@@ -7,131 +7,296 @@ description: 让不可控依赖变得可测
 
 # 第 076 讲 · Mock 与测试替身：时间、网络与随机
 
-> patch 要打在「被使用的地方」而不是「定义的地方」，这个细节占了 mock 失败案例的一大半。本讲的目标是「让不可控依赖变得可测」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+测试骨架有了，可一旦依赖时间、网络或随机，用例就开始看运气。一个「验证码五分钟过期」的测试白天全过、夜里偶发失败，查下来是有人改了全局时钟又没收回；更常见的是替身打在了名字定义的地方，业务照旧读真实时间，测试却显示通过。
 
-## 这一讲你会得到什么
+从 unittest.mock 与 patch 该打在哪儿说起，走到 monkeypatch，再用时钟注入、freezegun 与 HTTP 假实现把不可控依赖包起来，接着分清桩、假对象与间谍，最后落到依赖注入。带着测试、fixture 与导入解析的底子来；学完能把时间、随机、网络封成可注入依赖，优先用假实现，写出不串味的测试。
 
-<CheckList id='P076' title="本讲目标" :items='["能说清unittest.mock 与 patch 位置", "能说清monkeypatch", "能说清freezegun 与时钟注入", "能说清HTTP MockTransport", "能说清假对象与桩"]' />
 
-## 1. 先建立直觉
+## 「验证码 5 分钟过期」的测试白天全过、夜里偶发失败
 
-**unittest.mock 与 patch 位置**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+一个「验证码 5 分钟过期」的测试白天全过、夜里偶发失败；
 
-**monkeypatch**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+排查发现测试用 `freezegun.freeze_time` 改了全局 datetime，却没限制作用域，另一个并发用例把时间又改了回去。
 
-**freezegun 与时钟注入**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+更常见的一类：服务里写 from clock import now，测试照着「定义处」去 patch `clock.now`，结果业务函数照样读真实时间——patch 打错了位置，测试却显示通过。
 
-<ConceptDiagram type='flow4' title='第 076 讲 · unittest.mock 与 patch 位置' labels='unittest.mock 与 patch 位置|monkeypatch|freezegun 与时钟注入|HTTP MockTransport' caption='让不可控依赖变得可测' />
+还有人在断言里把 assert_called_once_with 拼成 assret_called_once_with，MagicMock 默默造出这个属性，测试永远绿。这些失败都指向同一件事：替身要打在名字被查找的地方，且可控依赖最好通过注入传入。
 
-上图用本讲的三个核心概念标出了主线：**unittest.mock 与 patch 位置 → monkeypatch → freezegun 与时钟注入**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+本讲把 `unittest.mock` 的 patch 位置、时间/随机/网络的假实现，以及替身分类讲到能写出不串味的测试。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 unittest.mock 与 patch 位置 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 2 passed, 1 raises as expe", "tone": "green"}, {"title": "深入边界", "desc": "厘清 monkeypatch 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 依赖注入 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+<Callout type="warn" title='先看一个真实会出错的写法' text='patch 打在「定义处」而非「使用处」：from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它' />
 
-## 2. 语法与规则：把行为跑出来
 
-### 2.1 主示例
+## patch 要打在「被使用的地方」：定义处 vs 使用处
 
-**unittest.mock 与 patch 位置**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+`unittest.mock` 提供 Mock、MagicMock、patch / `patch.object` / `patch.dict`，可作装饰器或上下文管理器，常用参数 return_value、side_effect（异常或序列）、autospec、spec；
 
-```python
-# test_demo.py —— 用 pytest 运行
-import pytest
+断言用 assert_called_once_with、call_count、reset_mock。决定成败的是 patch 目标：应打在「名字被查找的地方」而不是「定义的地方」。
 
-def parse_age(s):
-    n = int(s)
-    if not 0 <= n <= 150: raise ValueError("age out of range")
-    return n
+若 `service.py` 写 from clock import now，则 service 模块里绑定了 `service.now` 这个名字，patch `clock.now` 只改了 clock 模块的引用，`service.greet()` 仍读旧函数；
 
-@pytest.mark.parametrize("s,expected", [("18", 18), ("0", 0)])
-def test_ok(s, expected):
-    assert parse_age(s) == expected
+必须 patch `service.now` 才生效（可验证：定义处 patch 后仍返回 real，使用处 patch 才返回 FAKE）。反过来若业务写 import clock; `clock.now()`，就 patch `clock.now`。
 
-def test_bad():
-    with pytest.raises(ValueError):
-        parse_age("200")
-```
+patch 在退出时用保存的原值还原，`patch.dict` 可对 `os.environ` 做临时替换。
 
-<OutputBox title="运行结果" output='2 passed, 1 raises as expected' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+**patch 目标选择：定义处 vs 使用处**
 
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='# test_demo.py —— 用 pytest 运行\nimport pytest\n\ndef parse_age(s):\n    n = int(s)\n    if not 0 &lt;= n &lt;= 150: raise ValueError("age out of range")\n    return n\n\n@pytest.mark.parametrize("s,expected", [("18", 18), ("0", 0)])\ndef test_ok(s, expected):\n    assert parse_age(s) == expected\n\ndef test_bad():\n    with pytest.raises(ValueError):\n        parse_age("200")' :notes='["参数化把多个用例写成一张表", "pytest.raises 断言异常契约", "测试描述的是公开行为，不是实现细节", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色", "第 11 行：与上文规则对照，观察它在整体流程里承担的角色", "第 12 行：与上文规则对照，观察它在整体流程里承担的角色", "第 13 行：与上文规则对照，观察它在整体流程里承担的角色", "第 14 行：与上文规则对照，观察它在整体流程里承担的角色", "第 15 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 076 讲 · Mock 与测试替身：时间、网络与随机' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**monkeypatch**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
-
-```python
-from unittest.mock import patch
-import datetime as dt
-with patch.object(dt, "date", return_value=dt.date(2026, 1, 1)):
-    print(dt.date.today())
-```
-
-<OutputBox title="对照写法的输出（先自己猜）" output='2026-01-01' guess="true" />
-
-<Compare :panels='[{"label": "主写法", "code": "# test_demo.py —— 用 pytest 运行\nimport pytest\n\ndef parse_age(s):\n    n = int(s)\n    if not 0 &lt;= n &lt;= 150: raise ValueError(\"age out of range\")\n    return n\n\n@pytest.mark.parametrize(\"s,expected\", [(\"18\", 18), (\"0\", 0)])\ndef test_ok(s, expected):\n    assert parse_age(s) == expected\n\ndef test_bad():\n    with pytest.raises(ValueError):\n        parse_age(\"200\")", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "from unittest.mock import patch\nimport datetime as dt\nwith patch.object(dt, \"date\", return_value=dt.date(2026, 1, 1)):\n    print(dt.date.today())", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现」' />
-
-## 3. 深入一步：规则与边界
-
-**freezegun 与时钟注入**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
-
-**HTTP MockTransport**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
-
-**假对象与桩**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
-
-| 知识点 | 规则要点 | 常见误用 |
+| 业务写法 | 名字被查找处 | 应 patch 的目标 |
 | --- | --- | --- |
-| unittest.mock 与 patch 位置 | 这里的关键词是「什么时候」和「代价是什么」 | mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现 |
-| monkeypatch | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现 |
-| freezegun 与时钟注入 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现 |
-| HTTP MockTransport | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现 |
-| 假对象与桩 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现 |
+| from clock import now; now() | service.now | service.now |
+| import clock; clock.now() | clock.now | clock.now |
+| from pkg import util; util.f() | 当前模块的 util | 当前模块.util.f 或 util.f |
+| from datetime import datetime | 当前模块的 datetime | 当前模块.datetime |
+| 读 os.environ['K'] | os.environ | patch.dict(os.environ, &#123;'K': 'v'&#125;) |
 
-<Term word='unittest.mock 与 patch 位置' text='patch 要打在「被使用的地方」而不是「定义的地方」，这个细节占了 mock 失败案例的一大半' />
+<Callout type="tip" title='核心心智模型' text='unittest.mock 提供 Mock、MagicMock、patch / patch.object / patch.dict，可作装饰器或上下文管理器，常用参数 return_value、side_effect（异常或序列）、autospec、spec；断言用 assert_called_on' />
 
-<Callout type="warn" title="易错点" text='mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现' />
+`unittest.mock.patch` 把目标字符串按最后一个点拆成「模块/对象 + 属性」，import 该模块后对其 setattr 保存原值并替换成 MagicMock，退出时用 `__exit__` 把原值写回；
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：unittest.mock 与 patch 位置", "body": "**unittest.mock 与 patch 位置**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：monkeypatch", "body": "**monkeypatch**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：freezegun 与时钟注入", "body": "**freezegun 与时钟注入**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：HTTP MockTransport", "body": "**HTTP MockTransport**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+因此 patch `clock.now` 只改 clock 模块字典，而 `service.py` 早用 from clock import now 把函数对象绑成了自己的 `service.now`，二者是不同命名空间里的两个名字，改前者不影响后者——这就是「patch 打在使用处」的底层原因。
 
-## 4. 工程实践
+`MagicMock.__getattr__` 对未知属性返回一个新的子 Mock，所以拼错的断言方法不会触发 AttributeError；
 
-把时间、随机、网络封装成可注入依赖，优先用假实现（fake）而不是深度断言调用次数 **依赖注入**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+create_autospec 从目标类的 `__init__` / 方法签名构造 spec，`__getattr__` 对不在 spec 里的名字抛 AttributeError。
 
-### 用命令行复现
+freezegun 的做法是把 `sys.modules` 里的 datetime、date、time 等替换成 FrozenDateTime 家族，属全局改动，故必须用上下文限定作用域或改用构造函数注入的 now callable。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+`random.Random(seed)` 是独立的 Mersenne Twister 实例，同 seed 同调用序列可复现，因此注入它比 patch random 全局更隔离。
+
+<ConceptDiagram type='flow4' title='第 076 讲 · unittest.mock 与 patch 位置' labels='unittest.mock 与 patch |时间、随机、网络的可控注入|测试替身分类与 autospec 防呆' caption='让不可控依赖变得可测' />
+
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+### 为什么 patch 定义处常常不生效
+
+```python
+from unittest.mock import Mock, create_autospec
+
+class Service:
+    def fetch(self, key):
+        return 'real'
+
+m = Mock()
+print('bare mock invents attr', hasattr(m, 'fetchh'))
+m.fetchh()
+safe = create_autospec(Service, instance=True)
+try:
+    safe.fetchh()
+except AttributeError:
+    print('autospec rejects typo', True)
+safe.fetch.return_value = 'fake'
+print('autospec call ok', safe.fetch('k'))
+```
+
+<OutputBox title='原理验证' output='bare mock invents attr True\nautospec rejects typo True\nautospec call ok fake' />
+
+<Term word='unittest.mock 与 patch 位置' text='unittest.mock 提供 Mock、MagicMock、patch / patch.object / patch.dict，可作装饰器或上下文管理器，常用参数 return_value、side_effect（异常或序列）、autospec、spec；断言用 assert_called_once_with、ca' />
+
+<Term word='monkeypatch' text='时间最稳的做法是依赖注入：把 now 这个 callable 作为函数参数或对象构造参数传入，测试传一个返回固定值的 FakeClock，而不是全局 patch datetime.datetime.now；freezegun.freeze_time 之所以方便，是因为它替换 sys.modules 里的 datetim' />
+
+
+## 对照：patch 使用处与定义处的输出差
+
+```python
+import sys, os, tempfile
+from unittest.mock import patch
+
+with tempfile.TemporaryDirectory() as d:
+    open(os.path.join(d, 'clock.py'), 'w').write('def now():' + chr(10) + '    return "real"' + chr(10))
+    open(os.path.join(d, 'service.py'), 'w').write('from clock import now' + chr(10) + 'def greet():' + chr(10) + '    return "hi " + now()' + chr(10))
+    sys.path.insert(0, d)
+    import service, clock
+    print('baseline', service.greet())
+
+    with patch.object(clock, 'now', return_value='FAKE'):
+        print('patch definition site', service.greet())
+
+    with patch.object(service, 'now', return_value='FAKE'):
+        print('patch use site', service.greet())
+    sys.path.remove(d)
+```
+
+<OutputBox title='主示例运行结果' output='baseline hi real\npatch definition site hi real\npatch use site hi FAKE' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
+
+<LineByLine code='import sys, os, tempfile\nfrom unittest.mock import patch\n\nwith tempfile.TemporaryDirectory() as d:\n    open(os.path.join(d, &#39;clock.py&#39;), &#39;w&#39;).write(&#39;def now():&#39; + chr(10) + &#39;    return "real"&#39; + chr(10))\n    open(os.path.join(d, &#39;service.py&#39;), &#39;w&#39;).write(&#39;from clock import now&#39; + chr(10) + &#39;def greet():&#39; + chr(10) + &#39;    return "hi " + now()&#39; + chr(10))\n    sys.path.insert(0, d)\n    import service, clock\n    print(&#39;baseline&#39;, service.greet())\n\n    with patch.object(clock, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch definition site&#39;, service.greet())\n\n    with patch.object(service, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch use site&#39;, service.greet())\n    sys.path.remove(d)' :notes='["导入 sys/os/tempfile 建临时模块，patch 做替换", "从 unittest.mock 取 patch.object", "临时目录里造两个模块模拟业务与依赖", "clock.py 定义 now 返回 real", "service.py 用 from clock import now 绑定本地名字", "把临时目录加入 sys.path 以便 import", "导入两个模块，service.now 此刻指向原函数", "基线：greet 读到真实时间 real", "尝试在「定义处」clock 模块上 patch now", "service.greet 仍读自己的 service.now，故还是 real", "改在「使用处」service 模块上 patch now", "这次 greet 读到 FAKE，patch 生效", "移除临时路径，环境干净"]' title='第 076 讲 · Mock 与测试替身：时间、网络与随机' />
+
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
+
+```python
+import random
+
+class FakeClock:
+    def __init__(self, start):
+        self.t = start
+    def now(self):
+        self.t += 1
+        return self.t
+
+class FakeRNG:
+    def __init__(self, values):
+        self.values = list(values)
+    def randrange(self, n):
+        return self.values.pop(0) % n
+
+def make_id(clock, rng):
+    return str(clock.now()) + '-' + str(rng.randrange(100))
+
+c = FakeClock(100)
+r = FakeRNG([7, 7, 7])
+print('id1', make_id(c, r))
+print('id2', make_id(c, r))
+print('clock advanced', c.t)
+print('seeded reproducible', random.Random(7).randrange(100) == random.Random(7).randrange(100))
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='id1 101-7\nid2 102-7\nclock advanced 102\nseeded reproducible True' guess="true" />
+
+<Compare :panels='[{"label": "主示例", "code": "import sys, os, tempfile\nfrom unittest.mock import patch\n\nwith tempfile.TemporaryDirectory() as d:\n    open(os.path.join(d, &#39;clock.py&#39;), &#39;w&#39;).write(&#39;def now():&#39; + chr(10) + &#39;    return \"real\"&#39; + chr(10))\n    open(os.path.join(d, &#39;service.py&#39;), &#39;w&#39;).write(&#39;from clock import now&#39; + chr(10) + &#39;def greet():&#39; + chr(10) + &#39;    return \"hi \" + now()&#39; + chr(10))\n    sys.path.insert(0, d)\n    import service, clock\n    print(&#39;baseline&#39;, service.greet())\n\n    with patch.object(clock, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch definition site&#39;, service.greet())\n\n    with patch.object(service, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch use site&#39;, service.greet())\n    sys.path.remove(d)", "note": "unittest.mock 与 patch 位置"}, {"label": "对照 / 进阶", "code": "import random\n\nclass FakeClock:\n    def __init__(self, start):\n        self.t = start\n    def now(self):\n        self.t += 1\n        return self.t\n\nclass FakeRNG:\n    def __init__(self, values):\n        self.values = list(values)\n    def randrange(self, n):\n        return self.values.pop(0) % n\n\ndef make_id(clock, rng):\n    return str(clock.now()) + &#39;-&#39; + str(rng.randrange(100))\n\nc = FakeClock(100)\nr = FakeRNG([7, 7, 7])\nprint(&#39;id1&#39;, make_id(c, r))\nprint(&#39;id2&#39;, make_id(c, r))\nprint(&#39;clock advanced&#39;, c.t)\nprint(&#39;seeded reproducible&#39;, random.Random(7).randrange(100) == random.Random(7).randrange(100))", "note": "时间、随机、网络的可控注入"}]' title='两种写法对照' note='差异集中在 unittest.mock 与 patch 位置；先看输出，再找背后的规则。' />
+
+**unittest.mock 常用 API**
+
+| API | 作用 | 边界 |
+| --- | --- | --- |
+| Mock / MagicMock | 通用替身，MagicMock 支持魔法方法 | 任意属性动态创建，拼错名不报错 |
+| patch(target) / patch.object | 临时替换属性并自动还原 | target 要是「被查找处」 |
+| return_value / side_effect | 固定返回 / 异常或序列 | side_effect 可为可迭代对象 |
+| assert_called_once_with | 校验调用参数 | 过度使用会绑死实现 |
+| spec / autospec / create_autospec | 按真实签名限制属性 | 访问不存在方法抛 AttributeError |
+| seal() (3.7+) | 冻结已访问属性 | 防止后续拼错名 |
+| monkeypatch (pytest) | setattr/setenv/chdir 且自动 undo | function 级，无需手动还原 |
+
+
+## 时间、随机、网络的可控注入与替身分类
+
+时间最稳的做法是依赖注入：把 now 这个 callable 作为函数参数或对象构造参数传入，测试传一个返回固定值的 FakeClock，而不是全局 patch `datetime.datetime.now`；
+
+`freezegun.freeze_time` 之所以方便，是因为它替换 `sys.modules` 里的 datetime/date/time 等模块，但全局修改会串味，必须限定作用域。
+
+随机用 `random.Random(seed)` 实例注入或传入一个按序取值的 FakeRNG，固定 seed 的结果可复现（同 seed 两次 randrange 相等）；
+
+真正的安全令牌仍用 secrets。
+
+网络用 `httpx.MockTransport`、responses 或注入一个 get 方法的 FakeHTTP，返回预置页面并记录调用。
+
+优先用有真实行为的假实现（fake）而不是深度断言调用次数：前者验证外部行为，后者把测试绑死在内部实现上。
+
+替身按职责分五类：dummy 只占位不被用、stub 返回固定值、spy 记录调用、mock 预设期望并校验调用、fake 是有可用行为的轻量实现（内存版仓储、假时钟）。依赖注入让时间、随机、网络都成为可替换参数，测试不再依赖全局状态，因而不会跨用例串味。
+
+MagicMock 的陷阱在于 `__getattr__` 会为任意属性动态造子 Mock：把 assert_called_once_with 拼成 assret_called_once_with 不会报错，测试假通过；
+
+用 spec=、`autospec=True` 或 `create_autospec(Service, instance=True)` 让对象按真实签名生成，访问不存在的方法就抛 AttributeError（可验证：裸 Mock 的 hasattr(m,'fetchh') 为 True，autospec 拒绝拼错名）。
+
+3.7+ 的 `seal()` 还能冻结已访问属性，防止后续拼错。pytest 的 monkeypatch 与 patch 等价且自动 undo，适合函数级临时替换。
+
+**测试替身分类**
+
+| 类型 | 行为 | 适用 |
+| --- | --- | --- |
+| dummy | 占位、不被真正使用 | 凑参数 |
+| stub | 返回预置固定值 | 隔离外部查询 |
+| spy | 记录调用供检查 | 验证交互次数（谨慎用） |
+| mock | 预设期望并校验调用 | 契约型交互 |
+| fake | 有可用行为的轻量实现 | 内存仓储、假时钟、假 HTTP（推荐） |
 
 ```bash
 python -m pytest -q --disable-warnings
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **unittest.mock 与 patch 位置** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 **unittest.mock 与 patch 位置** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<Callout type="idea" title="生产提示" text='把「依赖注入」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## 依赖注入让时间、网络、随机全部可控
 
-## 动手练一练
+把不可控依赖变成可注入参数，是替身最稳的形态：服务函数接收 http、clock、rng 三个对象，测试时传入 FakeHTTP（预置页面并记录调用）、FakeClock（固定递增时间）、`random.Random(seed)`（可复现随机），生产时换真实实现。
 
-<Exercise title='动手：围绕「依赖注入」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 unittest.mock 与 patch 位置 与 依赖注入 两个关注点，并说明你的取舍。' :hints='["回到 unittest.mock 与 patch 位置 的规则", "留意易错点：mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现", "先让代码跑通，再补边界与异常分支"]' solution='from unittest.mock import patch\nimport datetime as dt\nwith patch.object(dt, "date", return_value=dt.date(2026, 1, 1)):\n    print(dt.date.today())' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；把时间、随机、网络封装成可注入依赖，优先用假实现（fake）而不是深度断言调用次数' />
+这样测试不修改任何全局对象，跨用例零串味，且验证的是「按 URL 抓取并生成记录」这个外部行为而非内部调用次数。下面片段用标准库拼出这套注入结构并打印行数、调用轨迹与时钟终值。
 
-## 随堂检测
+```python
+import random
 
-<Quiz no='076-1' q='在本讲讨论的「unittest.mock 与 patch 位置」语境下，下面哪一种说法是准确的？' :options='["patch 要打在「被使用的地方」而不是「定义的地方」，这个细节占了 mock 失败案例的一大半", "unittest.mock 与 patch 位置 只影响代码的书写形式，不会改变任何运行时行为", "unittest.mock 与 patch 位置 在所有 Python 实现与所有版本中表现完全一致", "只要用了 unittest.mock 与 patch 位置，就不必再考虑 依赖注入 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 依赖注入 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+class FakeHTTP:
+    def __init__(self, pages):
+        self.pages = pages
+        self.calls = []
+    def get(self, url):
+        self.calls.append(url)
+        return self.pages.get(url, '')
 
-<Predict no='076-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["2 passed, 1 raises as expected", "2 passed, 1 raises as expected\n（无更多输出）", "AttributeError: unittest.mock 与 patch 位置 不可用"]' answer="0" output='2 passed, 1 raises as expected' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+class Clock:
+    def __init__(self, start=0):
+        self.t = start
+    def now(self):
+        self.t += 1
+        return self.t
 
-<FillBlank no='076-3' tpl='___pytest' :answers='["import"]' hint='回想本讲关于 unittest.mock 与 patch 位置 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+def collect(http, clock, rng, urls):
+    rows = []
+    for url in urls:
+        body = http.get(url)
+        rows.append((url, len(body), clock.now(), rng.randrange(1000)))
+    return rows
 
-## 一页纸速记
+http = FakeHTTP({'/a': 'alpha', '/b': 'beta'})
+clock = Clock(100)
+rng = random.Random(7)
+rows = collect(http, clock, rng, ['/a', '/b', '/missing'])
+print('rows', len(rows))
+print('http calls', http.calls)
+print('clock end', clock.t)
+print('seeded reproducible', random.Random(7).randrange(1000) == random.Random(7).randrange(1000))
+```
 
-<KnowledgeCard :points='["unittest.mock 与 patch 位置：unittest.mock 与 patch 位置", "monkeypatch：monkeypatch", "freezegun 与时钟注入：freezegun 与时钟注入", "HTTP MockTransport：HTTP MockTransport"]' :pitfalls='["mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现", "忽略版本差异，把 依赖注入 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：patch 要打在「被使用的地方」而不是「定义的地方」，这个细节占了 mock 失败案例的一大半' />
+<Callout type="idea" title='落地提示' text='把时间、随机、网络封装成可注入依赖，优先用假实现（fake）而不是深度断言调用次数' />
 
-## 小结与下一讲
+<CheckList id='P076b' title='上线前自检' :items='["能复现并解释「patch 打在「定义处」而非「使用处」」", "能复现并解释「mock 了不存在的方法、或把断言方法名拼错」", "能复现并解释「全局 patch datetime.now / random」", "能用一条命令验证 unittest.mock 与 patch 位置", "关键路径有自动化测试与失败分支"]' />
 
-1. unittest.mock 与 patch 位置：unittest.mock 与 patch 位置
-2. monkeypatch：monkeypatch
-3. 把时间、随机、网络封装成可注入依赖，优先用假实现（fake）而不是深度断言调用次数
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| patch 打在「定义处」而非「使用处」 | from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它 | 定位名字被查找的模块，patch service.now；写 import clock 时才 patch clock.now |
+| mock 了不存在的方法、或把断言方法名拼错 | MagicMock.__getattr__ 为任意属性动态造子 Mock，assret_called_once_with 静默通过 | 用 spec / autospec / create_autospec 按真实签名限制，或 seal() 冻结属性 |
+| 全局 patch datetime.now / random 且不限制作用域 | 修改 sys.modules 级全局对象，跨用例串味、时区与异步任务互相干扰 | 把 now / rng / http 作为依赖注入传入 Fake 实现；freezegun 必须限定 with 作用域 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='patch 打在「定义处」而非「使用处」：from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：patch 打在「定义处」而非「使用处」", "body": "from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它", "tip": "定位名字被查找的模块，patch service.now；写 import clock 时才 patch clock.now"}, {"title": "第 2 步：mock 了不存在的方法、或把断言方法名拼错", "body": "MagicMock.__getattr__ 为任意属性动态造子 Mock，assret_called_once_with 静默通过", "tip": "用 spec / autospec / create_autospec 按真实签名限制，或 seal() 冻结属性"}, {"title": "第 3 步：全局 patch datetime.now ", "body": "修改 sys.modules 级全局对象，跨用例串味、时区与异步任务互相干扰", "tip": "把 now / rng / http 作为依赖注入传入 Fake 实现；freezegun 必须限定 with 作用域"}]' />
+
+
+## 练习、自测与一页纸速记
+
+<Exercise title='基础：确认 patch 上下文自动还原' task='用 patch.object 临时把 os.sep 改成 &#39;X&#39;，退出 with 后打印 os.sep != &#39;X&#39; 证明还原。' solution='from unittest.mock import patch\nimport os\nwith patch.object(os, &#39;sep&#39;, &#39;X&#39;):\n    print(&#39;patched&#39;, os.sep)\nprint(&#39;restored&#39;, os.sep != &#39;X&#39;)' explain='patch 保存原值并在 __exit__ 写回，等价于 monkeypatch 的自动 undo；用例之间不会残留被改的全局属性。' />
+
+<Exercise title='进阶：注入固定时钟' task='定义一个 now() 返回固定值的 Clock，作为依赖传给被测函数并打印结果，说明为何不全局 patch datetime。' solution='class Clock:\n    def __init__(self, v):\n        self.v = v\n    def now(self):\n        return self.v\nc = Clock(100)\nprint(&#39;deterministic&#39;, c.now() == 100)' explain='把 now 作为可注入依赖，测试传固定实现即可；不修改 sys.modules 里的 datetime，避免全局串味与时区问题。' />
+
+<Quiz no='076-1' q='service.py 写 from clock import now，测试要替换 now 应 patch 哪里？' :options='["service.now（名字被查找处）", "clock.now（定义处）", "两者都要", "builtins.now"]' answer="0" explain='from X import y 会在当前模块绑定独立名字 service.now；patch clock.now 只改 clock 模块字典，不影响 service 已绑定的引用，必须打在使用处。' />
+
+<Quiz no='076-2' q='裸 MagicMock 上把断言拼成 assret_called_once_with 会？' :options='["静默通过，因 __getattr__ 动态造出该属性", "抛 AttributeError", "抛 TypeError", "自动更正拼写"]' answer="0" explain='MagicMock.__getattr__ 对任意名字返回新的子 Mock，拼错名不报错，测试假通过；用 spec/autospec/create_autospec 让未知属性抛 AttributeError。' />
+
+<Quiz no='076-3' q='关于时间替身，最稳妥的做法是？' :options='["把 now callable 注入被测对象，测试传 FakeClock", "全局 patch datetime.datetime.now", "直接改系统时间", "在测试里 sleep 到指定时间"]' answer="0" explain='注入固定时钟不修改任何全局对象，跨用例零串味；freezegun 替换 sys.modules 属全局改动，必须严格限定 with 作用域。' />
+
+<Predict no='076-P' q='service.py 里 from clock import now; def greet(): return &#39;hi &#39; + now()，测试用 patch.object(clock,&#39;now&#39;,return_value=&#39;X&#39;) 后 greet() 返回？' :options='["hi real（原值，patch 未生效）", "hi X", "AttributeError"]' answer='0' output='hi real（原值，patch 未生效）' explain='service 通过 from clock import now 把函数绑定成自己的 service.now；patch clock.now 改的是 clock 模块字典，service 仍读旧引用。应改 patch service.now。' />
+
+<FillBlank no='076-F' tpl='___ sys, os, tempfile' :answers='["import"]' hint='回想本讲关于 unittest.mock 与 patch 位置 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 unittest.mock 与 patch 位置 的落点。' />
+
+<KnowledgeCard :points='["patch 要打在名字被查找处：from clock import now 要 patch 当前模块.now，import clock 才 patch clock.now", "patch 保存原值、退出自动还原；patch.dict 可临时替换 os.environ", "时间/随机/网络优先依赖注入：FakeClock、random.Random(seed)、FakeHTTP，避免全局修改", "MagicMock.__getattr__ 动态造属性，拼错断言方法会假通过；用 spec/autospec/create_autospec 或 seal()", "替身分类：dummy/stub/spy/mock/fake；优先 fake（有行为的轻量实现）而非深度调用断言", "freezegun 替换 sys.modules 里 datetime/date/time，属全局改动，必须用 with 限定作用域"]' :pitfalls='["patch 打在「定义处」而非「使用处」", "mock 了不存在的方法、或把断言方法名拼错", "全局 patch datetime.now / random 且不限制作用域", "mock 了不存在的方法，测试依然会通过，直到真实接口变化才发现"]' summary='patch 要打在「被使用的地方」而不是「定义的地方」，这个细节占了 mock 失败案例的一大半' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| patch 要打在名字被查找处：from clock import now 要 patch 当前模块.now，import clock 才 patch clock.now | 建立直觉 |
+| patch 保存原值、退出自动还原；patch.dict 可临时替换 os.environ | 跑通示例 |
+| 时间/随机/网络优先依赖注入：FakeClock、random.Random(seed)、FakeHTTP，避免全局修改 | 深入边界 |
+| MagicMock.__getattr__ 动态造属性，拼错断言方法会假通过；用 spec/autospec/create_autospec 或 seal() | 工程落地 |
+| 替身分类：dummy/stub/spy/mock/fake；优先 fake（有行为的轻量实现）而非深度调用断言 | 随堂检测 |
+| freezegun 替换 sys.modules 里 datetime/date/time，属全局改动，必须用 with 限定作用域 | 复盘 |
+
+1. patch 要打在名字被查找处：from clock import now 要 patch 当前模块.now，import clock 才 patch clock.now
+
+2. patch 保存原值、退出自动还原；patch.dict 可临时替换 os.environ
+
+3. 时间/随机/网络优先依赖注入：FakeClock、random.Random(seed)、FakeHTTP，避免全局修改
 
 [下一讲：属性测试、基准测试与模糊测试](/engineering/property-testing)

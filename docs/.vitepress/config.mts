@@ -69,6 +69,7 @@ export default defineConfig({
       },
     },
     nav: [
+      { text: '开始之前', link: '/guide/before-you-start' },
       { text: '课程总目录', link: '/guide/curriculum' },
       { text: '学习路线', link: '/guide/' },
       {
@@ -98,6 +99,7 @@ export default defineConfig({
       '/guide/': [
         { text: '导学 · 建立地图', collapsed: false, items: [
           { text: '阶段导览 · 导学', link: '/guide/' },
+          { text: '开始之前 · 教程使用说明', link: '/guide/before-you-start' },
           { text: '课程总目录（132 讲）', link: '/guide/curriculum' },
           { text: '001 开篇：Python 是什么，为什么值得学', link: '/guide/opening' },
           { text: '002 环境与工具链：解释器、虚拟环境与编辑器', link: '/guide/setup' },

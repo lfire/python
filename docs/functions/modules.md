@@ -7,130 +7,277 @@ description: 能诊断导入失败与命名冲突
 
 # 第 035 讲 · 模块与包：import 机制与循环导入
 
-> import 会执行模块顶层代码并把结果缓存进 sys.modules，第二次导入拿的是同一个对象，所以模块天然是单例。本讲的目标是「能诊断导入失败与命名冲突」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+函数这一层搭得差不多了，代码一多，问题就转到它们该放在哪、又怎样被找到。模块与包决定名字的可见范围和加载次序，是从单文件走向可协作工程的门槛。一个配置模块本该只放常量，却在顶层连了库、起了线程，别的测试只想导入一下就卡住；两个文件互相引用，提示又指向一个还没初始化完的模块。
 
-## 这一讲你会得到什么
+我们先跟着 import 走一遍：缓存、搜索路径与加载器怎样合作，模块为何天然是单例；再看包内相对导入与 __init__ 的导出约定；最后归结到循环导入的成因与下沉共享部分的办法。需要你习惯把函数分文件存放；走完你能判断是哪一步出了岔，而不是靠挪动 import 碰运气。
 
-<CheckList id='P035' title="本讲目标" :items='["能说清模块对象与 sys.modules", "能说清搜索路径与 finder", "能说清绝对与相对导入", "能说清__init__ 与 __all__", "能说清循环导入成因"]' />
 
-## 1. 先建立直觉
+## 只是 import 一下，进程却连了库、起了线程
 
-**模块对象与 sys.modules**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+一个配置模块 `config.py` 里除了定义常量，还在顶层连了数据库、起了个后台线程，结果单元测试只是 import config 就把连接建起来、进程卡住不退出。
 
-**搜索路径与 finder**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+更头疼的是 `a.py` 顶层 from b import B、`b.py` 顶层 from a import A 互相导入，运行报 partially initialized module 与 most likely due to a circular import，团队只能把 import 挪来挪去碰运气。
 
-**绝对与相对导入**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+朴素解法是在每个函数里到处重复导入，或在 `sys.path` 里乱塞路径，反而制造出同一模块被加载两份的新问题。本讲把 import 的真实流程讲清楚：`sys.modules` 缓存、finder / loader、搜索路径、`__init__` 与 `__all__`、命名空间包，以及循环导入的成因与四种根治办法。
 
-<ConceptDiagram type='flow3' title='第 035 讲 · 模块对象与 sys.modules' labels='模块对象与 sys.modules|搜索路径与 finder|绝对与相对导入|__init__ 与 __all__' caption='能诊断导入失败与命名冲突' />
+<Callout type="warn" title='先看一个真实会出错的写法' text='只是 import 一下配置模块，却连了库、起了线程、进程不退出：模块顶层代码在导入时执行一次，副作用不受 main 守卫保护' />
 
-上图用本讲的三个核心概念标出了主线：**模块对象与 sys.modules → 搜索路径与 finder → 绝对与相对导入**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 模块对象与 sys.modules 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 (x: int, y: int) -&gt; None", "tone": "green"}, {"title": "深入边界", "desc": "厘清 搜索路径与 finder 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 命名空间包 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## import 的执行链路与模块单例
 
-## 2. 语法与规则：把行为跑出来
+import X 先查 `sys.modules`（一个以完整模块名为键的 dict），命中就直接返回同一个 module 对象；
 
-### 2.1 主示例
+未命中才交给 `sys.meta_path` 里的 finder 依次尝试（BuiltinImporter、FrozenImporter、PathFinder），PathFinder 沿 `sys.path` 搜索，loader 创建 module 对象、执行其顶层代码，再存回 `sys.modules`。
 
-**模块对象与 sys.modules**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+因为缓存，模块天然是单例：第二次 import 不会重新执行顶层代码，要重跑得用 `importlib.reload(mod)`。
 
-```python
-import inspect
-from dataclasses import dataclass
+模块对象的属性来自它的顶层命名空间 `__dict__`，`__name__`、`__file__`、`__package__`、`__spec__` 由 loader 填充，包还额外有 `__path__` 供继续搜索子模块。
 
-@dataclass(frozen=True)
-class Point:
-    x: int
-    y: int
+`sys.path` 的顺序是入口脚本所在目录（或空字符串表示当前工作目录）→ PYTHONPATH → 标准库 → site-packages，`sys.path`[0] 是脚本目录，这也是随手写一个 `random.py` 就把标准库 random 遮蔽掉的根因。
 
-print(inspect.signature(Point))
-print(Point(1, 2))
-```
+顶层代码在导入时执行一次，所以连接、线程、打印这类副作用会在只是 import 一下时触发；把可执行入口收进 if `__name__` == '__main__': 守卫是基本纪律。
 
-<OutputBox title="运行结果" output='(x: int, y: int) -&gt; None\nPoint(x=1, y=2)' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
-
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='import inspect\nfrom dataclasses import dataclass\n\n@dataclass(frozen=True)\nclass Point:\n    x: int\n    y: int\n\nprint(inspect.signature(Point))\nprint(Point(1, 2))' :notes='["inspect 可读取运行时的真实签名", "frozen dataclass 自动生成 __eq__ / __hash__", "注解让 IDE 与类型检查器都能理解结构", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 035 讲 · 模块与包：import 机制与循环导入' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**搜索路径与 finder**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
+动态导入用 `importlib.import_module`('pkg.mod')，底层函数是 `__import__`。
 
 ```python
-class Lazy:
-    def __getattr__(self, name):
-        print("load", name)
-        return 42
+import sys, importlib, types
 
-print(Lazy().anything)
+first = importlib.import_module('json')
+second = importlib.import_module('json')
+print(first is second, 'json' in sys.modules)
+print(type(first).__name__, first.__name__)
+print(first.__spec__.name, hasattr(first, '__file__'))
+
+m = types.ModuleType('demo')
+m.value = 42
+sys.modules['demo'] = m
+import demo
+print(demo.value, demo is m, demo.__name__)
+print(demo.__dict__ is m.__dict__)
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='load anything\n42' guess="true" />
+<OutputBox title='主示例运行结果' output='True True\nmodule json\njson True\n42 True demo\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Compare :panels='[{"label": "主写法", "code": "import inspect\nfrom dataclasses import dataclass\n\n@dataclass(frozen=True)\nclass Point:\n    x: int\n    y: int\n\nprint(inspect.signature(Point))\nprint(Point(1, 2))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "class Lazy:\n    def __getattr__(self, name):\n        print(\"load\", name)\n        return 42\n\nprint(Lazy().anything)", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入也随」' />
+<LineByLine code='import sys, importlib, types\n\nfirst = importlib.import_module(&#39;json&#39;)\nsecond = importlib.import_module(&#39;json&#39;)\nprint(first is second, &#39;json&#39; in sys.modules)\nprint(type(first).__name__, first.__name__)\nprint(first.__spec__.name, hasattr(first, &#39;__file__&#39;))\n\nm = types.ModuleType(&#39;demo&#39;)\nm.value = 42\nsys.modules[&#39;demo&#39;] = m\nimport demo\nprint(demo.value, demo is m, demo.__name__)\nprint(demo.__dict__ is m.__dict__)' :notes='["导入 sys 读缓存、importlib 做动态导入、types 造模块对象", "第一次导入 json 并触发加载", "第二次导入同名的 json", "两次拿到同一个对象，且 json 已在 sys.modules 里", "模块对象的类型是 module，__name__ 为 json", "__spec__.name 是 json，普通模块有 __file__", "手动造一个名为 demo 的模块对象", "给它写一个自定义属性 value", "提前把对象放进 sys.modules 模拟已被加载", "import demo 直接命中缓存、绑定到本地名字", "取到 value，且 demo 就是我们放进去的那个对象", "模块对象的 __dict__ 与手动对象完全相同"]' title='第 035 讲 · 模块与包：import 机制与循环导入' />
 
-## 3. 深入一步：规则与边界
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-**绝对与相对导入**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+**import 的执行链路与关键对象**
 
-**__init__ 与 __all__**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
-
-**循环导入成因**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
-
-| 知识点 | 规则要点 | 常见误用 |
+| 步骤 | 对象 / 字段 | 作用 |
 | --- | --- | --- |
-| 模块对象与 sys.modules | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入 |
-| 搜索路径与 finder | 这里的关键词是「什么时候」和「代价是什么」 | 把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入 |
-| 绝对与相对导入 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入 |
-| __init__ 与 __all__ | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入 |
-| 循环导入成因 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入 |
+| 查缓存 | sys.modules（dict） | 命中直接返回同一 module 对象，保证单例 |
+| 找 finder | sys.meta_path 列表 | BuiltinImporter / FrozenImporter / PathFinder 依次尝试 |
+| 搜路径 | sys.path | 脚本目录 → PYTHONPATH → 标准库 → site-packages |
+| 加载执行 | loader.exec_module | 创建 module 对象、执行顶层代码、填 __dict__ |
+| 填元数据 | __name__ / __file__ / __package__ / __spec__ | 包才有 __path__；命名空间包 __file__ 为 None |
 
-<Term word='模块对象与 sys.modules' text='import 会执行模块顶层代码并把结果缓存进 sys.modules，第二次导入拿的是同一个对象，所以模块天然是单例' />
 
-<Callout type="warn" title="易错点" text='把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入也随之而来' />
+### sys.modules、finder 与 loader 的分工
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：模块对象与 sys.modules", "body": "**模块对象与 sys.modules**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：搜索路径与 finder", "body": "**搜索路径与 finder**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：绝对与相对导入", "body": "**绝对与相对导入**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：__init__ 与 __all__", "body": "**__init__ 与 __all__**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+import 的核心是 `sys.modules` 这个全局字典加上一套 finder / loader 协议。
 
-<ArchBlueprint title='第 035 讲 · 分层视角' caption='把「模块对象与 sys.modules」放进系统分层里看' :layers='[{"name": "入口层", "note": "请求与使用方式", "protocol": "函数调用 / HTTP", "items": [{"label": "模块对象与 sys.mo", "sub": "对外接口", "detail": "**模块对象与 sys.modules**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tone": "blue"}]}, {"name": "逻辑层", "note": "规则、状态与校验", "protocol": "Python 对象协议", "items": [{"label": "搜索路径与 finder", "sub": "核心处理", "detail": "**搜索路径与 finder**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tone": "purple"}]}, {"name": "资源层", "note": "数据、IO 与失败处理", "items": [{"label": "命名空间包", "sub": "落地与收尾", "detail": "用 src 布局、把共享类型下沉到独立模块、在包内用相对导入，可根治绝大多数导入问题", "tone": "green"}]}]' />
+执行 import X 时，`_bootstrap._find_and_load` 先查 `sys.modules`['X']；
 
-## 4. 工程实践
+命中就直接返回，未命中则在把占位 module 对象插入 `sys.modules` 之后才调用 loader 执行顶层代码，这个先入缓存再执行的顺序正是循环导入能拿到半成品模块的根本原因。
 
-用 src 布局、把共享类型下沉到独立模块、在包内用相对导入，可根治绝大多数导入问题 **命名空间包**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+loader 把顶层名字写进 `module.__dict__`，`__spec__`（ModuleSpec）记录 name、loader、origin、submodule_search_locations，`__package__` 决定相对导入的解析基准，包还会带 `__path__` 供继续搜索子模块。
 
-### 用命令行复现
+PathFinder 依次遍历 `sys.path` 的每个条目，用 FileFinder 找 .py / .pyc / 目录；PEP 420 的命名空间包在没有 `__init__.py` 时把多个匹配目录收集成 _NamespacePath，因而 `__file__` 为 None。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+第二次 import 不重新执行，除非 `importlib.reload` 明确要求。
+
+理解缓存与执行顺序，就知道为什么顶层副作用危险、为什么循环导入报 partially initialized。
+
+<ConceptDiagram type='layers3' title='第 035 讲 · 分层视角' labels='import 的执行链路与模块单例|包、相对导入与命名空间包|循环导入的成因与根治|命名空间包' caption='循环导入的成因与根治' />
+
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **命名空间包** 落在哪一层。
+
+
+## 模块对象为什么是天然单例
+
+<Callout type="tip" title='核心心智模型' text='import X 先查 sys.modules（一个以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 sys.meta_path 里的 finder 依次尝试（BuiltinImporter、FrozenImporter、PathFinder），PathFind' />
+
+```python
+import sys, importlib
+
+mod = importlib.import_module('json')
+print(type(mod.__loader__).__name__, mod.__spec__.name)
+print(mod.__spec__.origin is not None)
+print('PathFinder' in [m.__name__ for m in sys.meta_path])
+print(sys.modules['json'] is mod, importlib.import_module('json') is mod)
+```
+
+<OutputBox title='原理验证' output='SourceFileLoader json\nTrue\nTrue\nTrue True' />
+
+<FlowTimeline :steps='[{"title": "import 的执行链路与模块单例", "desc": "import X 先查 sys.modules（一个以完整模块名为键的 dict），…", "tone": "blue"}, {"title": "包、相对导入与命名空间包", "desc": "常规包是含 __init__.py 的目录，导入包时先执行 __init__.py，…", "tone": "purple"}, {"title": "循环导入的成因与根治", "desc": "循环导入是 a 与 b 互相 import，且至少一方在顶层就要用到对方尚未定义完成…", "tone": "orange"}, {"title": "工程落地", "desc": "复现循环导入，并把共享类型下沉到独立模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+
+<Term word='模块对象与 sys.modules' text='import X 先查 sys.modules（一个以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 sys.meta_path 里的 finder 依次尝试（BuiltinImporter、FrozenImporter、PathFinder），PathFinder 沿 sys.p' />
+
+<Term word='搜索路径与 finder' text='常规包是含 __init__.py 的目录，导入包时先执行 __init__.py，其顶层名字成为包的属性；__all__ 是一个字符串列表，控制 from pkg import * 导出哪些名字，不定义时导出所有不以单下划线开头的名字。绝对导入 import pkg.mod 从 sys.path 顶层开始找；相对导入' />
+
+
+## 包、相对导入与命名空间包
+
+常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.py`，其顶层名字成为包的属性；`__all__` 是一个字符串列表，控制 from pkg import * 导出哪些名字，不定义时导出所有不以单下划线开头的名字。
+
+绝对导入 import `pkg.mod` 从 `sys.path` 顶层开始找；
+
+相对导入 from . import x、from ..pkg import y 基于当前模块的 `__package__` 解析，只能在包内使用，直接运行的脚本里用相对导入会报 ImportError: attempted relative import with no known parent package。
+
+PEP 420（3.3+）引入命名空间包：没有 `__init__.py` 的目录也能成为包，用来把同名包分散到多个分发单元，其 `__path__` 是 _NamespacePath、`__file__` 为 None。常见陷阱有三个：包内混用绝对与相对导入导致同一模块以两个名字加载两份；把测试脚本放进包目录却直接运行；
+
+随意往 `sys.path` 插入路径导致导入到错误副本。用 python -m `pkg.mod` 运行会正确设置 `__package__`，相对导入才能生效，这与直接 python pkg/`mod.py` 的差别就在这里。
+
+**包、相对导入与命名空间包**
+
+| 形式 | 规则 | 常见错误 |
+| --- | --- | --- |
+| 常规包 | 目录含 __init__.py，导入时先执行它 | __init__.py 顶层副作用在导入时触发 |
+| __all__ | 字符串列表，控制 from pkg import * | 未定义时导出所有不以 _ 开头的名字 |
+| 相对导入 from . import x | 基于 __package__ 解析，仅包内可用 | 脚本直接运行报 ImportError: attempted relative import with no known parent package |
+| 命名空间包（PEP 420, 3.3+） | 无 __init__.py 也能成包，__path__ 是 _NamespacePath | __file__ 为 None，靠多路径拼接 |
+| 绝对导入 | 从 sys.path 顶层开始找 | 本地同名文件会遮蔽标准库 |
+
+```python
+import sys, tempfile, pathlib, importlib
+
+root = tempfile.mkdtemp()
+p = pathlib.Path(root)
+(p / 'pkg').mkdir()
+(p / 'pkg' / '__init__.py').write_text('from .mod import VALUE' + chr(10) + '__all__ = ' + str(['VALUE']) + chr(10))
+(p / 'pkg' / 'mod.py').write_text('VALUE = 99' + chr(10))
+sys.path.insert(0, root)
+import pkg
+print(pkg.VALUE, pkg.__all__)
+print(pkg.__file__ is not None, 'pkg.mod' in sys.modules)
+sys.path.remove(root)
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='99 [&#39;VALUE&#39;]\nTrue True' guess="true" />
+
+<Predict no='035-P' q='print(importlib.import_module(&#39;json&#39;) is importlib.import_module(&#39;json&#39;)) 输出什么？' :options='["True", "False", "抛 TypeError"]' answer='0' output='True' explain='两次调用命中 sys.modules 里同一个 json 模块对象，身份比较为真，这正是模块天然单例的直接证据。' />
+
+
+### __init__、__all__ 与相对导入的解析
+
+<CodeTabs :tabs='[{"label": "主示例", "code": "import sys, importlib, types\n\nfirst = importlib.import_module(&#39;json&#39;)\nsecond = importlib.import_module(&#39;json&#39;)\nprint(first is second, &#39;json&#39; in sys.modules)\nprint(type(first).__name__, first.__name__)\nprint(first.__spec__.name, hasattr(first, &#39;__file__&#39;))\n\nm = types.ModuleType(&#39;demo&#39;)\nm.value = 42\nsys.modules[&#39;demo&#39;] = m\nimport demo\nprint(demo.value, demo is m, demo.__name__)\nprint(demo.__dict__ is m.__dict__)", "note": "import 的执行链路与模块单例"}, {"label": "对照 / 进阶", "code": "import sys, tempfile, pathlib, importlib\n\nroot = tempfile.mkdtemp()\np = pathlib.Path(root)\n(p / &#39;pkg&#39;).mkdir()\n(p / &#39;pkg&#39; / &#39;__init__.py&#39;).write_text(&#39;from .mod import VALUE&#39; + chr(10) + &#39;__all__ = &#39; + str([&#39;VALUE&#39;]) + chr(10))\n(p / &#39;pkg&#39; / &#39;mod.py&#39;).write_text(&#39;VALUE = 99&#39; + chr(10))\nsys.path.insert(0, root)\nimport pkg\nprint(pkg.VALUE, pkg.__all__)\nprint(pkg.__file__ is not None, &#39;pkg.mod&#39; in sys.modules)\nsys.path.remove(root)", "note": "包、相对导入与命名空间包"}]' title='两种写法切换看' />
+
+
+## 循环导入的成因与根治
+
+循环导入是 a 与 b 互相 import，且至少一方在顶层就要用到对方尚未定义完成的名字。关键在于 _find_and_load 会先把占位 module 对象放进 `sys.modules`、之后才执行顶层代码：于是另一方拿到的是属性还没填齐的半成品模块。
+
+写法不同报错也不同：from a import A 在 A 未就绪时报 ImportError: cannot import name 'A' from partially initialized module 'a' (most likely due to a circular import)；
+
+而先 import a 再取 `a.A` 则报 AttributeError: partially initialized module 'a' ... has no attribute 'A' (most likely due to a circular import)。
+
+若只 import 模块对象、把属性访问推迟到运行时，通常不会立刻报错，因为等属性补齐后引用自然可用。诊断时看 Traceback 里的 partially initialized module 与 most likely due to a circular import，再打印 `sys.modules` 的键确认加载顺序。
+
+四种根治手段：把共享类型与常量下沉到第三个独立模块让依赖变单向；把 import 延迟到函数内部、用到时才导入；
+
+仅类型注解需要的导入放进 `typing.TYPE_CHECKING` 配合延迟注解，运行时不发生；
+
+统一包内相对导入加 src 布局（源码放 src/，避免包目录被直接塞进 `sys.path` 造成同名双加载）。
+
+**循环导入的成因、信号与根治**
+
+| 项 | 内容 | 可核对细节 |
+| --- | --- | --- |
+| 触发条件 | 两模块互相 import，且一方在顶层就要对方未完成的名字 | 模块对象先入 sys.modules 再执行，属性尚未填齐 |
+| from 形式报错 | ImportError: cannot import name 'A' from partially initialized module 'a' (most likely due to a circular import) | 3.8+ 文案，Traceback 里 circular import 是强信号 |
+| 取属性形式报错 | AttributeError: partially initialized module 'a' has no attribute 'A' (most likely due to a circular import) | 先 import 模块对象、再访问 a.A 时触发 |
+| 修复一 | 共享类型下沉到第三个独立模块 | 让依赖关系变成单向 |
+| 修复二 / 三 / 四 | 函数内延迟导入 / TYPE_CHECKING / 相对导入 + src 布局 | src 布局避免同名包被加载两份 |
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只是 import 一下配置模块，却连了库、", "body": "模块顶层代码在导入时执行一次，副作用不受 main 守卫保护", "tip": "把可执行逻辑放进 if __name__ == &#39;__main__&#39;: 或函数里，顶层只留类、函数与常量定义"}, {"title": "第 2 步：a 与 b 互相导入，报 partially", "body": "模块对象先入 sys.modules 再执行，顶层取对方属性时对方还没定义完", "tip": "共享类型下沉到第三模块、把 import 延迟到函数内、仅类型用 TYPE_CHECKING，并用 src 布局统一相对导入"}, {"title": "第 3 步：包内脚本直接运行，相对导入报 attempt", "body": "直接运行时 __package__ 为空，相对导入没有解析基准", "tip": "用 python -m pkg.mod 运行以设置包上下文，或改成绝对导入"}]' />
+
+
+## 复现循环导入，并把共享类型下沉到独立模块
+
+两个服务模块互相引用对方的类：`m_a.py` 顶层 import m_b 后在类体里取 `m_b.B`，`m_b.py` 又回头 import m_a 并立刻取 `m_a.A`。
+
+导入 m_a 时，m_a 的模块对象已进 `sys.modules` 但 class A 还没定义，m_b 取 `m_a.A` 就报 partially initialized module has no attribute，这就是典型的循环导入。
+
+修复思路不是调整 import 顺序，而是把双方都依赖的类型下沉到第三个模块 m_types，让依赖图变成单向：m_a2 只依赖 m_types，m_types 不依赖任何人。下面用 tempfile 造出真实文件、先捕获异常确认信号，再导入修复后的模块验证 loaded。
+
+真实工程还应配合 src 布局与包内相对导入，避免同名包被加载成两份。
+
+```python
+import sys, tempfile, pathlib, importlib
+
+root = tempfile.mkdtemp()
+d = pathlib.Path(root)
+(d / 'm_a.py').write_text('import m_b' + chr(10) + 'class A:' + chr(10) + '    peer = m_b.B' + chr(10))
+(d / 'm_b.py').write_text('import m_a' + chr(10) + 'X = m_a.A' + chr(10) + 'class B:' + chr(10) + '    pass' + chr(10))
+sys.path.insert(0, root)
+try:
+    importlib.import_module('m_a')
+except AttributeError as e:
+    print(type(e).__name__, 'circular' in str(e))
+
+(d / 'm_types.py').write_text('class B:' + chr(10) + '    pass' + chr(10))
+(d / 'm_a2.py').write_text('from m_types import B' + chr(10) + 'class A2:' + chr(10) + '    peer = B' + chr(10))
+print(importlib.import_module('m_a2').A2.peer.__name__)
+```
+
+<Callout type="idea" title='落地提示' text='用 src 布局、把共享类型下沉到独立模块、在包内用相对导入，可根治绝大多数导入问题' />
 
 ```bash
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **模块对象与 sys.modules** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 **模块对象与 sys.modules** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<Callout type="idea" title="生产提示" text='把「命名空间包」写成检查项，并在 CI 里用最小用例守住它。' />
+<CheckList id='P035b' title='上线前自检' :items='["能复现并解释「只是 import 一下配置模块，却连了库、起了线程、进程不」", "能复现并解释「a 与 b 互相导入，报 partially initial」", "能复现并解释「包内脚本直接运行，相对导入报 attempted relat」", "能用一条命令验证 模块对象与 sys.modules", "关键路径有自动化测试与失败分支"]' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
 
-## 动手练一练
+## 导入副作用与相对导入错因速查
 
-<Exercise title='动手：围绕「命名空间包」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 模块对象与 sys.modules 与 命名空间包 两个关注点，并说明你的取舍。' :hints='["回到 模块对象与 sys.modules 的规则", "留意易错点：把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入也随之而来", "先让代码跑通，再补边界与异常分支"]' solution='class Lazy:\n    def __getattr__(self, name):\n        print("load", name)\n        return 42\n\nprint(Lazy().anything)' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；用 src 布局、把共享类型下沉到独立模块、在包内用相对导入，可根治绝大多数导入问题' />
+**错因速查**
 
-## 随堂检测
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 只是 import 一下配置模块，却连了库、起了线程、进程不退出 | 模块顶层代码在导入时执行一次，副作用不受 main 守卫保护 | 把可执行逻辑放进 if __name__ == '__main__': 或函数里，顶层只留类、函数与常量定义 |
+| a 与 b 互相导入，报 partially initialized module ... most likely due to a circular import | 模块对象先入 sys.modules 再执行，顶层取对方属性时对方还没定义完 | 共享类型下沉到第三模块、把 import 延迟到函数内、仅类型用 TYPE_CHECKING，并用 src 布局统一相对导入 |
+| 包内脚本直接运行，相对导入报 attempted relative import with no known parent package | 直接运行时 __package__ 为空，相对导入没有解析基准 | 用 python -m pkg.mod 运行以设置包上下文，或改成绝对导入 |
 
-<Quiz no='035-1' q='在本讲讨论的「模块对象与 sys.modules」语境下，下面哪一种说法是准确的？' :options='["import 会执行模块顶层代码并把结果缓存进 sys.modules，第二次导入拿的是同一个对象，所以模块天然是单例", "模块对象与 sys.modules 只影响代码的书写形式，不会改变任何运行时行为", "模块对象与 sys.modules 在所有 Python 实现与所有版本中表现完全一致", "只要用了 模块对象与 sys.modules，就不必再考虑 命名空间包 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 命名空间包 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+<Callout type="warn" title='本讲最容易踩的坑' text='只是 import 一下配置模块，却连了库、起了线程、进程不退出：模块顶层代码在导入时执行一次，副作用不受 main 守卫保护' />
 
-<Predict no='035-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["(x: int, y: int) -&gt; None\nPoint(x=1, y=2)", "(x: int, y: int) -&gt; None\n（无更多输出）", "AttributeError: 模块对象与 sys.modules 不可用"]' answer="0" output='(x: int, y: int) -&gt; None\nPoint(x=1, y=2)' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+<CheckList id='P035a' title='学完你应当能' :items='["能讲清 import 的执行链路与模块单例", "能讲清 包、相对导入与命名空间包", "能讲清 循环导入的成因与根治", "能在工程里处理 命名空间包"]' />
 
-<FillBlank no='035-3' tpl='___inspect' :answers='["import"]' hint='回想本讲关于 模块对象与 sys.modules 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
 
-## 一页纸速记
+## 复现导入错误并自测
 
-<KnowledgeCard :points='["模块对象与 sys.modules：模块对象与 sys.modules", "搜索路径与 finder：搜索路径与 finder", "绝对与相对导入：绝对与相对导入", "__init__ 与 __all__：__init__ 与 __all__"]' :pitfalls='["把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入也随之而来", "忽略版本差异，把 命名空间包 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：import 会执行模块顶层代码并把结果缓存进 sys.modules，第二次导入拿的是同一个对象，所以模块天然是单例' />
+<Exercise title='基础：验证模块单例' task='用 importlib.import_module 连续导入两次 math，打印两个对象是否相同、模块名是否在 sys.modules、以及对象类型名。' solution='import sys, importlib\n\na = importlib.import_module(&#39;math&#39;)\nb = importlib.import_module(&#39;math&#39;)\nprint(a is b, &#39;math&#39; in sys.modules, type(a).__name__)' explain='第二次导入命中 sys.modules 缓存，返回同一个 module 对象，顶层代码不会重跑；类型名是 module。' />
 
-## 小结与下一讲
+<Exercise title='进阶：证明顶层代码在导入时执行' task='用 types.ModuleType 造一个模块对象，把一段含 print 与赋值的源码 compile 后在它的 __dict__ 里 exec，观察顶层副作用并读出属性。' solution='import types\n\nsrc = &#39;print(&#39; + repr(&#39;loading&#39;) + &#39;)&#39; + chr(10) + &#39;VALUE = 1&#39;\nm = types.ModuleType(&#39;side&#39;)\nexec(compile(src, &#39;side.py&#39;, &#39;exec&#39;), m.__dict__)\nprint(m.VALUE)' explain='exec 相当于导入时执行顶层代码，print 会立即触发；这正是把副作用收进 if __name__ == &#39;__main__&#39; 守卫的原因。' />
 
-1. 模块对象与 sys.modules：模块对象与 sys.modules
-2. 搜索路径与 finder：搜索路径与 finder
-3. 用 src 布局、把共享类型下沉到独立模块、在包内用相对导入，可根治绝大多数导入问题
+<Quiz no='035-1' q='对同一模块第二次执行 import X 会发生什么？' :options='["直接返回 sys.modules 里同一个模块对象，不重跑顶层代码", "重新执行一遍顶层代码", "抛 ImportError", "生成一个新的模块对象"]' answer="0" explain='sys.modules 以完整模块名为键缓存 module 对象，命中即返回；要重新执行必须显式调用 importlib.reload。' />
+
+<Quiz no='035-2' q='循环导入在 3.8+ 的 Traceback 里最典型的信号是？' :options='["partially initialized module 与 most likely due to a circular import", "SyntaxError: invalid syntax", "KeyError: module", "RecursionError: maximum recursion depth exceeded"]' answer="0" explain='模块对象先入 sys.modules 再执行顶层代码，取属性时对方尚未定义完，解释器据此给出 partially initialized 与 circular import 提示。' />
+
+<Quiz no='035-3' q='根治循环导入最稳妥的一组做法是？' :options='["共享类型下沉到第三模块、延迟导入、TYPE_CHECKING、包内相对导入 + src 布局", "把所有 import 语句删掉", "一律改用 from X import *", "把包内所有模块合并成一个大文件"]' answer="0" explain='前四者让依赖图变单向或把导入推迟到运行时；删 import 与 import * 只会制造新问题，合并大文件牺牲可维护性。' />
+
+<FillBlank no='035-F' tpl='___ sys, importlib, types' :answers='["import"]' hint='回想本讲关于 模块对象与 sys.modules 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 import 的执行链路与模块单例 的落点。' />
+
+<KnowledgeCard :points='["import 先查 sys.modules，命中返回同一 module 对象；模块天然单例，重跑用 importlib.reload", "sys.meta_path 里 BuiltinImporter / FrozenImporter / PathFinder 依次尝试；PathFinder 沿 sys.path 搜索，loader 执行顶层代码", "顶层代码在导入时执行一次，副作用要收进 if __name__ == &#39;__main__&#39;；sys.path[0] 是入口脚本目录，同名文件会遮蔽标准库", "常规包含 __init__.py；__all__ 控制 from pkg import *；相对导入基于 __package__，脚本直接运行报 attempted relative import with no known parent package", "PEP 420（3.3+）命名空间包无 __init__.py，__file__ 为 None、__path__ 是 _NamespacePath", "循环导入根因是模块对象先入 sys.modules 再执行；靠下沉共享类型、延迟导入、TYPE_CHECKING、src 布局根治"]' :pitfalls='["只是 import 一下配置模块，却连了库、起了线程、进程不退出", "a 与 b 互相导入，报 partially initialized module ... most likely due to a circular import", "包内脚本直接运行，相对导入报 attempted relative import with no known parent package", "把可执行逻辑写在模块顶层，会在「只是导入一下」时触发副作用；循环导入也随之而来"]' summary='import 会执行模块顶层代码并把结果缓存进 sys.modules，第二次导入拿的是同一个对象，所以模块天然是单例' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| import 先查 sys.modules，命中返回同一 module 对象；模块天然单例，重跑用 importlib.reload | 建立直觉 |
+| sys.meta_path 里 BuiltinImporter / FrozenImporter / PathFinder 依次尝试；PathFinder 沿 sys.path 搜索，loader 执行顶层代码 | 跑通示例 |
+| 顶层代码在导入时执行一次，副作用要收进 if __name__ == '__main__'；sys.path[0] 是入口脚本目录，同名文件会遮蔽标准库 | 深入边界 |
+| 常规包含 __init__.py；__all__ 控制 from pkg import *；相对导入基于 __package__，脚本直接运行报 attempted relative import with no known parent package | 工程落地 |
+| PEP 420（3.3+）命名空间包无 __init__.py，__file__ 为 None、__path__ 是 _NamespacePath | 随堂检测 |
+| 循环导入根因是模块对象先入 sys.modules 再执行；靠下沉共享类型、延迟导入、TYPE_CHECKING、src 布局根治 | 复盘 |
+
+1. import 先查 sys.modules，命中返回同一 module 对象；模块天然单例，重跑用 importlib.reload
+
+2. sys.meta_path 里 BuiltinImporter / FrozenImporter / PathFinder 依次尝试；PathFinder 沿 sys.path 搜索，loader 执行顶层代码
+
+3. 顶层代码在导入时执行一次，副作用要收进 if __name__ == '__main__'；sys.path[0] 是入口脚本目录，同名文件会遮蔽标准库
 
 [下一讲：类型注解、typing 与渐进式类型](/functions/typing)

@@ -29,6 +29,7 @@ description: 关于这套 Python 教程的编排思路、内容来源与站点�
 
 课程结构的领域覆盖参考了慕课网的 Python3 入门 / 进阶、Python 多领域工程师、Python3 核心技术、多领域场景实战、机器学习经典算法与 AI 编程系统课；本站全部讲解、示例与习题均为独立编写，不含任何第三方课程内容。
 
+- [开始之前 · 教程使用说明](/guide/before-you-start)
 - [课程总目录](/guide/curriculum)
 - [本地运行与 Pages 部署](/about/deploy)
 - 站点源码：[github.com/lfire/python](https://github.com/lfire/python)

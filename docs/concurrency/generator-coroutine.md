@@ -7,131 +7,445 @@ description: 从语言机制推出 async/await 的由来
 
 # 第 067 讲 · 生成器协程：send、yield from 与调度器
 
-> async/await 不是凭空出现的语法：把生成器的暂停点用于 IO 等待，再配一个调度器，就是协程的原型。本讲的目标是「从语言机制推出 async/await 的由来」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+事件循环在内核层露出了样子，可把「就绪恢复、没就绪挂起」写成回调，很快绕成一团。回到语言更省力：生成器协程就是从「能停住、再被推着走」长出来的。一个边等 IO 边走的任务，用回调拆得七零八落，而生成器自带暂停点，这落差值得看一眼。
 
-## 这一讲你会得到什么
+先看生成器借 send 双向通信、用 yield from 委托，亲手写个最小调度器，再对照状态机与无栈协程，和回调写法比一比，顺 PEP 380 到 492 摸到 async/await 的由来。前置是生成器、yield 与事件循环概念；学完能从语言机制推出这套语法的来历，也读得懂 Future 与 Task 的分工。
 
-<CheckList id='P067' title="本讲目标" :items='["能说清生成器双向通信", "能说清yield from 委托", "能说清用生成器写调度器", "能说清状态机与栈-less 协程", "能说清与回调写法对照"]' />
 
-## 1. 先建立直觉
+## 读 asyncio 源码卡在 Future 与 Task 的分工
 
-**生成器双向通信**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+读 asyncio 源码时，很多人卡在 Future 与 Task 的分工：为什么 await 一个协程不会执行、为什么生成器里 return 的值要从 `StopIteration.value` 取、为什么 PEP 492 又凭空造出 async/await。
 
-**yield from 委托**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+有人想用生成器写个调度器，第一次就 `gen.send(5)` 报 can't send non-None value to a just-started generator；
 
-**用生成器写调度器**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+还有人在生成器里 raise StopIteration 想结束循环，3.7 之后却被转成 RuntimeError: generator raised StopIteration，日志里完全对不上。
 
-<ConceptDiagram type='layers3' title='第 067 讲 · 生成器双向通信' labels='生成器双向通信|yield from 委托|用生成器写调度器|状态机与栈-less 协程' caption='从语言机制推出 async/await 的由来' />
+更常见的是把 yield from 当成「遍历另一个可迭代对象」，没注意到它还会透明转发 send/throw/close、并把子生成器的 return 值作为表达式结果。
 
-上图用本讲的三个核心概念标出了主线：**生成器双向通信 → yield from 委托 → 用生成器写调度器**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+这些困惑不是语法细节，而是同一条演进线：PEP 342 让生成器能双向通信，PEP 380 加委托，PEP 492 把「暂停点用于 IO 等待」正式固化为原生协程。把这条线走一遍，asyncio 的 Future/Task 分工与历史包袱才有解释。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 生成器双向通信 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 cleanup 1", "tone": "green"}, {"title": "深入边界", "desc": "厘清 yield from 委托 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 PEP 380 / 492 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+<Callout type="warn" title='先看一个真实会出错的写法' text='第一次就 gen.send(5) 驱动生成器：生成器尚未启动到第一个 yield，没有表达式可接收值' />
 
-## 2. 语法与规则：把行为跑出来
 
-### 2.1 主示例
+## 生成器状态机：send、throw 与 close
 
-**生成器双向通信**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+包含 yield 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。
 
-```python
-import asyncio
+首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 yield，否则 `send(非 None)` 抛 TypeError: can't send non-None value to a just-started generator。
 
-async def job(i):
-    try:
-        await asyncio.sleep(1)
-    except asyncio.CancelledError:
-        print("cleanup", i)
-        raise
+`gen.send(value)` 恢复执行，并把 value 作为当前 yield 表达式的值返回下一个 yield 出来的值；
 
-async def main():
-    t = asyncio.create_task(job(1))
-    await asyncio.sleep(0)
-    t.cancel()
-    try: await t
-    except asyncio.CancelledError: pass
-asyncio.run(main())
-```
+`gen.throw(exc)` 在暂停点抛异常，可被生成器内 try/except 捕获后继续 yield；`gen.close()` 在暂停点抛 GeneratorExit，生成器若再 yield 会触发 RuntimeError: generator ignored GeneratorExit。
 
-<OutputBox title="运行结果" output='cleanup 1' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+`inspect.getgeneratorstate(gen)` 返回四种状态：GEN_CREATED、GEN_RUNNING、GEN_SUSPENDED、GEN_CLOSED。
 
-上面每一行在做什么，点开逐行看：
+生成器里 return value（3.3+）等价于把值挂到 `StopIteration.value` 上；
 
-<LineByLine code='import asyncio\n\nasync def job(i):\n    try:\n        await asyncio.sleep(1)\n    except asyncio.CancelledError:\n        print("cleanup", i)\n        raise\n\nasync def main():\n    t = asyncio.create_task(job(1))\n    await asyncio.sleep(0)\n    t.cancel()\n    try: await t\n    except asyncio.CancelledError: pass\nasyncio.run(main())' :notes='["取消是在下一个 await 点抛 CancelledError", "资源清理必须写在 finally / except 并重抛", "不保存 task 引用可能导致任务被回收", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色", "第 11 行：与上文规则对照，观察它在整体流程里承担的角色", "第 12 行：与上文规则对照，观察它在整体流程里承担的角色", "第 13 行：与上文规则对照，观察它在整体流程里承担的角色", "第 14 行：与上文规则对照，观察它在整体流程里承担的角色", "第 15 行：与上文规则对照，观察它在整体流程里承担的角色", "第 16 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 067 讲 · 生成器协程：send、yield from 与调度器' />
+PEP 479 自 3.7 起默认生效（3.5/3.6 需 from `__future__` import generator_stop），把漏出生成器的 StopIteration 转成 RuntimeError，避免它悄悄被 for 循环当成正常终止。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**yield from 委托**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
+**生成器协议方法与状态**
 
-### 2.2 对照写法
-
-```python
-import selectors, socket
-sel = selectors.DefaultSelector()
-print(type(sel).__name__)
-```
-
-<OutputBox title="对照写法的输出（先自己猜）" output='KqueueSelector  (macOS) / EpollSelector  (Linux)' guess="true" />
-
-<Compare :panels='[{"label": "主写法", "code": "import asyncio\n\nasync def job(i):\n    try:\n        await asyncio.sleep(1)\n    except asyncio.CancelledError:\n        print(\"cleanup\", i)\n        raise\n\nasync def main():\n    t = asyncio.create_task(job(1))\n    await asyncio.sleep(0)\n    t.cancel()\n    try: await t\n    except asyncio.CancelledError: pass\nasyncio.run(main())", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "import selectors, socket\nsel = selectors.DefaultSelector()\nprint(type(sel).__name__)", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「在生成器里混用 return value 与 yield，容易搞不清 S」' />
-
-## 3. 深入一步：规则与边界
-
-**用生成器写调度器**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
-
-**状态机与栈-less 协程**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
-
-**与回调写法对照**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
-
-| 知识点 | 规则要点 | 常见误用 |
+| 方法 / 状态 | 作用 | 边界 / 报错 |
 | --- | --- | --- |
-| 生成器双向通信 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 在生成器里混用 return value 与 yield，容易搞不清 |
-| yield from 委托 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 在生成器里混用 return value 与 yield，容易搞不清 |
-| 用生成器写调度器 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 在生成器里混用 return value 与 yield，容易搞不清 |
-| 状态机与栈-less 协程 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 在生成器里混用 return value 与 yield，容易搞不清 |
-| 与回调写法对照 | 这里的关键词是「什么时候」和「代价是什么」 | 在生成器里混用 return value 与 yield，容易搞不清 |
+| next(gen) / send(None) | 启动或推进到下一个 yield | 首次 send 非 None 抛 TypeError |
+| gen.send(value) | 把 value 作为当前 yield 表达式的值 | 生成器已 CLOSED 则抛 StopIteration |
+| gen.throw(exc) | 在暂停点抛异常，可被内部 except 接住 | 未捕获则向上传播 |
+| gen.close() | 在暂停点抛 GeneratorExit | 若此时再 yield 触发 RuntimeError: generator ignored GeneratorExit |
+| GEN_CREATED/SUSPENDED/CLOSED | getgeneratorstate 的四种状态之一（另有 RUNNING） | CLOSED 后不可再 send |
 
-<Term word='生成器双向通信' text='async/await 不是凭空出现的语法：把生成器的暂停点用于 IO 等待，再配一个调度器，就是协程的原型' />
+<Callout type="tip" title='核心心智模型' text='包含 yield 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 next(gen) 或 gen.send(None) 启动到第一个 yield，否则 send(非 None) 抛 TypeError: can&#39;t send non-None value to a just-s' />
 
-<Callout type="warn" title="易错点" text='在生成器里混用 return value 与 yield，容易搞不清 StopIteration.value 到底从哪来' />
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：生成器双向通信", "body": "**生成器双向通信**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：yield from 委托", "body": "**yield from 委托**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：用生成器写调度器", "body": "**用生成器写调度器**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：状态机与栈-less 协程", "body": "**状态机与栈-less 协程**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+## 对照：第一次就 send(5) 为什么报错
 
-## 4. 工程实践
+```python
+def accumulator():
+    total = 0
+    while True:
+        value = yield total
+        if value is None:
+            return total
+        total += value
 
-理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱 **PEP 380 / 492**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+acc = accumulator()
+print('prime', next(acc))
+print('send 10', acc.send(10))
+print('send 5', acc.send(5))
+try:
+    acc.send(None)
+except StopIteration as e:
+    print('return value', e.value)
+```
 
-### 用命令行复现
+<OutputBox title='主示例运行结果' output='prime 0\nsend 10 10\nsend 5 15\nreturn value 15' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+<LineByLine code='def accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            return total\n        total += value\n\nacc = accumulator()\nprint(&#39;prime&#39;, next(acc))\nprint(&#39;send 10&#39;, acc.send(10))\nprint(&#39;send 5&#39;, acc.send(5))\ntry:\n    acc.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)' :notes='["定义生成器函数，含 yield 故调用时不执行", "累加器初值为 0", "无限循环，暂停点就是 yield total", "value 接住 send 的值，同时产出当前 total", "约定 send(None) 表示结束", "return 把 total 挂到 StopIteration.value", "否则累加后回到循环顶部再次 yield", "调用生成器函数只得到生成器对象", "首次必须 next 或 send(None) 启动", "send(10) 使 value=10，yield 出 10", "send(5) 后 total=15，yield 出 15", "准备捕获结束信号", "发送 None 触发 return", "return 以 StopIteration 形式冒出", "从 e.value 取回 return 值 15"]' title='第 067 讲 · 生成器协程：send、yield from 与调度器' />
+
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
+
+```python
+def sub():
+    v = yield 'sub-ready'
+    return v * 2
+
+def delegator():
+    result = yield from sub()
+    yield 'result:' + str(result)
+
+d = delegator()
+print('first', next(d))
+print('delegated', d.send(21))
+try:
+    d.send(None)
+except StopIteration as e:
+    print('delegator done', e.value)
+
+def guarded():
+    try:
+        yield 1
+    except ValueError as e:
+        yield 'caught:' + str(e)
+
+g = guarded()
+print('g first', next(g))
+print('throw', g.throw(ValueError('x')))
+g.close()
+print('closed', True)
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='first sub-ready\ndelegated result:42\ndelegator done None\ng first 1\nthrow caught:x\nclosed True' guess="true" />
+
+<CodeTabs :tabs='[{"label": "主示例", "code": "def accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            return total\n        total += value\n\nacc = accumulator()\nprint(&#39;prime&#39;, next(acc))\nprint(&#39;send 10&#39;, acc.send(10))\nprint(&#39;send 5&#39;, acc.send(5))\ntry:\n    acc.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)", "note": "生成器双向通信：send / throw / close 与状态机"}, {"label": "对照 / 进阶", "code": "def sub():\n    v = yield &#39;sub-ready&#39;\n    return v * 2\n\ndef delegator():\n    result = yield from sub()\n    yield &#39;result:&#39; + str(result)\n\nd = delegator()\nprint(&#39;first&#39;, next(d))\nprint(&#39;delegated&#39;, d.send(21))\ntry:\n    d.send(None)\nexcept StopIteration as e:\n    print(&#39;delegator done&#39;, e.value)\n\ndef guarded():\n    try:\n        yield 1\n    except ValueError as e:\n        yield &#39;caught:&#39; + str(e)\n\ng = guarded()\nprint(&#39;g first&#39;, next(g))\nprint(&#39;throw&#39;, g.throw(ValueError(&#39;x&#39;)))\ng.close()\nprint(&#39;closed&#39;, True)", "note": "yield from 委托与 StopIteration.value"}]' title='两种写法切换看' />
+
+
+## CO_GENERATOR 与 gi_frame 里的暂停点
+
+生成器函数在编译期带 CO_GENERATOR 标志，调用时 CPython 不执行帧而是返回一个 PyGenObject，帧保存在 gi_frame 里、指令指针停在 YIELD_VALUE 之后。
+
+3.13 的字节码以 RETURN_GENERATOR 起手，遇到 YIELD_VALUE 把值交还调用者并冻结栈帧，`send(v)` 把 v 压回栈、从 RESUME 继续。
+
+yield from 由 SEND / YIELD_VALUE 指令对实现委托：调用方 send 的值被转发进子生成器，子生成器 return 时抛 `StopIteration(value)`，外层把它转成 yield from 表达式的结果，这正是 await 的机器级原型。
+
+PEP 479 在生成器边界检查异常：若 StopIteration 漏出，就包装成 RuntimeError 并保留原异常为 `__cause__`，防止它被 for 循环误判为正常结束。
+
+asyncio 的 `Task.__step` 用 `coro.send(None)` 驱动原生协程，`Future.__await__` 在未完成时 yield self 并让出，事件循环在 fd 就绪后把结果 set 回 Future 再 send 进去——Task 负责调度、Future 负责占位，二者仍是「生成器帧 + 暂停点 + 外部驱动」这套模型。
+
+```python
+import dis
+import inspect
+
+def gen():
+    x = yield 1
+    return x
+
+g = gen()
+print('state created', inspect.getgeneratorstate(g))
+print('first', next(g))
+print('state suspended', inspect.getgeneratorstate(g))
+print('opnames', [i.opname for i in dis.get_instructions(gen)])
+print('CO_GENERATOR', bool(gen.__code__.co_flags & inspect.CO_GENERATOR))
+try:
+    next(g)
+except StopIteration as e:
+    print('return value', e.value)
+    print('state closed', inspect.getgeneratorstate(g))
+
+def bad():
+    yield 1
+    raise StopIteration('pep479')
+
+b = bad()
+next(b)
+try:
+    next(b)
+except RuntimeError as e:
+    print('pep479', 'generator raised StopIteration' in str(e))
+```
+
+<OutputBox title='原理验证' output='state created GEN_CREATED\nfirst 1\nstate suspended GEN_SUSPENDED\nopnames [&#39;RETURN_GENERATOR&#39;, &#39;POP_TOP&#39;, &#39;RESUME&#39;, &#39;LOAD_CONST&#39;, &#39;YIELD_VALUE&#39;, &#39;RESUME&#39;, &#39;STORE_FAST&#39;, &#39;LOAD_FAST&#39;, &#39;RETURN_VALUE&#39;, &#39;CALL_INTRINSIC_1&#39;, &#39;RERAISE&#39;]\nCO_GENERATOR True\nreturn value None\nstate closed GEN_CLOSED\npep479 True' />
+
+
+### 指令指针为什么停在 YIELD_VALUE 之后
+
+<Term word='生成器双向通信' text='包含 yield 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 next(gen) 或 gen.send(None) 启动到第一个 yield，否则 send(非 None) 抛 TypeError: can&#39;t send non-None value to a just-started gen' />
+
+<Term word='yield from 委托' text='yield from expr（PEP 380，3.3+）不只是「逐个产出子迭代器的值」：它建立一条透明通道，调用方 send 的值、throw 的异常、close 的关闭信号都会被转发给子生成器（只要子生成器有对应方法）；子生成器 return value 时，整个 yield from 表达式的值就是这个 valu' />
+
+
+## yield from 的委托语义与 StopIteration.value
+
+yield from expr（PEP 380，3.3+）不只是「逐个产出子迭代器的值」：它建立一条透明通道，调用方 send 的值、throw 的异常、close 的关闭信号都会被转发给子生成器（只要子生成器有对应方法）；子生成器 return value 时，整个 yield from 表达式的值就是这个 value。
+
+也就是说 def `outer()`: `r = yield` from `inner()` 里的 r 来自 inner 的 return，而不是某个 yield 出来的元素。这个语义正是 await 的原型：await future 等价于「把当前协程挂起、把结果通过 yield from 链路回传」。
+
+要区分两个容易混的点：生成器里 return 只是结束并携带值，不会产出给 for 循环；
+
+取值要么接住 yield from 的结果，要么在手动驱动时读 `StopIteration.value`（在 3.7+ 必须用 try/except 捕获，不能自己 raise 出来）。
+
+`types.coroutine`（3.5+）给生成器打上 CO_ITERABLE_COROUTINE 标记，使它成为 awaitable，这是从生成器协程过渡到原生协程的桥。
+
+**yield / yield from / await 语义对照**
+
+| 形式 | 产出值 | 接收值 | 结果来源 |
+| --- | --- | --- | --- |
+| yield expr | expr 给调用方 | send 的值成为 yield 表达式结果 | 暂停点本身 |
+| yield from sub() | 透明转发 sub 的产出 | 透明转发 send/throw/close | 子生成器 return 的 value |
+| await future | 不直接产出，交给事件循环 | 由 Task.send(None) 驱动 | Future 完成后回传结果 |
+
+
+## 从生成器调度器到 PEP 492 的原生协程
+
+用生成器写协程调度器的最小骨架是：一个 deque 就绪队列，每个生成器在 IO 等待处 yield 一个「等待令牌」，调度器 next/send 推进它，就绪后再放回队尾——这正是无栈（stackless）协程：暂停点显式、状态存在生成器帧里、单 OS 线程协作式调度，不需要保存调用栈。
+
+asyncio 的 Task 就是「被事件循环驱动的协程」，Future 是「结果的占位符」，await 把二者串起来；
+
+历史包袱在于 asyncio 早期（3.4）用 @`asyncio.coroutine` 装饰生成器来当协程，3.5 的 PEP 492 引入 async def / await 与 CO_COROUTINE 标记的原生协程，3.11 移除了 `asyncio.coroutine`。
+
+三条 PEP 串起来看：PEP 342（2.5/3.x，send/throw/close）→ PEP 380（3.3，yield from 委托）→ PEP 492（3.5，async/await）。
+
+读 asyncio 源码时，Task 的 __step 用 `send(None)` 驱动、Future 的 `__await__` 里 yield self 并把结果回传，本质仍是这套生成器协议。
+
+**PEP 演进线与版本**
+
+| PEP / 版本 | 引入能力 | 对应 async 概念 |
+| --- | --- | --- |
+| PEP 342 / 2.5 | send / throw / close，生成器双向通信 | 协程可接收结果 |
+| PEP 380 / 3.3 | yield from 委托、return value、StopIteration.value | await 的原型 |
+| PEP 479 / 3.7 默认 | 漏出的 StopIteration 转 RuntimeError | 避免协程错误被 for 吞掉 |
+| PEP 492 / 3.5 | async def / await、CO_COROUTINE 原生协程 | Task 与 Future 的分工 |
+| 3.11 | 移除 asyncio.coroutine | 生成器协程退出历史主线 |
+
+<FlowTimeline :steps='[{"title": "生成器双向通信：send / throw / close 与状态机", "desc": "包含 yield 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须…", "tone": "blue"}, {"title": "yield from 委托与 StopIteration.value", "desc": "yield from expr（PEP 380，3.3+）不只是「逐个产出子迭代器的…", "tone": "purple"}, {"title": "从生成器调度器到 PEP 492 的原生协程", "desc": "用生成器写协程调度器的最小骨架是：一个 deque 就绪队列，每个生成器在 IO 等…", "tone": "orange"}, {"title": "工程落地", "desc": "用生成器写一个协作式轮转调度器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+
+
+## 栈-less 协程与回调写法的调用栈
+
+<ConceptDiagram type='layers3' title='第 067 讲 · 分层视角' labels='生成器双向通信：send / throw|yield from 委托与 StopI|从生成器调度器到 PEP 492 的原生|PEP 380 / 492' caption='从生成器调度器到 PEP 492 的原生协程' />
+
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **PEP 380 / 492** 落在哪一层。
+
+
+## 用生成器写一个协作式轮转调度器
+
+要理解 asyncio 的事件循环，先手写一个最小调度器：每个任务是一个生成器，在需要「等待」的地方 yield 出一个令牌，调度器用 deque 维护就绪队列，每次 next 推进一个任务，令牌为 'wait' 就重新入队、任务结束（StopIteration）就出队。
+
+这就是无栈协程的原型——暂停点显式、状态在帧里、单线程协作式推进，不需要回调嵌套。下面片段让三个任务各跑几步，打印轮转顺序与总步数。把 'wait' 换成真实 fd 就绪判断、把 `send(None)` 换成送回 IO 结果，就得到 asyncio 里 Task/Future 分工的雏形。
+
+```python
+from collections import deque
+
+def task(name, steps):
+    for i in range(steps):
+        yield ('ready', name, i)
+        if i + 1 < steps:
+            yield ('wait', name, i)
+
+def run(tasks):
+    queue = deque(tasks)
+    log = []
+    while queue:
+        t = queue.popleft()
+        try:
+            token = next(t)
+            log.append(token)
+            if token[0] == 'wait':
+                try:
+                    next(t)
+                    queue.append(t)
+                except StopIteration:
+                    pass
+            else:
+                queue.append(t)
+        except StopIteration:
+            pass
+    return log
+
+if __name__ == '__main__':
+    out = run([task('A', 3), task('B', 2)])
+    print('steps', len(out))
+    print('first', out[0])
+    print('round robin', [x[1] for x in out if x[0] == 'ready'])
+```
+
+<Callout type="idea" title='落地提示' text='理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱' />
+
+<CheckList id='P067b' title='上线前自检' :items='["能复现并解释「第一次就 gen.send(5) 驱动生成器」", "能复现并解释「在生成器里 raise StopIteration 想结束循」", "能复现并解释「把 yield from 当成普通遍历，无视委托语义」", "能用一条命令验证 生成器双向通信", "关键路径有自动化测试与失败分支"]' />
+
+<Callout type="warn" title='本讲最容易踩的坑' text='第一次就 gen.send(5) 驱动生成器：生成器尚未启动到第一个 yield，没有表达式可接收值' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：第一次就 gen.send(5) 驱动生成器", "body": "生成器尚未启动到第一个 yield，没有表达式可接收值", "tip": "先 next(gen) 或 gen.send(None)  priming，再 send 非 None 值"}, {"title": "第 2 步：在生成器里 raise StopIterat", "body": "PEP 479（3.7+ 默认）把漏出的 StopIteration 转成 RuntimeError: generator raised StopIteration", "tip": "用 return value 正常结束；手动驱动时在 try/except StopIteration 里读 e.value"}, {"title": "第 3 步：把 yield from 当成普通遍历，无视", "body": "它还会转发 send/throw/close，并以子生成器 return 值作为表达式结果", "tip": "需要接收结果时写 r = yield from sub()；只遍历用 for x in sub() 即可"}]' />
+
+
+## 错因速查与排查顺序
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 第一次就 gen.send(5) 驱动生成器 | 生成器尚未启动到第一个 yield，没有表达式可接收值 | 先 next(gen) 或 gen.send(None)  priming，再 send 非 None 值 |
+| 在生成器里 raise StopIteration 想结束循环 | PEP 479（3.7+ 默认）把漏出的 StopIteration 转成 RuntimeError: generator raised StopIteration | 用 return value 正常结束；手动驱动时在 try/except StopIteration 里读 e.value |
+| 把 yield from 当成普通遍历，无视委托语义 | 它还会转发 send/throw/close，并以子生成器 return 值作为表达式结果 | 需要接收结果时写 r = yield from sub()；只遍历用 for x in sub() 即可 |
+
+
+## genobject.c 的 gen_send_ex2 与 SEND 指令
+
+正文把 yield from 讲成透明委托，落到 3.13 字节码是另一幅图：dis 显示 RETURN_GENERATOR、GET_YIELD_FROM_ITER、SEND、YIELD_VALUE、END_SEND。GET_YIELD_FROM_ITER 把表达式归一成迭代器；
+
+SEND 是委托核心，栈顶是要发给子生成器的值，下面是委托对象，有 send 就调 .`send(v)`，否则要求 v 为 None 并退化为 `next(it)`。
+
+执行侧在 Python/`genobject.c` 的 `gen_send_ex2(gen, arg, exc, closing, result)`：恢复 gi_frame 的 _PyInterpreterFrame，把 arg 压回栈作为上一个 yield 表达式的值，exc 为真时改为注入异常，再跑到下一个 YIELD_VALUE。
+
+`gen.throw` 以 `exc=1` 进同一路径，`gen.close` 注入 GeneratorExit。推导出的边界：暂停点固定在字节码里，帧状态在堆上的 PyGenObject 而非 C 调用栈，协程不需保存栈、可在任意深度恢复，代价是暂停点必须显式写出。
+
+```python
+import dis
+import inspect
+import types
+
+def inner():
+    yield 1
+    return 9
+
+def outer():
+    r = yield from inner()
+    return r
+
+ops = [i.opname for i in dis.get_instructions(outer)]
+print('send opcode', 'SEND' in ops)
+print('yield opcode', 'YIELD_VALUE' in ops)
+print('generator flag', bool(outer.__code__.co_flags & inspect.CO_GENERATOR))
+
+@types.coroutine
+def legacy():
+    yield
+print('iterable coroutine flag', bool(legacy.__code__.co_flags & inspect.CO_ITERABLE_COROUTINE))
+
+```
+
+<OutputBox title='扩展示例运行结果' output='send opcode True\nyield opcode True\ngenerator flag True\niterable coroutine flag True' />
+
+<LineByLine code='import dis\nimport inspect\nimport types\n\ndef inner():\n    yield 1\n    return 9\n\ndef outer():\n    r = yield from inner()\n    return r\n\nops = [i.opname for i in dis.get_instructions(outer)]\nprint(&#39;send opcode&#39;, &#39;SEND&#39; in ops)\nprint(&#39;yield opcode&#39;, &#39;YIELD_VALUE&#39; in ops)\nprint(&#39;generator flag&#39;, bool(outer.__code__.co_flags &amp; inspect.CO_GENERATOR))\n\n@types.coroutine\ndef legacy():\n    yield\nprint(&#39;iterable coroutine flag&#39;, bool(legacy.__code__.co_flags &amp; inspect.CO_ITERABLE_COROUTINE))\n' :notes='["dis 读出函数编译后的指令名列表", "3.11 起 yield from 编译出 SEND 指令", "types.coroutine 给生成器打上 0x100 让 Awaitable 放行", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 ignored GeneratorExit", "inspect.getgeneratorstate 的四态：GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR=32", "演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动", "生成器函数调用只返回对象；首次必须 next/send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值", "yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）", "生成器 return value 挂在 StopIteration.value；PEP 479（3.7+ 默认）把漏出的 StopIteration 转 RuntimeError", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 ignored GeneratorExit", "inspect.getgeneratorstate 的四态：GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR=32", "演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动", "生成器函数调用只返回对象；首次必须 next/send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值", "yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）", "生成器 return value 挂在 StopIteration.value；PEP 479（3.7+ 默认）把漏出的 StopIteration 转 RuntimeError", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 ignored GeneratorExit", "inspect.getgeneratorstate 的四态：GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR=32"]' title='扩展示例逐行讲解' />
+
+
+### PyGenObject 的 gi_yieldfrom 与 frame 状态
+
+<ConceptDiagram type='flow4' title='第 067 讲 · 扩展图解' labels='SEND 取栈顶 send 值|gi_yieldfrom 委托链|YIELD_VALUE 回传|gen_send_ex2 恢复帧' caption='SEND 循环转发调用方的值给子生成器并回传产出，直到 StopIteration.value 落入结果。' />
+
+
+## co_flags 四类协程标志与 types.coroutine 的桥
+
+Include/cpython/`code.h` 用 co_flags 的位区分四类可暂停函数：`CO_GENERATOR(0x20)` 给含 yield 的，`CO_COROUTINE(0x80)` 给 async def，`CO_ASYNC_GENERATOR(0x200)` 给 async def 里还带 yield 的，`CO_ITERABLE_COROUTINE(0x100)` 是 PEP 492 之前的桥。
+
+`types.coroutine` 给生成器打上 0x100，使 `collections.abc.Awaitable` 检查通过，于是 3.4 的 `asyncio.coroutine` 生成器能被原生 await 消费。
+
+桥解释了 asyncio 的历史包袱：`Future.__await__` 里写 yield self 再 return `self.result()`，仍是生成器协议；
+
+`Task.__step` 用 `send(None)` 驱动，__wakeup 把结果送回。编译器还靠这些位立规矩：CO_COROUTINE 的函数里出现 yield 或 yield from 直接报语法错，保证原生协程的暂停点只有 await。PEP 342 到 380 再到 492，是把可暂停收敛成有独立标志位的对象类别。
+
+**co_flags 四类可暂停标志**
+
+| 标志 | 十六进制 | 产生方式 | 能否被 await |
+| --- | --- | --- | --- |
+| CO_GENERATOR | 0x20 | 含 yield 的函数 | 否，除非另加 CO_ITERABLE_COROUTINE |
+| CO_ITERABLE_COROUTINE | 0x100 | types.coroutine 装饰生成器 | 是 |
+| CO_COROUTINE | 0x80 | async def | 是 |
+| CO_ASYNC_GENERATOR | 0x200 | async def 且含 yield | 否，用 async for |
+
+<Term word='gi_yieldfrom' text='PyGenObject 里指向当前 yield from 委托对象的字段；SEND 通过它把 send 与 throw 转发给子生成器，调试器也顺着这条链重建委托栈。' />
+
+
+### PEP 380 六段式等价展开的 throw/close 分发
+
+PEP 380 给了 `RESULT = yield` from EXPR 的六段式展开：取 `iter(EXPR)`，循环里 next、send、throw 分别处理，子迭代器抛 StopIteration 时取 `_e.value` 作结果，并把外层 throw 与 close 转发进去。
+
+这解释了两点：`r = yield` from `inner()` 拿到的是 inner 的 return 而非产出值，`send(None)` 能穿到最里层。PEP 479 的动机也在此：StopIteration 漏出会被 for 循环吞掉，3.7 起转成 RuntimeError。
+
+下面用 delegate 复现委托与返回值，观察 raise StopIteration 转换后的类型。
+
+```python
+def inner():
+    yield 1
+    yield 2
+    return 'done'
+
+def delegate(it):
+    try:
+        y = next(it)
+    except StopIteration as e: return e.value
+    while True:
+        sent = yield y
+        try:
+            y = it.send(sent)
+        except StopIteration as e: return e.value
+
+g = delegate(inner())
+print('first', next(g))
+print('second', g.send(None))
+try:
+    g.send(None)
+except StopIteration as e:
+    print('return value', e.value)
+
+def broken():
+    yield 1
+    raise StopIteration('leaked')
+
+b = broken()
+print('yield', next(b))
+try:
+    next(b)
+except RuntimeError as e:
+    print('converted', type(e).__name__)
+
+```
+
+
+## PEP 479 把漏出的 StopIteration 转成 RuntimeError 的复盘
+
+<Quiz no='067-X' q='在 3.13 中，一个生成器函数体内显式 raise StopIteration(&#39;leaked&#39;) 并被下一步驱动，最终外部观察到的是什么？' :options='["StopIteration(&#39;leaked&#39;) 原样抛出，value 为 leaked", "GeneratorExit，等价于 close() 的注入", "RuntimeError: generator raised StopIteration，原异常挂在 __cause__ 上", "无任何异常，生成器静默结束并返回 leaked"]' answer="2" explain='PEP 479 自 3.7 起生效：StopIteration 从生成器帧漏出时，解释器在边界把它转成 RuntimeError 并把原异常挂在 __cause__ 上，避免 for 循环误判为正常终止。A 是未开 generator_stop 的旧行为，B 混淆了 close() 的 GeneratorExit，D 是被静默吞掉的 bug。' />
+
+<Exercise title='用 co_flags 区分三类可暂停函数' task='定义生成器、types.coroutine 装饰的生成器、async def 原生协程，逐个打印 CO_GENERATOR / CO_ITERABLE_COROUTINE / CO_COROUTINE 三个位，说明哪一类是过渡期的桥。' solution='import inspect\nimport types\n\ndef gen():\n    yield 1\n\n@types.coroutine\ndef bridge():\n    yield\n\nasync def native():\n    pass\n\nfor name, fn in [(&#39;gen&#39;, gen), (&#39;bridge&#39;, bridge), (&#39;native&#39;, native)]:\n    f = fn.__code__.co_flags\n    print(name, bool(f &amp; inspect.CO_GENERATOR), bool(f &amp; inspect.CO_ITERABLE_COROUTINE), bool(f &amp; inspect.CO_COROUTINE))\n' explain='输出为 gen True/False/False、bridge True/True/False、native False/False/True。bridge 同时带 CO_GENERATOR 与 CO_ITERABLE_COROUTINE，仍是生成器、只多了 0x100 让 Awaitable 放行，是 3.4 到 3.5 的桥；原生协程只有 CO_COROUTINE，禁止函数体里出现 yield。' />
+
+
+## 练习、自测与速记
+
+<Exercise title='基础：用 send 写一个累加协程' task='写生成器累加器，next 启动后 send(10)、send(5)，再 send(None) 结束并从 StopIteration.value 取回 15；说明首帧为何不能 send 非 None。' solution='def acc():\n    total = 0\n    while True:\n        v = yield total\n        if v is None:\n            return total\n        total += v\ng = acc()\nprint(next(g), g.send(10), g.send(5))\ntry:\n    g.send(None)\nexcept StopIteration as e:\n    print(&#39;value&#39;, e.value)' explain='调用生成器函数只建对象、帧未启动，第一个 yield 之前没有表达式可接收值，故必须 next 或 send(None) 启动；return 值挂在 StopIteration.value 上。' />
+
+<Exercise title='进阶：用 yield from 取回子生成器的 return 值' task='子生成器接收一个值并 return 其两倍；外层用 r = yield from sub() 接住结果再 yield 出去；驱动外层并打印两处结果。' solution='def sub():\n    v = yield &#39;need&#39;\n    return v * 2\ndef outer():\n    r = yield from sub()\n    yield &#39;got:&#39; + str(r)\no = outer()\nprint(next(o))\nprint(o.send(21))\ntry:\n    o.send(None)\nexcept StopIteration as e:\n    print(&#39;outer return&#39;, e.value)' explain='yield from 把 send 透明转发给 sub，sub 的 return 42 成为表达式结果赋给 r，外层再 yield &#39;got:42&#39;；这正是 await 回传结果的原型。' />
+
+<Quiz no='067-1' q='yield from sub() 表达式的值来自哪里？' :options='["子生成器 return 的 value（经 StopIteration.value 回传）", "sub 最后一个 yield 出来的元素", "永远是 None", "调用方最后一次 send 的值"]' answer="0" explain='PEP 380 规定子生成器 return value 时，yield from 表达式求值得到该 value；send/throw/close 也透明转发。这是 await 回传结果的原型。' />
+
+<Quiz no='067-2' q='生成器里直接 raise StopIteration(&#39;done&#39;)，3.7+ 会怎样？' :options='["被 PEP 479 转成 RuntimeError: generator raised StopIteration", "正常结束且 value 为 done", "被 for 循环静默吞掉", "抛 TypeError"]' answer="0" explain='PEP 479 自 3.7 默认生效，防止漏出的 StopIteration 被 for/驱动逻辑误判为正常终止；正确写法是 return value，手动驱动时从 e.value 读。' />
+
+<Quiz no='067-3' q='关于 async/await 与生成器协程的演进，正确的是？' :options='["PEP 342 加 send/throw/close，PEP 380 加 yield from，PEP 492 引入原生协程", "async/await 与生成器毫无关系", "await 是 Python 2 就有的语法", "Task 负责占位、Future 负责调度"]' answer="0" explain='演进线是 PEP 342 → 380 → 492；asyncio 里 Task 负责调度、Future 负责结果占位，Task.__step 仍用 send(None) 驱动协程。' />
+
+<Predict no='067-P' q='生成器刚创建（GEN_CREATED）就执行 gen.send(5)，会发生什么？' :options='["抛 TypeError: can&#39;t send non-None value to a just-started generator", "返回第一个 yield 的值 5", "正常启动并丢弃 5", "抛 StopIteration"]' answer='0' output='TypeError: can&#39;t send non-None value to a just-started generator' explain='生成器帧尚未运行到任何 yield，没有表达式可接收传入值；必须先用 next(gen) 或 send(None) priming 到第一个暂停点。' />
+
+<FillBlank no='067-F' tpl='___ accumulator():' :answers='["def"]' hint='回想本讲关于 生成器双向通信 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 生成器双向通信：send / throw / close 与状态机 的落点。' />
+
+<KnowledgeCard :points='["生成器函数调用只返回对象；首次必须 next/send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值", "yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）", "生成器 return value 挂在 StopIteration.value；PEP 479（3.7+ 默认）把漏出的 StopIteration 转 RuntimeError", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 ignored GeneratorExit", "inspect.getgeneratorstate 的四态：GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR=32", "演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动"]' :pitfalls='["第一次就 gen.send(5) 驱动生成器", "在生成器里 raise StopIteration 想结束循环", "把 yield from 当成普通遍历，无视委托语义", "在生成器里混用 return value 与 yield，容易搞不清 StopIteration.value 到底从哪来"]' summary='async/await 不是凭空出现的语法：把生成器的暂停点用于 IO 等待，再配一个调度器，就是协程的原型' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| 生成器函数调用只返回对象；首次必须 next/send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值 | 建立直觉 |
+| yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380） | 跑通示例 |
+| 生成器 return value 挂在 StopIteration.value；PEP 479（3.7+ 默认）把漏出的 StopIteration 转 RuntimeError | 深入边界 |
+| gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 ignored GeneratorExit | 工程落地 |
+| inspect.getgeneratorstate 的四态：GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR=32 | 随堂检测 |
+| 演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动 | 复盘 |
+
+1. 生成器函数调用只返回对象；首次必须 next/send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值
+
+2. yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）
+
+3. 生成器 return value 挂在 StopIteration.value；PEP 479（3.7+ 默认）把漏出的 StopIteration 转 RuntimeError
+
+[下一讲：async / await 与协程对象](/concurrency/async-await)
 
 ```bash
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **生成器双向通信** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
-
-<Callout type="idea" title="生产提示" text='把「PEP 380 / 492」写成检查项，并在 CI 里用最小用例守住它。' />
-
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
-
-## 动手练一练
-
-<Exercise title='动手：围绕「PEP 380 / 492」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 生成器双向通信 与 PEP 380 / 492 两个关注点，并说明你的取舍。' :hints='["回到 生成器双向通信 的规则", "留意易错点：在生成器里混用 return value 与 yield，容易搞不清 StopI", "先让代码跑通，再补边界与异常分支"]' solution='import selectors, socket\nsel = selectors.DefaultSelector()\nprint(type(sel).__name__)' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱' />
-
-## 随堂检测
-
-<Quiz no='067-1' q='在本讲讨论的「生成器双向通信」语境下，下面哪一种说法是准确的？' :options='["async/await 不是凭空出现的语法：把生成器的暂停点用于 IO 等待，再配一个调度器，就是协程的原型", "生成器双向通信 只影响代码的书写形式，不会改变任何运行时行为", "生成器双向通信 在所有 Python 实现与所有版本中表现完全一致", "只要用了 生成器双向通信，就不必再考虑 PEP 380 / 492 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 PEP 380 / 492 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
-
-<Predict no='067-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["cleanup 1", "cleanup 1\n（无更多输出）", "AttributeError: 生成器双向通信 不可用"]' answer="0" output='cleanup 1' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
-
-<FillBlank no='067-3' tpl='import ___io' :answers='["async"]' hint='回想本讲关于 生成器双向通信 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
-
-## 一页纸速记
-
-<KnowledgeCard :points='["生成器双向通信：生成器双向通信", "yield from 委托：yield from 委托", "用生成器写调度器：用生成器写调度器", "状态机与栈-less 协程：状态机与栈-less 协程"]' :pitfalls='["在生成器里混用 return value 与 yield，容易搞不清 StopIteration.value 到底从哪来", "忽略版本差异，把 PEP 380 / 492 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：async/await 不是凭空出现的语法：把生成器的暂停点用于 IO 等待，再配一个调度器，就是协程的原型' />
-
-## 小结与下一讲
-
-1. 生成器双向通信：生成器双向通信
-2. yield from 委托：yield from 委托
-3. 理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱
-
-[下一讲：async / await 与协程对象](/concurrency/async-await)
+把输入换成你自己的数据，观察结果是否仍符合 **生成器双向通信** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

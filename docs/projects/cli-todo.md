@@ -7,127 +7,261 @@ description: 交付一个可安装、可测试、可持久化的命令行工具
 
 # 第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发
 
-> CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试。本讲的目标是「交付一个可安装、可测试、可持久化的命令行工具」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+上一讲收束了判断框架，从这里进入工程实战：把前十一阶段的知识放进能跑的小项目里用熟。第一站挑待办清单 CLI，因为它边界最干净——输入、领域、存储、输出四层都能单独替换与测试。
 
-## 这一讲你会得到什么
+一个清单用覆盖写存盘，进程写到一半被打断，次日打开时 JSON 只剩半截；另一条命令没找到条目却仍报成功，外层脚本照着往下跑。我们先用 argparse 子命令把命令解析与业务隔开，再用临时文件加 os.replace 做原子写入，最后补退出码、入口点打包与端到端测试。需要你熟悉函数、字典、json 与文件读写；学完能交付一个可安装、被中断也不丢数据的小工具。
 
-<CheckList id='P122' title="本讲目标" :items='["能说清命令解析 argparse / click", "能说清数据模型与 JSON 持久化", "能说清原子写入", "能说清退出码与错误", "能说清入口点打包"]' />
 
-## 1. 先建立直觉
+## 进程被杀后，待办文件只剩半截 JSON
 
-**命令解析 argparse / click**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+一个待办清单 CLI 用 open(path, 'w').`write(json.dumps(todos)`) 存盘，某次进程写到一半被 kill -9，磁盘上留下类似截断的半截 JSON，第二天所有命令一起抛 JSONDecodeError，用户数据永久丢失。
 
-**数据模型与 JSON 持久化**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+团队还发现没有退出码约定：todo done 99 明明没找到条目却返回 0，外层脚本以为成功继续往下跑，把后续步骤全带偏。朴素解法「直接覆盖写、报错就 print 一句」失败在两点：写操作不是原子的，进程随时可能停在文件写到一半；错误只打印给人看，没有通过进程退出码传给调用方，自动化脚本无法判定成败。
 
-**原子写入**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+本讲用 `tempfile.mkstemp` 加 `os.replace` 做原子写、argparse 子命令做命令分发、main 返回整数配 `sys.exit` 定退出码，并把输入、领域、存储、输出四层拆开做端到端测试。
 
-<ConceptDiagram type='layers3' title='第 122 讲 · 命令解析 argparse / click' labels='命令解析 argparse / click|数据模型与 JSON 持久化|原子写入|退出码与错误' caption='交付一个可安装、可测试、可持久化的命令行工具' />
 
-上图用本讲的三个核心概念标出了主线：**命令解析 argparse / click → 数据模型与 JSON 持久化 → 原子写入**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+## argparse 子命令与命令分发：命令层只解析不碰业务
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 命令解析 argparse / click 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 Namespace(done=False)", "tone": "green"}, {"title": "深入边界", "desc": "厘清 数据模型与 JSON 持久化 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 端到端测试 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+ArgumentParser(prog='todo') 建解析器，add_subparsers(dest='cmd', `required=True`) 建子命令；`required=True` 自 3.7 起支持，缺子命令时不再静默返回 None，而是报错。
 
-## 2. 语法与规则：把行为跑出来
+每个 add_parser('add') 返回独立的子解析器，可再 add_argument('title')、add_argument('tid', `type=int`) 声明位置参数与类型转换，`type=int` 会在解析阶段把字符串转整数，失败时由 argparse 统一报错。
 
-### 2.1 主示例
+`parse_args(argv)` 返回 Namespace，把 argv 参数化（默认 None 表示读 `sys.argv`）是让 main 可测试的关键。
 
-**命令解析 argparse / click**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+用法错误时 argparse 调 `parser.error`，打印 usage 到 stderr 并以退出码 2 结束——这是它和自定义业务错误码的分界线：0 成功、1 业务错误（如条目不存在）、2 用法错误。命令层仅负责把 Namespace 翻译成对领域层的调用，绝不直接 open 文件；这样换存储实现时命令层一行不动。
+
+`set_defaults(func=handler)` 可把处理函数挂到 Namespace 上做表驱动分发，但显式 if/elif 分支对初学者更透明。
 
 ```python
 import argparse, json, os, tempfile
 
-def save(path, data):
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(dir=d)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    os.replace(tmp, path)
+def load(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
 
-p = argparse.ArgumentParser()
-p.add_argument("--done", action="store_true")
-print(p.parse_args([]))
+def save(path, rows):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(rows, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+def add(path, title):
+    rows = load(path)
+    rows.append({'id': len(rows) + 1, 'title': title, 'done': False})
+    save(path, rows)
+    return rows[-1]['id']
+
+def done(path, tid):
+    rows = load(path)
+    hit = [r for r in rows if r['id'] == tid]
+    if not hit:
+        return 1
+    hit[0]['done'] = True
+    save(path, rows)
+    return 0
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog='todo')
+    sub = p.add_subparsers(dest='cmd', required=True)
+    sub.add_parser('add').add_argument('title')
+    sub.add_parser('done').add_argument('tid', type=int)
+    ns = p.parse_args(argv)
+    path = os.environ.get('TASK_PATH', 'todos.json')
+    if ns.cmd == 'add':
+        print('added', add(path, ns.title))
+        return 0
+    return done(path, ns.tid)
+
+with tempfile.TemporaryDirectory() as d:
+    path = os.path.join(d, 'todos.json')
+    os.environ['TASK_PATH'] = path
+    print('add', main(['add', '写精讲']), main(['add', '跑自检']))
+    print('done', main(['done', '1']), 'missing', main(['done', '99']))
+    print('rows', json.load(open(path, encoding='utf-8')))
+os.environ.pop('TASK_PATH', None)
 ```
 
-<OutputBox title="运行结果" output='Namespace(done=False)' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+<OutputBox title='主示例运行结果' output='added 1\nadded 2\nadd 0 0\ndone 0 missing 1\nrows [{&#39;id&#39;: 1, &#39;title&#39;: &#39;写精讲&#39;, &#39;done&#39;: True}, {&#39;id&#39;: 2, &#39;title&#39;: &#39;跑自检&#39;, &#39;done&#39;: False}]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-上面每一行在做什么，点开逐行看：
+<LineByLine code='import argparse, json, os, tempfile\n\ndef load(path):\n    if not os.path.exists(path):\n        return []\n    with open(path, &#39;r&#39;, encoding=&#39;utf-8&#39;) as f:\n        return json.load(f)\n\ndef save(path, rows):\n    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or &#39;.&#39;)\n    try:\n        with os.fdopen(fd, &#39;w&#39;, encoding=&#39;utf-8&#39;) as f:\n            json.dump(rows, f, ensure_ascii=False)\n            f.flush()\n            os.fsync(f.fileno())\n        os.replace(tmp, path)\n    finally:\n        if os.path.exists(tmp):\n            os.remove(tmp)\n\ndef add(path, title):\n    rows = load(path)\n    rows.append({&#39;id&#39;: len(rows) + 1, &#39;title&#39;: title, &#39;done&#39;: False})\n    save(path, rows)\n    return rows[-1][&#39;id&#39;]\n\ndef done(path, tid):\n    rows = load(path)\n    hit = [r for r in rows if r[&#39;id&#39;] == tid]\n    if not hit:\n        return 1\n    hit[0][&#39;done&#39;] = True\n    save(path, rows)\n    return 0\n\ndef main(argv=None):\n    p = argparse.ArgumentParser(prog=&#39;todo&#39;)\n    sub = p.add_subparsers(dest=&#39;cmd&#39;, required=True)\n    sub.add_parser(&#39;add&#39;).add_argument(&#39;title&#39;)\n    sub.add_parser(&#39;done&#39;).add_argument(&#39;tid&#39;, type=int)\n    ns = p.parse_args(argv)\n    path = os.environ.get(&#39;TASK_PATH&#39;, &#39;todos.json&#39;)\n    if ns.cmd == &#39;add&#39;:\n        print(&#39;added&#39;, add(path, ns.title))\n        return 0\n    return done(path, ns.tid)\n\nwith tempfile.TemporaryDirectory() as d:\n    path = os.path.join(d, &#39;todos.json&#39;)\n    os.environ[&#39;TASK_PATH&#39;] = path\n    print(&#39;add&#39;, main([&#39;add&#39;, &#39;写精讲&#39;]), main([&#39;add&#39;, &#39;跑自检&#39;]))\n    print(&#39;done&#39;, main([&#39;done&#39;, &#39;1&#39;]), &#39;missing&#39;, main([&#39;done&#39;, &#39;99&#39;]))\n    print(&#39;rows&#39;, json.load(open(path, encoding=&#39;utf-8&#39;)))\nos.environ.pop(&#39;TASK_PATH&#39;, None)' :notes='["导入 argparse 做命令解析，json 做持久化，os 做原子替换，tempfile 建临时文件", "load 读取清单；文件不存在视为空库", "os.path.exists 先判断，避免首次运行时 FileNotFoundError", "不存在返回空列表，作为初始状态", "以 UTF-8 显式打开，跨平台不依赖系统默认编码", "json.load 反序列化，文件损坏时这里会抛 JSONDecodeError", "save 用临时文件加 os.replace 实现原子写", "mkstemp 必须在目标文件所在目录建临时文件，保证同文件系统", "try 包住整段写入，异常时走 finally 清理", "os.fdopen 把 fd 包成文本文件对象", "json.dump 序列化，ensure_ascii=False 让中文原样落盘", "f.flush 把用户态缓冲刷进内核页缓存", "os.fsync 把页缓存真正写到磁盘，防止断电丢数据", "os.replace 原子替换：读者只会看到完整旧文件或完整新文件", "finally 无论成功失败都执行清理", "仅在临时文件仍存在时才删，replace 成功后它已不存在", "删除残留的 .tmp，避免目录里堆积垃圾", "add 是纯领域逻辑，只依赖 load/save 返回的列表", "先读当前清单", "追加一条待办，id 用长度加一，done 初始为 False", "调用原子写落盘", "返回新条目的 id 供输出层使用", "done 按 id 标记完成，找不到返回业务错误码 1", "读取当前清单", "用列表推导找出匹配 id 的条目", "没命中则走业务错误分支", "return 1 让调用方据此设退出码", "命中则置 done 为 True", "保存回磁盘", "成功返回 0", "main 接收可注入的 argv，便于测试，默认 None 表示读 sys.argv", "建顶层解析器，prog 影响 usage 里显示的程序名", "add_subparsers 的 required=True 自 3.7 起支持，缺子命令直接报错", "add 子命令声明一个名为 title 的位置参数", "done 子命令声明 tid，type=int 在解析阶段完成字符串到整数转换", "parse_args 返回 Namespace，命令层只到这里为止", "存储路径从环境变量取，遵循 12-factor 配置外置", "命令分发：add 分支调用领域层并打印结果", "打印新 id", "add 成功固定返回 0", "其余命令把领域层返回的码原样作为退出码", "用 TemporaryDirectory 建隔离目录，测试不污染真实家目录", "组合出目标文件路径", "通过环境变量把路径注入 main，演示配置外置", "连续两次 add，外层 print 先输出两次内部打印再打印两个返回码", "done 命中返回 0，done 99 未命中返回 1，退出码区分业务成败", "直接读取最终文件，验证持久化内容正确", "清理环境变量，避免污染同进程的其它测试"]' title='第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发' />
 
-<LineByLine code='import argparse, json, os, tempfile\n\ndef save(path, data):\n    d = os.path.dirname(path) or "."\n    fd, tmp = tempfile.mkstemp(dir=d)\n    with os.fdopen(fd, "w", encoding="utf-8") as f:\n        json.dump(data, f, ensure_ascii=False)\n    os.replace(tmp, path)\n\np = argparse.ArgumentParser()\np.add_argument("--done", action="store_true")\nprint(p.parse_args([]))' :notes='["临时文件 + os.replace 保证写入原子性", "argparse 把 CLI 契约集中声明", "崩溃时不会留下半截 JSON", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色", "第 11 行：与上文规则对照，观察它在整体流程里承担的角色", "第 12 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发' />
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**数据模型与 JSON 持久化**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
+<ConceptDiagram type='layers3' title='第 122 讲 · argparse 子命令与命令分发：命令层只解析不碰业务' labels='argparse 子命令与命令分发：命令层只|JSON 持久化与原子写入：临时文件加 os|四层分离、退出码与端到端测试' caption='交付一个可安装、可测试、可持久化的命令行工具' />
 
-### 2.2 对照写法
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+### 对照：把解析和业务塞进同一个函数
 
 ```python
-import json, pathlib
-p = pathlib.Path("todos.json")
-print(json.loads(p.read_text()) if p.exists() else [])
+import json, os, tempfile
+
+target = os.path.join(tempfile.mkdtemp(), 'todos.json')
+old = json.dumps([{'id': 1, 'done': False}])
+with open(target, 'w', encoding='utf-8') as f:
+    f.write(old)
+with open(target, 'w', encoding='utf-8') as f:
+    f.write(old[:8])
+try:
+    json.loads(open(target, encoding='utf-8').read())
+except json.JSONDecodeError as e:
+    print('direct-write corrupt', type(e).__name__)
+tmp = target + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as f:
+    f.write(old)
+os.replace(tmp, target)
+print('atomic restore', json.loads(open(target, encoding='utf-8').read()))
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='[]' guess="true" />
+<OutputBox title='对照写法：先自己猜，再点开' output='direct-write corrupt JSONDecodeError\natomic restore [{&#39;id&#39;: 1, &#39;done&#39;: False}]' guess="true" />
 
-<Compare :panels='[{"label": "主写法", "code": "import argparse, json, os, tempfile\n\ndef save(path, data):\n    d = os.path.dirname(path) or \".\"\n    fd, tmp = tempfile.mkstemp(dir=d)\n    with os.fdopen(fd, \"w\", encoding=\"utf-8\") as f:\n        json.dump(data, f, ensure_ascii=False)\n    os.replace(tmp, path)\n\np = argparse.ArgumentParser()\np.add_argument(\"--done\", action=\"store_true\")\nprint(p.parse_args([]))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "import json, pathlib\np = pathlib.Path(\"todos.json\")\nprint(json.loads(p.read_text()) if p.exists() else [])", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏」' />
 
-## 3. 深入一步：规则与边界
+## JSON 持久化与原子写入：临时文件加 os.replace
 
-**原子写入**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+`json.dump` 负责序列化，`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写入、`indent=2` 便于人读。
 
-**退出码与错误**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+原子写的标准姿势：`tempfile.mkstemp(dir=目标目录)` 在**同一目录**建临时文件，返回 (fd, 路径)；
 
-**入口点打包**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+用 `os.fdopen`(fd, 'w') 包裹后写入，`f.flush()` 把用户态缓冲刷到内核，`os.fsync(f.fileno()`) 把页缓存真正落盘，最后 `os.replace(tmp, target)` 原子替换。
 
-| 知识点 | 规则要点 | 常见误用 |
+POSIX 的 rename 在同一文件系统内是原子操作：任何时刻的读者要么看到完整的旧文件、要么看到完整的新文件，绝不会看到半截；这正是直接 open(target,'w') 做不到的（它先截断再逐字节写）。
+
+跨文件系统 rename 会抛 OSError [Errno 18] EXDEV，所以 mkstemp 的 dir 必须是目标文件所在目录。用 try/finally 保证异常时删掉残留的 .tmp 文件。
+
+加载侧要区分：文件不存在返回空列表，但文件存在却 `json.JSONDecodeError` 时应报错退出，绝不能当成空列表后覆盖写，否则会把损坏的数据悄悄抹掉。
+
+**进程退出码约定与产生方式**
+
+| 退出码 | 含义 | 产生方式 |
 | --- | --- | --- |
-| 命令解析 argparse / click | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏 |
-| 数据模型与 JSON 持久化 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏 |
-| 原子写入 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏 |
-| 退出码与错误 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏 |
-| 入口点打包 | 这里的关键词是「什么时候」和「代价是什么」 | 直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏 |
+| 0 | 命令成功 | main 返回 0，sys.exit(main()) 透传 |
+| 1 | 业务错误，如条目 id 不存在 | 领域层返回 1，命令层原样返回 |
+| 2 | 用法错误，参数缺失或类型不对 | argparse 的 parser.error 自动以此码退出 |
+| 126 / 127 | 不可执行 / 命令未找到 | 由 shell 产生，非 Python 程序控制 |
 
-<Term word='命令解析 argparse / click' text='CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试' />
 
-<Callout type="warn" title="易错点" text='直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏' />
+## os.replace 为什么是原子写
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：命令解析 argparse / click", "body": "**命令解析 argparse / click**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：数据模型与 JSON 持久化", "body": "**数据模型与 JSON 持久化**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：原子写入", "body": "**原子写入**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：退出码与错误", "body": "**退出码与错误**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+`os.replace` 落在 POSIX 的 `rename(2)` 系统调用上：同一挂载点内，内核把目录项从旧 inode 改指向新 inode 是一次原子更新，不存在「改到一半」的中间状态，因此并发读者只会打开到旧 inode 或新 inode 之一。
 
-## 4. 工程实践
+直接 open(path,'w') 则会先以 O_TRUNC 把文件截零再逐字节写，崩溃窗口里目标文件本身就是半成品，这正是数据永久损坏的根因。`f.flush` 只把 Python 的 BufferedWriter 缓冲交给内核，断电时页缓存仍会丢，必须 `os.fsync` 触发文件系统的日志落盘；
 
-临时文件加 os.replace 实现原子写，命令层不碰业务逻辑，用 CliRunner 做端到端测试 **端到端测试**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+两者职责不同，不能互相替代。mkstemp 建在目标同目录是为了保证同一文件系统，否则 rename 返回 EXDEV。argparse 的退出码 2 来自它调用 `sys.exit(2)` 的 `parser.error`，而业务码由 main 返回值经 `sys.exit` 透传；
 
-### 用命令行复现
+把两者分开，自动化脚本才能用 returncode 区分「命令用错了」与「业务没成功」。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
 
-```bash
-python -m compileall -q . && python -m pytest -q
+### rename(2) 的同一挂载点前提
+
+
+## 四层分离与替换点
+
+把 CLI 拆成输入层（argparse）、领域层（纯逻辑 add/done）、存储层（load/save 原子写）、输出层（print 格式化）四层，每层都能单独替换与测试：领域层注入内存 Fake 存储就能测，不需要碰磁盘。`main(argv)` 返回整数而不是直接 `sys.exit`，测试里可直接断言返回值；
+
+脚本入口写成 if `__name__` == '__main__': `sys.exit(main()`)，把整数变成进程退出码。
+
+端到端测试有两种做法：click 生态用 `click.testing.CliRunner` 捕获 stdout 与 exit_code；
+
+纯标准库用 `subprocess.run`([`sys.executable`, '-m', 'todo', ...], `capture_output=True`) 断言 stdout 与 returncode，或把 main 设计成可注入 argv 与输出流直接调用。
+
+打包入口点在 `pyproject.toml` 的 `[project.scripts]`：todo = 'todo.cli:main'，pip install -e . 后由 setuptools/hatchling 生成可执行脚本，脚本调用 `main()` 并用其返回值作退出码。
+
+三个失效信号：命令函数里直接 `open()`、测试要清理真实家目录、以及所有路径都返回 0。
+
+
+## 退出码约定：别让所有路径都返回 0
+
+
+## 错因速查与排查顺序
+
+
+## 可安装 CLI：pyproject 入口点与端到端断言
+
+要把待办工具交付成可安装命令，项目结构应是 todo/`cli.py`、todo/`store.py` 与 `pyproject.toml` 的 `[project.scripts]` todo = 'todo.cli:main'。
+
+下面片段把四层收在一个可运行脚本里：JsonTodoRepo 承担原子存储，build_parser 承担输入，dispatch 把 Namespace 翻译成领域调用并返回 (退出码, 消息)，e2e_test 用 TemporaryDirectory 建隔离库、注入仓储、断言返回码与落盘内容。
+
+因为 dispatch 只依赖 repo 的方法而不依赖具体路径，换成 sqlite 实现时领域与测试都不用改。真实项目里 e2e_test 会交给 pytest，另用 `subprocess.run` 断言安装后的脚本 returncode 与 stdout。重点看各层之间只传数据与整数，不共享文件句柄。
+
+```python
+import argparse, json, os, tempfile
+
+class JsonTodoRepo:
+    def __init__(self, path):
+        self.path = path
+    def load(self):
+        if not os.path.exists(self.path):
+            return []
+        return json.load(open(self.path, encoding='utf-8'))
+    def save(self, rows):
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.path) or '.')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(rows, f)
+        os.replace(tmp, self.path)
+    def add(self, title):
+        rows = self.load()
+        rows.append({'title': title, 'done': False})
+        self.save(rows)
+        return len(rows)
+
+def build_parser():
+    p = argparse.ArgumentParser(prog='todo')
+    sub = p.add_subparsers(dest='cmd', required=True)
+    sub.add_parser('add').add_argument('title')
+    return p
+
+def dispatch(argv, repo):
+    ns = build_parser().parse_args(argv)
+    if ns.cmd == 'add':
+        return 0, 'added ' + str(repo.add(ns.title))
+    return 2, 'unknown command'
+
+def e2e_test():
+    with tempfile.TemporaryDirectory() as d:
+        repo = JsonTodoRepo(os.path.join(d, 't.json'))
+        rc, msg = dispatch(['add', 'task-a'], repo)
+        assert rc == 0
+        assert repo.load() == [{'title': 'task-a', 'done': False}]
+        return msg
+
+print(e2e_test())
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **命令解析 argparse / click** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<Callout type="idea" title='落地提示' text='临时文件加 os.replace 实现原子写，命令层不碰业务逻辑，用 CliRunner 做端到端测试' />
 
-<Callout type="idea" title="生产提示" text='把「端到端测试」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## 动手加一个 done 子命令，再自测
 
-## 动手练一练
+<Exercise title='基础：复现半截 JSON 并用原子写恢复' task='先直接覆盖写把一个合法 JSON 截成前半段，捕获 json.loads 的异常类型；再用 os.replace 把完整内容写回，打印恢复后的对象。' solution='import json, os, tempfile\np = os.path.join(tempfile.mkdtemp(), &#39;t.json&#39;)\nfull = json.dumps([{&#39;id&#39;: 1}])\nopen(p, &#39;w&#39;).write(full[:6])\ntry:\n    json.loads(open(p).read())\nexcept json.JSONDecodeError as e:\n    print(&#39;corrupt&#39;, type(e).__name__)\ntmp = p + &#39;.tmp&#39;\nopen(tmp, &#39;w&#39;).write(full)\nos.replace(tmp, p)\nprint(&#39;restored&#39;, json.loads(open(p).read()))' explain='截断后的内容不是合法 JSON，json.loads 抛 JSONDecodeError；os.replace 把完整文件原子换回，读者不会看到中间态。' />
 
-<Exercise title='动手：围绕「端到端测试」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 命令解析 argparse / click 与 端到端测试 两个关注点，并说明你的取舍。' :hints='["回到 命令解析 argparse / click 的规则", "留意易错点：直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏", "先让代码跑通，再补边界与异常分支"]' solution='import json, pathlib\np = pathlib.Path("todos.json")\nprint(json.loads(p.read_text()) if p.exists() else [])' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；临时文件加 os.replace 实现原子写，命令层不碰业务逻辑，用 CliRunner 做端到端测试' />
+<Exercise title='进阶：给 done 命令补退出码并解释 argparse 的 2' task='写一个 main，命中 id 返回 0、未命中返回 1；用 type=int 让 tid 在解析阶段转成整数。说明为什么「用法错误」是退出码 2 而不是业务错误 1。' solution='import argparse\n\ndef main(argv):\n    p = argparse.ArgumentParser()\n    sub = p.add_subparsers(dest=&#39;cmd&#39;, required=True)\n    sub.add_parser(&#39;done&#39;).add_argument(&#39;tid&#39;, type=int)\n    ns = p.parse_args(argv)\n    return 0 if ns.tid in (1, 2) else 1\n\nprint(&#39;hit&#39;, main([&#39;done&#39;, &#39;1&#39;]), &#39;miss&#39;, main([&#39;done&#39;, &#39;99&#39;]))' explain='命中返回 0、未命中返回 1，由 main 的整数经 sys.exit 透传；用法错误（缺参数、类型不对）是 argparse 的 parser.error 走 sys.exit(2)，与业务失败分开，外层脚本据此判定是命令用错还是业务没成。' />
 
-## 随堂检测
+<Quiz no='122-1' q='关于 os.replace 的原子性，哪一项准确？' :options='["同一文件系统内 rename 是原子的，读者只会看到完整旧文件或完整新文件", "它先把目标清零再写，与直接 open(&#39;w&#39;) 一样", "它靠 Python 层的锁保证并发安全", "跨文件系统也能原子，只是慢一点"]' answer="0" explain='os.replace 落到 rename(2)，同挂载点内是一次原子目录项更新；跨文件系统会抛 OSError Errno 18 EXDEV，所以临时文件必须建在目标同目录。' />
 
-<Quiz no='122-1' q='在本讲讨论的「命令解析 argparse / click」语境下，下面哪一种说法是准确的？' :options='["CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试", "命令解析 argparse / click 只影响代码的书写形式，不会改变任何运行时行为", "命令解析 argparse / click 在所有 Python 实现与所有版本中表现完全一致", "只要用了 命令解析 argparse / click，就不必再考虑 端到端测试 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 端到端测试 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+<Quiz no='122-2' q='argparse 解析参数失败时，进程退出码通常是？' :options='["2（parser.error 触发的用法错误）", "0", "1", "126"]' answer="0" explain='argparse 遇到缺参数、类型不对等用法错误会调用 parser.error，打印 usage 到 stderr 并以 sys.exit(2) 结束；业务错误才由程序自己返回 1，两者要分开。' />
 
-<Predict no='122-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["Namespace(done=False)", "Namespace(done=False)\n（无更多输出）", "AttributeError: 命令解析 argparse / click 不可用"]' answer="0" output='Namespace(done=False)' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+<Quiz no='122-3' q='文件已存在但 json.load 抛 JSONDecodeError，正确做法是？' :options='["报错退出并保留原文件，供人工恢复", "当成空列表继续 save", "删掉文件重新建库", "捕获后返回 0"]' answer="0" explain='只有文件不存在才返回空列表；存在却解析失败说明数据已损坏，静默当空库再覆盖会抹掉仅存数据，必须报错退出并保留现场。' />
 
-<FillBlank no='122-3' tpl='___argparse, json, os, tempfile' :answers='["import"]' hint='回想本讲关于 命令解析 argparse / click 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+<Predict no='122-P' q='进程在 os.replace 之前被杀，目标文件会是什么状态？' :options='["仍是完整的旧文件，临时文件是半成品但目标未被触碰", "是半截 JSON，下次 load 抛异常", "变成空文件"]' answer='0' output='目标仍是完整的旧文件，损坏的只是同目录的临时文件' explain='崩溃发生在 replace 之前时，目标文件从未被截断，写入只发生在临时文件上；replace 是唯一的提交点，要么整体生效要么完全不生效，这正是原子写隔离崩溃窗口的原理。' />
 
-## 一页纸速记
+<FillBlank no='122-F' tpl='___ argparse, json, os, tempfile' :answers='["import"]' hint='回想本讲关于 命令解析 argparse / click 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 argparse 子命令与命令分发：命令层只解析不碰业务 的落点。' />
 
-<KnowledgeCard :points='["命令解析 argparse / click：命令解析 argparse / click", "数据模型与 JSON 持久化：数据模型与 JSON 持久化", "原子写入：原子写入", "退出码与错误：退出码与错误"]' :pitfalls='["直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏", "忽略版本差异，把 端到端测试 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试' />
+<KnowledgeCard :points='["原子写 = 同目录 mkstemp 临时文件 + f.flush + os.fsync + os.replace，replace 是唯一提交点", "os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError Errno 18 EXDEV", "退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传", "add_subparsers(required=True) 自 3.7 起支持；type=int 在解析阶段完成转换", "四层分离：输入 argparse / 领域纯逻辑 / 存储原子写 / 输出格式化，各层可独立替换与测试", "文件损坏时保留现场报错退出，绝不静默当空库覆盖；入口点写在 pyproject.toml [project.scripts]"]' :pitfalls='["直接 open(path,&#39;w&#39;) 覆盖写，进程被杀留下半截 JSON", "把 json.JSONDecodeError 当成空列表继续 save", "所有路径都返回 0，外层脚本误判成功", "直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏"]' summary='CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试' />
 
-## 小结与下一讲
+1. 原子写 = 同目录 mkstemp 临时文件 + f.flush + os.fsync + os.replace，replace 是唯一提交点
 
-1. 命令解析 argparse / click：命令解析 argparse / click
-2. 数据模型与 JSON 持久化：数据模型与 JSON 持久化
-3. 临时文件加 os.replace 实现原子写，命令层不碰业务逻辑，用 CliRunner 做端到端测试
+2. os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError Errno 18 EXDEV
+
+3. 退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传
 
 [下一讲：实战 02 · 文件检索、日志与自动化办公](/projects/office-files)

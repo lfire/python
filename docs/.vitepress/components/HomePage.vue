@@ -29,15 +29,33 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
     <section class="hp-hero">
       <span class="hp-kicker">从零基础到资深 · 交互式中文教程</span>
       <h1>把 <em>Python</em> 学成<br />你真正会用的语言</h1>
-      <p>不假设你有编程基础，也不停在「会写语法」。13 个递进阶段、132 讲，从第一行 print 一路走到解释器源码、高并发架构、数据智能与生产级工程 —— 每个难点都拆成能看懂、能动手、能自测的一小步。</p>
+      <p>先别急着写代码。这里把 Python 从第一行 print 铺到解释器源码、高并发架构与生产级工程，做成一条缓坡：13 个阶段、132 讲，不假设你有编程基础，每一讲都会先说清它为什么出现在这里，再慢慢切入主题。</p>
       <div class="hp-actions">
-        <a class="hp-btn main" :href="withBase('/guide/opening')">🚀 从第 001 讲开始</a>
+        <a class="hp-btn main" :href="withBase('/guide/before-you-start')">🧭 先读「开始之前」</a>
+        <a class="hp-btn alt" :href="withBase('/guide/opening')">🚀 直接从第 001 讲开始</a>
         <a class="hp-btn alt" :href="withBase('/guide/curriculum')">📖 完整课程目录</a>
-        <a class="hp-btn alt" :href="withBase('/projects/')">🏗️ 直接看工程实战</a>
       </div>
       <div class="hp-stats">
         <div class="hp-stat" v-for="(s, i) in stats" :key="i"><b>{{ s.n }}</b><span>{{ s.t }}</span></div>
       </div>
+    </section>
+
+    <section class="hp-section" id="before-you-start">
+      <div class="hp-section-head">
+        <div class="eyebrow">Before you start</div>
+        <h2>先花五分钟，把地图摊开</h2>
+        <p>刚开始学一门语言，最容易消耗耐心的往往不是语法，而是不知道自己站在哪里、接下来往哪走。这一节把教程的定位、适合的人群、可选路线和站点的用法先说清楚；读完再开始，会顺很多。</p>
+      </div>
+      <div class="hp-grid">
+        <div class="hp-feature"><div class="ico">🧭</div><h4>三条学习路线</h4><p>零基础顺序学、按短板切入、只查一个具体问题，都能找到自己的入口；不要求从头到尾一字不落。</p></div>
+        <div class="hp-feature"><div class="ico">🪜</div><h4>逐级递进</h4><p>先能对，再能快；先单进程，再并发；先会写，再会发布。每讲开头都有一段引入，交代承接、前置与展开顺序。</p></div>
+        <div class="hp-feature"><div class="ico">🧰</div><h4>需要准备什么</h4><p>一台能联网的电脑、Python 3.10 以上、一个顺手的编辑器。虚拟环境与工具链会在导学阶段带着装。</p></div>
+        <div class="hp-feature"><div class="ico">🎛️</div><h4>站点怎么用</h4><p>逐行讲解、先猜输出、随堂检测、可放大概念图、练习与打卡怎么用，都在开篇页里逐项说明。</p></div>
+      </div>
+      <div style="margin-top:1.2rem">
+        <Callout type="tip" title="不确定从哪开始？" text="就读「开始之前」。它不教你语法，只回答「这套教程是什么、写给谁、我该怎么用」——把这几件事弄清楚，后面每一讲都会好切入得多。" />
+      </div>
+      <div style="margin-top:1.2rem"><a class="hp-btn main" style="background:var(--go-brand)" :href="withBase('/guide/before-you-start')">读「开始之前」 →</a></div>
     </section>
 
     <section class="hp-section">

@@ -7,135 +7,347 @@ description: 掌握属性访问的底层协议
 
 # 第 040 讲 · 访问控制、property 与描述符协议
 
-> 描述符是 Python 里最被低估的机制：property、method、classmethod、staticmethod 全部由它实现，实例属性查找优先级也由它决定。本讲的目标是「掌握属性访问的底层协议」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+理清查找顺序，还差一层：访问控制若只靠下划线或把校验写死在创建时，一句赋值就绕了过去。描述符协议道出了 property 与类方法为何是同一套机制。在 __init__ 里校验过年龄非负，别处一次赋值却改出负数；把校验拆进 getter 和 setter，字段一多就得复制。
 
-## 这一讲你会得到什么
+先从名称改写谈起，看清私有只是约定；再借 property 引出 __get__ / __set__ 协议，区分数据描述符与非数据描述符；最后按优先级写个校验字段，一处定义处处生效。接着类与实例、属性查找两讲；走完你能解释校验为何该写进 setter，也为特殊方法留入口。
 
-<CheckList id='P040' title="本讲目标" :items='["能说清名称改写与私有约定", "能说清property 的 getter / setter", "能说清数据描述符与非数据描述符", "能说清__get__ / __set__ / __delete__", "能说清优先级规则"]' />
 
-## 1. 先建立直觉
+## user.age = -1 绕过了所有校验
 
-**名称改写与私有约定**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+一个 User 类在 `__init__` 里校验 age 必须是非负整数，上线后发现 age 字段仍出现负数——因为别处直接写 `user.age = -1` 绕过了 `__init__` 的校验，而 `__init__` 只在创建时跑一次。
 
-**property 的 getter / setter**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+有人改成把属性藏成 _age 再加一对 getter / setter，校验逻辑散落在两个方法里，加新字段时又得复制一遍。更根本的困惑是：property、method、classmethod、staticmethod 看起来毫不相干，凭什么说它们是同一套机制？还有人以为双下划线开头就是真私有，结果外部照样能改到内部状态。
 
-**数据描述符与非数据描述符**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+本讲把描述符协议讲透：`__get__` / `__set__` / `__delete__` / `__set_name__`、数据描述符与非数据描述符的优先级、名称改写的真实边界，并用一个可复用的校验字段描述符把一处定义、全局生效落地。
 
-<ConceptDiagram type='flow3' title='第 040 讲 · 名称改写与私有约定' labels='名称改写与私有约定|property 的 getter / setter|数据描述符与非数据描述符|__get__ / __set__ / __delete__' caption='掌握属性访问的底层协议' />
+<Callout type="warn" title='先看一个真实会出错的写法' text='校验写在 __init__ 里，后续 user.age = -1 绕过校验：__init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它' />
 
-上图用本讲的三个核心概念标出了主线：**名称改写与私有约定 → property 的 getter / setter → 数据描述符与非数据描述符**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 名称改写与私有约定 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 3", "tone": "green"}, {"title": "深入边界", "desc": "厘清 property 的 getter / setter 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 __set_name__ 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## 属性访问协议的版图
 
-## 2. 语法与规则：把行为跑出来
+**本讲定位**
 
-### 2.1 主示例
+| 项目 | 内容 |
+| --- | --- |
+| 所属阶段 | 阶段四 · 面向对象与元编程 |
+| 前置 | 第 039 讲 · 属性查找、MRO 与 super |
+| 难度 / 建议时长 | ★★★★☆ · 40 分钟 |
+| 本讲新增 | 名称改写与私有约定、property 的 getter / setter、数据描述符与非数据描述符 |
+| 一句话目标 | 掌握属性访问的底层协议 |
+| 为下一讲铺垫 | 特殊方法：repr、比较、算术与容器协议 |
 
-**名称改写与私有约定**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+<CheckList id='P040a' title='学完你应当能' :items='["能讲清 名称改写与私有约定", "能讲清 property 与描述符协议", "能讲清 优先级规则与自定义描述符", "能在工程里处理 __set_name__"]' />
+
+<ConceptDiagram type='layers3' title='第 040 讲 · 分层视角' labels='名称改写与私有约定|property 与描述符协议|优先级规则与自定义描述符|__set_name__' caption='优先级规则与自定义描述符' />
+
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **__set_name__** 落在哪一层。
+
+
+## 名称改写与私有约定
+
+单下划线 _name 只是约定，提示内部使用，不影响访问；from module import * 默认不导入以 _ 开头的名字，除非模块定义了 `__all__` 把它们列进去。
+
+双下划线前缀且最多一个尾部下划线的名字（如 __x、__x_，但 `__x__` 不算）会被名称改写：编译器在编译类体时把它重写成 _ClassName__x，并写进 code object 的 co_names 与常量，用 dis 能看到改写后的属性名。
+
+改写的真实目的是避免子类意外覆盖父类的内部名，不是访问控制——外部仍可通过 _ClassName__x 这个真实键访问，`obj.__dict__` 与 `dir(obj)` 都看得到。这条规则只在类体内生效：在类外写 `obj.__x` 不会改写，自然也访问不到改写后的键；
+
+`__x__` 这种前后双下划线的 dunder 名完全不改写，留给语言的特殊方法使用。理解编译期改写，才能解释为什么继承体系里两个同名的 __x 互不干扰，也才能明白所谓私有其实只是命名约定。
 
 ```python
-class Positive:
+class User:
+    def __init__(self, age):
+        self.__secret = 7
+        self.age = age
+    @property
+    def age(self):
+        return self._age
+    @age.setter
+    def age(self, value):
+        if not isinstance(value, int) or value < 0:
+            raise ValueError('age must be non-negative int')
+        self._age = value
+
+u = User(18)
+print(u.age, '_User__secret' in u.__dict__)
+try:
+    u.age = -1
+except ValueError as e:
+    print(type(e).__name__, str(e))
+print(u.age)
+print(type(User.__dict__['age']).__name__)
+print(isinstance(User.__dict__['age'], property))
+```
+
+<OutputBox title='主示例运行结果' output='18 True\nValueError age must be non-negative int\n18\nproperty\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
+
+<LineByLine code='class User:\n    def __init__(self, age):\n        self.__secret = 7\n        self.age = age\n    @property\n    def age(self):\n        return self._age\n    @age.setter\n    def age(self, value):\n        if not isinstance(value, int) or value &lt; 0:\n            raise ValueError(&#39;age must be non-negative int&#39;)\n        self._age = value\n\nu = User(18)\nprint(u.age, &#39;_User__secret&#39; in u.__dict__)\ntry:\n    u.age = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))\nprint(u.age)\nprint(type(User.__dict__[&#39;age&#39;]).__name__)\nprint(isinstance(User.__dict__[&#39;age&#39;], property))' :notes='["定义 User 类，演示校验与名称改写", "构造器接收初始年龄", "双下划线名在类体内被改写为 _User__secret", "self.age 赋值会触发 property 的 setter 校验", "@property 把 age 变成数据描述符的 getter", "getter 返回私有存储里的值", "从 _age 读出，避免再次触发描述符", "@age.setter 生成带 fset 的新 property", "setter 接收待赋的值", "校验类型与非负约束", "不满足就抛 ValueError，赋值不会被写入", "校验通过后写进实例字典", "创建实例，__init__ 内部已走一次 setter", "年龄可读，改写后的键确实在实例字典里", "准备捕获非法赋值", "直接赋 -1，绕过 __init__ 但仍经过 setter", "捕获预期的 ValueError", "打印异常类型与消息", "非法值未写入，age 仍是 18", "类字典里的 age 是一个 property 对象", "isinstance 确认它确实是 property"]' title='第 040 讲 · 访问控制、property 与描述符协议' />
+
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
+
+**命名约定与名称改写**
+
+| 写法 | 真实行为 | 边界 |
+| --- | --- | --- |
+| _name | 约定为内部使用，不改写 | from m import * 默认不导入，除非 __all__ 列出 |
+| __name（至多一个尾部下划线） | 编译期改写为 _ClassName__name | 目的是防子类覆盖，不是访问控制 |
+| __name__ | 不改写，留给特殊方法 | dunder 名由语言使用 |
+| 类外 obj.__x | 不改写，访问不到改写后的键 | 要看真实键用 obj.__dict__ 或 dir |
+
+
+### _Class__name 是怎么改写的
+
+```python
+import dis
+
+class C:
+    __hidden = 1
+    def m(self):
+        return self.__hidden
+    @property
+    def p(self):
+        return 1
+
+p = C.__dict__['p']
+m = C.__dict__['m']
+print(hasattr(p, '__set__'), hasattr(p, '__get__'))
+print(hasattr(m, '__set__'), hasattr(m, '__get__'))
+print('_C__hidden' in C.__dict__)
+print([n for n in C.__dict__ if 'hidden' in n])
+ops = [i.argval for i in dis.get_instructions(C.m)]
+print('_C__hidden' in ops)
+```
+
+<OutputBox title='原理验证' output='True True\nFalse True\nTrue\n[&#39;_C__hidden&#39;]\nTrue' />
+
+
+## property 与描述符协议
+
+描述符协议由三个方法构成：`__get__(self, obj, objtype=None)`、`__set__(self, obj, value)`、`__delete__(self, obj)`。
+
+一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现 `__set__` 或 `__delete__` 的描述符（哪怕只实现其一），非数据描述符只实现 `__get__`。
+
+property 是典型的数据描述符：@property 生成带 fget 的 getter，@`x.setter` 用新 fset 构造一个新的 property，@`x.deleter` 同理；
+
+只读 property 赋值会抛 AttributeError: property 'x' of 'C' object has no setter。
+
+校验必须写在 setter 里，因为 property 是数据描述符、优先于实例 `__dict__`，每次赋值都会经过同一入口，写在 `__init__` 里的校验则会被后续直接赋值绕过。
+
+`__set_name__(self, owner, name)`（3.6+）在类创建时由 `type.__new__` 自动对每个描述符调用一次，把字段名告诉它，避免手写 name 参数，ORM 字段与 dataclass 大量依赖它。
+
+```python
+class Checked:
     def __set_name__(self, owner, name):
         self.name = name
-    def __get__(self, obj, owner=None):
-        return obj.__dict__.get(self.name, 0)
+        self.key = '_' + name
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return obj.__dict__.get(self.key)
     def __set__(self, obj, value):
-        if value < 0: raise ValueError("must be positive")
-        obj.__dict__[self.name] = value
+        if value < 0:
+            raise ValueError('negative')
+        obj.__dict__[self.key] = value
 
-class Order:
-    qty = Positive()
+class Loose:
+    def __get__(self, obj, objtype=None):
+        return 'loose'
 
-o = Order(); o.qty = 3
-print(o.qty)
+class Item:
+    price = Checked()
+    tag = Loose()
+    def __init__(self, price):
+        self.price = price
+
+it = Item(10)
+print(it.price, Item.price.name, Item.price.key)
+it.tag = 'mine'
+print(it.tag, 'tag' in it.__dict__)
+try:
+    it.price = -5
+except ValueError as e:
+    print(type(e).__name__, str(e))
 ```
 
-<OutputBox title="运行结果" output='3' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+<OutputBox title='对照写法：先自己猜，再点开' output='10 price _price\nmine True\nValueError negative' guess="true" />
 
-上面每一行在做什么，点开逐行看：
 
-<LineByLine code='class Positive:\n    def __set_name__(self, owner, name):\n        self.name = name\n    def __get__(self, obj, owner=None):\n        return obj.__dict__.get(self.name, 0)\n    def __set__(self, obj, value):\n        if value &lt; 0: raise ValueError("must be positive")\n        obj.__dict__[self.name] = value\n\nclass Order:\n    qty = Positive()\n\no = Order(); o.qty = 3\nprint(o.qty)' :notes='["实现 __set__ 即为数据描述符，优先级高于实例字典", "__set_name__ 在类创建时拿到字段名", "校验集中在一处，所有赋值路径都受约束", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色", "第 11 行：与上文规则对照，观察它在整体流程里承担的角色", "第 12 行：与上文规则对照，观察它在整体流程里承担的角色", "第 13 行：与上文规则对照，观察它在整体流程里承担的角色", "第 14 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 040 讲 · 访问控制、property 与描述符协议' />
+### getter / setter 如何落到描述符方法
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**property 的 getter / setter**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
+<Term word='名称改写与私有约定' text='单下划线 _name 只是约定，提示内部使用，不影响访问；from module import * 默认不导入以 _ 开头的名字，除非模块定义了 __all__ 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 __x、__x_，但 __x__ 不算）会被名称改写：编译器在编译类体时把它重写成 _ClassNa' />
 
-### 2.2 对照写法
+<Term word='property 的 getter / setter' text='描述符协议由三个方法构成：__get__(self, obj, objtype=None)、__set__(self, obj, value)、__delete__(self, obj)。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现 __set__ 或 ' />
 
-```python
-class Vector:
-    def __init__(self, x, y): self.x, self.y = x, y
-    def __len__(self): return 2
-    def __repr__(self): return f"V({self.x},{self.y})"
 
-v = Vector(1, 2)
-print(len(v), bool(v), v)
-```
+## 数据描述符与非数据描述符
 
-<OutputBox title="对照写法的输出（先自己猜）" output='2 True V(1,2)' guess="true" />
+**数据描述符与非数据描述符**
 
-<Compare :panels='[{"label": "主写法", "code": "class Positive:\n    def __set_name__(self, owner, name):\n        self.name = name\n    def __get__(self, obj, owner=None):\n        return obj.__dict__.get(self.name, 0)\n    def __set__(self, obj, value):\n        if value &lt; 0: raise ValueError(\"must be positive\")\n        obj.__dict__[self.name] = value\n\nclass Order:\n    qty = Positive()\n\no = Order(); o.qty = 3\nprint(o.qty)", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "class Vector:\n    def __init__(self, x, y): self.x, self.y = x, y\n    def __len__(self): return 2\n    def __repr__(self): return f\"V({self.x},{self.y})\"\n\nv = Vector(1, 2)\nprint(len(v), bool(v), v)", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才能保」' />
+| 类别 | 实现的方法 | 优先级 | 实例 |
+| --- | --- | --- | --- |
+| 数据描述符 | __set__ 或 __delete__（含 __get__） | 优先于实例 __dict__ | property、__slots__ 槽、自定义带 __set__ 的描述符 |
+| 非数据描述符 | 只有 __get__ | 被实例 __dict__ 同名键遮蔽 | function、staticmethod、cached_property |
+| __set_name__(owner, name) | 3.6+ 类创建时自动调用 | 把字段名交给描述符 | ORM 字段、校验字段 |
+| __get__(obj, objtype) | obj 为 None 表示类访问 | 类访问通常返回描述符自身 | Class.field |
 
-## 3. 深入一步：规则与边界
+<Compare :panels='[{"label": "主示例", "code": "class User:\n    def __init__(self, age):\n        self.__secret = 7\n        self.age = age\n    @property\n    def age(self):\n        return self._age\n    @age.setter\n    def age(self, value):\n        if not isinstance(value, int) or value &lt; 0:\n            raise ValueError(&#39;age must be non-negative int&#39;)\n        self._age = value\n\nu = User(18)\nprint(u.age, &#39;_User__secret&#39; in u.__dict__)\ntry:\n    u.age = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))\nprint(u.age)\nprint(type(User.__dict__[&#39;age&#39;]).__name__)\nprint(isinstance(User.__dict__[&#39;age&#39;], property))", "note": "名称改写与私有约定"}, {"label": "对照 / 进阶", "code": "class Checked:\n    def __set_name__(self, owner, name):\n        self.name = name\n        self.key = &#39;_&#39; + name\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return obj.__dict__.get(self.key)\n    def __set__(self, obj, value):\n        if value &lt; 0:\n            raise ValueError(&#39;negative&#39;)\n        obj.__dict__[self.key] = value\n\nclass Loose:\n    def __get__(self, obj, objtype=None):\n        return &#39;loose&#39;\n\nclass Item:\n    price = Checked()\n    tag = Loose()\n    def __init__(self, price):\n        self.price = price\n\nit = Item(10)\nprint(it.price, Item.price.name, Item.price.key)\nit.tag = &#39;mine&#39;\nprint(it.tag, &#39;tag&#39; in it.__dict__)\ntry:\n    it.price = -5\nexcept ValueError as e:\n    print(type(e).__name__, str(e))", "note": "property 与描述符协议"}]' title='两种写法对照' note='差异集中在 名称改写与私有约定；先看输出，再找背后的规则。' />
 
-**数据描述符与非数据描述符**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+<Callout type="tip" title='核心心智模型' text='单下划线 _name 只是约定，提示内部使用，不影响访问；from module import * 默认不导入以 _ 开头的名字，除非模块定义了 __all__ 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 __x、__x_，但 __x__ 不算）会被名称改写：编译器在编译类体时把它重写' />
 
-**__get__ / __set__ / __delete__**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
 
-**优先级规则**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+## 底层：__getattribute__ 里的描述符分派
 
-| 知识点 | 规则要点 | 常见误用 |
+描述符协议是 CPython 属性访问的统一钩子。
+
+任何类属性对象只要实现了 `__get__`、`__set__`、`__delete__` 之一，`object.__getattribute__` 在查到它时就会分派：若它是数据描述符（有 `__set__` 或 `__delete__`），优先调用 `__get__(obj, type(obj)`)，连 `obj.__dict__` 里的同名键都不看；
+
+若是非数据描述符（只有 `__get__`），则先让实例字典有机会。
+
+`object.__setattr__` 同样先看数据描述符的 `__set__`，因此 property 的 setter 能拦住每一次赋值，而 `__init__` 里写死的校验会在后续直接赋值时被绕过。
+
+property 本身是 C 实现的数据描述符，@`x.setter` 会构造一个新的 property 把 fset 换进去；只读 property 的 `__set__` 存在但没有 fset，赋值时抛 AttributeError。
+
+名称改写是编译期行为：编译器把类体内 __x 的每次引用重写成 _ClassName__x 并写进 code object 的 co_names 与常量，用 dis 能看到改写后的属性名。
+
+`__set_name__` 由 `type.__new__` 在类创建时对每个描述符调用一次，把字段名注入，让 ORM 字段无需重复声明名字。classmethod 与 staticmethod 也都是描述符：前者 `__get__` 绑定 cls，后者 `__get__` 原样返回函数。
+
+<ArchBlueprint title='第 040 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "名称改写与私有约定", "protocol": "调用 / 请求", "items": [{"label": "名称改写与私有约定", "sub": "输入与前置", "detail": "单下划线 _name 只是约定，提示内部使用，不影响访问；from module import * 默认不导入以 _ 开头的名字，除非模块定义了 __all__ 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 __x、__x_，但 __x__ 不算）会被名称改写：编译器在编译类体时把它重写", "tone": "blue"}]}, {"name": "核心规则", "note": "property 与描述符协议", "protocol": "语言 / 运行时协议", "items": [{"label": "property 与描述", "sub": "状态与边界", "detail": "描述符协议由三个方法构成：__get__(self, obj, objtype=None)、__set__(self, obj, value)、__delete__(self, obj)。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现 ", "tone": "purple"}]}, {"name": "落地与收尾", "note": "优先级规则与自定义描述符", "items": [{"label": "优先级规则与自定义描述符", "sub": "工程处理", "detail": "object.__getattribute__ 的完整优先级是：数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → 全失败后才调用 __getattr__；object.__setattr__ 里数据描述符的 __set__ 也优先于写入实例字典，而非数据描述符会被实例同名键覆", "tone": "green"}]}]' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：校验写在 __init__ 里，后续 use", "body": "__init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它", "tip": "用 property 的 setter 或自定义数据描述符，把校验放进 __set__，保证每次赋值都过同一入口"}, {"title": "第 2 步：自定义描述符忘了实现 __set__，校验被", "body": "只实现 __get__ 的是非数据描述符，优先级低于实例 __dict__，obj.x = v 直接写进字典", "tip": "实现 __set__（或 __delete__）让它成为数据描述符；__get__ 里读写 obj.__dict__[key] 避免递归"}, {"title": "第 3 步：以为双下划线是真私有，外部仍改到了内部状态", "body": "名称改写只是编译期把 __x 改成 _ClassName__x，不是访问控制", "tip": "按约定用单下划线表达内部；确需隔离靠 property / 描述符与文档约束"}]' />
+
+
+## 优先级规则与自定义描述符
+
+`object.__getattribute__` 的完整优先级是：数据描述符 → 实例 `__dict__` → 非数据描述符 → 类属性 → 全失败后才调用 `__getattr__`；
+
+`object.__setattr__` 里数据描述符的 `__set__` 也优先于写入实例字典，而非数据描述符会被实例同名键覆盖。
+
+据此可以写一个可复用的校验字段：`__set_name__` 记录 name 与存储键，`__get__` 从 `obj.__dict__` 读，`__set__` 先校验类型与范围再写回，一处定义让所有用了它的字段自动获得校验。
+
+常见失效信号有三个：把描述符实例赋给实例属性（`obj.x = descriptor`）不生效，因为它不在类上；
+
+忘了实现 `__set__` 就退化成非数据描述符，校验会被实例字典绕过；`__get__` 里若访问 `obj.name` 又会触发描述符本身，造成无限递归，应读写 `obj.__dict__``[key]`。典型应用包括 ORM 字段、配置校验、懒加载属性（cached_property 正是非数据描述符）与类型约束；
+
+classmethod 与 staticmethod 也由描述符实现，前者 `__get__` 绑定 cls、后者原样返回函数。`__slots__` 生成的槽本身也是数据描述符。
+
+**属性访问优先级与失效信号**
+
+| 场景 | 结果 | 原因 / 修复 |
 | --- | --- | --- |
-| 名称改写与私有约定 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才 |
-| property 的 getter / setter | 这里的关键词是「什么时候」和「代价是什么」 | 把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才 |
-| 数据描述符与非数据描述符 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才 |
-| __get__ / __set__ / __delete__ | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才 |
-| 优先级规则 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才 |
+| 数据描述符 vs 实例字典 | 数据描述符胜出 | object.__getattribute__ 先查数据描述符 |
+| 非数据描述符 vs 实例同名键 | 实例字典胜出 | 忘写 __set__ 会让校验被绕过 |
+| 只读 property 赋值 | AttributeError: property 'x' of 'C' object has no setter | property 有 __set__ 但无 fset，赋新值时报错 |
+| 把描述符放进实例字典 | 不生效 | 描述符必须作为类属性 |
+| __get__ 里访问 obj.name 递归 | 无限递归 | 应读写 obj.__dict__[key] 或 super().__getattribute__ |
 
-<Term word='名称改写与私有约定' text='描述符是 Python 里最被低估的机制：property、method、classmethod、staticmethod 全部由它实现，实例属性查找优先级也由它决定' />
 
-<Callout type="warn" title="易错点" text='把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才能保证每次赋值都经过同一入口' />
+### 数据描述符为何压过实例字典
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：名称改写与私有约定", "body": "**名称改写与私有约定**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：property 的 getter / setter", "body": "**property 的 getter / setter**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：数据描述符与非数据描述符", "body": "**数据描述符与非数据描述符**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：__get__ / __set__ / __delete__", "body": "**__get__ / __set__ / __delete__**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+<Predict no='040-P' q='class C 里 @property def p；print(hasattr(C.__dict__[&#39;p&#39;], &#39;__set__&#39;), hasattr(C.__dict__[&#39;p&#39;], &#39;__get__&#39;)) 输出什么？' :options='["True True", "False True", "True False"]' answer='0' output='True True' explain='property 是数据描述符，同时实现 __get__ 与 __set__；即使是只读 property，__set__ 方法依旧存在，只是赋值时会抛 AttributeError。' />
 
-<ArchBlueprint title='第 040 讲 · 分层视角' caption='把「名称改写与私有约定」放进系统分层里看' :layers='[{"name": "入口层", "note": "请求与使用方式", "protocol": "函数调用 / HTTP", "items": [{"label": "名称改写与私有约定", "sub": "对外接口", "detail": "**名称改写与私有约定**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tone": "blue"}]}, {"name": "逻辑层", "note": "规则、状态与校验", "protocol": "Python 对象协议", "items": [{"label": "property 的 g", "sub": "核心处理", "detail": "**property 的 getter / setter**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而", "tone": "purple"}]}, {"name": "资源层", "note": "数据、IO 与失败处理", "items": [{"label": "__set_name__", "sub": "落地与收尾", "detail": "ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效", "tone": "green"}]}]' />
 
-## 4. 工程实践
+## 从命名约定到描述符的版本演进
 
-ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效 **__set_name__**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
-
-### 用命令行复现
-
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+<FlowTimeline :steps='[{"title": "名称改写与私有约定", "desc": "单下划线 _name 只是约定，提示内部使用，不影响访问；from module i…", "tone": "blue"}, {"title": "property 与描述符协议", "desc": "描述符协议由三个方法构成：__get__(self, obj, objtype=No…", "tone": "purple"}, {"title": "优先级规则与自定义描述符", "desc": "object.__getattribute__ 的完整优先级是：数据描述符 → 实例…", "tone": "orange"}, {"title": "工程落地", "desc": "可复用的校验字段描述符：一个 ORM 雏形", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 ```bash
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **名称改写与私有约定** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 **名称改写与私有约定** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<Callout type="idea" title="生产提示" text='把「__set_name__」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## 可复用的校验字段描述符：一个 ORM 雏形
 
-## 动手练一练
+一个商品模型需要 price 为浮点且非负、stock 为整数且非负，若在每个 setter 里各写一遍校验，字段一多就重复且容易漏。
 
-<Exercise title='动手：围绕「__set_name__」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 名称改写与私有约定 与 __set_name__ 两个关注点，并说明你的取舍。' :hints='["回到 名称改写与私有约定 的规则", "留意易错点：把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才能保证每次赋", "先让代码跑通，再补边界与异常分支"]' solution='class Vector:\n    def __init__(self, x, y): self.x, self.y = x, y\n    def __len__(self): return 2\n    def __repr__(self): return f"V({self.x},{self.y})"\n\nv = Vector(1, 2)\nprint(len(v), bool(v), v)' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效' />
+正确做法是把校验逻辑收进一个 Field 描述符：`__init__` 收目标类型与下限，`__set_name__` 在类创建时自动拿到字段名并算出存储键，`__get__` 从实例字典读，`__set__` 先校验类型与范围再写入。
 
-## 随堂检测
+因为实现了 `__set__`，它是数据描述符，每次赋值都经过同一入口，`__init__` 里的第一次赋值也不例外。下面用标准库实现一个最小 ORM 雏形，演示正常构造、类上访问描述符拿到字段名，以及两类非法赋值分别抛 ValueError 与 TypeError。真实项目还会在此基础上加默认值、必填标记与数据库列名映射。
 
-<Quiz no='040-1' q='在本讲讨论的「名称改写与私有约定」语境下，下面哪一种说法是准确的？' :options='["描述符是 Python 里最被低估的机制：property、method、classmethod、staticmethod 全部由它实现，实例属性查找优先级", "名称改写与私有约定 只影响代码的书写形式，不会改变任何运行时行为", "名称改写与私有约定 在所有 Python 实现与所有版本中表现完全一致", "只要用了 名称改写与私有约定，就不必再考虑 __set_name__ 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 __set_name__ 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+```python
+class Field:
+    def __init__(self, typ, minimum=None):
+        self.typ = typ
+        self.minimum = minimum
+    def __set_name__(self, owner, name):
+        self.name = name
+        self.key = '_' + name
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return obj.__dict__.get(self.key)
+    def __set__(self, obj, value):
+        if not isinstance(value, self.typ):
+            raise TypeError('bad type for ' + self.name)
+        if self.minimum is not None and value < self.minimum:
+            raise ValueError('too small for ' + self.name)
+        obj.__dict__[self.key] = value
 
-<Predict no='040-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["3", "3\n（无更多输出）", "AttributeError: 名称改写与私有约定 不可用"]' answer="0" output='3' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+class Product:
+    price = Field(float, minimum=0.0)
+    stock = Field(int, minimum=0)
+    def __init__(self, price, stock):
+        self.price = price
+        self.stock = stock
 
-<FillBlank no='040-3' tpl='    _____set_name__(self, owner, name):' :answers='["def"]' hint='回想本讲关于 名称改写与私有约定 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+p = Product(9.9, 5)
+print(p.price, p.stock, Product.price.name)
+for attr, val in [('price', -1.0), ('stock', 'x')]:
+    try:
+        setattr(p, attr, val)
+    except (TypeError, ValueError) as e:
+        print(type(e).__name__, str(e))
+```
 
-## 一页纸速记
+<Callout type="idea" title='落地提示' text='ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效' />
 
-<KnowledgeCard :points='["名称改写与私有约定：名称改写与私有约定", "property 的 getter / setter：property 的 getter / setter", "数据描述符与非数据描述符：数据描述符与非数据描述符", "__get__ / __set__ / __delete__：__get__ / __set__ / __delete__"]' :pitfalls='["把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才能保证每次赋值都经过同一入口", "忽略版本差异，把 __set_name__ 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：描述符是 Python 里最被低估的机制：property、method、classmethod、staticmethod 全部由它实现，实例属性查找优先级也由它决定' />
+<CheckList id='P040b' title='上线前自检' :items='["能复现并解释「校验写在 __init__ 里，后续 user.age = 」", "能复现并解释「自定义描述符忘了实现 __set__，校验被实例字典绕过」", "能复现并解释「以为双下划线是真私有，外部仍改到了内部状态」", "能用一条命令验证 名称改写与私有约定", "关键路径有自动化测试与失败分支"]' />
 
-## 小结与下一讲
 
-1. 名称改写与私有约定：名称改写与私有约定
-2. property 的 getter / setter：property 的 getter / setter
-3. ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效
+## 校验写在 __init__、__set__ 缺失与假私有
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 校验写在 __init__ 里，后续 user.age = -1 绕过校验 | __init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它 | 用 property 的 setter 或自定义数据描述符，把校验放进 __set__，保证每次赋值都过同一入口 |
+| 自定义描述符忘了实现 __set__，校验被实例字典绕过 | 只实现 __get__ 的是非数据描述符，优先级低于实例 __dict__，obj.x = v 直接写进字典 | 实现 __set__（或 __delete__）让它成为数据描述符；__get__ 里读写 obj.__dict__[key] 避免递归 |
+| 以为双下划线是真私有，外部仍改到了内部状态 | 名称改写只是编译期把 __x 改成 _ClassName__x，不是访问控制 | 按约定用单下划线表达内部；确需隔离靠 property / 描述符与文档约束 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='校验写在 __init__ 里，后续 user.age = -1 绕过校验：__init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它' />
+
+
+## 描述符练习与速记
+
+<Exercise title='基础：用 property setter 做校验' task='定义一个带 @property 与 @x.setter 的类，setter 里拒绝负数；正常赋值后打印，再赋负值捕获异常。' solution='class C:\n    @property\n    def x(self):\n        return self._x\n    @x.setter\n    def x(self, v):\n        if v &lt; 0:\n            raise ValueError(&#39;neg&#39;)\n        self._x = v\n\nc = C()\nc.x = 5\nprint(c.x)\ntry:\n    c.x = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))' explain='property 是数据描述符，setter 拦住每一次赋值；校验写在 __init__ 则会被后续直接赋值绕过。' />
+
+<Exercise title='进阶：自定义描述符加 __set_name__' task='实现一个描述符，__set_name__ 记录存储键，__get__/__set__ 读写 obj.__dict__ 且 __set__ 把值翻倍，验证类访问返回描述符自身。' solution='class D:\n    def __set_name__(self, owner, name):\n        self.key = &#39;_&#39; + name\n    def __get__(self, obj, objtype=None):\n        return self if obj is None else obj.__dict__.get(self.key)\n    def __set__(self, obj, value):\n        obj.__dict__[self.key] = value * 2\n\nclass C:\n    v = D()\nc = C()\nc.v = 3\nprint(c.v, C.v.key)' explain='__set_name__ 在类创建时把字段名注入；__get__ 里 obj 为 None 表示类访问，应返回描述符自身；__set__ 让它成为数据描述符。' />
+
+<Quiz no='040-1' q='把 __x 写在类体里，编译器会怎么处理？' :options='["改写为 _ClassName__x，防子类意外覆盖而非访问控制", "加密存储，禁止外部访问", "自动生成一个 property", "原样保留，完全不变"]' answer="0" explain='名称改写是编译期行为，把类体内的 __x 重写成 _ClassName__x 并写进 co_names；目的是避免子类覆盖，不是真正的私有。' />
+
+<Quiz no='040-2' q='数据描述符与非数据描述符的区别是？' :options='["实现 __set__ 或 __delete__ 的是数据描述符，优先于实例 __dict__", "实现 __get__ 的就是数据描述符", "两者优先级完全相同", "定义在类里的都是数据描述符"]' answer="0" explain='object.__getattribute__ 让数据描述符优先于实例字典；只实现 __get__ 的非数据描述符会被实例同名键遮蔽。' />
+
+<Quiz no='040-3' q='__set_name__ 在什么时候被调用？' :options='["类创建时由 type.__new__ 对每个描述符自动调用一次", "每次访问属性时", "每个实例创建时", "必须手动调用才触发"]' answer="0" explain='3.6 起类创建阶段自动把字段名传给描述符，ORM 字段因此无需在声明里重复写名字。' />
+
+<FillBlank no='040-F' tpl='___ __init__(self, age):' :answers='["def"]' hint='回想本讲关于 名称改写与私有约定 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 名称改写与私有约定 的落点。' />
+
+<KnowledgeCard :points='["双下划线前缀名在类体内被编译期改写为 _ClassName__x，防子类覆盖而非私有；dunder 名不改写", "描述符协议 __get__ / __set__ / __delete__；实现 __set__ 或 __delete__ 的是数据描述符，优先于实例 __dict__", "property 是数据描述符，setter 保证每次赋值都过同一入口；只读赋值抛 AttributeError: ... has no setter", "__set_name__(owner, name)（3.6+）在类创建时自动调用，把字段名注入描述符", "优先级：数据描述符 &gt; 实例 __dict__ &gt; 非数据描述符 &gt; 类属性 &gt; __getattr__；function / staticmethod / cached_property 是非数据描述符", "自定义描述符要作类属性、__get__ 里读写 obj.__dict__[key] 避免递归；ORM 字段、配置校验、懒加载都用它"]' :pitfalls='["校验写在 __init__ 里，后续 user.age = -1 绕过校验", "自定义描述符忘了实现 __set__，校验被实例字典绕过", "以为双下划线是真私有，外部仍改到了内部状态", "把校验写在 __init__ 里，后续赋值就绕过了校验；数据描述符才能保证每次赋值都经过同一入口"]' summary='描述符是 Python 里最被低估的机制：property、method、classmethod、staticmethod 全部由它实现，实例属性查找优先级也由它决定' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| 双下划线前缀名在类体内被编译期改写为 _ClassName__x，防子类覆盖而非私有；dunder 名不改写 | 建立直觉 |
+| 描述符协议 __get__ / __set__ / __delete__；实现 __set__ 或 __delete__ 的是数据描述符，优先于实例 __dict__ | 跑通示例 |
+| property 是数据描述符，setter 保证每次赋值都过同一入口；只读赋值抛 AttributeError: ... has no setter | 深入边界 |
+| __set_name__(owner, name)（3.6+）在类创建时自动调用，把字段名注入描述符 | 工程落地 |
+| 优先级：数据描述符 > 实例 __dict__ > 非数据描述符 > 类属性 > __getattr__；function / staticmethod / cached_property 是非数据描述符 | 随堂检测 |
+| 自定义描述符要作类属性、__get__ 里读写 obj.__dict__[key] 避免递归；ORM 字段、配置校验、懒加载都用它 | 复盘 |
+
+1. 双下划线前缀名在类体内被编译期改写为 _ClassName__x，防子类覆盖而非私有；dunder 名不改写
+
+2. 描述符协议 __get__ / __set__ / __delete__；实现 __set__ 或 __delete__ 的是数据描述符，优先于实例 __dict__
+
+3. property 是数据描述符，setter 保证每次赋值都过同一入口；只读赋值抛 AttributeError: ... has no setter
 
 [下一讲：特殊方法：repr、比较、算术与容器协议](/oop/special-methods)

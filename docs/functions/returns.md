@@ -7,123 +7,210 @@ description: 理解函数边界上的数据契约
 
 # 第 029 讲 · 返回值、None 与多返回值
 
-> Python 的多返回值其实是返回一个元组再解包，所以函数永远只有一个返回对象，契约反而更统一。本讲的目标是「理解函数边界上的数据契约」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+参数怎么传定下来后，函数的另一半边界浮出来了：它把什么交还给调用方。这一讲说的不是语法，而是双方的默契——拿到结果的人该怎么理解它。写查询时容易顺手用 None 表示没找到，可空结果也算合法，调用方就分不清；把内部列表直接递出去，外面一次追加又改到了对象里。
 
-## 这一讲你会得到什么
+我们先看多返回值只是元组打包再解包，函数始终只交出一个对象；接着谈提前返回与返回可变对象带来的松动；最后延伸到生成器里那句含义不同的 return。接着参数形态，再加元组与解包就够；读完后你能为失败路径留一个不含糊的约定。
 
-<CheckList id='P029' title="本讲目标" :items='["能说清隐式 return None", "能说清元组打包与解包", "能说清提前返回", "能说清返回可变对象的风险", "能说清注解里的返回类型"]' />
 
-## 1. 先建立直觉
+## find() 返回 None，调用方为什么崩了
 
-**隐式 return None**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+一个用户查询函数 `find(uid)` 被两个调用方复用：A 模块写 name, `age = find`(uid)，B 模块写 if `find(uid)` is None 判断用户不存在。
 
-**元组打包与解包**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+上线后 A 模块偶尔抛 TypeError: cannot unpack non-iterable NoneType object，因为没找到时函数走的是隐式 return，返回 None；而 B 模块更糟——用户记录里 age 字段本就允许为 None，于是合法的空值被当成了查询失败。
 
-**提前返回**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+朴素解法是让失败时返回 (None, None) 凑够元组，A 不报错了，但 B 的 is None 判断彻底失效；再加一个 ok 布尔位变成三元组，又让每个调用点都得记牢下标含义。
 
-<ConceptDiagram type='compare2' title='第 029 讲 · 隐式 return None' labels='隐式 return None|元组打包与解包|提前返回|返回可变对象的风险' caption='理解函数边界上的数据契约' />
+本讲把函数边界上的数据契约讲清楚：函数永远只返回一个对象，所谓多返回值是元组打包加解包的语法糖，None 是单例，用同一种类型去表达成功与失败必然产生歧义。
 
-上图用本讲的三个核心概念标出了主线：**隐式 return None → 元组打包与解包 → 提前返回**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 隐式 return None 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 [1] [1, 2]", "tone": "green"}, {"title": "深入边界", "desc": "厘清 元组打包与解包 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 生成器返回 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## 函数只有一个返回对象：元组打包与解包
 
-## 2. 语法与规则：把行为跑出来
+return a, b 与 return (a, b) 完全等价，逗号才是元组构造符，括号可省；编译后是依次压入 a、b 再 BUILD_TUPLE 2，栈上仍只有一个元组对象，而单个 return a 不生成 BUILD_TUPLE。
 
-### 2.1 主示例
+调用侧 x, `y = f`() 由 UNPACK_SEQUENCE 完成，要求右侧可迭代且元素个数精确匹配，否则抛 ValueError: too many values to unpack (expected 2) 或 not enough values to unpack (expected 2, got 1)。
 
-**隐式 return None**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+PEP 3132 在 3.0 引入扩展解包 a, *`rest = seq`，星号目标收集剩余元素且恒为 list，一个解包语句里只能有一个星号目标。无 return、单独 return、return None 三条路径都返回同一个 None 对象，它是 NoneType 的唯一实例，用 is None 判断身份而非 ==。
 
-```python
-def f(x, buf=[]):
-    buf.append(x)
-    return buf
-
-print(f(1), f(2))
-```
-
-<OutputBox title="运行结果" output='[1] [1, 2]' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
-
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='def f(x, buf=[]):\n    buf.append(x)\n    return buf\n\nprint(f(1), f(2))' :notes='["默认列表在函数定义时只创建一次", "第二次调用复用了同一个列表", "这是可变默认参数最典型的意外", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 029 讲 · 返回值、None 与多返回值' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**元组打包与解包**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
+提前返回（guard clause）能让失败分支先退出、减少嵌套，但代价是函数出现了多个出口，必须保证每个出口返回同一类型，否则调用方就要到处判空。交换 a, `b = b`, a、for 里解包、嵌套解包用的都是同一套机制。
 
 ```python
-def f(x, buf=None):
-    buf = [] if buf is None else buf
-    buf.append(x)
-    return buf
+def stats(xs):
+    if not xs:
+        return None
+    return min(xs), max(xs), sum(xs) / len(xs)
 
-print(f(1), f(2))
+print(stats([2, 8, 5]))
+lo, hi, avg = stats([2, 8, 5])
+print(lo, hi, avg)
+print(stats([]) is None)
+try:
+    a, b = stats([])
+except TypeError as e:
+    print(type(e).__name__, str(e))
+first, *rest = (1, 2, 3, 4)
+print(first, rest)
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='[1] [2]' guess="true" />
+<OutputBox title='主示例运行结果' output='(2, 8, 5.0)\n2 8 5.0\nTrue\nTypeError cannot unpack non-iterable NoneType object\n1 [2, 3, 4]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Compare :panels='[{"label": "主写法", "code": "def f(x, buf=[]):\n    buf.append(x)\n    return buf\n\nprint(f(1), f(2))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "def f(x, buf=None):\n    buf = [] if buf is None else buf\n    buf.append(x)\n    return buf\n\nprint(f(1), f(2))", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「用返回 None 表示失败、又用 None 表示合法结果，会让调用方无法」' />
+<LineByLine code='def stats(xs):\n    if not xs:\n        return None\n    return min(xs), max(xs), sum(xs) / len(xs)\n\nprint(stats([2, 8, 5]))\nlo, hi, avg = stats([2, 8, 5])\nprint(lo, hi, avg)\nprint(stats([]) is None)\ntry:\n    a, b = stats([])\nexcept TypeError as e:\n    print(type(e).__name__, str(e))\nfirst, *rest = (1, 2, 3, 4)\nprint(first, rest)' :notes='["定义统计函数：空输入走失败分支，非空返回三个值", "空列表时提前返回 None，这是后面解包崩溃的来源", "返回 None 单例，函数此处结束", "逗号把 min、max、均值打包成一个三元组再返回", "打印整个返回值，看到它是一个元组对象", "用三个目标解包同一个元组", "三个名字分别拿到最小值、最大值与均值 5.0", "确认空输入的返回值就是 None 单例", "准备捕获对 None 解包时的类型错误", "失败路径返回 None，却按两个目标解包", "捕获预期的 TypeError", "打印异常类型与消息：None 不可迭代", "用扩展解包把首元素与剩余元素分开", "星号目标 rest 收集成 list，不是元组"]' title='第 029 讲 · 返回值、None 与多返回值' />
 
-## 3. 深入一步：规则与边界
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-**提前返回**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+**返回形态与解包规则**
 
-**返回可变对象的风险**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+| 写法 | 实际返回对象 | 调用侧 | 出错信号 |
+| --- | --- | --- | --- |
+| return a, b | 2 元素元组 | x, y = f() | 元素数不符抛 ValueError |
+| return a | 单个对象（不建元组） | x = f() | 无 |
+| 无 return / return / return None | None 单例 | x is None | 对 None 解包抛 TypeError |
+| a, *rest = seq | 首元素 + 一个 list | 批量解包 | 星号目标只能有一个 |
+| 含 yield 的函数调用 | generator 对象 | next(g) / for | 耗尽抛 StopIteration |
 
-**注解里的返回类型**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+<ConceptDiagram type='compare2' title='第 029 讲 · 函数只有一个返回对象：元组打包与解包' labels='函数只有一个返回对象：元组打包与解包|返回可变对象与契约污染|生成器函数：return 不是返回值' caption='理解函数边界上的数据契约' />
 
-| 知识点 | 规则要点 | 常见误用 |
-| --- | --- | --- |
-| 隐式 return None | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 用返回 None 表示失败、又用 None 表示合法结果，会让调用方 |
-| 元组打包与解包 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 用返回 None 表示失败、又用 None 表示合法结果，会让调用方 |
-| 提前返回 | 这里的关键词是「什么时候」和「代价是什么」 | 用返回 None 表示失败、又用 None 表示合法结果，会让调用方 |
-| 返回可变对象的风险 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 用返回 None 表示失败、又用 None 表示合法结果，会让调用方 |
-| 注解里的返回类型 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 用返回 None 表示失败、又用 None 表示合法结果，会让调用方 |
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Term word='隐式 return None' text='Python 的多返回值其实是返回一个元组再解包，所以函数永远只有一个返回对象，契约反而更统一' />
 
-<Callout type="warn" title="易错点" text='用返回 None 表示失败、又用 None 表示合法结果，会让调用方无法区分两种情况' />
+### 多返回值其实是先打包再解包
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：隐式 return None", "body": "**隐式 return None**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：元组打包与解包", "body": "**元组打包与解包**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：提前返回", "body": "**提前返回**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：返回可变对象的风险", "body": "**返回可变对象的风险**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}]' />
 
-## 4. 工程实践
+## 返回可变对象与契约污染
 
-库函数要么始终返回同类型，要么抛异常；业务层用 Result / Optional 明确表达可失败 **生成器返回**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+直接返回 `self.items`、模块级缓存字典或任何内部可变容器，等于把对象引用交给调用方：外部一次 append 就会原地改掉内部状态，而这次改动发生在函数之外、日志里看不到，封装被完全绕过。
 
-### 用命令行复现
+稳妥做法是返回副本 `list(self._items)`、`tuple(self._items)`，或干脆只暴露只读视图与迭代器。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+另一类更常见的污染是返回类型不统一：成功返回 list、失败返回 None，会让每个调用方都写 if result: 判断，而空列表本身是合法的假值，于是「查到了但结果为空」被误判成「没查到」。库函数的契约应当是二选一：要么始终返回同一类型（找不到就返回空容器），要么始终用异常表达失败，让调用方一处处理。
 
-```bash
-python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
+注解上用 -> tuple[str, int]（PEP 585，3.9+）或 X | None（PEP 604，3.10+）把契约写出来，但注解默认不强制运行时检查，真正的边界校验要靠代码本身或 pydantic 这类运行时库。
+
+```python
+class Cart:
+    def __init__(self):
+        self.items = []
+    def raw(self):
+        return self.items
+    def snapshot(self):
+        return tuple(self.items)
+
+c = Cart()
+c.items.append('book')
+r = c.raw()
+r.append('pen')
+print(list(c.items), r is c.items)
+print(c.snapshot(), type(c.snapshot()).__name__)
+
+def pages():
+    yield 'a'
+    return 'end'
+g = pages()
+print(next(g))
+try:
+    next(g)
+except StopIteration as e:
+    print(type(e).__name__, e.value)
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **隐式 return None** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<OutputBox title='对照写法：先自己猜，再点开' output='[&#39;book&#39;, &#39;pen&#39;] True\n(&#39;book&#39;, &#39;pen&#39;) tuple\na\nStopIteration end' guess="true" />
 
-<Callout type="idea" title="生产提示" text='把「生成器返回」写成检查项，并在 CI 里用最小用例守住它。' />
+<Predict no='029-P' q='def f(): return 1, 2, 3 之后执行 a, *rest = f(); print(a, rest) 输出什么？' :options='["1 [2, 3]", "1 (2, 3)", "[1, 2, 3] []"]' answer='0' output='1 [2, 3]' explain='PEP 3132 的星号目标收集剩余全部元素并恒为 list，因此 a 得 1、rest 得 [2, 3]，而不是元组 (2, 3)。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
 
-## 动手练一练
+## 生成器函数：return 不是返回值
 
-<Exercise title='动手：围绕「生成器返回」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 隐式 return None 与 生成器返回 两个关注点，并说明你的取舍。' :hints='["回到 隐式 return None 的规则", "留意易错点：用返回 None 表示失败、又用 None 表示合法结果，会让调用方无法区分两种", "先让代码跑通，再补边界与异常分支"]' solution='def f(x, buf=None):\n    buf = [] if buf is None else buf\n    buf.append(x)\n    return buf\n\nprint(f(1), f(2))' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；库函数要么始终返回同类型，要么抛异常；业务层用 Result / Optional 明确表达可失败' />
+函数体里只要出现 yield，它就是生成器函数：编译期在 co_flags 置 CO_GENERATOR（0x20），调用它并不执行函数体，而是创建并返回一个 generator 对象（`types.GeneratorType`），该对象实现了迭代器协议 `__iter__` / `__next__`，函数帧保存在 gi_frame 里，直到第一次 `next()` 才恢复执行。
 
-## 随堂检测
+正因如此，函数体里的异常、资源申请都要等到迭代时才发生，清理必须放在 try/finally 或依赖 `close()`。
 
-<Quiz no='029-1' q='在本讲讨论的「隐式 return None」语境下，下面哪一种说法是准确的？' :options='["Python 的多返回值其实是返回一个元组再解包，所以函数永远只有一个返回对象，契约反而更统一", "隐式 return None 只影响代码的书写形式，不会改变任何运行时行为", "隐式 return None 在所有 Python 实现与所有版本中表现完全一致", "只要用了 隐式 return None，就不必再考虑 生成器返回 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 生成器返回 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+生成器里的 return value 也不是把 value 交给调用方：它终止迭代，并把 value 挂到 `StopIteration.value`（PEP 380，3.3+），普通 for 循环完全看不到这个值，只有显式捕获 StopIteration 或用 yield from 接收才能拿到；
 
-<Predict no='029-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["[1] [1, 2]", "[1] [1, 2]\n（无更多输出）", "AttributeError: 隐式 return None 不可用"]' answer="0" output='[1] [1, 2]' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+不带值的 return 则让 value 为 None。
 
-<FillBlank no='029-3' tpl='___f(x, buf=[]):' :answers='["def"]' hint='回想本讲关于 隐式 return None 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+可以用 `inspect.isgeneratorfunction(f)` 与 `inspect.isgenerator(obj)` 区分函数与对象。
 
-## 一页纸速记
+这与多返回值的区别很关键：生成器产出的是一串值，而不是一次返回多个值。
 
-<KnowledgeCard :points='["隐式 return None：隐式 return None", "元组打包与解包：元组打包与解包", "提前返回：提前返回", "返回可变对象的风险：返回可变对象的风险"]' :pitfalls='["用返回 None 表示失败、又用 None 表示合法结果，会让调用方无法区分两种情况", "忽略版本差异，把 生成器返回 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：Python 的多返回值其实是返回一个元组再解包，所以函数永远只有一个返回对象，契约反而更统一' />
+CPython 里函数返回只有一个出口值：RETURN_VALUE 指令把栈顶对象弹出交给调用方，函数帧随即销毁。所谓多返回值是语法糖，编译器把 return a, b 编译成依次压入 a、b 再 BUILD_TUPLE 2，栈上仍只有一个元组对象；单个 return a 不生成 BUILD_TUPLE。
 
-## 小结与下一讲
+调用侧解包由 UNPACK_SEQUENCE（定长）与 UNPACK_EX（带星号）完成，元素数不符就在这一步抛 ValueError。
 
-1. 隐式 return None：隐式 return None
-2. 元组打包与解包：元组打包与解包
-3. 库函数要么始终返回同类型，要么抛异常；业务层用 Result / Optional 明确表达可失败
+None 是全局唯一的 _Py_NoneStruct 实例，Py_None 的地址固定，所以无 return、return、return None 三条路径压栈的都是同一个对象，is None 判断的是身份而非值。
+
+生成器是另一条机制：编译期见到 yield 就在 co_flags 置 CO_GENERATOR（0x20），调用时创建 genobject 并保存空帧而不执行，直到 `next()` 才恢复 gi_frame；
+
+函数体里的 return v 不产生 RETURN_VALUE 交给调用方，而是设置 `StopIteration.value = v` 后终止迭代，PEP 380 的 yield from 才把这个值取出来。
+
+理解只有一个返回对象，才能解释为什么返回类型必须统一、为什么 None 不能同时表达失败与合法空值。
+
+
+### 生成器 return 与返回注解的版本演进
+
+
+## 返回值常见错误与修复
+
+
+## Repository 查询：把成功与失败写成一条明确契约
+
+一个用户仓库里 age 字段允许为 None（资料未填），而 uid 不存在又是另一回事。若用 None 表示查不到，合法的 `age=None` 会和失败混淆；若用 (None, None) 凑元组，调用方又要额外记约定。
+
+工程上用一个不可变的 Result 把三件事分开：ok 表示查询是否命中、value 放真实数据、error 放原因。find 始终返回 Result，display 只在一处解包 `r.value`，字段缺省再单独判 None。这样函数永远只有一个返回对象、且类型恒定，任何调用方都不需要猜测返回值结构。
+
+下面用标准库 dataclass 实现一个可直接运行的最小版本：成功时返回二元组 (name, age)，失败时返回带错误串的 Result，并演示三种 uid 的输出。
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Result:
+    ok: bool
+    value: object
+    error: str
+
+USERS = {'u1': ('Ada', 36), 'u2': ('Lin', None)}
+
+def find(uid):
+    if uid not in USERS:
+        return Result(False, None, 'not found')
+    name, age = USERS[uid]
+    return Result(True, (name, age), '')
+
+def display(uid):
+    r = find(uid)
+    if not r.ok:
+        return 'error: ' + r.error
+    name, age = r.value
+    return name + ' / ' + ('unknown' if age is None else str(age))
+
+print(display('u1'))
+print(display('u2'))
+print(display('u9'))
+print(find('u1').value)
+```
+
+<Callout type="idea" title='落地提示' text='库函数要么始终返回同类型，要么抛异常；业务层用 Result / Optional 明确表达可失败' />
+
+
+## 练一练，再把返回值契约记牢
+
+<Exercise title='基础：观察元组打包与解包错误' task='定义 def f(): return 1, 2, 3，打印返回值与其类型；用 a, *rest = f() 解包并打印；再故意用 x, y = f() 触发异常，打印异常类型与消息。' solution='def f():\n    return 1, 2, 3\n\nprint(f(), type(f()).__name__)\na, *rest = f()\nprint(a, rest)\ntry:\n    x, y = f()\nexcept ValueError as e:\n    print(type(e).__name__, str(e))' explain='return 1, 2, 3 由 BUILD_TUPLE 打包成三元组；UNPACK_EX 把 rest 收成 list；UNPACK_SEQUENCE 遇到 3 个元素对 2 个目标抛 too many values to unpack。' />
+
+<Exercise title='进阶：让失败路径也遵守同一契约' task='对比 divide（b 为 0 时返回 None）与 divide2（b 为 0 时抛 ZeroDivisionError），分别调用并说明为什么后者让调用方只需一处处理。' solution='def divide(a, b):\n    if b == 0:\n        return None\n    return a / b, a % b\n\ndef divide2(a, b):\n    if b == 0:\n        raise ZeroDivisionError(&#39;b is zero&#39;)\n    return a / b, a % b\n\nprint(divide(7, 0) is None)\ntry:\n    divide2(7, 0)\nexcept ZeroDivisionError as e:\n    print(type(e).__name__, str(e))\nprint(divide2(7, 3))' explain='divide 混合返回 None 与元组，调用方必须到处判空；divide2 始终返回二元组或抛异常，成功路径类型恒定，失败集中在一个 except 里处理。' />
+
+<Quiz no='029-1' q='return a, b 实际返回的是什么？' :options='["一个二元组，逗号触发 BUILD_TUPLE", "两个独立的对象", "一个 list", "一个生成器对象"]' answer="0" explain='逗号是元组构造符，编译器生成 BUILD_TUPLE 2；函数只压栈一个对象交给 RETURN_VALUE，括号可省。' />
+
+<Quiz no='029-2' q='函数里完全没有写 return，它的返回值是？' :options='["None 单例", "整数 0", "空元组 ()", "最后一次表达式的值"]' answer="0" explain='无 return、单独 return、return None 三条路径都压入同一个 Py_None 对象；用 is None 判断身份。' />
+
+<Quiz no='029-3' q='生成器函数里写 return &#39;x&#39; 会发生什么？' :options='["&#39;x&#39; 被放进 StopIteration.value，普通 for 看不到", "调用方直接拿到字符串 &#39;x&#39;", "抛 RuntimeError", "被无视，返回值变成 None"]' answer="0" explain='PEP 380 规定生成器 return v 把 v 设到 StopIteration.value；只有捕获 StopIteration 或用 yield from 才能取到，for 循环会静默结束。' />
+
+<FillBlank no='029-F' tpl='___ stats(xs):' :answers='["def"]' hint='回想本讲关于 隐式 return None 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 函数只有一个返回对象：元组打包与解包 的落点。' />
+
+<KnowledgeCard :points='["函数永远只返回一个对象；return a, b 由 BUILD_TUPLE 打包成元组，括号可省", "无 return / return / return None 都返回 None 单例（NoneType 唯一实例），用 is None 判断", "解包元素数不符抛 ValueError: too many / not enough values to unpack；带星号解包（3.0+）星号目标是 list", "含 yield 的函数返回 generator 对象，return v 的值进 StopIteration.value（3.3+），靠 yield from 接收", "返回类型要统一：要么始终同类型，要么失败抛异常；别用 None 兼表失败与合法空值", "返回内部可变容器等于暴露引用，返回 tuple(...) 或副本；注解用 -&gt; tuple[int, str] / X | None（3.9 / 3.10+）"]' :pitfalls='["用 None 同时表示没找到与合法空值", "对可能失败的返回值直接 a, b = find()", "函数返回内部 self.items 列表，外部 append 改了对象状态", "用返回 None 表示失败、又用 None 表示合法结果，会让调用方无法区分两种情况"]' summary='Python 的多返回值其实是返回一个元组再解包，所以函数永远只有一个返回对象，契约反而更统一' />
+
+1. 函数永远只返回一个对象；return a, b 由 BUILD_TUPLE 打包成元组，括号可省
+
+2. 无 return / return / return None 都返回 None 单例（NoneType 唯一实例），用 is None 判断
+
+3. 解包元素数不符抛 ValueError: too many / not enough values to unpack；带星号解包（3.0+）星号目标是 list
 
 [下一讲：作用域、LEGB 与闭包延迟绑定](/functions/scope)

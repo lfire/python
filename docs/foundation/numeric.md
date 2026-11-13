@@ -7,121 +7,202 @@ description: 根据场景选对数值类型，避开精度陷阱
 
 # 第 008 讲 · 数值体系：int 任意精度、float、Decimal 与 bool
 
-> Python 的 int 不会溢出，代价是位数越多运算越慢；float 用二进制近似十进制，0.1 + 0.2 != 0.3 不是 bug 而是表示法的必然。本讲的目标是「根据场景选对数值类型，避开精度陷阱」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+名字与赋值都清楚了，总算能踏实算点东西。可『数字』并非铁板一块：整数、小数、金额或比率各有脾气与场合。这一讲帮你把这套数值体系按场景理清。
 
-## 这一讲你会得到什么
+记账的人多半见过：几笔一毛两毛累加，结果和手算差一点点。这不是写错，是二进制表示十进制小数的必然。我们先看 int 如何不溢出、付了什么代价，顺带交代 bool 是 int 子类；再拆开 float 与 IEEE 754，弄清浮点误差从哪来、比较为何用 math.isclose；最后请出 Decimal 与 Fraction，把精度交还业务口径。会用变量与基本运算就够；学完面对金额与统计你能选对类型。
 
-<CheckList id='P008' title="本讲目标" :items='["能说清int 的任意精度实现", "能说清float 与 IEEE 754", "能说清浮点误差与 math.isclose", "能说清Decimal 与 Fraction", "能说清bool 是 int 的子类"]' />
 
-## 1. 先建立直觉
+## 金额累加对不上账：0.1 + 0.2 为什么不是 0.3
 
-**int 的任意精度实现**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+财务系统里有人把订单金额累加写成 total += 0.1，跑完一万条后对账差了几分钱；
 
-**float 与 IEEE 754**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+排查时用 `print(total == 预期)` 得到 False，于是改成 `round(total, 2)`，可换个批次又对不上。
 
-**浮点误差与 math.isclose**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+另一个脚本要生成大额订单号，直接 2 ** 100 得到 31 位整数却担心溢出，加了一堆没必要的取模；还有人用 float 存利率，把 0.1 + 0.2 == 0.3 写成断言，测试直接挂掉。
 
-<ConceptDiagram type='hub4' title='第 008 讲 · int 的任意精度实现' labels='int 的任意精度实现|float 与 IEEE 754|浮点误差与 math.isclose|Decimal 与 Fraction' caption='根据场景选对数值类型，避开精度陷阱' />
+朴素解法是「用 round 抹平误差」或「拿 == 判断两个计算结果相等」，两者都把表示法的问题当成计算的问题：float 用二进制近似十进制，0.1 根本无法被有限位二进制精确表示，误差会随累加放大。Python 的 int 反而是任意精度、不会溢出，代价是位数越多运算越慢。
 
-上图用本讲的三个核心概念标出了主线：**int 的任意精度实现 → float 与 IEEE 754 → 浮点误差与 math.isclose**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+本讲把四类数值的表示、误差来源、比较与量化规则讲清，并给出金额用 Decimal、科学计算用明确 dtype 的选型依据。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 int 的任意精度实现 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 0.30000000000000004", "tone": "green"}, {"title": "深入边界", "desc": "厘清 float 与 IEEE 754 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 复数与位运算 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
 
-## 2. 语法与规则：把行为跑出来
+## int 任意精度与 bool：不会溢出的代价
 
-### 2.1 主示例
+CPython 的 int 是变长对象：PyLongObject 用一个 digit 数组（64 位平台默认每 digit 存 30 位）保存绝对值，ob_size 带符号记录长度，因此数值没有固定上限，2 ** 100 得到 31 位十进制数完全合法，只有内存是边界。
 
-**int 的任意精度实现**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+代价是位数越多，加减乘除要遍历的 digit 越多，大整数运算明显慢于机器字长的 C int，`sys.getsizeof(0)` 与 `sys.getsizeof(2 ** 100)` 的差就是变长存储的证据。
+
+3.11 起还加了安全限制：int 与 str 互转默认最多 4300 位十进制，超过抛 ValueError，可用 `sys.set_int_max_str_digits` 调整或置 0 关闭，目的是防止超长数字字符串把 CPU 拖死。
+
+bool 是 int 的子类，True 与 False 就是 1 与 0 的单例，因此 `isinstance(True, int)` 为真、True + True 得 2；
+
+但 `type(True)` is bool，做类型判断时别把布尔当普通整数收进金额统计。位运算直接作用在整型的二进制补码语义上：1 << 10 得 1024，0b1100 & 0b1010 得 8；复数用 3 + 4j 字面量，`abs(3 + 4j)` 返回 5.0，实部虚部都是 float。
 
 ```python
 from decimal import Decimal
-print(0.1 + 0.2)
-print(Decimal("0.1") + Decimal("0.2"))
-print(2 ** 100)
+from fractions import Fraction
+import math
+
+print('float_sum', 0.1 + 0.2)
+print('equal', 0.1 + 0.2 == 0.3)
+print('isclose', math.isclose(0.1 + 0.2, 0.3))
+print('decimal', Decimal('0.1') + Decimal('0.2'))
+print('decimal_eq', Decimal('0.1') + Decimal('0.2') == Decimal('0.3'))
+print('fraction', Fraction(1, 3) + Fraction(1, 6))
 ```
 
-<OutputBox title="运行结果" output='0.30000000000000004\n0.3\n1267650600228229401496703205376' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+<OutputBox title='主示例运行结果' output='float_sum 0.30000000000000004\nequal False\nisclose True\ndecimal 0.3\ndecimal_eq True\nfraction 1/2' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-上面每一行在做什么，点开逐行看：
+<LineByLine code='from decimal import Decimal\nfrom fractions import Fraction\nimport math\n\nprint(&#39;float_sum&#39;, 0.1 + 0.2)\nprint(&#39;equal&#39;, 0.1 + 0.2 == 0.3)\nprint(&#39;isclose&#39;, math.isclose(0.1 + 0.2, 0.3))\nprint(&#39;decimal&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;))\nprint(&#39;decimal_eq&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;) == Decimal(&#39;0.3&#39;))\nprint(&#39;fraction&#39;, Fraction(1, 3) + Fraction(1, 6))' :notes='["导入 Decimal：十进制表示，金额场景用它避免二进制误差", "导入 Fraction：用整数分子分母做精确有理数运算", "导入 math 以使用浮点近似比较 isclose", "0.1 与 0.2 的二进制近似相加得 0.30000000000000004", "用 == 判断两个浮点计算结果相等，结果为 False", "math.isclose 按相对容差判定，二者视为足够接近", "字符串构造的 Decimal 精确相加得 0.3", "Decimal 的 == 比较值，精确相等故为 True", "Fraction 精确通分，1/3 加 1/6 打印成 1/2"]' title='第 008 讲 · 数值体系：int 任意精度、float、Decimal 与 bool' />
 
-<LineByLine code='from decimal import Decimal\nprint(0.1 + 0.2)\nprint(Decimal("0.1") + Decimal("0.2"))\nprint(2 ** 100)' :notes='["二进制浮点无法精确表示 0.1", "Decimal 用十进制表示，金额场景可控", "int 任意精度，不会像 C 那样溢出", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 008 讲 · 数值体系：int 任意精度、float、Decimal 与 bool' />
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**float 与 IEEE 754**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
 
-### 2.2 对照写法
+## float 与 IEEE 754：二进制近似十进制
+
+float 对应 C 的 double，遵循 IEEE 754 二进制 64 位：1 位符号、11 位指数、52 位尾数，约 15 到 17 位有效十进制数字。
+
+十进制的 0.1 转成二进制是无限循环小数，只能存成最接近的近似值，`struct.pack`('>d', 0.1).`hex()` 得到 3fb999999999999a 就是证据；0.1 + 0.2 因此等于 0.30000000000000004，与 0.3 不相等。这不是 bug，是二进制浮点表示十进制小数的必然。
+
+比较计算结果一律用 `math.isclose(a, b)`，它默认 `rel_tol=1e-9`、`abs_tol=0.0`，判定式是 `abs(a-b)` <= `max(rel_tol * max(abs(a)`, `abs(b)`), abs_tol)；
+
+`math.isclose(1.0, 1.0 + 1e-10)` 为真，而把 rel_tol 收紧后比较 1.0 与 1.0001 为假。
+
+`sys.float_info` 给出 epsilon（约 2.22e-16）、`radix=2`、max 与 min 等机器常量。还要注意 float('nan') 与自身用 == 比较恒为 False，判断 NaN 必须用 `math.isnan`；float('inf') 参与运算会产生无穷或 nan。
+
+用 == 判断两个浮点计算结果相等是财务系统最典型的线上事故，因为它把表示误差当成了逻辑差异。
+
+还要留意一个容易混淆的版本差异：3.12 起 `sum()` 对浮点输入改用补偿求和，在 3.13 里 `sum([0.1] * 10)` 恰好得到 1.0，而手写 += 循环累加十次仍是 0.9999999999999999；
+
+因此「浮点一定不精确」与「sum 一定不精确」都不是准确结论，要看有没有补偿、误差是否被这次舍入吃掉。
+
+
+### 浮点误差怎么用 math.isclose 判定
+
+
+## Decimal、Fraction 与量化：把精度交还给业务规则
+
+`decimal.Decimal` 用十进制表示，构造时必须传字符串：Decimal('0.1') + Decimal('0.2') 精确等于 Decimal('0.3')，而 `Decimal(0.1)` 会把 float 的近似值一并带进来，得到一长串尾数。
+
+Decimal 的运算受 context 控制：`decimal.getcontext()`.prec 默认 28 位有效数字，rounding 默认 ROUND_HALF_EVEN（银行家舍入），可用 `localcontext()` 临时改；
+
+金额要显式 quantize(Decimal('0.01')) 把量化规则写进领域层，而不是最后随手 round。`Fraction(1, 3)` + `Fraction(1, 6)` 得到 1/2，它用分子分母整数做精确有理数运算，适合比例与概率，但分母会随运算膨胀、比 float 慢得多。
+
+选型很清晰：金融与计量用 Decimal 并固定量化规则，避免任何二进制误差；需要精确分数用 Fraction；科学计算与大规模数组用明确 dtype 的 NumPy，用空间换速度并接受浮点误差；一般计数用 int。
+
+不要用 float 累加金额、不要用 == 比较浮点计算结果、不要把 Decimal 与 float 混在一个表达式里（会抛 TypeError）。
 
 ```python
+big = 2 ** 100
+print('big_digits', len(str(big)))
+print('no_overflow', big * big > big)
+print('bool_sub', isinstance(True, int), True + True)
+print('shift', 1 << 10)
+print('bitand', 0b1100 & 0b1010)
+print('complex', 3 + 4j, abs(3 + 4j))
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='big_digits 31\nno_overflow True\nbool_sub True 2\nshift 1024\nbitand 8\ncomplex (3+4j) 5.0' guess="true" />
+
+
+### Decimal(0.1) 与 Decimal('0.1') 的差别
+
+
+## 四类数值类型怎么选：维度对照
+
+**数值类型对照**
+
+| 类型 | 表示 | 典型陷阱 | 适用场景 |
+| --- | --- | --- | --- |
+| int | 变长 digit 数组，任意精度 | 位数越多越慢；3.11 起 str 互转默认限 4300 位 | 计数、ID、位运算 |
+| float | IEEE 754 二进制 64 位 | 0.1+0.2 不等于 0.3；nan 与自身不等 | 科学计算、测量值 |
+| Decimal | 十进制加 context 精度 | 必须用字符串构造，混 float 抛 TypeError | 金额、计量 |
+| Fraction | 整数分子分母 | 分母膨胀、运算慢 | 精确比例 |
+| bool | int 子类，True/False 单例 | isinstance(True, int) 为真 | 逻辑判断 |
+| complex | 实部虚部均为 float | abs 返回 float | 信号、复数运算 |
+
+
+### 版本与机器常量：float_info 里能读到什么
+
+
+## 底层：为什么 int 不溢出而 float 会丢精度
+
+CPython 的 PyLongObject 用 ob_size 带符号记录 digit 数组长度，每 digit 在 64 位平台存 30 位，加减法逐 digit 进位、乘法走 Karatsuba 或更快的算法，因此整数不溢出但时间复杂度随位数增长。
+
+PyFloatObject 直接包一个 C double，遵循 IEEE 754：符号 1 位、指数 11 位、尾数 52 位，规格化数隐含一个前导 1，故 0.1 这种分母含 5 的十进制小数无法用有限二进制表示，只能取最近可表示值，`struct.pack` 的十六进制字节把它暴露出来。
+
+Decimal 则用十进制的系数加指数，配合一个线程局部的 Context 保存 prec、rounding、Emin 与 Emax，所有运算按十进制规则舍入，因此能与人工账本一致。`math.isclose` 把误差判定写成相对容差与绝对容差取较大者，避免接近零时相对容差失效。
+
+理解这几种表示的数据结构，就能推断「为什么 int 不溢出」「为什么金额不能用 float」「为什么 Decimal 要用字符串构造」，而不用死记结论。
+
+<ConceptDiagram type='hub4' title='第 008 讲 · int 任意精度与 bool：不会溢出的代价' labels='int 任意精度与 bool：不会溢出的代价|float 与 IEEE 754：0.1 +|Decimal、Fraction 与量化：把' caption='根据场景选对数值类型，避开精度陷阱' />
+
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+## 结算服务：把量化规则写进领域层
+
+一个结算服务要把一批交易按分位汇总、计算手续费并输出两位小数，早期实现全程 float，月末对账总差几分钱。下面这段给出工程写法：所有金额用字符串构造的 Decimal，累加后用 quantize 配合 ROUND_HALF_UP 把量化规则固定在领域层，手续费按比例 Decimal 计算，最后输出可核对的字符串；
+
+同时用 float 版本在同一批数据上的结果说明为什么不能靠 round 兜底。真实系统还会把 context 的 prec 与 rounding 写进配置、对每笔交易留原始字符串，避免二次解析引入误差。重点是量化只做一次、且发生在明确的业务边界，而不是在打印前随手四舍五入。
+
+```python
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 import math
-a, b = 0.1 + 0.2, 0.3
-print(a == b, math.isclose(a, b))
+
+CENT = Decimal('0.01')
+
+def money(s):
+    return Decimal(s)
+
+def settle(rows, rate):
+    with localcontext() as ctx:
+        ctx.prec = 28
+        ctx.rounding = ROUND_HALF_UP
+        total = Decimal('0')
+        for s in rows:
+            total += money(s)
+        fee = (total * Decimal(rate)).quantize(CENT)
+        return (total + fee).quantize(CENT)
+
+rows = ['0.10'] * 10
+gross = settle(rows, '0.006')
+float_sum = 0.0
+for s in rows:
+    float_sum += float(s)
+print('decimal_total', gross)
+print('float_exact', float_sum == 1.0)
+print('float_isclose', math.isclose(float_sum, 1.0))
+print('two_places', str(gross))
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='False True' guess="true" />
+<Callout type="idea" title='落地提示' text='金融与计量用 Decimal 并把量化规则写进领域层；科学计算用 NumPy 的 dtype 明确精度与内存' />
 
-<Compare :panels='[{"label": "主写法", "code": "from decimal import Decimal\nprint(0.1 + 0.2)\nprint(Decimal(\"0.1\") + Decimal(\"0.2\"))\nprint(2 ** 100)", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "import math\na, b = 0.1 + 0.2, 0.3\nprint(a == b, math.isclose(a, b))", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「金额用 float 累加、或用 == 判断两个计算结果相等，是财务系统最」' />
 
-## 3. 深入一步：规则与边界
+## 金额与混算的错因速查
 
-**浮点误差与 math.isclose**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
 
-**Decimal 与 Fraction**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+## 按场景选数值类型：练习、自测与速记
 
-**bool 是 int 的子类**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+<Exercise title='基础：用 Decimal 修好金额累加' task='把 0.1 累加十次，分别用 float 与 Decimal(&#39;0.1&#39;) 打印结果，并打印 float 版是否等于 1.0、Decimal 版是否等于 Decimal(&#39;1.0&#39;)。' solution='from decimal import Decimal\nf = 0.0\nd = Decimal(&#39;0&#39;)\nfor _ in range(10):\n    f += 0.1\n    d += Decimal(&#39;0.1&#39;)\nprint(&#39;float&#39;, f, f == 1.0)\nprint(&#39;decimal&#39;, d, d == Decimal(&#39;1.0&#39;))' explain='float 累加十次 0.1 得到 0.9999999999999999，与 1.0 不相等；Decimal 按十进制精确累加得到 1.0。金额不可靠 float 累加。' />
 
-| 知识点 | 规则要点 | 常见误用 |
-| --- | --- | --- |
-| int 的任意精度实现 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 金额用 float 累加、或用 == 判断两个计算结果相等，是财务系 |
-| float 与 IEEE 754 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 金额用 float 累加、或用 == 判断两个计算结果相等，是财务系 |
-| 浮点误差与 math.isclose | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 金额用 float 累加、或用 == 判断两个计算结果相等，是财务系 |
-| Decimal 与 Fraction | 这里的关键词是「什么时候」和「代价是什么」 | 金额用 float 累加、或用 == 判断两个计算结果相等，是财务系 |
-| bool 是 int 的子类 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 金额用 float 累加、或用 == 判断两个计算结果相等，是财务系 |
+<Exercise title='进阶：给 isclose 选对容差' task='用 math.isclose 分别比较 1e9 与 1e9+1、1.0 与 1.0001，打印默认 rel_tol 下的结果，再对第二组收紧 rel_tol 并用 abs_tol 比较接近零的两个值。' solution='import math\nprint(&#39;large&#39;, math.isclose(1e9, 1e9 + 1))\nprint(&#39;small&#39;, math.isclose(1.0, 1.0001))\nprint(&#39;tight&#39;, math.isclose(1.0, 1.0001, rel_tol=1e-9))\nprint(&#39;with_abs&#39;, math.isclose(0.0, 1e-12, abs_tol=1e-9))' explain='相对容差随量级缩放：差 1 对 1e9 恰好落在 1e-9 边界内为真；差 1e-4 对 1.0 远超默认 rel_tol 为假；接近零时相对容差失效，须靠 abs_tol。' />
 
-<Term word='int 的任意精度实现' text='Python 的 int 不会溢出，代价是位数越多运算越慢；float 用二进制近似十进制，0.1 + 0.2 != 0.3 不是 bug 而是表示法的必然' />
+<Quiz no='008-1' q='0.1 + 0.2 不等于 0.3 的根本原因是？' :options='["二进制浮点无法精确表示十分之一，二者是不同近似值", "Python 的加法有 bug", "float 精度只有 6 位", "0.3 被四舍五入过"]' answer="0" explain='0.1 与 0.2 在 IEEE 754 双精度里都是无限循环二进制的截断近似，相加后最近可表示值与 0.3 的近似值不同，属于表示法必然结果。' />
 
-<Callout type="warn" title="易错点" text='金额用 float 累加、或用 == 判断两个计算结果相等，是财务系统最典型的线上事故' />
+<Quiz no='008-2' q='比较两个浮点计算结果是否相等，正确做法是？' :options='["math.isclose(a, b)，必要时配 rel_tol 与 abs_tol", "用 == 前先 round 两位", "转成 str 比较", "用 is 比较"]' answer="0" explain='math.isclose 用相对与绝对容差的较大者判定，能容纳表示误差；round 只是换一种截断，== 与 is 都不比较近似程度。' />
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：int 的任意精度实现", "body": "**int 的任意精度实现**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：float 与 IEEE 754", "body": "**float 与 IEEE 754**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：浮点误差与 math.isclose", "body": "**浮点误差与 math.isclose**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：Decimal 与 Fraction", "body": "**Decimal 与 Fraction**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+<Quiz no='008-3' q='构造十进制金额，哪种写法正确？' :options='["Decimal(&#39;0.1&#39;)，用字符串避免带入 float 近似", "Decimal(0.1)", "float(&#39;0.1&#39;)", "Fraction(0.1)"]' answer="0" explain='Decimal(0.1) 会把 float 已有的二进制近似原样带进来；Decimal 只接受字符串或整数才是精确十进制值。' />
 
-<SequenceDiagram title='第 008 讲 · 调用时序' caption='从触发到收尾，标出可能失败的位置' :actors='["调用方", "处理逻辑", "依赖资源"]' :steps='[{"from": "调用方", "to": "处理逻辑", "label": "发起调用", "note": "int 的任意精度实现", "kind": "call"}, {"from": "处理逻辑", "to": "处理逻辑", "label": "校验状态", "note": "float 与 IEEE 7", "kind": "self"}, {"from": "处理逻辑", "to": "依赖资源", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "依赖资源", "to": "处理逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "处理逻辑", "to": "调用方", "label": "返回或失败", "note": "清理资源", "kind": "return"}]' />
+<Predict no='008-P' q='主示例里 print(&#39;float_sum&#39;, 0.1 + 0.2) 输出什么？' :options='["0.30000000000000004", "0.3", "0.3000000000000000"]' answer='0' output='0.30000000000000004' explain='0.1 与 0.2 在 IEEE 754 双精度里都只能存成近似值，相加后最近可表示值是 0.30000000000000004，与 0.3 对应的近似值不同。' />
 
-## 4. 工程实践
+<FillBlank no='008-F' tpl='from decimal  ___ Decimal' :answers='["import"]' hint='回想本讲关于 int 的任意精度实现 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 int 任意精度与 bool：不会溢出的代价 的落点。' />
 
-金融与计量用 Decimal 并把量化规则写进领域层；科学计算用 NumPy 的 dtype 明确精度与内存 **复数与位运算**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+<KnowledgeCard :points='["int 是变长 digit 数组、不溢出，位数越多越慢；3.11 起 int/str 互转默认限 4300 位", "float 是 IEEE 754 双精度（符号 1 位、指数 11 位、尾数 52 位），用 math.isclose 比较", "math.isclose 默认 rel_tol=1e-9、abs_tol=0.0；接近零时靠 abs_tol 兜底", "Decimal 用字符串构造加 context（prec=28、ROUND_HALF_EVEN）；金额显式 quantize 到分位", "Fraction 做精确有理数但分母膨胀；Decimal 与 float 混算会抛 TypeError", "bool 是 int 子类；金额用 Decimal、科学计算用明确 dtype 的 NumPy"]' :pitfalls='["用 float 累加金额、用 == 判断两个计算结果相等", "用 Decimal(0.1) 构造十进制数", "把 True 当普通整数收进金额统计，或把 Decimal 与 float 混算", "金额用 float 累加、或用 == 判断两个计算结果相等，是财务系统最典型的线上事故"]' summary='Python 的 int 不会溢出，代价是位数越多运算越慢；float 用二进制近似十进制，0.1 + 0.2 != 0.3 不是 bug 而是表示法的必然' />
 
-### 用命令行复现
+1. int 是变长 digit 数组、不溢出，位数越多越慢；3.11 起 int/str 互转默认限 4300 位
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+2. float 是 IEEE 754 双精度（符号 1 位、指数 11 位、尾数 52 位），用 math.isclose 比较
 
-```bash
-python -c "import math; print(0.1+0.2, math.isclose(0.1+0.2, 0.3))"
-```
-
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **int 的任意精度实现** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
-
-<Callout type="idea" title="生产提示" text='把「复数与位运算」写成检查项，并在 CI 里用最小用例守住它。' />
-
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
-
-## 动手练一练
-
-<Exercise title='动手：围绕「复数与位运算」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 int 的任意精度实现 与 复数与位运算 两个关注点，并说明你的取舍。' :hints='["回到 int 的任意精度实现 的规则", "留意易错点：金额用 float 累加、或用 == 判断两个计算结果相等，是财务系统最典型的线", "先让代码跑通，再补边界与异常分支"]' solution='import math\na, b = 0.1 + 0.2, 0.3\nprint(a == b, math.isclose(a, b))' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；金融与计量用 Decimal 并把量化规则写进领域层；科学计算用 NumPy 的 dtype 明确精度与内存' />
-
-## 随堂检测
-
-<Quiz no='008-1' q='在本讲讨论的「int 的任意精度实现」语境下，下面哪一种说法是准确的？' :options='["Python 的 int 不会溢出，代价是位数越多运算越慢；float 用二进制近似十进制，0.1 + 0.2 != 0.3 不是 bug 而是表示法的必然", "int 的任意精度实现 只影响代码的书写形式，不会改变任何运行时行为", "int 的任意精度实现 在所有 Python 实现与所有版本中表现完全一致", "只要用了 int 的任意精度实现，就不必再考虑 复数与位运算 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 复数与位运算 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
-
-<Predict no='008-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["0.30000000000000004\n0.3\n1267650600228229401496703205376", "0.30000000000000004\n（无更多输出）", "AttributeError: int 的任意精度实现 不可用"]' answer="0" output='0.30000000000000004\n0.3\n1267650600228229401496703205376' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
-
-<FillBlank no='008-3' tpl='from decimal ___Decimal' :answers='["import"]' hint='回想本讲关于 int 的任意精度实现 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
-
-## 一页纸速记
-
-<KnowledgeCard :points='["int 的任意精度实现：int 的任意精度实现", "float 与 IEEE 754：float 与 IEEE 754", "浮点误差与 math.isclose：浮点误差与 math.isclose", "Decimal 与 Fraction：Decimal 与 Fraction"]' :pitfalls='["金额用 float 累加、或用 == 判断两个计算结果相等，是财务系统最典型的线上事故", "忽略版本差异，把 复数与位运算 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：Python 的 int 不会溢出，代价是位数越多运算越慢；float 用二进制近似十进制，0.1 + 0.2 != 0.3 不是 bug 而是表示法的必然' />
-
-## 小结与下一讲
-
-1. int 的任意精度实现：int 的任意精度实现
-2. float 与 IEEE 754：float 与 IEEE 754
-3. 金融与计量用 Decimal 并把量化规则写进领域层；科学计算用 NumPy 的 dtype 明确精度与内存
+3. math.isclose 默认 rel_tol=1e-9、abs_tol=0.0；接近零时靠 abs_tol 兜底
 
 [下一讲：字符串与编码：Unicode、str / bytes 与转义](/foundation/strings)

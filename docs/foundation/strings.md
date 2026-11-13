@@ -7,128 +7,177 @@ description: 能定位并解决绝大多数乱码问题
 
 # 第 009 讲 · 字符串与编码：Unicode、str / bytes 与转义
 
-> str 是字符序列，bytes 是字节序列，二者之间必须显式编码/解码；Python 3 把这条边界画得很清楚，正是为了消灭 Python 2 时代的隐式转换。本讲的目标是「能定位并解决绝大多数乱码问题」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+数字刚算清，程序平日打交道的却更多是字符串与文本。偏偏文字更易出岔子：同一份中文配置换台机器就花了，表头还莫名多个看不见的前缀。毛病几乎都绕不开一个根：字符和字节被混成了一回事。
 
-## 这一讲你会得到什么
+这一讲就把边界画清。我们先从 Unicode 码点与编码讲起，立住 str 是字符序列、bytes 是字节序列、二者不能互转；再看 encode 与 decode 碰到非法字节怎么办、BOM 是什么；最后落在习惯上——源码、文件、HTTP 头、数据库都显式声明 UTF-8，转换只在边界做一次。有变量、类型与一点文件读写的印象就够；学完再遇乱码，你能顺着『字符还是字节』定位。
 
-<CheckList id='P009' title="本讲目标" :items='["能说清Unicode 码点与编码", "能说清str 与 bytes 的边界", "能说清encode / decode", "能说清UTF-8 与 BOM", "能说清raw 字符串与转义"]' />
 
-## 1. 先建立直觉
+## 报表首列名多了个看不见的字符：乱码从哪来
 
-**Unicode 码点与编码**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+一个服务在 macOS 上读用户上传的 CSV 一切正常，部署到 Windows 容器后中文列名全变乱码，日志里还夹着问号方块；排查发现代码里 `open(path)` 没写 encoding，依赖了平台默认编码，而两边默认编码并不一致。
 
-**str 与 bytes 的边界**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+另一处把 HTTP 响应体（bytes）和用户拼的字符串直接相加，得到 TypeError: can only concatenate str (not bytes) to str 这类报错；还有人把带 BOM 的文件用 utf-8 读进来，第一列字段名前面多了个看不见的字符，导致字典查键永远失败。
 
-**encode / decode**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+朴素解法是「到处 .decode('utf-8') 一下」或「把乱码字符 replace 掉」，前者会在已经解码的 str 上再抛 AttributeError，后者把数据悄悄改坏。
 
-<ConceptDiagram type='compare2' title='第 009 讲 · Unicode 码点与编码' labels='Unicode 码点与编码|str 与 bytes 的边界|encode / decode|UTF-8 与 BOM' caption='能定位并解决绝大多数乱码问题' />
+Python 3 把 str 与 bytes 的边界画得很清楚：str 是 Unicode 码点序列，bytes 是字节序列，二者之间必须显式编码与解码。本讲把码点、UTF-8 编码规则、BOM、错误处理与四处显式声明讲清，让乱码变成可定位的问题。
 
-上图用本讲的三个核心概念标出了主线：**Unicode 码点与编码 → str 与 bytes 的边界 → encode / decode**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 Unicode 码点与编码 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 第一行", "tone": "green"}, {"title": "深入边界", "desc": "厘清 str 与 bytes 的边界 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 多行字符串 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## 码点、编码与 str / bytes 的硬边界
 
-## 2. 语法与规则：把行为跑出来
+str 是 Unicode 码点的不可变序列，len('中文') 得 2 是码点数，ord('中') 得 20013（U+4E2D），`chr(20013)` 反查回字符；bytes 是 0 到 255 整数的不可变序列，len('中文'.encode('utf-8')) 得 6 是字节数。
 
-### 2.1 主示例
+二者之间只有两个方向：`str.encode(encoding)` 生成 bytes，`bytes.decode(encoding)` 生成 str，没有隐式转换。
 
-**Unicode 码点与编码**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+UTF-8 是变长编码：ASCII 字符占 1 字节，U+0080 到 U+07FF 占 2 字节，U+0800 到 U+FFFF 占 3 字节（汉字在此），U+10000 以上占 4 字节，'中'.encode('utf-8').`hex()` 得 e4b8ad 就是三字节。
 
-```python
-from pathlib import Path
-p = Path("data") / "report.txt"
-with p.open("w", encoding="utf-8") as f:
-    f.write("第一行" + chr(10))
-with p.open(encoding="utf-8") as f:
-    print(f.read().strip())
-```
+Python 3 明确禁止 str 与 bytes 拼接、比较或混写：'x' 加 b'y' 抛 TypeError，用 == 比较恒为 False 且不报错。`open()` 的文本模式负责在边界处解码，二进制模式 rb 则原样返回 bytes；混用是乱码与类型错误的共同来源。
 
-<OutputBox title="运行结果" output='第一行' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
-
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='from pathlib import Path\np = Path("data") / "report.txt"\nwith p.open("w", encoding="utf-8") as f:\n    f.write("第一行" + chr(10))\nwith p.open(encoding="utf-8") as f:\n    print(f.read().strip())' :notes='["pathlib 用 / 拼路径，跨平台安全", "open 显式指定 encoding，避免默认编码差异", "with 保证异常路径也会关闭文件", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 009 讲 · 字符串与编码：Unicode、str / bytes 与转义' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**str 与 bytes 的边界**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
+源码文件默认按 UTF-8 读（PEP 3120，3.0 起），可用首行编码声明覆盖，但工程上统一 UTF-8 更省心。raw 字符串前缀 r 让反斜杠不参与转义，适合写正则与路径；需要真实换行值时用 `chr(10)` 或多行字符串，不要在字面量里堆转义序列。
 
 ```python
-from contextlib import contextmanager
-
-@contextmanager
-def tag(name):
-    print("enter", name)
-    yield
-    print("exit", name)
-
-with tag("job"):
-    print("work")
+s = '中文'
+b = s.encode('utf-8')
+print('str_len', len(s))
+print('bytes_len', len(b))
+print('hex', b.hex())
+print('roundtrip', b.decode('utf-8') == s)
+print('codepoint', ord('中'))
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='enter job\nwork\nexit job' guess="true" />
+<OutputBox title='主示例运行结果' output='str_len 2\nbytes_len 6\nhex e4b8ade69687\nroundtrip True\ncodepoint 20013' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Compare :panels='[{"label": "主写法", "code": "from pathlib import Path\np = Path(\"data\") / \"report.txt\"\nwith p.open(\"w\", encoding=\"utf-8\") as f:\n    f.write(\"第一行\" + chr(10))\nwith p.open(encoding=\"utf-8\") as f:\n    print(f.read().strip())", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "from contextlib import contextmanager\n\n@contextmanager\ndef tag(name):\n    print(\"enter\", name)\n    yield\n    print(\"exit\", name)\n\nwith tag(\"job\"):\n    print(\"work\")", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台时突」' />
+<LineByLine code='s = &#39;中文&#39;\nb = s.encode(&#39;utf-8&#39;)\nprint(&#39;str_len&#39;, len(s))\nprint(&#39;bytes_len&#39;, len(b))\nprint(&#39;hex&#39;, b.hex())\nprint(&#39;roundtrip&#39;, b.decode(&#39;utf-8&#39;) == s)\nprint(&#39;codepoint&#39;, ord(&#39;中&#39;))' :notes='["s 是 str，长度按 Unicode 码点计", "encode 把码点序列映射为 UTF-8 字节序列，得到 bytes", "两个汉字对应两个码点，len 为 2", "UTF-8 里每个汉字占 3 字节，故字节数为 6", "hex 以十六进制显示原始字节，便于核对编码规则", "decode 把字节按同一编码还原，与原始 str 相等", "ord 返回 &#39;中&#39; 的码点 20013，即 U+4E2D"]' title='第 009 讲 · 字符串与编码：Unicode、str / bytes 与转义' />
 
-## 3. 深入一步：规则与边界
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-**encode / decode**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+**str 与 bytes 的边界**
 
-**UTF-8 与 BOM**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+| 操作 | 输入 | 输出 | 出错信号 |
+| --- | --- | --- | --- |
+| s.encode('utf-8') | str | bytes | 编码到 ascii 且含汉字时抛 UnicodeEncodeError |
+| b.decode('utf-8') | bytes | str | 非法字节抛 UnicodeDecodeError |
+| len(s) | str | 码点数 | '中文' 为 2 |
+| len(s.encode('utf-8')) | 字节数 | 整数 | '中文' 为 6 |
+| str 加 bytes | 混合类型 | 报错 | TypeError，无隐式转换 |
 
-**raw 字符串与转义**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+<ConceptDiagram type='compare2' title='第 009 讲 · 码点、编码与 str / bytes 的硬边界' labels='码点、编码与 str / bytes 的硬边|encode / decode 的错误处理与|四处显式声明：把乱码挡在边界之外' caption='能定位并解决绝大多数乱码问题' />
 
-| 知识点 | 规则要点 | 常见误用 |
-| --- | --- | --- |
-| Unicode 码点与编码 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台 |
-| str 与 bytes 的边界 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台 |
-| encode / decode | 这里的关键词是「什么时候」和「代价是什么」 | 用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台 |
-| UTF-8 与 BOM | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台 |
-| raw 字符串与转义 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台 |
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Term word='Unicode 码点与编码' text='str 是字符序列，bytes 是字节序列，二者之间必须显式编码/解码；Python 3 把这条边界画得很清楚，正是为了消灭 Python 2 时代的隐式转换' />
 
-<Callout type="warn" title="易错点" text='用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台时突然乱码' />
+## encode / decode 的错误处理与 BOM
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：Unicode 码点与编码", "body": "**Unicode 码点与编码**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：str 与 bytes 的边界", "body": "**str 与 bytes 的边界**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：encode / decode", "body": "**encode / decode**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：UTF-8 与 BOM", "body": "**UTF-8 与 BOM**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+decode 的默认 errors 是 strict，遇到非法字节序列抛 UnicodeDecodeError（含 start、end、reason）；可改成 ignore 丢弃非法字节、replace 换成 U+FFFD、backslashreplace 保留成转义文本。
 
-## 4. 工程实践
+encode 同样有 errors：中文编码到 ascii 会用 strict 抛 UnicodeEncodeError，xmlcharrefreplace 能转成字符引用。
 
-工程上统一 UTF-8：源码、文件 IO、HTTP 头、数据库连接四处都要显式声明，边界处做一次转换 **多行字符串**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+BOM（字节顺序标记）是 U+FEFF，用 `codecs.BOM_UTF8.hex()` 可核对为 efbbbf；
 
-### 用命令行复现
+UTF-8 本身无字节序问题，但有些 Windows 工具会写 BOM，用普通 utf-8 解码会把 U+FEFF 当成一个真实字符留在串首，导致首列名多一个不可见前缀，此时应用 utf-8-sig 自动剥离。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+UTF-16 与 UTF-32 必须区分大小端：'A'.encode('utf-16-le').`hex()` 是 4100，而 utf-16 会在开头加 ff fe 的 BOM。codecs 模块暴露了 BOM_UTF8、BOM_UTF16_LE 等常量便于核对；
 
-```bash
-python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
+`sys.getdefaultencoding()` 是 str 内部转换用的编码（3.x 固定 utf-8），`sys.getfilesystemencoding()` 是文件名编码（macOS 与多数 Linux 是 utf-8，Windows 历史上是 mbcs），二者不是一回事，别拿前者去猜文件内容的编码。
+
+```python
+import codecs
+raw = bytes([0xe4, 0xb8, 0xad])
+print('decoded', raw.decode('utf-8'))
+print('encoded_len', len('中'.encode('utf-8')))
+try:
+    bytes([0xff]).decode('utf-8')
+except UnicodeDecodeError as e:
+    print('strict_error', type(e).__name__)
+print('ignore_len', len(bytes([0xff]).decode('utf-8', errors='ignore')))
+print('bom', codecs.BOM_UTF8.hex())
+print('utf16_hex', 'A'.encode('utf-16-le').hex())
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **Unicode 码点与编码** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<OutputBox title='对照写法：先自己猜，再点开' output='decoded 中\nencoded_len 3\nstrict_error UnicodeDecodeError\nignore_len 0\nbom efbbbf\nutf16_hex 4100' guess="true" />
 
-<Callout type="idea" title="生产提示" text='把「多行字符串」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## decode 的 errors 策略：replace 为什么不可逆
 
-## 动手练一练
+乱码几乎都发生在系统边界，工程上要在四处都写明 UTF-8：源码文件（保存为 UTF-8，必要时加编码声明）、文件 IO（open(path, encoding='utf-8')，绝不要省略让平台默认值决定）、HTTP 头（Content-Type 带 `charset=utf-8`，响应体 encode 与请求体 decode 成对）、数据库连接（连接串或驱动参数指定 charset，如 MySQL 的 utf8mb4，注意 utf8mb3 存不下四字节的表情符号）。
 
-<Exercise title='动手：围绕「多行字符串」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 Unicode 码点与编码 与 多行字符串 两个关注点，并说明你的取舍。' :hints='["回到 Unicode 码点与编码 的规则", "留意易错点：用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台时突然乱码", "先让代码跑通，再补边界与异常分支"]' solution='from contextlib import contextmanager\n\n@contextmanager\ndef tag(name):\n    print("enter", name)\n    yield\n    print("exit", name)\n\nwith tag("job"):\n    print("work")' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；工程上统一 UTF-8：源码、文件 IO、HTTP 头、数据库连接四处都要显式声明，边界处做一次转换' />
+每处只做一次转换：读入时 decode 成 str，内部全程用 str 处理，写出时再 encode 成 bytes；在两个边界之间反复编解码既慢又容易把已替换的字符二次破坏。
 
-## 随堂检测
+诊断顺序也有章法：先确认原始字节（用 .`hex()` 或 `repr(bytes)` 看到底是什么），再确认声明的编码，最后确认是否被 BOM、errors='replace' 或双重解码改过；直接对乱码字符串再 decode 会在 str 上抛 AttributeError。
 
-<Quiz no='009-1' q='在本讲讨论的「Unicode 码点与编码」语境下，下面哪一种说法是准确的？' :options='["str 是字符序列，bytes 是字节序列，二者之间必须显式编码/解码；Python 3 把这条边界画得很清楚，正是为了消灭 Python 2 时代的隐式转", "Unicode 码点与编码 只影响代码的书写形式，不会改变任何运行时行为", "Unicode 码点与编码 在所有 Python 实现与所有版本中表现完全一致", "只要用了 Unicode 码点与编码，就不必再考虑 多行字符串 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 多行字符串 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+日志里打印 bytes 的十六进制比打印乱码字符有用得多，因为前者保留了原始证据。
 
-<Predict no='009-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["第一行", "第一行\n（无更多输出）", "AttributeError: Unicode 码点与编码 不可用"]' answer="0" output='第一行' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
 
-<FillBlank no='009-3' tpl='from pathlib ___Path' :answers='["import"]' hint='回想本讲关于 Unicode 码点与编码 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+## 四处显式声明：把乱码挡在边界之外
 
-## 一页纸速记
+CPython 内部用 PEP 393 的灵活字符串表示：一个 str 对象按最大码点选择 1、2 或 4 字节的定宽存储（Latin-1、UCS-2、UCS-4），因此索引是 `O(1)` 且不含变长编码的歧义；bytes 则是简单的 PyBytesObject，存一段 char 数组加长度。
 
-<KnowledgeCard :points='["Unicode 码点与编码：Unicode 码点与编码", "str 与 bytes 的边界：str 与 bytes 的边界", "encode / decode：encode / decode", "UTF-8 与 BOM：UTF-8 与 BOM"]' :pitfalls='["用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台时突然乱码", "忽略版本差异，把 多行字符串 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：str 是字符序列，bytes 是字节序列，二者之间必须显式编码/解码；Python 3 把这条边界画得很清楚，正是为了消灭 Python 2 时代的隐式转换' />
+编码与解码的本质是在「码点序列」与「字节序列」之间按某个 codec 做映射，UTF-8 用首字节的高位模式声明后续字节数（110xxxxx 表示 2 字节、1110xxxx 表示 3 字节），解码器据此还原码点；
 
-## 小结与下一讲
+非法序列（如孤立的 0xff）无法匹配任何模式，于是 strict 模式抛 UnicodeDecodeError 并给出出错区间。BOM 只是 U+FEFF 这个码点在流开头的约定，UTF-16 与 UTF-32 靠它判断大小端，UTF-8 不需要但常被写入，故有 utf-8-sig 这个专门剥离它的 codec。
 
-1. Unicode 码点与编码：Unicode 码点与编码
-2. str 与 bytes 的边界：str 与 bytes 的边界
-3. 工程上统一 UTF-8：源码、文件 IO、HTTP 头、数据库连接四处都要显式声明，边界处做一次转换
+`open()` 的文本模式在 C 层包了一个 IncrementalDecoder，逐块读入字节并增量解码，写入时用 IncrementalEncoder 反向处理。理解「内部定宽码点、边界才做变长字节映射」，就知道为什么不能在 str 上调 decode、为什么省略 encoding 会跨平台翻车。
+
+
+## 跨系统 CSV：入口解码一次、出口编码一次
+
+一批用户上传的 CSV 来自不同系统：有的带 UTF-8 BOM，有的用 ASCII 兼容编码，个别文件还混入非法字节。直接 read_text 要么首列多出不可见字符，要么整批抛异常。
+
+下面这段给出边界清晰的清洗流程：先以二进制拿到原始 bytes 并留十六进制摘要，按声明的编码在入口解码一次（带 BOM 的用 utf-8-sig 自动剥离），内部全程用 str 处理，写出时再编码一次并验证往返无损。重点是每处只做一次转换，并把原始字节摘要打进日志，便于事后回溯而不是靠猜编码。
+
+真实系统还应为解码失败的文件单独记录字节片段并跳过，不让一条脏数据中断整批。
+
+```python
+import codecs
+
+def decode_once(blob, enc):
+    return blob.decode(enc)
+
+def summarize(blob):
+    return blob[:6].hex()
+
+def encode_once(text):
+    return text.encode('utf-8')
+
+bom_blob = codecs.BOM_UTF8 + 'name,city'.encode('utf-8')
+plain_blob = 'name,city'.encode('ascii')
+for enc, blob in [('utf-8-sig', bom_blob), ('ascii', plain_blob)]:
+    text = decode_once(blob, enc)
+    out = encode_once(text)
+    print('hex', summarize(blob))
+    print('first', text.split(',')[0])
+    print('clean', text == 'name,city')
+    print('roundtrip', out.decode('utf-8') == text)
+```
+
+<Callout type="idea" title='落地提示' text='工程上统一 UTF-8：源码、文件 IO、HTTP 头、数据库连接四处都要显式声明，边界处做一次转换' />
+
+
+## 编码错因速查
+
+
+## 边界处只做一次转换：练习、自测与速记
+
+<Exercise title='基础：验证 str 与 bytes 的长度差' task='打印 len(&#39;中文&#39;)、len(&#39;中文&#39;.encode(&#39;utf-8&#39;))、&#39;中&#39;.encode(&#39;utf-8&#39;).hex()、ord(&#39;中&#39;)，并解释前两者为何相差三倍。' solution='s = &#39;中文&#39;\nprint(&#39;chars&#39;, len(s))\nprint(&#39;bytes&#39;, len(s.encode(&#39;utf-8&#39;)))\nprint(&#39;hex&#39;, &#39;中&#39;.encode(&#39;utf-8&#39;).hex())\nprint(&#39;codepoint&#39;, ord(&#39;中&#39;))' explain='str 长度是码点数 2，UTF-8 里每个汉字占 3 字节故字节数为 6；&#39;中&#39; 的编码是 e4b8ad，码点是 20013（U+4E2D）。' />
+
+<Exercise title='进阶：用 utf-8-sig 处理 BOM' task='构造带 BOM 的字节，分别用 utf-8 与 utf-8-sig 解码，打印首字符的码点，说明普通 utf-8 为何让首列查键失败。' solution='import codecs\nblob = codecs.BOM_UTF8 + &#39;name&#39;.encode(&#39;utf-8&#39;)\na = blob.decode(&#39;utf-8&#39;)\nb = blob.decode(&#39;utf-8-sig&#39;)\nprint(&#39;plain_first_ord&#39;, ord(a[0]))\nprint(&#39;sig_first&#39;, b[0])\nprint(&#39;bom_hex&#39;, codecs.BOM_UTF8.hex())' explain='普通 utf-8 把 U+FEFF 当真实字符留在串首，ord 为 65279，导致首字段名变成带不可见前缀的键；utf-8-sig 剥离它，首字符回到 n。' />
+
+<Quiz no='009-1' q='&#39;中文&#39;.encode(&#39;utf-8&#39;) 的长度是？' :options='["6，汉字在 UTF-8 里各占 3 字节", "2，等于码点数", "4，固定每字 2 字节", "9，含 BOM"]' answer="0" explain='U+0800 到 U+FFFF 的码点在 UTF-8 里用 3 字节表示，两个汉字共 6 字节；UTF-8 编码本身不附加 BOM。' />
+
+<Quiz no='009-2' q='读带 UTF-8 BOM 的文件，正确的 encoding 是？' :options='["utf-8-sig，自动剥离串首 U+FEFF", "utf-8，效果完全相同", "ascii", "latin-1"]' answer="0" explain='普通 utf-8 会把 U+FEFF 解码成一个真实字符留在串首；utf-8-sig 是专门剥离 BOM 的 codec，适合 Excel 等工具导出的文件。' />
+
+<Quiz no='009-3' q='关于 str 与 bytes，哪项描述准确？' :options='["二者必须显式 encode/decode，拼接会抛 TypeError 且无隐式转换", "Python 3 会自动把 bytes 转成 str", "对 str 调 decode 可修复乱码", "== 比较会先尝试自动解码"]' answer="0" explain='Python 3 取消了 Python 2 时代的隐式转换：str 与 bytes 拼接抛 TypeError，== 恒为 False；str 没有 decode 方法，转换只在边界显式进行。' />
+
+<Predict no='009-P' q='主示例里 print(&#39;hex&#39;, b.hex())（b = &#39;中文&#39;.encode(&#39;utf-8&#39;)）输出什么？' :options='["e4b8ade69687", "4e2d6587", "efbbbfe4b8ade69687"]' answer='0' output='e4b8ade69687' explain='两个汉字各占 3 字节：&#39;中&#39; 为 e4b8ad、&#39;文&#39; 为 e69687，拼成 12 个十六进制字符；UTF-8 编码不自带 BOM，故没有 efbbbf 前缀。' />
+
+<FillBlank no='009-F' tpl='print(&#39;roundtrip&#39;, b.decode(&#39;utf-8&#39;) ___ s)' :answers='["=="]' hint='回想本讲关于 Unicode 码点与编码 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 码点、编码与 str / bytes 的硬边界 的落点。' />
+
+<KnowledgeCard :points='["str 是 Unicode 码点序列、bytes 是 0 到 255 字节序列，二者必须显式 encode/decode", "UTF-8 变长：ASCII 1 字节、汉字 3 字节；&#39;中&#39; 编码 e4b8ad，ord(&#39;中&#39;) 为 20013", "BOM 是 U+FEFF，UTF-8 的 BOM 字节 efbbbf；带 BOM 文件用 utf-8-sig 解码自动剥离", "decode 的 errors：strict 抛 UnicodeDecodeError，ignore 与 replace 会静默或不可逆地改数据", "open 文本模式在边界增量解码，省略 encoding 会依赖平台默认编码导致跨平台乱码", "四处显式 UTF-8：源码、文件 IO、HTTP 头、数据库连接；每处只做一次转换"]' :pitfalls='["open 不写 encoding，或把 str 与 bytes 直接相加", "用普通 utf-8 读带 BOM 的文件", "对已经是 str 的乱码再 decode，或用 errors=&#39;replace&#39; 兜底", "用 str 去拼接 bytes、或用系统默认编码打开文件，会在跨平台时突然乱码"]' summary='str 是字符序列，bytes 是字节序列，二者之间必须显式编码/解码；Python 3 把这条边界画得很清楚，正是为了消灭 Python 2 时代的隐式转换' />
+
+1. str 是 Unicode 码点序列、bytes 是 0 到 255 字节序列，二者必须显式 encode/decode
+
+2. UTF-8 变长：ASCII 1 字节、汉字 3 字节；'中' 编码 e4b8ad，ord('中') 为 20013
+
+3. BOM 是 U+FEFF，UTF-8 的 BOM 字节 efbbbf；带 BOM 文件用 utf-8-sig 解码自动剥离
 
 [下一讲：字符串操作：切片、f-string 与常用方法](/foundation/string-ops)

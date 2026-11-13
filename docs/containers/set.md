@@ -7,120 +7,212 @@ description: 用集合把成员判断与去重做到 O(1)
 
 # 第 023 讲 · set / frozenset：哈希、集合运算与去重
 
-> 集合不保证顺序，且字符串哈希带随机盐，跨进程遍历顺序可能不同；这不是 bug，是安全设计。本讲的目标是「用集合把成员判断与去重做到 O(1)」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+有时我们并不关心次序，只想知道“在不在”：编号见过没有、两组标签有哪些交集。上一讲把按名字存取讲透了，这一讲看把键单独拿出来用会怎样——判重和去重的成本。
 
-## 这一讲你会得到什么
+一个日志脚本拿列表配 in 过滤十万行重复请求，跑几分钟没完；换成集合几秒就结束。可又有人抱怨顺序乱了，不同进程跑出来还不一样。我们先看集合的哈希实现与字典同源，摸清增删与并交差的边界；再讲 frozenset 为何可哈希、哈希随机化为何让顺序不可依赖；最后算一笔判重去重的成本账。需要你熟悉字典、哈希与成员判断。学完你能把反复扫描换成一次规整，也知道哪些场合不能拿 set 直接当结果交出去。
 
-<CheckList id='P023' title="本讲目标" :items='["能说清集合的哈希实现", "能说清增删与运算", "能说清frozenset 可哈希", "能说清去重与保序", "能说清集合推导式"]' />
 
-## 1. 先建立直觉
+## 对 list 反复用 in 判重，数据量一上来就卡死
 
-**集合的哈希实现**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+一个日志去重脚本用 seen = [] 配合 if rid in seen 过滤 10 万行重复请求，跑了几分钟还没结束；把 seen 换成 set 后同样的输入几秒就跑完。原因是 list 的 in 是线性扫描，n 次判重累计 `O(n²)`，而 set 的成员判断平均 `O(1)`。
 
-**增删与运算**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+但换过去又冒出新问题：有人直接把 `set(seq)` 的结果写进报告，抱怨顺序乱了，甚至不同进程跑出的顺序不一样；有人想把一组标签当 dict 的键，用可变 set 时抛 TypeError: unhashable type；
 
-**frozenset 可哈希**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+还有人写 empty = &#123;&#125; 以为得到空集合，结果拿了个 dict，`add()` 直接 AttributeError。这些现象都指向同一套机制：set 是与 dict 同源的哈希表，顺序不由插入决定，且只有不可变版本才可哈希。本讲把集合运算、frozenset、哈希随机化与保序去重讲清楚。
 
-<ConceptDiagram type='hub4' title='第 023 讲 · 集合的哈希实现' labels='集合的哈希实现|增删与运算|frozenset 可哈希|去重与保序' caption='用集合把成员判断与去重做到 O(1)' />
 
-上图用本讲的三个核心概念标出了主线：**集合的哈希实现 → 增删与运算 → frozenset 可哈希**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+## 哈希表实现与集合运算：O(1) 的边界
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 集合的哈希实现 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 {3} {1, 2, 3, 4} {1, 2}", "tone": "green"}, {"title": "深入边界", "desc": "厘清 增删与运算 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 哈希随机化 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+CPython 的 set 与 dict 同源，都是开放寻址哈希表，只是表项只存 (hash, key) 而不存 value。add / remove / in 平均 `O(1)`、最坏 `O(n)`（哈希冲突严重时退化为线性探测），负载因子超过约 2/3 就扩容并 rehash；删除同样写墓碑标记、扩容时才清理。
 
-## 2. 语法与规则：把行为跑出来
+运算符与方法是两套等价写法：| / union 并集、& / intersection 交集、- / difference 差集（在左不在右）、^ / symmetric_difference 对称差；原地版本 |=、&=、-=、^= 对应 update、intersection_update 等，会直接改左操作数。
 
-### 2.1 主示例
+判断关系用 <= 子集、< 真子集、>= 超集、> 真超集，以及 `isdisjoint()` 判断无公共元素。增删上 `add(x)` 新增、`remove(x)` 缺失抛 KeyError、`discard(x)` 缺失静默忽略、`pop()` 返回并移除任意一个元素（空集合抛 KeyError）、`clear()` 清空。
 
-**集合的哈希实现**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+空集合必须写 `set()`，因为 &#123;&#125; 是空 dict；集合推导式 &#123;expr for x in iterable&#125; 与字面量 &#123;1, 2, 3&#125; 都受'元素必须可哈希'约束。
 
 ```python
-s1 = {1, 2, 3}
-s2 = {3, 4}
-print(s1 & s2, s1 | s2, s1 - s2)
-print(dict.fromkeys(["b", "a", "b"]))
+s = {1, 2, 3}
+s.add(4)
+s.discard(10)
+print('after add', sorted(s), len(s))
+try:
+    s.remove(10)
+except KeyError as e:
+    print('remove missing', type(e).__name__)
+
+a = {1, 2, 3}
+b = {3, 4, 5}
+print('union', sorted(a | b))
+print('intersection', sorted(a & b))
+print('difference', sorted(a - b))
+print('symmetric', sorted(a ^ b))
+print('subset', {1, 2} <= a, {1, 2} < a, a.isdisjoint({9}))
+
+squares = {x * x for x in range(6)}
+print('comprehension', sorted(squares))
+
+fs = frozenset([1, 2, 3])
+print('frozenset hashable', {fs: 'value'}[frozenset([3, 2, 1])])
+print('frozenset ops', sorted(fs | {4}), type(fs | {4}).__name__)
+
+seq = ['b', 'a', 'b', 'c', 'a']
+print('set dedup', sorted(set(seq)))
+print('ordered dedup', list(dict.fromkeys(seq)))
+print('empty set is dict?', isinstance({}, dict))
 ```
 
-<OutputBox title="运行结果" output='{3} {1, 2, 3, 4} {1, 2}\n{&#39;b&#39;: None, &#39;a&#39;: None}' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+<OutputBox title='主示例运行结果' output='after add [1, 2, 3, 4] 4\nremove missing KeyError\nunion [1, 2, 3, 4, 5]\nintersection [3]\ndifference [1, 2]\nsymmetric [1, 2, 4, 5]\nsubset True True True\ncomprehension [0, 1, 4, 9, 16, 25]\nfrozenset hashable value\nfrozenset ops [1, 2, 3, 4] frozenset\nset dedup [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nordered dedup [&#39;b&#39;, &#39;a&#39;, &#39;c&#39;]\nempty set is dict? True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-上面每一行在做什么，点开逐行看：
+<LineByLine code='s = {1, 2, 3}\ns.add(4)\ns.discard(10)\nprint(&#39;after add&#39;, sorted(s), len(s))\ntry:\n    s.remove(10)\nexcept KeyError as e:\n    print(&#39;remove missing&#39;, type(e).__name__)\n\na = {1, 2, 3}\nb = {3, 4, 5}\nprint(&#39;union&#39;, sorted(a | b))\nprint(&#39;intersection&#39;, sorted(a &amp; b))\nprint(&#39;difference&#39;, sorted(a - b))\nprint(&#39;symmetric&#39;, sorted(a ^ b))\nprint(&#39;subset&#39;, {1, 2} &lt;= a, {1, 2} &lt; a, a.isdisjoint({9}))\n\nsquares = {x * x for x in range(6)}\nprint(&#39;comprehension&#39;, sorted(squares))\n\nfs = frozenset([1, 2, 3])\nprint(&#39;frozenset hashable&#39;, {fs: &#39;value&#39;}[frozenset([3, 2, 1])])\nprint(&#39;frozenset ops&#39;, sorted(fs | {4}), type(fs | {4}).__name__)\n\nseq = [&#39;b&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;a&#39;]\nprint(&#39;set dedup&#39;, sorted(set(seq)))\nprint(&#39;ordered dedup&#39;, list(dict.fromkeys(seq)))\nprint(&#39;empty set is dict?&#39;, isinstance({}, dict))' :notes='["字面量构造一个整数集合", "add 平均 O(1) 新增元素", "discard 对缺失元素静默忽略，不抛异常", "用 sorted 输出以消除集合顺序的不确定性", "remove 对缺失元素会抛异常", "尝试删除不存在的 10", "捕获 KeyError，对比 discard 的行为", "构造两个有交集的集合用于演示四种运算", "并集 |，用 sorted 得到可复现结果", "交集 &amp;，只保留两集合共有的 3", "差集 -，保留在 a 但不在 b 的元素", "对称差 ^，保留只出现在其中一侧的元素", "子集、真子集与 isdisjoint 三个关系判断", "集合推导式生成 0 到 5 的平方集合", "sorted 后输出，避免依赖哈希顺序", "frozenset 不可变且可哈希", "用它作 dict 键，顺序不同的同一组合命中同一值", "frozenset 与 set 做运算结果仍是 frozenset", "含重复元素的序列，用于对比两种去重", "set 去重不保序，故用 sorted 得到字母序", "dict.fromkeys 按首次出现顺序保序去重", "{} 是空 dict，空集合必须显式写 set()", "{} 是空 dict，空集合必须写 set()；s.pop() 返回任意元素，空集合抛 KeyError", "保序去重写 list(dict.fromkeys(seq))；高频判重先规整成 set，别对 list 反复用 in"]' title='第 023 讲 · set / frozenset：哈希、集合运算与去重' />
 
-<LineByLine code='s1 = {1, 2, 3}\ns2 = {3, 4}\nprint(s1 &amp; s2, s1 | s2, s1 - s2)\nprint(dict.fromkeys(["b", "a", "b"]))' :notes='["集合运算直接对应数学里的交并差", "成员判断平均 O(1)，远快于列表线性扫描", "dict.fromkeys 去重且保留插入顺序", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 023 讲 · set / frozenset：哈希、集合运算与去重' />
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**增删与运算**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
+<ConceptDiagram type='hub4' title='第 023 讲 · 哈希表实现与集合运算：O(1) 的边界' labels='哈希表实现与集合运算：O(1) 的边界|frozenset、哈希随机化与保序去重|选型：判重、去重、成员判断的成本账' caption='用集合把成员判断与去重做到 O(1)' />
 
-### 2.2 对照写法
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+## 集合运算对照
+
+**集合运算对照**
+
+| 运算符 | 等价方法 | 含义 | 备注 |
+| --- | --- | --- | --- |
+| a \| b | a.union(b) | 并集 | frozenset 参与时结果为 frozenset |
+| a & b | a.intersection(b) | 交集 | 只保留两侧共有元素 |
+| a - b | a.difference(b) | 差集 | 在 a 但不在 b |
+| a ^ b | a.symmetric_difference(b) | 对称差 | 只出现在一侧 |
+| <= | a.issubset(b) | 子集判断 | < 为真子集 |
+| isdisjoint | a.isdisjoint(b) | 无公共元素 | 返回 bool，不构造新集合 |
+
+
+## frozenset、哈希随机化与保序去重
+
+set 是可变对象所以不可哈希，不能作 dict 键或塞进另一个 set；
+
+`frozenset(iterable)` 把表冻结后允许求 hash，于是能表达'顺序无关的一组标签'这类键：frozenset(['a','b']) 与 frozenset(['b','a']) 相等且哈希相同，命中同一条规则；
+
+它与 set 做 | & - ^ 时结果仍是 frozenset。顺序不保证是哈希表结构的直接后果：遍历按表槽位走，而 str / bytes 的哈希从 3.3 起默认带 PYTHONHASHSEED 随机盐（防哈希碰撞攻击），同一份字符串集合在不同进程里遍历顺序可能不同；
+
+整数哈希等于自身（-1 被保留作错误码，故映射为 -2），纯整数集合看起来顺序稳定，但仍不该依赖它，输出前一律 sorted 或按业务字段排序。去重有两条路：`list(set(seq)`) 是 `O(n)` 但不保序；
+
+`list(dict.fromkeys(seq)`) 借助 3.7 起 dict 的插入顺序，按首次出现保序去重，是报表与流水线的首选。
+
+把'顺序依赖'写进代码前，先确认用的是哪一种结构。
 
 ```python
-frozen = frozenset([1, 2])
-print({frozen: "ok"}[frozenset([2, 1])])
+from time import perf_counter
+
+data = list(range(4000))
+probes = list(range(4000))
+def bench(seq):
+    t0 = perf_counter()
+    for x in probes:
+        x in seq
+    return perf_counter() - t0
+t_list = bench(data)
+t_set = bench(set(data))
+print('set much faster than list', t_list > t_set * 5)
+
+s = set('abc')
+print('pop returns arbitrary', isinstance(s.pop(), str), len(s))
+s2 = {1, 2, 3}
+s2 |= {3, 4}
+print('in-place union', sorted(s2))
+print('int hash stable', hash(7) == 7, hash(-1) == -2)
+print('str hash is int', isinstance(hash('python'), int))
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='ok' guess="true" />
+<OutputBox title='对照写法：先自己猜，再点开' output='set much faster than list True\npop returns arbitrary True 2\nin-place union [1, 2, 3, 4]\nint hash stable True True\nstr hash is int True' guess="true" />
 
-<Compare :panels='[{"label": "主写法", "code": "s1 = {1, 2, 3}\ns2 = {3, 4}\nprint(s1 &amp; s2, s1 | s2, s1 - s2)\nprint(dict.fromkeys([\"b\", \"a\", \"b\"]))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "frozen = frozenset([1, 2])\nprint({frozen: \"ok\"}[frozenset([2, 1])])", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据一上」' />
 
-## 3. 深入一步：规则与边界
+### 增删方法与失效信号
 
-**frozenset 可哈希**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
 
-**去重与保序**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+## 去重与哈希随机化的实测
 
-**集合推导式**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
 
-| 知识点 | 规则要点 | 常见误用 |
-| --- | --- | --- |
-| 集合的哈希实现 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据 |
-| 增删与运算 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据 |
-| frozenset 可哈希 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据 |
-| 去重与保序 | 这里的关键词是「什么时候」和「代价是什么」 | 对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据 |
-| 集合推导式 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据 |
+## 选型：判重、去重、成员判断的成本账
 
-<Term word='集合的哈希实现' text='集合不保证顺序，且字符串哈希带随机盐，跨进程遍历顺序可能不同；这不是 bug，是安全设计' />
+选容器前先算操作分布。判断某个值是否在集合里，set 平均 `O(1)`、list 是 `O(n)`，因此高频判重必须先把数据规整成 set 或 dict，绝不能对 list 反复用 in；一次判重的差距不明显，n 次判重就是 `O(n²)` 与 `O(n)` 的量级差。
 
-<Callout type="warn" title="易错点" text='对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据一上来就卡死' />
+需要去重又不关心顺序时用 `set(seq)`，需要保序时用 `dict.fromkeys`；需要把一组值当作不可变键时用 frozenset；需要集合代数（并交差）时直接用运算符而不是手写双层循环。还要注意几处边界：`s.pop()` 的返回值是任意的，不能用来实现'取最小'；
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：集合的哈希实现", "body": "**集合的哈希实现**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：增删与运算", "body": "**增删与运算**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：frozenset 可哈希", "body": "**frozenset 可哈希**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：去重与保序", "body": "**去重与保序**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+remove 与 discard 对缺失元素的行为不同，清理可选元素用后者；遍历 set 时增删会与 dict 一样抛 RuntimeError，应遍历副本。哈希随机化是安全设计而非 bug，跨进程的顺序差异要靠 sorted 消除，不能靠固定 PYTHONHASHSEED 来掩盖（那会重新暴露哈希碰撞攻击面）。
 
-<SequenceDiagram title='第 023 讲 · 调用时序' caption='从触发到收尾，标出可能失败的位置' :actors='["调用方", "处理逻辑", "依赖资源"]' :steps='[{"from": "调用方", "to": "处理逻辑", "label": "发起调用", "note": "集合的哈希实现", "kind": "call"}, {"from": "处理逻辑", "to": "处理逻辑", "label": "校验状态", "note": "增删与运算", "kind": "self"}, {"from": "处理逻辑", "to": "依赖资源", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "依赖资源", "to": "处理逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "处理逻辑", "to": "调用方", "label": "返回或失败", "note": "清理资源", "kind": "return"}]' />
+set 在 CPython 里是与 dict 同源的哈希表：表项只存 (hash, key) 而不存 value，查找时对元素求 hash、用 mask 取模定位槽位，冲突时按扰动序列开放寻址探测，因此 add / remove / in 平均 `O(1)`、最坏 `O(n)`，负载因子超过约 2/3 就扩容并 rehash。
 
-## 4. 工程实践
+删除同样写墓碑标记而不是立即压缩，扩容时才清理。元素必须可哈希，set 本身是可变对象所以不可哈希，frozenset 则把表冻结并允许求 hash，能作 dict 键或嵌套进另一个 set。
 
-需要保序去重时用 dict.fromkeys；需要可哈希集合做键时用 frozenset **哈希随机化**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+顺序不保证是这套结构的直接后果：遍历按表槽位顺序走，而 str / bytes 的哈希从 3.3 起默认带 PYTHONHASHSEED 随机盐（防哈希碰撞攻击），同一份字符串集合在不同进程里遍历顺序可能不同；整数哈希等于自身（-1 被保留作错误码故映射为 -2），纯整数集合看起来顺序稳定但仍不该依赖它。
 
-### 用命令行复现
+`dict.fromkeys` 能保序去重，是因为 3.7 起 dict 按插入顺序遍历，它把首次出现编码成了键顺序，这与 set 的去重语义正好互补。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
 
-```bash
-python -c "from collections import Counter; print(Counter('a b a'.split()))"
+### 保序去重用 dict.fromkeys
+
+
+## 日志去重与标签过滤：set 判重、frozenset 规则键与保序输出
+
+一个日志分析器要在大量记录里过滤掉重复的请求 ID，并按首次出现顺序输出，同时把标签组合当作规则缓存的键。直接写成若 rid 不在 seen_list 就追加会退化成 `O(n²)`；正确做法是维护一个 set 做 `O(1)` 判重，再用一个保序列表记录首次出现的 ID。
+
+规则缓存的键是一组标签，用 `frozenset(labels)` 表达顺序无关、可哈希的语义，这样不同顺序的同一组标签能命中同一条规则。
+
+最后用集合运算求同时带 a 与 b、带 a 不带 b 的请求，并用 sorted 得到可复现输出，避免把 set 遍历顺序写进日志或断言。重点是 `O(1)` 判重、可哈希规则键、保序输出三件事分别用对结构。
+
+```python
+RECORDS = [
+    ('r1', frozenset(['a', 'b'])),
+    ('r2', frozenset(['a'])),
+    ('r1', frozenset(['a', 'b'])),
+    ('r3', frozenset(['b', 'c'])),
+    ('r4', frozenset([])),
+]
+
+seen = set()
+ordered = []
+for rid, tags in RECORDS:
+    if rid not in seen:
+        seen.add(rid)
+        ordered.append((rid, tags))
+print('unique count', len(ordered), 'order', [r for r, _ in ordered])
+
+rule_cache = {frozenset(['a', 'b']): 'rule-AB'}
+print('rule hit', rule_cache.get(frozenset(['b', 'a'])))
+
+with_a = {rid for rid, tags in RECORDS if 'a' in tags}
+with_b = {rid for rid, tags in RECORDS if 'b' in tags}
+print('both', sorted(with_a & with_b))
+print('a not b', sorted(with_a - with_b))
+print('symmetric', sorted(with_a ^ with_b))
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **集合的哈希实现** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<Callout type="idea" title='落地提示' text='需要保序去重时用 dict.fromkeys；需要可哈希集合做键时用 frozenset' />
 
-<Callout type="idea" title="生产提示" text='把「哈希随机化」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## 集合误用速查与自测
 
-## 动手练一练
+<Exercise title='基础：对比 list 与 set 的判重复杂度' task='对 4000 个元素分别用 list 与 set 做 4000 次成员判断并计时，验证 set 明显更快；再用 list(dict.fromkeys(seq)) 保序去重。' solution='from time import perf_counter\ndata = list(range(4000))\nprobes = list(range(4000))\ndef bench(seq):\n    t0 = perf_counter()\n    for x in probes:\n        x in seq\n    return perf_counter() - t0\nprint(&#39;set faster&#39;, bench(data) &gt; bench(set(data)) * 5)\nseq = [&#39;b&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;a&#39;]\nprint(&#39;ordered dedup&#39;, list(dict.fromkeys(seq)))\nprint(&#39;unordered dedup&#39;, sorted(set(seq)))' explain='list 的 in 是线性扫描，n 次判重是 O(n²)；set 平均 O(1)。dict.fromkeys 借助 3.7+ 的插入顺序得到按首次出现保序的去重结果，set 去重则顺序不定，需用 sorted 才能稳定输出。' />
 
-<Exercise title='动手：围绕「哈希随机化」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 集合的哈希实现 与 哈希随机化 两个关注点，并说明你的取舍。' :hints='["回到 集合的哈希实现 的规则", "留意易错点：对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据一上来就卡死", "先让代码跑通，再补边界与异常分支"]' solution='frozen = frozenset([1, 2])\nprint({frozen: "ok"}[frozenset([2, 1])])' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；需要保序去重时用 dict.fromkeys；需要可哈希集合做键时用 frozenset' />
+<Exercise title='进阶：用 frozenset 做可哈希的规则键并实现集合运算' task='把若干标签组合构造成 frozenset 当作 dict 键，验证不同顺序的同一组合命中同一规则；再实现并、交、差、对称差与子集判断，并对结果排序保证可复现。' solution='rules = {frozenset([&#39;vip&#39;, &#39;cn&#39;]): &#39;discount&#39;, frozenset([&#39;vip&#39;]): &#39;base&#39;}\nprint(&#39;order independent&#39;, rules[frozenset([&#39;cn&#39;, &#39;vip&#39;])])\na = frozenset([1, 2, 3])\nb = {3, 4}\nprint(&#39;union&#39;, sorted(a | b), &#39;type&#39;, type(a | b).__name__)\nprint(&#39;inter&#39;, sorted(a &amp; b), &#39;diff&#39;, sorted(a - b), &#39;sym&#39;, sorted(a ^ b))\nprint(&#39;subset&#39;, frozenset([1, 2]) &lt;= a, &#39;disjoint&#39;, a.isdisjoint({9}))' explain='frozenset 不可变且可哈希，且相等性与元素顺序无关，适合做顺序无关的规则键；它与 set 做 | &amp; - ^ 时结果仍是 frozenset。对结果排序是为了让输出可复现，而不是假定集合有顺序。' />
 
-## 随堂检测
+<Quiz no='023-1' q='为什么集合的遍历顺序不该被依赖？' :options='["因为 set 按哈希表槽位遍历，且 str/bytes 哈希带随机盐，跨进程可能不同", "因为 Python 每次都主动打乱集合", "因为 set 内部是排序的二叉树", "因为只有 frozenset 才无序"]' answer="0" explain='set 是哈希表，顺序由元素哈希与表大小决定；3.3 起 str/bytes 哈希默认带 PYTHONHASHSEED 随机盐，同一份数据在不同进程里顺序可能不同。' />
 
-<Quiz no='023-1' q='在本讲讨论的「集合的哈希实现」语境下，下面哪一种说法是准确的？' :options='["集合不保证顺序，且字符串哈希带随机盐，跨进程遍历顺序可能不同；这不是 bug，是安全设计", "集合的哈希实现 只影响代码的书写形式，不会改变任何运行时行为", "集合的哈希实现 在所有 Python 实现与所有版本中表现完全一致", "只要用了 集合的哈希实现，就不必再考虑 哈希随机化 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 哈希随机化 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+<Quiz no='023-2' q='需要去重且保留首次出现顺序，正确写法是？' :options='["list(set(seq))", "list(dict.fromkeys(seq))", "sorted(set(seq))", "set(seq)"]' answer="1" explain='3.7 起 dict 按插入顺序遍历，dict.fromkeys 把首次出现编码成键顺序；list(set(seq)) 顺序不定，sorted 是按值排序而非保序。' />
 
-<Predict no='023-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["{3} {1, 2, 3, 4} {1, 2}\n{&#39;b&#39;: None, &#39;a&#39;: None}", "{3} {1, 2, 3, 4} {1, 2}\n（无更多输出）", "AttributeError: 集合的哈希实现 不可用"]' answer="0" output='{3} {1, 2, 3, 4} {1, 2}\n{&#39;b&#39;: None, &#39;a&#39;: None}' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+<Quiz no='023-3' q='把一组标签当作 dict 键且要求顺序无关，应该用？' :options='["list(tags)", "set(tags)", "frozenset(tags)", "tuple(tags)"]' answer="2" explain='list 与 set 都不可哈希，tuple 顺序敏感；frozenset 不可变、可哈希、相等性与顺序无关，正好表达标签组合。' />
 
-<FillBlank no='023-3' tpl='___ = {1, 2, 3}' :answers='["s1"]' hint='回想本讲关于 集合的哈希实现 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+<Predict no='023-P' q='seq = [&#39;b&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;a&#39;]; print(list(dict.fromkeys(seq)), sorted(set(seq))) 输出什么？' :options='["[&#39;b&#39;, &#39;a&#39;, &#39;c&#39;] [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]", "[&#39;a&#39;, &#39;b&#39;, &#39;c&#39;] [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]", "[&#39;b&#39;, &#39;a&#39;, &#39;c&#39;] [&#39;b&#39;, &#39;a&#39;, &#39;c&#39;]"]' answer='0' output='[&#39;b&#39;, &#39;a&#39;, &#39;c&#39;] [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]' explain='dict.fromkeys 按首次出现顺序保留键，得到 b、a、c；set 去重后顺序由哈希决定，用 sorted 才得到按字母排序的 a、b、c。两者分别对应保序去重与不保序但可排序输出两种需求。' />
 
-## 一页纸速记
+<FillBlank no='023-F' tpl='___  KeyError as e:' :answers='["except"]' hint='回想本讲关于 集合的哈希实现 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 哈希表实现与集合运算：O(1) 的边界 的落点。' />
 
-<KnowledgeCard :points='["集合的哈希实现：集合的哈希实现", "增删与运算：增删与运算", "frozenset 可哈希：frozenset 可哈希", "去重与保序：去重与保序"]' :pitfalls='["对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据一上来就卡死", "忽略版本差异，把 哈希随机化 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：集合不保证顺序，且字符串哈希带随机盐，跨进程遍历顺序可能不同；这不是 bug，是安全设计' />
+<KnowledgeCard :points='["set 是与 dict 同源的哈希表，add / remove / in 平均 O(1)、最坏 O(n)，负载因子约 2/3 时扩容", "集合不保证顺序；3.3 起 str/bytes 哈希带 PYTHONHASHSEED 随机盐，跨进程遍历顺序可能不同", "| &amp; - ^ 分别是并、交、差、对称差，|= &amp;= -= ^= 是原地版本；remove 缺失抛 KeyError，discard 静默", "frozenset 不可变且可哈希，可作 dict 键与 set 元素；与 set 做运算结果仍是 frozenset", "{} 是空 dict，空集合必须写 set()；s.pop() 返回任意元素，空集合抛 KeyError", "保序去重写 list(dict.fromkeys(seq))；高频判重先规整成 set，别对 list 反复用 in"]' :pitfalls='["对 list 反复用 in 判重，数据量一大就卡死", "用 set(seq) 去重后抱怨顺序乱了", "把可变 set 当 dict 键或塞进另一个 set", "对 list 反复用 in 判重会让整体复杂度变成 O(n²)，数据一上来就卡死"]' summary='集合不保证顺序，且字符串哈希带随机盐，跨进程遍历顺序可能不同；这不是 bug，是安全设计' />
 
-## 小结与下一讲
+1. set 是与 dict 同源的哈希表，add / remove / in 平均 O(1)、最坏 O(n)，负载因子约 2/3 时扩容
 
-1. 集合的哈希实现：集合的哈希实现
-2. 增删与运算：增删与运算
-3. 需要保序去重时用 dict.fromkeys；需要可哈希集合做键时用 frozenset
+2. 集合不保证顺序；3.3 起 str/bytes 哈希带 PYTHONHASHSEED 随机盐，跨进程遍历顺序可能不同
+
+3. | & - ^ 分别是并、交、差、对称差，|= &= -= ^= 是原地版本；remove 缺失抛 KeyError，discard 静默
 
 [下一讲：推导式：四种写法与可读性边界](/containers/comprehension)

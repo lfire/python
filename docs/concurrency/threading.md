@@ -7,125 +7,303 @@ description: 能安全地在线程间传递数据
 
 # 第 061 讲 · threading：线程生命周期与共享状态
 
-> GIL 保证单条字节码原子，但业务上的读—改—写是多条字节码，因此复合操作依然会竞态。本讲的目标是「能安全地在线程间传递数据」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+全景把路线摆好，现在真正迈出第一步：让不止一条执行流同时跑起来。所谓「多个线程同时改它」，就从这个最小例子开始看清，而不是一上来铺大框架。起两个线程各对同一个计数加一万次，结果常比两万少；子线程里出了岔子，主线程日志却干干净净，任务就这么静默失败。
 
-## 这一讲你会得到什么
+由浅入深：先认 Thread 与 daemon、线程局部存储，再看共享变量的可见性，亲手复现一次竞争条件，接着弄明白 Queue 为何线程安全，最后处理线程异常不冒泡怎么收。前置是函数、对象引用、基本异常，以及 GIL 只保单条字节码原子这点；学完能用队列在线程间安全传数据，把子线程的失败收集回来。
 
-<CheckList id='P061' title="本讲目标" :items='["能说清Thread 与 daemon", "能说清线程局部存储", "能说清共享变量的可见性", "能说清Queue 是线程安全的", "能说清竞争条件复现"]' />
 
-## 1. 先建立直觉
+## 四个线程累加十万次，总数总少几万
 
-**Thread 与 daemon**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+一个对账服务起了四个线程各累加十万次计数器，跑完发现总数总比 400000 少几万；有人给每个线程加 `time.sleep` 想「让它们别抢」，结果更慢且照样少。另一次故障里子线程抛了异常，主线程 join 完照常打印「成功」，日志里只有一行 stderr 的 Traceback 被采集系统丢掉，任务静默失败直到对账差额暴露。
 
-**线程局部存储**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+还有人把结果写进全局 list 当成线程间传递，偶尔读到半截数据。三个问题的根不在「线程不安全」这种笼统结论：GIL 只保证单条字节码原子，counter += 1 是多条字节码；子线程异常不向 join 方传播；而 `list.append` 虽是单条 C 操作，业务上的「读—改—写」仍要自己保证。
 
-**共享变量的可见性**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+要写对，得先分清 GIL 的原子边界、线程生命周期、以及队列与 Future 各自承担的失败传播职责。
 
-<ConceptDiagram type='flow4' title='第 061 讲 · Thread 与 daemon' labels='Thread 与 daemon|线程局部存储|共享变量的可见性|Queue 是线程安全的' caption='能安全地在线程间传递数据' />
+<Callout type="warn" title='先看一个真实会出错的写法' text='认为有 GIL 就不用给 counter 加锁：GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值' />
 
-上图用本讲的三个核心概念标出了主线：**Thread 与 daemon → 线程局部存储 → 共享变量的可见性**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 Thread 与 daemon 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 [0, 1, 2, 3, 4]", "tone": "green"}, {"title": "深入边界", "desc": "厘清 线程局部存储 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 线程异常不冒泡 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## Thread 生命周期、daemon 与线程局部存储
 
-## 2. 语法与规则：把行为跑出来
+`threading.Thread` 的签名是 (`group=None`, `target=None`, `name=None`, args=(), kwargs=&#123;&#125;, *, `daemon=None`)；
 
-### 2.1 主示例
+group 是保留参数必须传 None。`start()` 只能调一次，重复抛 RuntimeError: threads can only be started once；
 
-**Thread 与 daemon**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+`join(timeout=None)` 等待结束但不返回目标函数结果，也不重抛子线程异常；
 
-```python
-import threading, time
-lock = threading.Lock()
-shared = []
-def writer(i):
-    with lock:
-        shared.append(i)
-ts = [threading.Thread(target=writer, args=(i,)) for i in range(5)]
-[t.start() for t in ts]; [t.join() for t in ts]
-print(sorted(shared))
-```
+`is_alive()`、ident、native_id（3.8+）、name 用于观测。`daemon=True` 的线程在解释器关闭时被直接丢弃，finally 与 atexit 不保证执行，写文件、刷缓冲这类收尾不能放进去；非 daemon 线程会被解释器在退出时隐式 join。
 
-<OutputBox title="运行结果" output='[0, 1, 2, 3, 4]' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+`threading.local()` 给每个线程一份独立属性空间，子类可重写 `__init__` 做初始化；
 
-上面每一行在做什么，点开逐行看：
+但它不感知协程，async 场景要用 contextvars（3.7+）。
 
-<LineByLine code='import threading, time\nlock = threading.Lock()\nshared = []\ndef writer(i):\n    with lock:\n        shared.append(i)\nts = [threading.Thread(target=writer, args=(i,)) for i in range(5)]\n[t.start() for t in ts]; [t.join() for t in ts]\nprint(sorted(shared))' :notes='["锁把复合操作变成临界区", "with 保证异常时也释放锁", "共享可变状态是并发 bug 的主要来源", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 061 讲 · threading：线程生命周期与共享状态' />
+线程异常默认交由 `threading.excepthook`（3.8+）打到 `sys.stderr`，主线程完全收不到——这正是「静默失败」的来源，改用 ThreadPoolExecutor 的 `Future.result()` 才会重新抛出。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**线程局部存储**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
+**Thread 方法与语义边界**
 
-### 2.2 对照写法
-
-```python
-from multiprocessing import Pool
-def sq(x): return x*x
-if __name__ == "__main__":
-    with Pool(2) as p: print(p.map(sq, [1,2,3]))
-```
-
-<OutputBox title="对照写法的输出（先自己猜）" output='[1, 4, 9]' guess="true" />
-
-<Compare :panels='[{"label": "主写法", "code": "import threading, time\nlock = threading.Lock()\nshared = []\ndef writer(i):\n    with lock:\n        shared.append(i)\nts = [threading.Thread(target=writer, args=(i,)) for i in range(5)]\n[t.start() for t in ts]; [t.join() for t in ts]\nprint(sorted(shared))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "from multiprocessing import Pool\ndef sq(x): return x*x\nif __name__ == \"__main__\":\n    with Pool(2) as p: print(p.map(sq, [1,2,3]))", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有」' />
-
-## 3. 深入一步：规则与边界
-
-**共享变量的可见性**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
-
-**Queue 是线程安全的**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
-
-**竞争条件复现**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
-
-| 知识点 | 规则要点 | 常见误用 |
+| 方法 / 属性 | 行为 | 常见误用 |
 | --- | --- | --- |
-| Thread 与 daemon | 这里的关键词是「什么时候」和「代价是什么」 | 子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有 |
-| 线程局部存储 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有 |
-| 共享变量的可见性 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有 |
-| Queue 是线程安全的 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有 |
-| 竞争条件复现 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有 |
+| start() | 启动且只能一次，重复抛 RuntimeError | 误以为可以重启同一线程 |
+| join(timeout=None) | 等待结束，不返回结果、不重抛异常 | 以为 join 后能拿到子线程异常 |
+| is_alive() / ident / native_id (3.8+) | 存活与系统线程标识 | 把 native_id 当跨机器稳定 ID |
+| daemon=True | 解释器退出时被直接丢弃 | 把刷盘、finally 清理放进 daemon 线程 |
+| threading.local() | 每线程独立属性空间 | 在 async 协程里用它，应改 contextvars |
 
-<Term word='Thread 与 daemon' text='GIL 保证单条字节码原子，但业务上的读—改—写是多条字节码，因此复合操作依然会竞态' />
+<Callout type="tip" title='核心心智模型' text='threading.Thread 的签名是 (group=None, target=None, name=None, args=(), kwargs={}, *, daemon=None)；group 是保留参数必须传 None。start() 只能调一次，重复抛 RuntimeError: thr' />
 
-<Callout type="warn" title="易错点" text='子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有' />
+<ConceptDiagram type='flow4' title='第 061 讲 · Thread 生命周期、daemon 与线程局部存储' labels='Thread 生命周期、daemon 与线程|GIL 原子边界与竞态的可复现条件|队列、Future 与失败传播' caption='能安全地在线程间传递数据' />
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：Thread 与 daemon", "body": "**Thread 与 daemon**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：线程局部存储", "body": "**线程局部存储**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：共享变量的可见性", "body": "**共享变量的可见性**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：Queue 是线程安全的", "body": "**Queue 是线程安全的**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-## 4. 工程实践
 
-用队列传递数据、用 ThreadPoolExecutor 收集 Future 异常、给线程命名并接入统一日志 **线程异常不冒泡**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+## 命名、超时与可观测的执行器骨架
 
-### 用命令行复现
+```python
+import threading
+import queue
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+q = queue.Queue()
+results = []
 
-```bash
-python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
+def worker(n):
+    q.put(n * n)
+    results.append(threading.current_thread().name)
+
+ts = [threading.Thread(target=worker, args=(i,), name='w' + str(i)) for i in range(4)]
+print('before start alive', [t.is_alive() for t in ts])
+for t in ts: t.start()
+for t in ts: t.join()
+print('queue size', q.qsize())
+print('results', sorted(results))
+print('all joined', all(not t.is_alive() for t in ts))
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **Thread 与 daemon** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<OutputBox title='主示例运行结果' output='before start alive [False, False, False, False]\nqueue size 4\nresults [&#39;w0&#39;, &#39;w1&#39;, &#39;w2&#39;, &#39;w3&#39;]\nall joined True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Callout type="idea" title="生产提示" text='把「线程异常不冒泡」写成检查项，并在 CI 里用最小用例守住它。' />
+<LineByLine code='import threading\nimport queue\n\nq = queue.Queue()\nresults = []\n\ndef worker(n):\n    q.put(n * n)\n    results.append(threading.current_thread().name)\n\nts = [threading.Thread(target=worker, args=(i,), name=&#39;w&#39; + str(i)) for i in range(4)]\nprint(&#39;before start alive&#39;, [t.is_alive() for t in ts])\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;queue size&#39;, q.qsize())\nprint(&#39;results&#39;, sorted(results))\nprint(&#39;all joined&#39;, all(not t.is_alive() for t in ts))' :notes='["导入 threading 建线程并读取当前线程名", "导入 queue，用线程安全队列传数据", "无界队列，put/get 内部带锁与 Condition", "普通 list 只收集线程名，最后一次读", "worker 把平方值放进队列", "队列 put 单次调用即线程安全", "单次 append 可依赖 GIL 原子性", "建 4 个命名线程，args 必须是元组", "start 之前 is_alive 全为 False", "start 只能一次，重复抛 RuntimeError", "join 等待结束，但不返回结果、不重抛异常", "qsize 是近似值；此处无消费者稳定为 4", "排序后打印四个名字，证明都跑过", "join 返回后所有线程已结束"]' title='第 061 讲 · threading：线程生命周期与共享状态' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-## 动手练一练
+<CheckList id='P061b' title='上线前自检' :items='["能复现并解释「认为有 GIL 就不用给 counter 加锁」", "能复现并解释「子线程抛异常后主线程 join 完打印成功」", "能复现并解释「用 daemon 线程做日志落盘或缓存刷新」", "能用一条命令验证 Thread 与 daemon", "关键路径有自动化测试与失败分支"]' />
 
-<Exercise title='动手：围绕「线程异常不冒泡」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 Thread 与 daemon 与 线程异常不冒泡 两个关注点，并说明你的取舍。' :hints='["回到 Thread 与 daemon 的规则", "留意易错点：子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有", "先让代码跑通，再补边界与异常分支"]' solution='from multiprocessing import Pool\ndef sq(x): return x*x\nif __name__ == "__main__":\n    with Pool(2) as p: print(p.map(sq, [1,2,3]))' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；用队列传递数据、用 ThreadPoolExecutor 收集 Future 异常、给线程命名并接入统一日志' />
 
-## 随堂检测
+## GIL 原子边界与竞态的可复现条件
 
-<Quiz no='061-1' q='在本讲讨论的「Thread 与 daemon」语境下，下面哪一种说法是准确的？' :options='["GIL 保证单条字节码原子，但业务上的读—改—写是多条字节码，因此复合操作依然会竞态", "Thread 与 daemon 只影响代码的书写形式，不会改变任何运行时行为", "Thread 与 daemon 在所有 Python 实现与所有版本中表现完全一致", "只要用了 Thread 与 daemon，就不必再考虑 线程异常不冒泡 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 线程异常不冒泡 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+GIL 保证的是单条字节码层面的原子性，不是业务操作的原子性。
 
-<Predict no='061-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["[0, 1, 2, 3, 4]", "[0, 1, 2, 3, 4]\n（无更多输出）", "AttributeError: Thread 与 daemon 不可用"]' answer="0" output='[0, 1, 2, 3, 4]' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+模块级 counter += 1 在 3.13 反汇编为 LOAD_GLOBAL / LOAD_CONST / `BINARY_OP(+=)` / STORE_GLOBAL 四条指令（3.13 用 RETURN_CONST 收尾），切换可发生在任意两条之间：两个线程都读到旧值再加一，写回同一个值，一次更新就丢了。
 
-<FillBlank no='061-3' tpl='___threading, time' :answers='["import"]' hint='回想本讲关于 Thread 与 daemon 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+`sys.getswitchinterval()` 默认 0.005 秒；
 
-## 一页纸速记
+3.10+ 把让出检查收敛到 eval breaker（循环回边与函数调用处），因此老版本常见的少计数在新版本上复现概率会变，但语义上仍是竞态，不能依赖版本行为。
 
-<KnowledgeCard :points='["Thread 与 daemon：Thread 与 daemon", "线程局部存储：线程局部存储", "共享变量的可见性：共享变量的可见性", "Queue 是线程安全的：Queue 是线程安全的"]' :pitfalls='["子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有", "忽略版本差异，把 线程异常不冒泡 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：GIL 保证单条字节码原子，但业务上的读—改—写是多条字节码，因此复合操作依然会竞态' />
+正确的修复是用 `threading.Lock` 包住整个复合操作，或改用单次原子调用：`queue.Queue.put`/get 内部带锁、`collections.Counter` 的更新也需自己加锁。
 
-## 小结与下一讲
+判断标准很简单：只要一段逻辑跨越多条字节码且共享可变状态，就必须显式同步，与有没有 GIL 无关。
 
-1. Thread 与 daemon：Thread 与 daemon
-2. 线程局部存储：线程局部存储
-3. 用队列传递数据、用 ThreadPoolExecutor 收集 Future 异常、给线程命名并接入统一日志
+**竞态相关事实与修复**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 4 线程各加十万次，总数偏小 | counter += 1 跨 4 条字节码，切换写回旧值 | threading.Lock 包住整段，或用 queue.Queue |
+| 新版本不再复现少计数 | 3.10+ eval breaker 在循环回边检查让出 | 语义仍是竞态，照样加锁，不依赖版本 |
+| 子线程异常后主线程照常成功 | 异常交给 threading.excepthook 打到 stderr | 用 Future.result() 收集并重新抛出 |
+| list 读到半截数据 | 单次 append 原子，但读—改—写是多步 | 用 Lock 或 queue.Queue 传递完整消息 |
+
+
+### 一次自增在字节码里不是原子的
+
+```python
+import threading
+import concurrent.futures as cf
+
+def boom():
+    raise ValueError('child-boom')
+
+old = threading.excepthook
+threading.excepthook = lambda args: None
+t = threading.Thread(target=boom, name='boomer')
+t.start()
+t.join()
+threading.excepthook = old
+print('join returned', not t.is_alive())
+
+with cf.ThreadPoolExecutor(1) as ex:
+    fut = ex.submit(boom)
+    try:
+        fut.result()
+    except ValueError as e:
+        print('future reraises', str(e))
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='join returned True\nfuture reraises child-boom' guess="true" />
+
+
+## 对照：不加锁与加锁的输出差
+
+<CodeTabs :tabs='[{"label": "主示例", "code": "import threading\nimport queue\n\nq = queue.Queue()\nresults = []\n\ndef worker(n):\n    q.put(n * n)\n    results.append(threading.current_thread().name)\n\nts = [threading.Thread(target=worker, args=(i,), name=&#39;w&#39; + str(i)) for i in range(4)]\nprint(&#39;before start alive&#39;, [t.is_alive() for t in ts])\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;queue size&#39;, q.qsize())\nprint(&#39;results&#39;, sorted(results))\nprint(&#39;all joined&#39;, all(not t.is_alive() for t in ts))", "note": "Thread 生命周期、daemon 与线程局部存储"}, {"label": "对照 / 进阶", "code": "import threading\nimport concurrent.futures as cf\n\ndef boom():\n    raise ValueError(&#39;child-boom&#39;)\n\nold = threading.excepthook\nthreading.excepthook = lambda args: None\nt = threading.Thread(target=boom, name=&#39;boomer&#39;)\nt.start()\nt.join()\nthreading.excepthook = old\nprint(&#39;join returned&#39;, not t.is_alive())\n\nwith cf.ThreadPoolExecutor(1) as ex:\n    fut = ex.submit(boom)\n    try:\n        fut.result()\n    except ValueError as e:\n        print(&#39;future reraises&#39;, str(e))", "note": "GIL 原子边界与竞态的可复现条件"}]' title='两种写法切换看' />
+
+```python
+import dis
+import threading
+
+counter = 0
+def bump():
+    global counter
+    counter += 1
+
+print('opnames', [i.opname for i in dis.get_instructions(bump)])
+tls = threading.local()
+tls.value = 0
+def child():
+    tls.value = 99
+t = threading.Thread(target=child)
+t.start(); t.join()
+print('main tls value', tls.value)
+```
+
+<OutputBox title='原理验证' output='opnames [&#39;RESUME&#39;, &#39;LOAD_GLOBAL&#39;, &#39;LOAD_CONST&#39;, &#39;BINARY_OP&#39;, &#39;STORE_GLOBAL&#39;, &#39;RETURN_CONST&#39;]\nmain tls value 0' />
+
+
+## 队列为什么是线程安全的
+
+线程间传数据首选 `queue.Queue(maxsize=0)`：它内部用一把互斥锁加 not_empty / not_full / all_tasks_done 三个 Condition，put/get 天然线程安全；
+
+`qsize()` 只是近似值（多消费者下会变），`empty()`/`full()` 也不可作条件判断；`task_done()` 与 `join()` 配合可等一批任务真正处理完。LifoQueue、PriorityQueue 换的是出队顺序，SimpleQueue（3.7+，C 实现）更轻但没有 task_done 机制。
+
+要拿到返回值与异常，用 `ThreadPoolExecutor.submit` 返回 Future，再逐个 `result()`：异常存在 Future 里，`result()` 时重新抛出；
+
+若 Future 从不被读取，异常就永远没人发现。
+
+给线程起有意义的 name 并接入统一日志，配合 `threading.enumerate()` 与 `active_count()` 做存活观测。
+
+最后记住：`list.append`、dict 单次赋值这类单条 C 操作可以依赖 GIL，但「先检查再插入」「读出来改完写回」这类组合永远要自己加锁。
+
+**线程间传值方案选型**
+
+| 方案 | 线程安全 | 能否拿到返回值/异常 | 适用 |
+| --- | --- | --- | --- |
+| queue.Queue(maxsize=0) | 是，内含 Lock + Condition | 只传数据，异常需自己塞进消息 | 生产者—消费者、有界背压 |
+| LifoQueue / PriorityQueue | 是 | 同 Queue | 改出队顺序 |
+| SimpleQueue (3.7+) | 是，C 实现更轻 | 无 task_done 机制 | 单向大批量传递 |
+| ThreadPoolExecutor + Future |  executor 内部同步 | result() 重抛异常 | 需要结果与失败传播 |
+| 全局 list / dict 共享 | 单条 C 操作安全，组合不安全 | 没有 | 只做只读或已加锁的简单计数 |
+
+
+## ceval 主循环、GIL 与 ob_refcnt
+
+CPython 的 ceval 主循环在执行字节码前假定当前线程持有 GIL；Py_INCREF / Py_DECREF 直接改对象头的 ob_refcnt，全局锁让这些增减不必加细粒度锁。
+
+持有者按 `sys.getswitchinterval()`（默认 0.005 秒）收到让出请求，3.10+ 在 eval breaker 标志位检查，主要落在后向跳转（循环回边）与函数调用处；
+
+阻塞式系统调用前通过 Py_BEGIN_ALLOW_THREADS 主动释放。
+
+于是「单条字节码原子、多条字节码可被打断」成为硬事实：counter += 1 编译为 LOAD_GLOBAL / LOAD_CONST / BINARY_OP / STORE_GLOBAL，两个线程完全可能在 LOAD 之后、STORE 之前各读到同一个旧值。
+
+`threading.Thread` 在 C 层对应一个 PyThreadState 与 OS 线程，异常若未被捕获，会走 `threading.excepthook` 输出到 `sys.stderr`，不会沿 join 传播到父线程；
+
+Future 之所以能重抛，是因为 worker 把异常对象存进 Future 状态，`result()` 检查到异常再 raise。
+
+`threading.local` 用线程状态里的字典实现，因此与协程调度不兼容。
+
+<Term word='Thread 与 daemon' text='threading.Thread 的签名是 (group=None, target=None, name=None, args=(), kwargs={}, *, daemon=None)；group 是保留参数必须传 None。start() 只能调一次，重复抛 RuntimeError: threads can o' />
+
+<Term word='线程局部存储' text='GIL 保证的是单条字节码层面的原子性，不是业务操作的原子性。模块级 counter += 1 在 3.13 反汇编为 LOAD_GLOBAL / LOAD_CONST / BINARY_OP(+=) / STORE_GLOBAL 四条指令（3.13 用 RETURN_CONST 收尾），切换可发生在任意两条之间：两个' />
+
+
+## 可观测的批量任务执行器：命名、超时、异常一个不丢
+
+一个定时任务要并发跑几十个校验项，要求：每项有名字便于定位、单项超时不能拖死整体、任何一项失败都要汇总上报而不是静默。裸 Thread 做不到后两点：join 不返回结果，异常也传不回来。
+
+用 ThreadPoolExecutor 把每项包成 Future，用 `wait(timeout=...)` 分批收集，对未完成项取消并标记超时，对完成项逐个 `result()` 把异常转成结构化记录。
+
+下面用标准库模拟：任务里故意让一项抛 ValueError、一项睡眠超时，执行器输出一张含状态与原因的表。真实系统把 records 换成上报接口即可，重点是「异常必被读取、超时有出口、线程有名字」三条契约。
+
+```python
+import concurrent.futures as cf
+import threading
+import time
+
+def check(item):
+    name, delay, fail = item
+    time.sleep(delay)
+    if fail:
+        raise ValueError(name + ' invalid')
+    return name + ' ok'
+
+ITEMS = [('fast', 0.01, False), ('boom', 0.01, True), ('slow', 0.30, False)]
+
+def run_all(items, timeout=0.1):
+    records = []
+    with cf.ThreadPoolExecutor(max_workers=3,
+                              thread_name_prefix='checker') as ex:
+        futs = {ex.submit(check, it): it[0] for it in items}
+        done, pending = cf.wait(futs, timeout=timeout)
+        for f in done:
+            label = futs[f]
+            try:
+                records.append((label, 'ok', f.result()))
+            except Exception as e:
+                records.append((label, 'failed', type(e).__name__ + ': ' + str(e)))
+        for f in pending:
+            f.cancel()
+            records.append((futs[f], 'timeout', 'cancelled'))
+    return sorted(records)
+
+if __name__ == '__main__':
+    for row in run_all(ITEMS):
+        print(row[0], row[1], row[2].split(':')[0])
+    print('main thread', threading.current_thread().name)
+```
+
+<Callout type="idea" title='落地提示' text='用队列传递数据、用 ThreadPoolExecutor 收集 Future 异常、给线程命名并接入统一日志' />
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 认为有 GIL 就不用给 counter 加锁 | GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值 | 用 threading.Lock 包住复合操作，或把状态放进 queue.Queue 由单消费者更新 |
+| 子线程抛异常后主线程 join 完打印成功 | 子线程异常经 threading.excepthook 打到 stderr，不向 join 方传播 | 改用 ThreadPoolExecutor.submit 拿 Future，逐个 result() 暴露异常；给线程命名并接统一日志 |
+| 用 daemon 线程做日志落盘或缓存刷新 | 解释器退出时 daemon 线程被直接终止，finally 与缓冲刷新不保证执行 | 关键收尾放非 daemon 线程并显式 join，或用队列 + 主线程收尾 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='认为有 GIL 就不用给 counter 加锁：GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：认为有 GIL 就不用给 counter 加", "body": "GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值", "tip": "用 threading.Lock 包住复合操作，或把状态放进 queue.Queue 由单消费者更新"}, {"title": "第 2 步：子线程抛异常后主线程 join 完打印成功", "body": "子线程异常经 threading.excepthook 打到 stderr，不向 join 方传播", "tip": "改用 ThreadPoolExecutor.submit 拿 Future，逐个 result() 暴露异常；给线程命名并接统一日志"}, {"title": "第 3 步：用 daemon 线程做日志落盘或缓存刷新", "body": "解释器退出时 daemon 线程被直接终止，finally 与缓冲刷新不保证执行", "tip": "关键收尾放非 daemon 线程并显式 join，或用队列 + 主线程收尾"}]' />
+
+
+## 练习、自测与速记
+
+<Exercise title='基础：让竞态稳定复现并修好' task='四个线程各对全局 counter 加 100000 次，先不加锁跑一次记录结果，再加 threading.Lock 跑一次；解释为什么不同 Python 版本复现概率不同。' solution='import threading\ncounter = 0\nlock = threading.Lock()\ndef bump(use_lock):\n    global counter\n    for _ in range(100000):\n        if use_lock:\n            with lock: counter += 1\n        else:\n            counter += 1\ndef run(use_lock):\n    global counter\n    counter = 0\n    ts = [threading.Thread(target=bump, args=(use_lock,)) for _ in range(4)]\n    for t in ts: t.start()\n    for t in ts: t.join()\n    return counter\nprint(&#39;no lock&#39;, run(False), &#39;with lock&#39;, run(True))' explain='3.10+ 把切换检查收敛到循环回边，纯字节码长循环可能很少让出 GIL，老版本常见的少计数在新版不一定复现——但语义上仍是竞态。加锁后恒为 400000。' />
+
+<Exercise title='进阶：用 Future 把子线程异常汇总上报' task='提交三个任务，其中一个抛异常；用 as_completed 逐个 result()，把成功值与异常类型收集成列表并打印，证明异常没有丢。' solution='import concurrent.futures as cf\ndef job(i):\n    if i == 1:\n        raise ValueError(&#39;bad&#39;)\n    return i * i\nout = []\nwith cf.ThreadPoolExecutor(2) as ex:\n    futs = [ex.submit(job, i) for i in range(3)]\n    for f in cf.as_completed(futs):\n        try:\n            out.append((&#39;ok&#39;, f.result()))\n        except Exception as e:\n            out.append((&#39;err&#39;, type(e).__name__))\nprint(sorted(out, key=lambda r: r[0]))' explain='异常被存进 Future 状态，只有 result() 才重新抛出；若 Future 从不读取，异常会永久静默。as_completed 保证每个 Future 都被消费一次。' />
+
+<Quiz no='061-1' q='关于「有 GIL 是否还需要加锁」，哪项正确？' :options='["仍需要，counter += 1 跨多条字节码，中途可能被切换", "不需要，GIL 保证所有操作原子", "只有多进程才需要锁", "只要用 dis 看过字节码就不需要锁"]' answer="0" explain='GIL 保证单条字节码原子。读—改—写由 LOAD_GLOBAL / BINARY_OP / STORE_GLOBAL 组成，切换可发生在指令之间，写回旧值造成丢失更新。' />
+
+<Quiz no='061-2' q='子线程抛异常且未捕获，主线程 join 后会怎样？' :options='["异常经 threading.excepthook 打到 stderr，主线程照常继续", "join 重新抛出该异常", "整个进程立即退出", "异常被写进线程对象供 is_alive 读取"]' answer="0" explain='threading.excepthook（3.8+）负责输出到 sys.stderr，不向 join 方传播。要拿到异常须用 Future.result() 或在 worker 内自己捕获并塞进队列。' />
+
+<Quiz no='061-3' q='关于 queue.Queue，下列哪项准确？' :options='["put/get 内部带锁与 Condition，qsize() 只是近似值", "qsize() 精确，可用来做条件判断", "它是非线程安全的，需要额外加锁", "task_done() 是 SimpleQueue 才有的"]' answer="0" explain='Queue 用互斥锁加 not_empty/not_full/all_tasks_done 三个 Condition 实现同步；qsize 在多消费者下会变，不能当判断依据。SimpleQueue 没有 task_done。' />
+
+<Predict no='061-P' q='dis 反汇编 global counter; counter += 1（3.13）最可能看到哪组指令？' :options='["LOAD_GLOBAL / LOAD_CONST / BINARY_OP / STORE_GLOBAL / RETURN_CONST", "单条 ATOMIC_INC 指令", "LOAD_FAST / STORE_FAST 两条"]' answer='0' output='LOAD_GLOBAL / LOAD_CONST / BINARY_OP / STORE_GLOBAL / RETURN_CONST' explain='模块级名字走 LOAD_GLOBAL / STORE_GLOBAL，自增由 BINARY_OP(+=) 完成，3.13 用 RETURN_CONST 收尾。读与写分离正是竞态的窗口。' />
+
+<FillBlank no='061-F' tpl='___ threading' :answers='["import"]' hint='回想本讲关于 Thread 与 daemon 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Thread 生命周期、daemon 与线程局部存储 的落点。' />
+
+<KnowledgeCard :points='["GIL 只保证单条字节码原子；counter += 1 跨四条字节码，复合操作必须显式加锁", "start() 只能用一次；join() 不返回结果也不重抛异常；daemon 线程退出时 finally 不保证执行", "子线程异常走 threading.excepthook 打到 stderr 就结束，Future.result() 才会重新抛出", "queue.Queue(maxsize=0) 内部带 Lock + 三个 Condition；qsize/empty/full 只是近似，不能作条件", "threading.local 是每线程字典、不感知协程；async 场景用 contextvars（3.7+）", "线程要命名、接统一日志；用 ThreadPoolExecutor + as_completed 保证每个 Future 的异常都被读取"]' :pitfalls='["认为有 GIL 就不用给 counter 加锁", "子线程抛异常后主线程 join 完打印成功", "用 daemon 线程做日志落盘或缓存刷新", "子线程里抛出的异常不会传到主线程，任务静默失败，日志里却什么都没有"]' summary='GIL 保证单条字节码原子，但业务上的读—改—写是多条字节码，因此复合操作依然会竞态' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| GIL 只保证单条字节码原子；counter += 1 跨四条字节码，复合操作必须显式加锁 | 建立直觉 |
+| start() 只能用一次；join() 不返回结果也不重抛异常；daemon 线程退出时 finally 不保证执行 | 跑通示例 |
+| 子线程异常走 threading.excepthook 打到 stderr 就结束，Future.result() 才会重新抛出 | 深入边界 |
+| queue.Queue(maxsize=0) 内部带 Lock + 三个 Condition；qsize/empty/full 只是近似，不能作条件 | 工程落地 |
+| threading.local 是每线程字典、不感知协程；async 场景用 contextvars（3.7+） | 随堂检测 |
+| 线程要命名、接统一日志；用 ThreadPoolExecutor + as_completed 保证每个 Future 的异常都被读取 | 复盘 |
+
+1. GIL 只保证单条字节码原子；counter += 1 跨四条字节码，复合操作必须显式加锁
+
+2. start() 只能用一次；join() 不返回结果也不重抛异常；daemon 线程退出时 finally 不保证执行
+
+3. 子线程异常走 threading.excepthook 打到 stderr 就结束，Future.result() 才会重新抛出
 
 [下一讲：线程同步：Lock、Condition、Semaphore、Event](/concurrency/sync-primitives)

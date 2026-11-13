@@ -153,6 +153,7 @@ export const LESSONS: Lesson[] = [
   { path: '/projects/kv-network', title: '第 130 讲 · 实战 09 · KV 贯穿线 ② 协议帧与网络层', stage: 'L12' },
   { path: '/projects/kv-wal', title: '第 131 讲 · 实战 10 · KV 贯穿线 ③ WAL、持久化与并发控制', stage: 'L12' },
   { path: '/projects/kv-distributed', title: '第 132 讲 · 实战 11 · 分片复制、AI 网关与能力收束', stage: 'L12' },
+  { path: '/guide/before-you-start', title: '开始之前 · 教程使用说明', stage: 'L0' },
   { path: '/guide/curriculum', title: '课程总目录（132 讲）', stage: 'L0' },
   { path: '/practice/', title: '练习与速查', stage: 'L0' },
   { path: '/practice/cheatsheet', title: '语法与标准库速查表', stage: 'L0' },

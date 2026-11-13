@@ -7,130 +7,250 @@ description: 让发布可追溯、可灰度、可回滚
 
 # 第 111 讲 · GitOps、灰度发布与可观测平台
 
-> 发布的安全性来自「任何变更都有版本、有对比、有回退路径」，而不是发布时有人盯着屏幕。本讲的目标是「让发布可追溯、可灰度、可回滚」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+服务稳稳跑在集群里，新的问题变成「怎么改它」。一次全量更新把失败率推高，值班的人盯着屏幕手动回滚，往往已波及所有实例。让变更可追溯、可小步验证、可自动退回，靠的不是发布时更专心，而是一套以 GitOps 为骨架、事先定好的机制。
 
-## 这一讲你会得到什么
+先讲声明式的期望状态和 Helm、Kustomize 怎么管清单，再用金丝雀与蓝绿把流量按比例分桶放量，最后接上 Trace、Metrics、Log 三支柱，用 SLO 与错误预算算该不该自动回滚。需要上一讲的部署清单、Git 基本操作和一点指标概念；学完你能设计一次灰度发布，说清 99.9% 的 SLO 三十天里留多少余地。
 
-<CheckList id='P111' title="本讲目标" :items='["能说清声明式与期望状态", "能说清Helm / Kustomize", "能说清金丝雀与蓝绿", "能说清指标驱动自动回滚", "能说清Trace / Metrics / Log 三支柱"]' />
 
-## 1. 先建立直觉
+## 全量滚动更新把失败率抬到全量，缺的是什么
 
-**声明式与期望状态**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+一个团队用流水线直接 kubectl apply 全量滚动更新，发布时有人盯着大屏看错误率。某次新版本把 /pay 接口的失败率从 0.1% 抬到 8%，滚动更新在几分钟内把全部实例换掉，等值班发现并手工回滚时，故障已经等比放大到全量用户，错误预算一次烧掉大半。
 
-**Helm / Kustomize**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+复盘发现三个缺口：任何变更没有可对比的版本清单、放量没有按比例的中间态、回滚条件没有与指标绑定而是靠人判断。还有一次配置文件被直接改在集群里，Git 里的清单与线上不一致，下次发布把改动覆盖掉，问题重新出现。
 
-**金丝雀与蓝绿**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+GitOps、灰度与可观测平台要解决的是同一件事：让每次发布有版本、有对比、有分阶段暴露、有可自动触发的回退路径，并把 SLO 与错误预算变成发布门禁，而不是事后报表。
 
-<ConceptDiagram type='flow4' title='第 111 讲 · 声明式与期望状态' labels='声明式与期望状态|Helm / Kustomize|金丝雀与蓝绿|指标驱动自动回滚' caption='让发布可追溯、可灰度、可回滚' />
+<Callout type="warn" title='先看一个真实会出错的写法' text='用随机数或轮询给灰度流量分桶：同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因' />
 
-上图用本讲的三个核心概念标出了主线：**声明式与期望状态 → Helm / Kustomize → 金丝雀与蓝绿**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+<CheckList id='P111a' title='学完你应当能' :items='["能讲清 声明式期望状态、Helm 与 Kustomize", "能讲清 金丝雀、蓝绿与流量比例的确定性分桶", "能讲清 三支柱、SLO 与指标驱动的自动回滚", "能在工程里处理 SLO 与错误预算"]' />
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 声明式与期望状态 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 True True False", "tone": "green"}, {"title": "深入边界", "desc": "厘清 Helm / Kustomize 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 SLO 与错误预算 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
 
-## 2. 语法与规则：把行为跑出来
+## 声明式期望状态、Helm 与 Kustomize
 
-### 2.1 主示例
+GitOps 的核心是把集群的期望状态以声明式清单存在 Git 里，由控制器（Argo CD / Flux）持续比对实际状态并调和，任何漂移都会被发现或自动纠正；变更走 pull request，天然留下评审、版本与回滚记录。这里的调和是幂等的：控制器反复 apply 同一份清单结果一致，而不是每次追加操作。
 
-**声明式与期望状态**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+Helm 用模板加 values 渲染清单，适合把同一套应用分发到多环境，代价是模板层引入额外抽象与 values 漂移；Kustomize 用 base 加 overlay 做补丁，不引入模板语法，更适合按环境叠加差异。
 
-```python
-# 令牌桶限流
-import time
-class Bucket:
-    def __init__(self, rate, cap):
-        self.rate, self.cap, self.tokens, self.t = rate, cap, cap, time.monotonic()
-    def allow(self):
-        now = time.monotonic()
-        self.tokens = min(self.cap, self.tokens + (now - self.t) * self.rate)
-        self.t = now
-        if self.tokens < 1: return False
-        self.tokens -= 1
-        return True
-b = Bucket(1, 2)
-print(b.allow(), b.allow(), b.allow())
-```
+两者的输出都应是可审查的 YAML，CI 里用 helm template 或 kustomize build 渲染后做 diff 与策略检查。关键约束是集群内不要手工 kubectl edit：手工改动不在 Git 里，下次调和会被覆盖，且无法审计谁改了什么。
 
-<OutputBox title="运行结果" output='True True False' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+镜像 tag 要固定为不可变摘要（digest）而非 latest，否则同一份清单在不同时间拉到不同内容，回滚失去确定性。
 
-上面每一行在做什么，点开逐行看：
+**Helm 与 Kustomize 取舍**
 
-<LineByLine code='# 令牌桶限流\nimport time\nclass Bucket:\n    def __init__(self, rate, cap):\n        self.rate, self.cap, self.tokens, self.t = rate, cap, cap, time.monotonic()\n    def allow(self):\n        now = time.monotonic()\n        self.tokens = min(self.cap, self.tokens + (now - self.t) * self.rate)\n        self.t = now\n        if self.tokens &lt; 1: return False\n        self.tokens -= 1\n        return True\nb = Bucket(1, 2)\nprint(b.allow(), b.allow(), b.allow())' :notes='["按时间补充令牌，允许突发但限制平均速率", "容量决定突发上限，速率决定长期均值", "分布式限流要在共享存储上做原子扣减", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色", "第 11 行：与上文规则对照，观察它在整体流程里承担的角色", "第 12 行：与上文规则对照，观察它在整体流程里承担的角色", "第 13 行：与上文规则对照，观察它在整体流程里承担的角色", "第 14 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 111 讲 · GitOps、灰度发布与可观测平台' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**Helm / Kustomize**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
-
-```python
-# 容器清单要点（示意）
-cfg = {"readinessProbe": "/healthz", "livenessProbe": "/live",
-       "resources": {"limits": {"memory": "512Mi"}}}
-print(sorted(cfg))
-```
-
-<OutputBox title="对照写法的输出（先自己猜）" output='[&#39;livenessProbe&#39;, &#39;readinessProbe&#39;, &#39;resources&#39;]' guess="true" />
-
-<Compare :panels='[{"label": "主写法", "code": "# 令牌桶限流\nimport time\nclass Bucket:\n    def __init__(self, rate, cap):\n        self.rate, self.cap, self.tokens, self.t = rate, cap, cap, time.monotonic()\n    def allow(self):\n        now = time.monotonic()\n        self.tokens = min(self.cap, self.tokens + (now - self.t) * self.rate)\n        self.t = now\n        if self.tokens &lt; 1: return False\n        self.tokens -= 1\n        return True\nb = Bucket(1, 2)\nprint(b.allow(), b.allow(), b.allow())", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "# 容器清单要点（示意）\ncfg = {\"readinessProbe\": \"/healthz\", \"livenessProbe\": \"/live\",\n       \"resources\": {\"limits\": {\"memory\": \"512Mi\"}}}\nprint(sorted(cfg))", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实例」' />
-
-## 3. 深入一步：规则与边界
-
-**金丝雀与蓝绿**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
-
-**指标驱动自动回滚**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
-
-**Trace / Metrics / Log 三支柱**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
-
-| 知识点 | 规则要点 | 常见误用 |
+| 维度 | Helm | Kustomize |
 | --- | --- | --- |
-| 声明式与期望状态 | 这里的关键词是「什么时候」和「代价是什么」 | 只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实 |
-| Helm / Kustomize | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实 |
-| 金丝雀与蓝绿 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实 |
-| 指标驱动自动回滚 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实 |
-| Trace / Metrics / Log 三支柱 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实 |
+| 组织方式 | 模板 + values 渲染 | base + overlay 补丁 |
+| 多环境 | 一套 chart 配多份 values | overlay 叠加差异 |
+| 抽象代价 | 模板语法与 values 漂移 | 无模板，输出更贴近原生 YAML |
+| CI 检查 | helm template 后 diff | kustomize build 后 diff |
 
-<Term word='声明式与期望状态' text='发布的安全性来自「任何变更都有版本、有对比、有回退路径」，而不是发布时有人盯着屏幕' />
 
-<Callout type="warn" title="易错点" text='只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实例' />
+### CI 渲染清单后的 diff 与策略检查
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：声明式与期望状态", "body": "**声明式与期望状态**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：Helm / Kustomize", "body": "**Helm / Kustomize**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：金丝雀与蓝绿", "body": "**金丝雀与蓝绿**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：指标驱动自动回滚", "body": "**指标驱动自动回滚**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+<CheckList id='P111b' title='上线前自检' :items='["能复现并解释「用随机数或轮询给灰度流量分桶」", "能复现并解释「金丝雀放量没有样本量下限就做回滚判断」", "能复现并解释「集群里直接 kubectl edit 改配置，镜像用 lat」", "能用一条命令验证 声明式与期望状态", "关键路径有自动化测试与失败分支"]' />
 
-## 4. 工程实践
 
-把清单放 Git 由流水线同步，灰度按流量比例逐步放量，绑定核心指标自动回滚，并保留一键回退 **SLO 与错误预算**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+## 金丝雀、蓝绿与流量比例的确定性分桶
 
-### 用命令行复现
+灰度发布按流量比例逐步放量：先 5% 观察核心指标，再 20%、50%，最后 100%。分桶必须确定性且无状态：对稳定的用户标识（user_id 或设备 id）做哈希取模，同一用户在一次发布中始终落到同一版本，避免来回切换导致会话状态错乱；不要用随机数分桶，否则刷新一次就换版本。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+实现上常见做法是 `hash(id)` % 1000 映射到千分桶，canary 占前 pct*10 个桶。蓝绿部署准备两套完整环境，通过切流量一次性切换，回滚快但资源翻倍、切换瞬间风险集中；金丝雀资源省、暴露可控，但需要流量染色、指标按版本拆分与自动决策。
+
+Service Mesh 或网关按 header/cookie 染色可支持内部灰度。放量前要定义好判定窗口（如连续 5 分钟）、样本量下限（避免小流量噪声误判）与核心指标（错误率、p99 延迟、业务转化率），样本不足时不做回滚判断而继续观察。
+
+```python
+import hashlib
+
+def bucket(user, mod=1000):
+    return int(hashlib.md5(user.encode()).hexdigest()[:8], 16) % mod
+
+def route(user, canary_pct):
+    return 'canary' if bucket(user) < canary_pct * 10 else 'stable'
+
+users = ['u' + str(i) for i in range(1000)]
+for pct in (5, 20, 50):
+    c = sum(1 for u in users if route(u, pct) == 'canary')
+    print('pct', pct, 'canary_users', c)
+
+def should_rollback(errors, total, threshold=0.02):
+    return total > 0 and errors / total > threshold
+
+print('rollback_when_high', should_rollback(8, 100))
+print('keep_when_low', should_rollback(1, 100))
+```
+
+<OutputBox title='主示例运行结果' output='pct 5 canary_users 59\npct 20 canary_users 191\npct 50 canary_users 487\nrollback_when_high True\nkeep_when_low False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
+
+<LineByLine code='import hashlib\n\ndef bucket(user, mod=1000):\n    return int(hashlib.md5(user.encode()).hexdigest()[:8], 16) % mod\n\ndef route(user, canary_pct):\n    return &#39;canary&#39; if bucket(user) &lt; canary_pct * 10 else &#39;stable&#39;\n\nusers = [&#39;u&#39; + str(i) for i in range(1000)]\nfor pct in (5, 20, 50):\n    c = sum(1 for u in users if route(u, pct) == &#39;canary&#39;)\n    print(&#39;pct&#39;, pct, &#39;canary_users&#39;, c)\n\ndef should_rollback(errors, total, threshold=0.02):\n    return total &gt; 0 and errors / total &gt; threshold\n\nprint(&#39;rollback_when_high&#39;, should_rollback(8, 100))\nprint(&#39;keep_when_low&#39;, should_rollback(1, 100))' :notes='["导入 hashlib 做稳定散列，保证同一用户落点固定", "把用户标识映射到 0 到 999 的千分桶", "md5 前 8 位十六进制转整数后取模，mod 默认 1000", "route 按灰度百分比决定版本", "桶号小于 pct*10 进金丝雀，否则进稳定版", "构造 1000 个用户用于统计实际放量比例", "依次观察 5%、20%、50% 三档", "统计落入金丝雀的用户数", "打印档位与实际人数，验证接近目标比例", "should_rollback 把错误率与阈值比较", "样本为 0 时不做判断，避免除零误判", "8/100 错误率 8% 超过 2% 阈值，应回滚", "1/100 错误率 1% 低于阈值，继续放量"]' title='第 111 讲 · GitOps、灰度发布与可观测平台' />
+
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
+
+
+### 对照：随机分桶与稳定 user_id 哈希分桶
+
+```python
+def error_budget(slo, requests):
+    return (1 - slo) * requests
+def burned(allowed, errors):
+    return round(errors / allowed, 3)
+
+budget = error_budget(0.999, 1000000)
+print('budget_requests', int(budget))
+print('burned_500', burned(budget, 500))
+print('burned_1500', burned(budget, 1500))
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='budget_requests 1000\nburned_500 0.5\nburned_1500 1.5' guess="true" />
+
+<CodeTabs :tabs='[{"label": "主示例", "code": "import hashlib\n\ndef bucket(user, mod=1000):\n    return int(hashlib.md5(user.encode()).hexdigest()[:8], 16) % mod\n\ndef route(user, canary_pct):\n    return &#39;canary&#39; if bucket(user) &lt; canary_pct * 10 else &#39;stable&#39;\n\nusers = [&#39;u&#39; + str(i) for i in range(1000)]\nfor pct in (5, 20, 50):\n    c = sum(1 for u in users if route(u, pct) == &#39;canary&#39;)\n    print(&#39;pct&#39;, pct, &#39;canary_users&#39;, c)\n\ndef should_rollback(errors, total, threshold=0.02):\n    return total &gt; 0 and errors / total &gt; threshold\n\nprint(&#39;rollback_when_high&#39;, should_rollback(8, 100))\nprint(&#39;keep_when_low&#39;, should_rollback(1, 100))", "note": "声明式期望状态、Helm 与 Kustomize"}, {"label": "对照 / 进阶", "code": "def error_budget(slo, requests):\n    return (1 - slo) * requests\ndef burned(allowed, errors):\n    return round(errors / allowed, 3)\n\nbudget = error_budget(0.999, 1000000)\nprint(&#39;budget_requests&#39;, int(budget))\nprint(&#39;burned_500&#39;, burned(budget, 500))\nprint(&#39;burned_1500&#39;, burned(budget, 1500))", "note": "金丝雀、蓝绿与流量比例的确定性分桶"}]' title='两种写法切换看' />
+
+```python
+desired = {'replicas': 4, 'image': 'app:v2'}
+current = {'replicas': 2, 'image': 'app:v1'}
+diff = {k: (current.get(k), desired[k]) for k in desired if current.get(k) != desired[k]}
+print('diff', diff)
+print('need_apply', len(diff) > 0)
+```
+
+<OutputBox title='原理验证' output='diff {&#39;replicas&#39;: (2, 4), &#39;image&#39;: (&#39;app:v1&#39;, &#39;app:v2&#39;)}\nneed_apply True' />
+
+
+## 发布策略对照
+
+**发布策略对照**
+
+| 策略 | 资源开销 | 回滚速度 | 主要风险 |
+| --- | --- | --- | --- |
+| 全量滚动更新 | 低 | 慢，需重新回滚全部实例 | 故障等比放大到全量用户 |
+| 蓝绿 | 翻倍 | 快，切流量即可 | 切换瞬间风险集中、需双份资源 |
+| 金丝雀按比例 | 低 | 快，切回稳定版 | 需版本拆分指标与自动决策 |
+| 按 header 染色 | 低 | 快 | 仅覆盖带染色的内部或特定流量 |
+
+
+## 用随机数或轮询给灰度流量分桶
+
+<Callout type="warn" title='本讲最容易踩的坑' text='用随机数或轮询给灰度流量分桶：同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用随机数或轮询给灰度流量分桶", "body": "同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因", "tip": "对稳定 user_id 做哈希取模落到千分桶，同一发布内映射恒定；内部灰度用 header 染色"}, {"title": "第 2 步：金丝雀放量没有样本量下限就做回滚判断", "body": "5% 流量初期样本极少，偶发几个错误就让错误率飙升，触发误回滚，发布反复失败", "tip": "设定最小样本量与连续观察窗口，样本不足时只观察不决策；用 burn rate 而非瞬时错误率"}, {"title": "第 3 步：集群里直接 kubectl edit 改配置", "body": "手工改动不在 Git 里，下次调和被覆盖且无法审计；latest 让同一份清单在不同时间拉到不同镜像，回滚失去确定性", "tip": "所有变更走 PR 由控制器调和，镜像固定为 digest，CI 渲染清单后做 diff 与策略检查"}]' />
+
+
+## 可观测三支柱、SLO 与指标驱动的自动回滚
+
+可观测性三支柱是 Metrics（聚合指标与告警）、Logging（离散事件）、Tracing（跨服务调用链），发布期间尤其需要按版本标签拆分指标，否则新旧版本混在一起看不出差异。SLO 用 SLI 表达，例如 30 天窗口内成功请求占比 99.9%，对应错误预算为总请求数的 0.1%，100 万请求允许 1000 次失败；
+
+burn rate 是当前错误消耗速度与预算允许速度的比值，1 表示刚好用满，超过阈值（如 6 倍持续 5 分钟）应触发告警或暂停发布。自动回滚把放量决策与指标绑定：金丝雀版本错误率超过阈值或 p99 超限时，控制器自动把流量切回稳定版并标记发布失败，比人工盯屏快一个数量级。
+
+回滚要可一键执行且经过演练，Git 里 revert 对应清单即触发调和。告警本身要可行动、有级别、有预案，避免用 CPU 高这类与用户体验弱相关的信号刷屏。
+
+**SLO 与错误预算换算（30 天窗口）**
+
+| SLO | 允许失败比例 | 100 万请求的预算 | burn rate 含义 |
+| --- | --- | --- | --- |
+| 99.0% | 1% | 10000 次 | 当前消耗速度与预算速度之比 |
+| 99.9% | 0.1% | 1000 次 | 1 为刚好用满，6 倍持续 5 分钟应告警 |
+| 99.99% | 0.01% | 100 次 | 预算极窄，发布需更小步长 |
+
+
+### 错误预算与 burn rate 的换算
+
+确定性分桶是灰度可分析的前提：对稳定标识做哈希取模后，同一请求在整次发布中恒定映射到同一版本，于是新旧版本的指标可以按标签聚合比较，用户也不会因刷新在两套状态间跳变。若用随机数或轮询分桶，同一用户多次请求落在不同版本，错误率与延迟被混合稀释，无法判断差异来自版本还是分桶噪声。
+
+错误预算把可靠性变成可消耗的量化资源：SLO 定义为滑动窗口内 SLI 目标，预算等于 (1 - SLO) 乘以窗口总请求数，burn rate 是单位时间实际错误数与预算允许速度之比，用速率而非累计值才能在预算耗尽前提前告警。
+
+自动回滚把这两者接成闭环：控制器周期性读取金丝雀版本的按标签错误率与 p99，超过阈值或样本量达标后判定失败，直接把流量比例调回 0 并 revert 清单；由于 GitOps 的调和是幂等且版本化的，回滚就是应用一个已知的旧版本，不依赖发布时有人在场。
+
+
+## 金丝雀放量没有样本量下限就做回滚判断
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 用随机数或轮询给灰度流量分桶 | 同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因 | 对稳定 user_id 做哈希取模落到千分桶，同一发布内映射恒定；内部灰度用 header 染色 |
+| 金丝雀放量没有样本量下限就做回滚判断 | 5% 流量初期样本极少，偶发几个错误就让错误率飙升，触发误回滚，发布反复失败 | 设定最小样本量与连续观察窗口，样本不足时只观察不决策；用 burn rate 而非瞬时错误率 |
+| 集群里直接 kubectl edit 改配置，镜像用 latest tag | 手工改动不在 Git 里，下次调和被覆盖且无法审计；latest 让同一份清单在不同时间拉到不同镜像，回滚失去确定性 | 所有变更走 PR 由控制器调和，镜像固定为 digest，CI 渲染清单后做 diff 与策略检查 |
+
+
+## 指标驱动的金丝雀发布控制器
+
+把一次发布建模成有状态机的最小控制器：按稳定哈希分桶决定每个用户走哪个版本，累计各版本的请求数与错误数，达到最小样本量后计算金丝雀错误率，与阈值比较决定继续放量还是自动回滚，并把每一步决策写进审计日志。
+
+真实实现里流量比例由网关或 Service Mesh 下发，指标来自 Prometheus 的按版本标签时间序列，回滚通过 revert Git 清单触发 Argo CD 调和。下面这段用标准库把分桶、指标累计、阈值判定与审计串成闭环，重点观察每个决策都有可核对的输入与输出，而不是靠人盯屏。
+
+```python
+import hashlib
+
+class Canary:
+    def __init__(self, pct, threshold=0.02, min_samples=30):
+        self.pct = pct
+        self.threshold = threshold
+        self.min_samples = min_samples
+        self.stats = {'canary': [0, 0], 'stable': [0, 0]}
+        self.audit = []
+    def bucket(self, uid):
+        return int(hashlib.md5(uid.encode()).hexdigest()[:8], 16) % 1000
+    def version(self, uid):
+        return 'canary' if self.bucket(uid) < self.pct * 10 else 'stable'
+    def observe(self, uid, failed):
+        v = self.version(uid)
+        self.stats[v][0] += 1
+        self.stats[v][1] += int(failed)
+    def decide(self):
+        n, e = self.stats['canary']
+        if n < self.min_samples:
+            return 'observing'
+        if e / n > self.threshold:
+            self.audit.append('rollback at pct ' + str(self.pct))
+            return 'rollback'
+        self.audit.append('promote')
+        return 'promote'
+
+c = Canary(20)
+for i in range(200):
+    c.observe('u' + str(i), failed=(i % 3 == 0))
+print('decision', c.decide())
+print('stats', c.stats)
+print('audit', c.audit)
+```
+
+<Callout type="idea" title='落地提示' text='把清单放 Git 由流水线同步，灰度按流量比例逐步放量，绑定核心指标自动回滚，并保留一键回退' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **声明式与期望状态** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 **声明式与期望状态** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<Callout type="idea" title="生产提示" text='把「SLO 与错误预算」写成检查项，并在 CI 里用最小用例守住它。' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+## 集群里直接 kubectl edit 改配置，镜像用 latest tag
 
-## 动手练一练
+<SequenceDiagram title='第 111 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "声明式期望状态、Helm 与", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "金丝雀、蓝绿与流量比例的确定", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
-<Exercise title='动手：围绕「SLO 与错误预算」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 声明式与期望状态 与 SLO 与错误预算 两个关注点，并说明你的取舍。' :hints='["回到 声明式与期望状态 的规则", "留意易错点：只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实例", "先让代码跑通，再补边界与异常分支"]' solution='# 容器清单要点（示意）\ncfg = {"readinessProbe": "/healthz", "livenessProbe": "/live",\n       "resources": {"limits": {"memory": "512Mi"}}}\nprint(sorted(cfg))' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；把清单放 Git 由流水线同步，灰度按流量比例逐步放量，绑定核心指标自动回滚，并保留一键回退' />
+<FlowTimeline :steps='[{"title": "声明式期望状态、Helm 与 Kustomize", "desc": "GitOps 的核心是把集群的期望状态以声明式清单存在 Git 里，由控制器（Arg…", "tone": "blue"}, {"title": "金丝雀、蓝绿与流量比例的确定性分桶", "desc": "灰度发布按流量比例逐步放量：先 5% 观察核心指标，再 20%、50%，最后 100…", "tone": "purple"}, {"title": "三支柱、SLO 与指标驱动的自动回滚", "desc": "可观测性三支柱是 Metrics（聚合指标与告警）、Logging（离散事件）、Tr…", "tone": "orange"}, {"title": "工程落地", "desc": "指标驱动的金丝雀发布控制器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-## 随堂检测
 
-<Quiz no='111-1' q='在本讲讨论的「声明式与期望状态」语境下，下面哪一种说法是准确的？' :options='["发布的安全性来自「任何变更都有版本、有对比、有回退路径」，而不是发布时有人盯着屏幕", "声明式与期望状态 只影响代码的书写形式，不会改变任何运行时行为", "声明式与期望状态 在所有 Python 实现与所有版本中表现完全一致", "只要用了 声明式与期望状态，就不必再考虑 SLO 与错误预算 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 SLO 与错误预算 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+## 练习与一页纸速记
 
-<Predict no='111-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["True True False", "True True False\n（无更多输出）", "AttributeError: 声明式与期望状态 不可用"]' answer="0" output='True True False' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+<Exercise title='基础：计算给定 SLO 的错误预算与 burn' task='写函数 error_budget(slo, requests) 与 burn(allowed, errors)，对 99.9% SLO、100 万请求打印预算与 500、1500 次错误的 burn 值。' solution='def budget(slo, n):\n    return (1 - slo) * n\ndef burn(allowed, errors):\n    return round(errors / allowed, 3)\nb = budget(0.999, 1000000)\nprint(int(b), burn(b, 500), burn(b, 1500))' explain='99.9% SLO 在 100 万请求里允许 1000 次失败；500 次用掉 0.5 倍预算，1500 次已达 1.5 倍，应触发告警或暂停发布。' />
 
-<FillBlank no='111-3' tpl='___time' :answers='["import"]' hint='回想本讲关于 声明式与期望状态 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+<Exercise title='进阶：实现确定性分桶并验证映射稳定' task='写 version(uid, pct) 用 md5 取模千分桶，验证同一 uid 在不同 pct 下只会在达到阈值时从 stable 切到 canary，不会来回跳变。' solution='import hashlib\ndef b(uid):\n    return int(hashlib.md5(uid.encode()).hexdigest()[:8], 16) % 1000\ndef version(uid, pct):\n    return &#39;canary&#39; if b(uid) &lt; pct * 10 else &#39;stable&#39;\nu = &#39;user:42&#39;\nprint(b(u), [version(u, p) for p in (5, 20, 50, 100)])' explain='桶号固定，随 pct 单调扩大：小比例时为 stable，越过自身桶号对应阈值后才变 canary，不会反复横跳，这正是灰度指标可拆分的前提。' />
 
-## 一页纸速记
+<Quiz no='111-1' q='某次全量滚动更新把失败率抬到 8%，值班几分钟后手工回滚，故障仍放大到全量，主要缺什么？' :options='["按流量比例的中间态与指标绑定的自动回滚", "更大的镜像仓库带宽", "更多副本数", "更长的观察窗口但不设阈值"]' answer="0" explain='全量滚动没有小比例暴露阶段，回滚靠人判断必然滞后；金丝雀放量加指标阈值自动切回，才能把影响限制在已放量的那部分用户。' />
 
-<KnowledgeCard :points='["声明式与期望状态：声明式与期望状态", "Helm / Kustomize：Helm / Kustomize", "金丝雀与蓝绿：金丝雀与蓝绿", "指标驱动自动回滚：指标驱动自动回滚"]' :pitfalls='["只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实例", "忽略版本差异，把 SLO 与错误预算 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：发布的安全性来自「任何变更都有版本、有对比、有回退路径」，而不是发布时有人盯着屏幕' />
+<Quiz no='111-2' q='关于灰度分桶，下面哪项做法正确？' :options='["对稳定 user_id 做哈希取模，同一用户映射恒定", "每次请求用 random.random() 决定版本", "按请求到达顺序轮询分配", "按响应耗时动态分配版本"]' answer="0" explain='随机或轮询会让同一用户多次请求落在不同版本，指标被稀释且会话错乱；稳定哈希分桶让新旧版本指标可按标签聚合比较。' />
 
-## 小结与下一讲
+<Quiz no='111-3' q='99.9% SLO、30 天 100 万请求，错误预算是多少？' :options='["1000 次失败", "10000 次失败", "100 次失败", "0 次失败"]' answer="0" explain='(1 - 0.999) * 1000000 = 1000。预算是允许失败的请求数，用 burn rate 衡量消耗速度可在耗尽前告警。' />
 
-1. 声明式与期望状态：声明式与期望状态
-2. Helm / Kustomize：Helm / Kustomize
-3. 把清单放 Git 由流水线同步，灰度按流量比例逐步放量，绑定核心指标自动回滚，并保留一键回退
+<KnowledgeCard :points='["GitOps 把期望状态存 Git，控制器幂等调和；禁止集群内手工 edit，镜像固定 digest", "Helm 用模板 + values，Kustomize 用 base + overlay；CI 渲染清单后做 diff 与策略检查", "灰度按稳定标识哈希分桶，同一用户映射恒定；蓝绿回滚快但资源翻倍", "放量需最小样本量、连续观察窗口与按版本拆分的错误率/p99，样本不足只观察不决策", "SLO 的预算 = (1-SLO)*请求数，burn rate 用消耗速度提前告警", "自动回滚把指标阈值与流量切换绑定；告警要可行动、有级别、有预案，不用 CPU 高这类弱相关信号"]' :pitfalls='["用随机数或轮询给灰度流量分桶", "金丝雀放量没有样本量下限就做回滚判断", "集群里直接 kubectl edit 改配置，镜像用 latest tag", "只做全量滚动更新、又没有与指标联动的回滚条件，故障会等比放大到全部实例"]' summary='发布的安全性来自「任何变更都有版本、有对比、有回退路径」，而不是发布时有人盯着屏幕' />
+
+1. GitOps 把期望状态存 Git，控制器幂等调和；禁止集群内手工 edit，镜像固定 digest
+
+2. Helm 用模板 + values，Kustomize 用 base + overlay；CI 渲染清单后做 diff 与策略检查
+
+3. 灰度按稳定标识哈希分桶，同一用户映射恒定；蓝绿回滚快但资源翻倍
 
 [下一讲：任务调度、SRE 与混沌工程](/distributed/scheduling)
+
+<Predict no='111-P' q='1000 个用户按 20% 灰度分桶，落入 canary 的人数最可能是？' :options='["约 191，接近 200 但因哈希分布略有偏差", "恰好 200", "0，20% 需要 2000 用户才生效"]' answer='0' output='191' explain='千分桶里 20% 对应前 200 个桶；md5 散列在有限样本上并非绝对均匀，实测 1000 个用户有 191 个落入，接近但不等于理论值 200。' />
+
+<FillBlank no='111-F' tpl='___ hashlib' :answers='["import"]' hint='回想本讲关于 声明式与期望状态 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 声明式期望状态、Helm 与 Kustomize 的落点。' />

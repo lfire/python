@@ -7,129 +7,294 @@ description: 理解事件循环在系统调用层的样子
 
 # 第 066 讲 · IO 多路复用：select / poll / epoll
 
-> 事件循环本质就是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上加了协程与任务调度。本讲的目标是「理解事件循环在系统调用层的样子」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+进程把多核用上了，可面对成百上千个连接，为每个配一条执行流还是太重，等待的时间大多闲着。往下沉一层：IO 多路复用回答的正是「一个执行流盯住一批连接、谁就绪处理谁」在系统调用层长什么样。一个 echo 服务，连接一多要么线程堆满，要么慢连接堵路。
 
-## 这一讲你会得到什么
+先对照阻塞与非阻塞 IO，再比 select、poll、epoll，再讲水平与边缘触发，用 selectors 标准库写个最小 echo server，最后收束到反应器模式与回调地狱的由来。前置是文件描述符、socket、阻塞概念与第 60 讲全景；读完能看清事件循环底下那层，明白框架替你扛了哪些复杂度。
 
-<CheckList id='P066' title="本讲目标" :items='["能说清阻塞与非阻塞 IO", "能说清select / poll / epoll 对比", "能说清水平与边缘触发", "能说清selectors 标准库", "能说清回调地狱的由来"]' />
 
-## 1. 先建立直觉
+## 非阻塞 socket 上 recv 一次，连接卡死
 
-**阻塞与非阻塞 IO**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
+用 selectors 写 echo server 时，有人把 socket 设成非阻塞却仍用 recv 一次就返回，边缘触发下内核只通知一次，剩余数据再没事件，连接永久卡住；
 
-**select / poll / epoll 对比**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+另一个版本用 `select.select` 传了上千个 fd，每次调用都把 fd_set 在用户态与内核态来回拷贝并线性扫描，CPU 全耗在扫描上——这正是 C10K 要解决的问题。还有人分不清水平触发与边缘触发，把 epoll 的 EPOLLET 当成默认行为；
 
-**水平与边缘触发**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+或在 macOS 上照抄 Linux 教程直接 import `select.epoll`，启动时 AttributeError。更根本的困惑是：asyncio 明明叫异步，为什么底层还是 select？答案是事件循环本质是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上叠了协程与任务调度。
 
-<ConceptDiagram type='flow4' title='第 066 讲 · 阻塞与非阻塞 IO' labels='阻塞与非阻塞 IO|select / poll / epoll 对比|水平与边缘触发|selectors 标准库' caption='理解事件循环在系统调用层的样子' />
+用标准库 selectors 写一个最小反应器，能看清框架替你承担了哪些系统调用细节。
 
-上图用本讲的三个核心概念标出了主线：**阻塞与非阻塞 IO → select / poll / epoll 对比 → 水平与边缘触发**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+<Callout type="warn" title='先看一个真实会出错的写法' text='边缘触发下 recv 只读一次，连接卡死：ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件' />
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 阻塞与非阻塞 IO 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 [0, 2, 4, 6, 8]", "tone": "green"}, {"title": "深入边界", "desc": "厘清 select / poll / epoll 对比 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 反应器模式 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
 
-## 2. 语法与规则：把行为跑出来
+## 阻塞、非阻塞 fd 与三种就绪通知
 
-### 2.1 主示例
+socket 默认阻塞：recv 无数据时挂起线程；
 
-**阻塞与非阻塞 IO**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+`setblocking(False)`（等价 `settimeout(0.0)`）后，无数据立刻抛 BlockingIOError，errno 为 EAGAIN / EWOULDBLOCK（两者常同值）。
+
+`select.select(rlist, wlist, xlist, timeout=None)` 用 fd_set 位图，跨平台最好但有三个硬伤：FD_SETSIZE 上限（常见 1024）、每次调用把整个集合在用户/内核间拷贝、返回后要线性扫描全部 fd 才知道谁就绪，复杂度 `O(n)`。
+
+`poll()` 用数组登记 (fd, events)，没有 FD_SETSIZE 限制、事件位含 POLLIN/POLLOUT/POLLERR/POLLHUP，但每次仍需把整个数组传进内核并线性扫描就绪项，还是 `O(n)`。
+
+epoll 是 Linux 2.6+ 的接口：epoll_create1 建实例，`epoll_ctl(ADD/MOD/DEL)` 把兴趣集合维护在内核红黑树里，epoll_wait 只返回就绪链表，复杂度与就绪数相关而非总 fd 数，适合海量连接；
+
+macOS/BSD 对应 kqueue，Windows 是 IOCP（前摄器而非反应器），select 模块在这台 macOS 上有 kqueue 与 poll、没有 epoll。
+
+**select / poll / epoll / kqueue 对照**
+
+| 接口 | 就绪探测复杂度 | fd 上限 | 平台 |
+| --- | --- | --- | --- |
+| select.select | O(n) 线性扫描 + 每次拷贝 fd_set | FD_SETSIZE 常见 1024 | 全平台（Windows 仅 socket） |
+| poll / PollSelector | O(n) 扫描数组，无位图上限 | 受系统 fd 限制 | POSIX |
+| epoll / EpollSelector | O(就绪数)，内核维护红黑树 + 就绪链表 | 受系统 fd 限制 | Linux 2.6+ |
+| kqueue / KqueueSelector | O(就绪数)，内核事件队列 | 受系统 fd 限制 | macOS / BSD |
+| IOCP | 完成端口，内核完成操作后通知 | 受系统限制 | Windows，前摄器非反应器 |
+
+<ConceptDiagram type='flow4' title='第 066 讲 · 阻塞 / 非阻塞 fd 与 select / poll / epoll' labels='阻塞 / 非阻塞 fd 与 select /|水平触发、边缘触发与 reactors 模式|selectors 标准库与可移植写法' caption='理解事件循环在系统调用层的样子' />
+
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+<Callout type="tip" title='核心心智模型' text='socket 默认阻塞：recv 无数据时挂起线程；setblocking(False)（等价 settimeout(0.0)）后，无数据立刻抛 BlockingIOError，errno 为 EAGAIN / EWOULDBLOCK（两者常同值）。select.select(rlist, wlis' />
+
+
+## 用 select 写一次事件循环
 
 ```python
-import asyncio
+import socket
+import selectors
 
-async def fetch(i):
-    await asyncio.sleep(0.01)
-    return i * 2
-
-async def main():
-    return await asyncio.gather(*(fetch(i) for i in range(5)))
-
-print(asyncio.run(main()))
+sel = selectors.DefaultSelector()
+a, b = socket.socketpair()
+a.setblocking(False)
+b.setblocking(False)
+sel.register(a, selectors.EVENT_READ, data='peerA')
+print('selector', type(sel).__name__)
+print('registered', len(sel.get_map()))
+b.send(b'hello')
+events = sel.select(timeout=1)
+for key, mask in events:
+    print('event', key.data, mask == selectors.EVENT_READ)
+    print('payload', key.fileobj.recv(64))
+a.close()
+b.close()
+sel.close()
 ```
 
-<OutputBox title="运行结果" output='[0, 2, 4, 6, 8]' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
+<OutputBox title='主示例运行结果' output='selector KqueueSelector\nregistered 1\nevent peerA True\npayload b&#39;hello&#39;' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-上面每一行在做什么，点开逐行看：
+<LineByLine code='import socket\nimport selectors\n\nsel = selectors.DefaultSelector()\na, b = socket.socketpair()\na.setblocking(False)\nb.setblocking(False)\nsel.register(a, selectors.EVENT_READ, data=&#39;peerA&#39;)\nprint(&#39;selector&#39;, type(sel).__name__)\nprint(&#39;registered&#39;, len(sel.get_map()))\nb.send(b&#39;hello&#39;)\nevents = sel.select(timeout=1)\nfor key, mask in events:\n    print(&#39;event&#39;, key.data, mask == selectors.EVENT_READ)\n    print(&#39;payload&#39;, key.fileobj.recv(64))\na.close()\nb.close()\nsel.close()' :notes='["导入 socket 建本机 socketpair 做自测", "导入 selectors 使用跨平台抽象", "macOS 上选 KqueueSelector", "一对已连接的 socket", "读端非阻塞，无数据 recv 会抛 BlockingIOError", "写端同样非阻塞", "注册读事件，data 携带上下文标签", "打印实际选择器类型，证明平台差异", "get_map 里恰好一个已注册 fd", "从 b 写入，使 a 变为可读", "select 带超时，避免无事件时永久挂住", "遍历就绪事件列表", "key.data 是注册时的标签，mask 为 EVENT_READ", "读一次数据；LT 下若有剩余还会再次就绪", "关闭读端 socket", "关闭写端 socket", "关闭选择器释放内核资源"]' title='第 066 讲 · IO 多路复用：select / poll / epoll' />
 
-<LineByLine code='import asyncio\n\nasync def fetch(i):\n    await asyncio.sleep(0.01)\n    return i * 2\n\nasync def main():\n    return await asyncio.gather(*(fetch(i) for i in range(5)))\n\nprint(asyncio.run(main()))' :notes='["async 调用只创建协程，await 才真正驱动", "gather 并发调度一批任务", "asyncio.run 负责创建并关闭事件循环", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色", "第 9 行：与上文规则对照，观察它在整体流程里承担的角色", "第 10 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 066 讲 · IO 多路复用：select / poll / epoll' />
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**select / poll / epoll 对比**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
 
-### 2.2 对照写法
+## 对照：边缘触发只读一次与读到 EAGAIN
 
 ```python
-import asyncio
-async def main():
-    try:
-        await asyncio.wait_for(asyncio.sleep(1), timeout=0.01)
-    except asyncio.TimeoutError:
-        print("timeout")
-asyncio.run(main())
+import socket
+import select
+import selectors
+import sys
+
+a, b = socket.socketpair()
+b.setblocking(False)
+try:
+    b.recv(64)
+except BlockingIOError as e:
+    print('nonblocking raises', type(e).__name__)
+a.send(b'x')
+r, w, x = select.select([b], [], [b], 1)
+print('select readable', len(r) == 1)
+print('poll available', hasattr(select, 'poll'))
+print('epoll available', hasattr(select, 'epoll'))
+print('EVENT_READ/WRITE', selectors.EVENT_READ, selectors.EVENT_WRITE)
+print('platform', sys.platform)
+a.close()
+b.close()
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='timeout' guess="true" />
+<OutputBox title='对照写法：先自己猜，再点开' output='nonblocking raises BlockingIOError\nselect readable True\npoll available True\nepoll available False\nEVENT_READ/WRITE 1 2\nplatform darwin' guess="true" />
 
-<Compare :panels='[{"label": "主写法", "code": "import asyncio\n\nasync def fetch(i):\n    await asyncio.sleep(0.01)\n    return i * 2\n\nasync def main():\n    return await asyncio.gather(*(fetch(i) for i in range(5)))\n\nprint(asyncio.run(main()))", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "import asyncio\nasync def main():\n    try:\n        await asyncio.wait_for(asyncio.sleep(1), timeout=0.01)\n    except asyncio.TimeoutError:\n        print(\"timeout\")\nasyncio.run(main())", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住」' />
+<Compare :panels='[{"label": "主示例", "code": "import socket\nimport selectors\n\nsel = selectors.DefaultSelector()\na, b = socket.socketpair()\na.setblocking(False)\nb.setblocking(False)\nsel.register(a, selectors.EVENT_READ, data=&#39;peerA&#39;)\nprint(&#39;selector&#39;, type(sel).__name__)\nprint(&#39;registered&#39;, len(sel.get_map()))\nb.send(b&#39;hello&#39;)\nevents = sel.select(timeout=1)\nfor key, mask in events:\n    print(&#39;event&#39;, key.data, mask == selectors.EVENT_READ)\n    print(&#39;payload&#39;, key.fileobj.recv(64))\na.close()\nb.close()\nsel.close()", "note": "阻塞 / 非阻塞 fd 与 select / poll / epoll"}, {"label": "对照 / 进阶", "code": "import socket\nimport select\nimport selectors\nimport sys\n\na, b = socket.socketpair()\nb.setblocking(False)\ntry:\n    b.recv(64)\nexcept BlockingIOError as e:\n    print(&#39;nonblocking raises&#39;, type(e).__name__)\na.send(b&#39;x&#39;)\nr, w, x = select.select([b], [], [b], 1)\nprint(&#39;select readable&#39;, len(r) == 1)\nprint(&#39;poll available&#39;, hasattr(select, &#39;poll&#39;))\nprint(&#39;epoll available&#39;, hasattr(select, &#39;epoll&#39;))\nprint(&#39;EVENT_READ/WRITE&#39;, selectors.EVENT_READ, selectors.EVENT_WRITE)\nprint(&#39;platform&#39;, sys.platform)\na.close()\nb.close()", "note": "水平触发、边缘触发与 reactors 模式"}]' title='两种写法对照' note='差异集中在 阻塞与非阻塞 IO；先看输出，再找背后的规则。' />
 
-## 3. 深入一步：规则与边界
+```python
+import inspect
+import selectors
+import select
 
-**水平与边缘触发**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+print('DefaultSelector', selectors.DefaultSelector.__name__)
+print('EVENT_READ', selectors.EVENT_READ, 'EVENT_WRITE', selectors.EVENT_WRITE)
+print('select sig', str(inspect.signature(select.select)))
+print('epoll on this host', hasattr(select, 'epoll'))
+print('kqueue on this host', hasattr(select, 'kqueue'))
+```
 
-**selectors 标准库**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+<OutputBox title='原理验证' output='DefaultSelector KqueueSelector\nEVENT_READ 1 EVENT_WRITE 2\nselect sig (rlist, wlist, xlist, timeout=None, /)\nepoll on this host False\nkqueue on this host True' />
 
-**回调地狱的由来**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
 
-| 知识点 | 规则要点 | 常见误用 |
+## 水平触发、边缘触发与反应器模式
+
+水平触发（LT，epoll 默认、select/poll 都是）只要 fd 仍处于就绪状态（接收缓冲区还有数据），每次 wait 都会再次报告；
+
+边缘触发（ET，需显式 EPOLLET）只在状态发生跃迁时报告一次，因此必须在一个循环里把缓冲区读到 BlockingIOError / EAGAIN 为止，漏读就会永久失去该 fd 的后续事件。EPOLLONESHOT 则在处理完要用 `epoll_ctl(MOD)` 重新武装。
+
+反应器模式的骨架是：把 fd 设为非阻塞、注册到 demultiplexer、事件循环调 select 拿就绪列表、按事件分派到对应 handler；handler 内不能阻塞，否则整个 loop 停摆。
+
+回调层层嵌套就是「回调地狱」的由来，协程把它改写成看起来同步的 await，但底层的 register / select / dispatch 一步没少。
+
+asyncio 的 BaseSelectorEventLoop 正是用 `selectors.DefaultSelector`，`loop.add_reader` / add_writer 最终落到 register 与 modify。
+
+**水平触发与边缘触发**
+
+| 模式 | 通知时机 | 读取要求 | 漏读后果 |
+| --- | --- | --- | --- |
+| 水平触发 LT（epoll 默认、select/poll） | 只要缓冲区仍有数据就重复报告 | 可读一次，剩余数据下次还会通知 | 相对宽容，但每次仍要拷贝到内核 |
+| 边缘触发 ET（EPOLLET） | 仅状态跃迁时报告一次 | 必须循环读到 BlockingIOError/EAGAIN | 连接永久卡住，事件不再来 |
+| EPOLLONESHOT | 只报告一次后自动失活 | 处理后 epoll_ctl(MOD) 重新武装 | 忘记重新武装则该 fd 再无事件 |
+
+<FlowTimeline :steps='[{"title": "阻塞 / 非阻塞 fd 与 select / poll / epoll", "desc": "socket 默认阻塞：recv 无数据时挂起线程；setblocking(Fals…", "tone": "blue"}, {"title": "水平触发、边缘触发与 reactors 模式", "desc": "水平触发（LT，epoll 默认、select/poll 都是）只要 fd 仍处于就…", "tone": "purple"}, {"title": "selectors 标准库与可移植写法", "desc": "selectors（3.4+）提供统一抽象：DefaultSelector 在支持的…", "tone": "orange"}, {"title": "工程落地", "desc": "用 selectors 写一个最小 echo server（反应器骨", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+
+
+## 内核如何替进程监视一批 fd
+
+IO 多路复用的核心是让内核替进程监视一批 fd，进程只在「有就绪」时被唤醒。select 把三个 fd_set 位图从用户态拷进内核，内核线性设置就绪位再整体拷回，调用方还得再扫一遍全表，故成本随总连接数 `O(n)` 增长且受 FD_SETSIZE 约束。
+
+poll 用 (fd, events) 数组去掉位图上限，但仍每轮传全量、扫全量。epoll 把注册与等待拆开：epoll_ctl 把 fd 挂进内核红黑树，网卡收包触发回调把就绪 fd 挂到就绪链表，epoll_wait 只取链表，因此与总 fd 数无关；kqueue 用内核事件队列与 changelist 达到类似效果。
+
+LT 与 ET 的区别在「就绪状态持续」还是「状态变化」：ET 少一次唤醒但要求一次读空。
+
+`selectors.DefaultSelector` 在模块导入时按 `sys.platform` 选择具体类，register 把 (fd, events, data) 存进字典并对 epoll/kqueue 调 ctl，select 把内核返回的事件翻译回 SelectorKey。
+
+asyncio 的 BaseSelectorEventLoop 用的正是这套 register/select 循环，add_reader/add_writer 只是往 data 里挂回调。
+
+<Term word='阻塞与非阻塞 IO' text='socket 默认阻塞：recv 无数据时挂起线程；setblocking(False)（等价 settimeout(0.0)）后，无数据立刻抛 BlockingIOError，errno 为 EAGAIN / EWOULDBLOCK（两者常同值）。select.select(rlist, wlist, xlist, ' />
+
+<Term word='select / poll / epoll 对比' text='水平触发（LT，epoll 默认、select/poll 都是）只要 fd 仍处于就绪状态（接收缓冲区还有数据），每次 wait 都会再次报告；边缘触发（ET，需显式 EPOLLET）只在状态发生跃迁时报告一次，因此必须在一个循环里把缓冲区读到 BlockingIOError / EAGAIN 为止，漏读就会永久失去该' />
+
+
+## selectors 标准库、可移植写法与 echo server 骨架
+
+selectors（3.4+）提供统一抽象：DefaultSelector 在支持的平台上选最优实现——Linux 是 EpollSelector、macOS/BSD 是 KqueueSelector、否则 DevpollSelector / PollSelector / 最后 SelectSelector。
+
+`register(fileobj, events, data=None)` 返回 SelectorKey，events 取 `EVENT_READ(=1)` / `EVENT_WRITE(=2)`；
+
+unregister / modify / get_map / close 管理注册表；
+
+`select(timeout=None)` 返回 [(key, events), ...]，`key.data` 可携带 handler 或连接上下文。
+
+Key 里的 fileobj 可以是 fd 整数或带 `fileno()` 的对象。写可移植代码应一律用 DefaultSelector 而不是直接 import epoll；
+
+用 `socket.socketpair()` 做自测，能在本机无网络权限下验证注册、就绪与读写。
+
+生产环境不要手写这套循环去替代成熟框架：还要处理 EINTR、半关闭、写缓冲背压、定时器和跨线程唤醒，这些 asyncio / 网络框架已经替你解决。
+
+**selectors API 与默认实现**
+
+| API / 常量 | 含义 | 取值 / 默认 |
 | --- | --- | --- |
-| 阻塞与非阻塞 IO | 这里的关键词是「什么时候」和「代价是什么」 | 边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住 |
-| select / poll / epoll 对比 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住 |
-| 水平与边缘触发 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住 |
-| selectors 标准库 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住 |
-| 回调地狱的由来 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住 |
+| DefaultSelector | 按平台选最优实现 | Linux=EpollSelector，macOS=KqueueSelector |
+| register(fileobj, events, data=None) | 登记 fd 返回 SelectorKey | events 用 EVENT_READ / EVENT_WRITE |
+| select(timeout=None) | 返回就绪 [(key, events)] 列表 | timeout=None 表示无限等待 |
+| EVENT_READ / EVENT_WRITE | 事件位 | 1 / 2 |
+| get_map() / modify() / unregister() | 查看 / 改事件 / 注销 | key.data 可带 handler |
 
-<Term word='阻塞与非阻塞 IO' text='事件循环本质就是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上加了协程与任务调度' />
+要理解 asyncio 替我们做了什么，最直接的办法是手写一个反应器：监听 socket 设为非阻塞并注册 EVENT_READ，accept 到的连接也设非阻塞并注册读回调；
 
-<Callout type="warn" title="易错点" text='边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住' />
+事件循环反复 `sel.select(timeout)`，把就绪 key 的 data 当 handler 调用；
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：阻塞与非阻塞 IO", "body": "**阻塞与非阻塞 IO**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：select / poll / epoll 对比", "body": "**select / poll / epoll 对比**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：水平与边缘触发", "body": "**水平与边缘触发**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：selectors 标准库", "body": "**selectors 标准库**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+读到数据就回写、读到空就注销关闭。下面片段用有界 ticks 让它在无人连接时也能自行结束，便于直接运行观察；生产版会去掉 ticks、加 EINTR 处理、写缓冲背压与定时器。重点是三件事：注册/就绪/分派三段结构、非阻塞 fd 的必要性、以及一个 handler 阻塞就拖垮全 loop 的事实。
 
-## 4. 工程实践
+```python
+import socket
+import selectors
 
-用 selectors 写一个最小 echo server，能帮你看清框架替你承担了哪些复杂度；生产环境直接用成熟框架 **反应器模式**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+sel = selectors.DefaultSelector()
 
-### 用命令行复现
+def on_read(conn, mask):
+    data = conn.recv(4096)
+    if data:
+        conn.sendall(data)
+    else:
+        sel.unregister(conn)
+        conn.close()
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+def on_accept(server, mask):
+    conn, _ = server.accept()
+    conn.setblocking(False)
+    sel.register(conn, selectors.EVENT_READ, on_read)
+
+def serve(host, port, ticks=20):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((host, port))
+    server.listen(128)
+    server.setblocking(False)
+    sel.register(server, selectors.EVENT_READ, on_accept)
+    for _ in range(ticks):
+        for key, mask in sel.select(timeout=0.05):
+            key.data(key.fileobj, mask)
+    sel.unregister(server)
+    server.close()
+    sel.close()
+
+if __name__ == '__main__':
+    serve('127.0.0.1', 0)
+```
+
+<Callout type="idea" title='落地提示' text='用 selectors 写一个最小 echo server，能帮你看清框架替你承担了哪些复杂度；生产环境直接用成熟框架' />
+
+<CheckList id='P066b' title='上线前自检' :items='["能复现并解释「边缘触发下 recv 只读一次，连接卡死」", "能复现并解释「在 macOS 直接 import select.epoll」", "能复现并解释「事件循环 handler 里做同步阻塞调用」", "能用一条命令验证 阻塞与非阻塞 IO", "关键路径有自动化测试与失败分支"]' />
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 边缘触发下 recv 只读一次，连接卡死 | ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件 | 循环 recv 直到 BlockingIOError/EAGAIN，或改用默认 LT 并接受每轮拷贝 |
+| 在 macOS 直接 import select.epoll | epoll 是 Linux 专属，macOS 提供 kqueue 与 poll | 用 selectors.DefaultSelector 写可移植代码，它会自动选 KqueueSelector |
+| 事件循环 handler 里做同步阻塞调用 | select 之后的 dispatch 仍在单线程，一个阻塞 recv/requests 会停住整个 loop | handler 内全部非阻塞读写，阻塞工作丢进线程池或换 asyncio 原生异步库 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='边缘触发下 recv 只读一次，连接卡死：ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：边缘触发下 recv 只读一次，连接卡死", "body": "ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件", "tip": "循环 recv 直到 BlockingIOError/EAGAIN，或改用默认 LT 并接受每轮拷贝"}, {"title": "第 2 步：在 macOS 直接 import sele", "body": "epoll 是 Linux 专属，macOS 提供 kqueue 与 poll", "tip": "用 selectors.DefaultSelector 写可移植代码，它会自动选 KqueueSelector"}, {"title": "第 3 步：事件循环 handler 里做同步阻塞调用", "body": "select 之后的 dispatch 仍在单线程，一个阻塞 recv/requests 会停住整个 loop", "tip": "handler 内全部非阻塞读写，阻塞工作丢进线程池或换 asyncio 原生异步库"}]' />
+
+
+## 练习、自测与速记
+
+<Exercise title='基础：验证非阻塞 recv 抛 BlockingIOError' task='用 socketpair 把一端设为非阻塞，无数据时 recv 应抛 BlockingIOError 且 errno 属 EAGAIN/EWOULDBLOCK；另一端 send 后应读到数据。' solution='import socket, errno\na, b = socket.socketpair()\nb.setblocking(False)\ntry:\n    b.recv(64)\nexcept BlockingIOError as e:\n    print(&#39;eagain&#39;, e.errno in (errno.EAGAIN, errno.EWOULDBLOCK))\na.send(b&#39;x&#39;)\nprint(&#39;data&#39;, b.recv(64))\na.close(); b.close()' explain='非阻塞 fd 无数据时不挂起而抛 BlockingIOError，errno 为 EAGAIN（与 EWOULDBLOCK 常同值）；事件循环正是靠这个信号把 fd 交给 selector 等待就绪。' />
+
+<Exercise title='进阶：用 selectors 同时监控两个 socketpair' task='建两对 socketpair，都注册 EVENT_READ 且 data 标记来源；只往其中一对写数据，select 后打印就绪的 data，证明只返回就绪 fd。' solution='import socket, selectors\nsel = selectors.DefaultSelector()\npairs = [socket.socketpair() for _ in range(2)]\nfor i, (a, b) in enumerate(pairs):\n    a.setblocking(False)\n    sel.register(a, selectors.EVENT_READ, data=&#39;ch&#39; + str(i))\npairs[1][1].send(b&#39;z&#39;)\nprint([k.data for k, _ in sel.select(timeout=1)])\nfor a, b in pairs: a.close(); b.close()\nsel.close()' explain='select 只返回就绪 fd 对应的 SelectorKey；key.data 把上下文带回分派处。这正是 epoll/kqueue 相对 select 线性扫描的优势：成本与就绪数相关。' />
+
+<Quiz no='066-1' q='关于 epoll 与 select 的复杂度，正确的是？' :options='["epoll 用内核红黑树维护注册、只返回就绪链表；select 每轮拷贝并线性扫描全部 fd", "两者都是 O(1)", "select 比 epoll 更适合 C10K", "epoll 在所有平台可用"]' answer="0" explain='select 每轮把 fd_set 在用户/内核间拷贝并线性扫描，且有 FD_SETSIZE 上限；epoll 把注册留在内核、wait 只取就绪链表，Linux 专属，macOS 对应 kqueue。' />
+
+<Quiz no='066-2' q='边缘触发（EPOLLET）下必须怎么做？' :options='["循环读到 BlockingIOError/EAGAIN 为止", "只读一次即可，剩余数据下次会再通知", "每次 wait 后重新 register", "把 socket 改回阻塞"]' answer="0" explain='ET 只在状态跃迁时通知一次，缓冲区残留数据不会再产生事件；漏读会让连接永久卡住。LT 才会对持续就绪状态反复报告。' />
+
+<Quiz no='066-3' q='关于 selectors.DefaultSelector，正确的是？' :options='["在 macOS 选 KqueueSelector、Linux 选 EpollSelector，是可移植写法", "它永远是 SelectSelector", "它会自动把 handler 改成多线程", "只有 Linux 才有这个模块"]' answer="0" explain='DefaultSelector 在模块导入时按平台挑最优实现；register/select/modify 是统一 API。直接 import select.epoll 在 macOS 会 AttributeError。' />
+
+<Predict no='066-P' q='socket 设为 setblocking(False) 且无数据时调用 recv(64)，结果是？' :options='["抛 BlockingIOError，errno 为 EAGAIN/EWOULDBLOCK", "返回 b&#39;&#39;", "阻塞直到有数据", "返回 None"]' answer='0' output='BlockingIOError(EAGAIN)' explain='非阻塞 fd 在数据未就绪时不挂起线程，而是立刻抛 BlockingIOError；事件循环把这个信号交给 selector，等 fd 就绪再回调读逻辑。' />
+
+<FillBlank no='066-F' tpl='___ socket' :answers='["import"]' hint='回想本讲关于 阻塞与非阻塞 IO 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 阻塞 / 非阻塞 fd 与 select / poll / epoll 的落点。' />
+
+<KnowledgeCard :points='["非阻塞 fd 无数据抛 BlockingIOError(EAGAIN)；setblocking(False) 等价 settimeout(0.0)", "select 是 O(n) 且受 FD_SETSIZE 约束；poll 去掉位图上限仍 O(n)；epoll/kqueue 只返回就绪集合", "LT（默认）对持续就绪反复通知；ET(EPOLLET) 只在跃迁时通知一次，必须读空到 EAGAIN", "selectors.DefaultSelector 按平台选实现；EVENT_READ=1 / EVENT_WRITE=2，key.data 带上下文", "反应器 = 注册 → select 就绪 → 分派 handler；任一 handler 阻塞都会拖垮整个 loop", "asyncio 的 BaseSelectorEventLoop 底层就是 selectors，add_reader/add_writer 落到 register/modify"]' :pitfalls='["边缘触发下 recv 只读一次，连接卡死", "在 macOS 直接 import select.epoll", "事件循环 handler 里做同步阻塞调用", "边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住"]' summary='事件循环本质就是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上加了协程与任务调度' />
+
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| 非阻塞 fd 无数据抛 BlockingIOError(EAGAIN)；setblocking(False) 等价 settimeout(0.0) | 建立直觉 |
+| select 是 O(n) 且受 FD_SETSIZE 约束；poll 去掉位图上限仍 O(n)；epoll/kqueue 只返回就绪集合 | 跑通示例 |
+| LT（默认）对持续就绪反复通知；ET(EPOLLET) 只在跃迁时通知一次，必须读空到 EAGAIN | 深入边界 |
+| selectors.DefaultSelector 按平台选实现；EVENT_READ=1 / EVENT_WRITE=2，key.data 带上下文 | 工程落地 |
+| 反应器 = 注册 → select 就绪 → 分派 handler；任一 handler 阻塞都会拖垮整个 loop | 随堂检测 |
+| asyncio 的 BaseSelectorEventLoop 底层就是 selectors，add_reader/add_writer 落到 register/modify | 复盘 |
+
+1. 非阻塞 fd 无数据抛 BlockingIOError(EAGAIN)；setblocking(False) 等价 settimeout(0.0)
+
+2. select 是 O(n) 且受 FD_SETSIZE 约束；poll 去掉位图上限仍 O(n)；epoll/kqueue 只返回就绪集合
+
+3. LT（默认）对持续就绪反复通知；ET(EPOLLET) 只在跃迁时通知一次，必须读空到 EAGAIN
+
+[下一讲：生成器协程：send、yield from 与调度器](/concurrency/generator-coroutine)
 
 ```bash
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **阻塞与非阻塞 IO** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
-
-<Callout type="idea" title="生产提示" text='把「反应器模式」写成检查项，并在 CI 里用最小用例守住它。' />
-
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
-
-## 动手练一练
-
-<Exercise title='动手：围绕「反应器模式」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 阻塞与非阻塞 IO 与 反应器模式 两个关注点，并说明你的取舍。' :hints='["回到 阻塞与非阻塞 IO 的规则", "留意易错点：边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住", "先让代码跑通，再补边界与异常分支"]' solution='import asyncio\nasync def main():\n    try:\n        await asyncio.wait_for(asyncio.sleep(1), timeout=0.01)\n    except asyncio.TimeoutError:\n        print("timeout")\nasyncio.run(main())' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；用 selectors 写一个最小 echo server，能帮你看清框架替你承担了哪些复杂度；生产环境直接用成熟框架' />
-
-## 随堂检测
-
-<Quiz no='066-1' q='在本讲讨论的「阻塞与非阻塞 IO」语境下，下面哪一种说法是准确的？' :options='["事件循环本质就是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上加了协程与任务调度", "阻塞与非阻塞 IO 只影响代码的书写形式，不会改变任何运行时行为", "阻塞与非阻塞 IO 在所有 Python 实现与所有版本中表现完全一致", "只要用了 阻塞与非阻塞 IO，就不必再考虑 反应器模式 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 反应器模式 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
-
-<Predict no='066-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["[0, 2, 4, 6, 8]", "[0, 2, 4, 6, 8]\n（无更多输出）", "AttributeError: 阻塞与非阻塞 IO 不可用"]' answer="0" output='[0, 2, 4, 6, 8]' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
-
-<FillBlank no='066-3' tpl='import ___io' :answers='["async"]' hint='回想本讲关于 阻塞与非阻塞 IO 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
-
-## 一页纸速记
-
-<KnowledgeCard :points='["阻塞与非阻塞 IO：阻塞与非阻塞 IO", "select / poll / epoll 对比：select / poll / epoll 对比", "水平与边缘触发：水平与边缘触发", "selectors 标准库：selectors 标准库"]' :pitfalls='["边缘触发模式下没一次性读完缓冲区，事件不会再来，连接会永久卡住", "忽略版本差异，把 反应器模式 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：事件循环本质就是「把一批 fd 交给内核，谁就绪就处理谁」，asyncio 只是在这之上加了协程与任务调度' />
-
-## 小结与下一讲
-
-1. 阻塞与非阻塞 IO：阻塞与非阻塞 IO
-2. select / poll / epoll 对比：select / poll / epoll 对比
-3. 用 selectors 写一个最小 echo server，能帮你看清框架替你承担了哪些复杂度；生产环境直接用成熟框架
-
-[下一讲：生成器协程：send、yield from 与调度器](/concurrency/generator-coroutine)
+把输入换成你自己的数据，观察结果是否仍符合 **阻塞与非阻塞 IO** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

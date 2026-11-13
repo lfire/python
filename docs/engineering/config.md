@@ -7,123 +7,204 @@ description: 把配置做成可验证、可覆盖、可审计的输入
 
 # 第 079 讲 · 配置管理：环境变量、.env 与配置中心
 
-> 配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸。本讲的目标是「把配置做成可验证、可覆盖、可审计的输入」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+日志能查了，可配置出错的时机仍很别扭：有人把调试开关写成字符串，解析时被当成真，生产环境就此敞着；也有人把数据库密码硬编码在代码里，轮换一次得全量改代码重新发版。更隐蔽的是某个冷门分支直到半夜才第一次读到空值，排查时对不上任何发布记录。
 
-## 这一讲你会得到什么
+顺序按可信度来：先立十二要素的环境变量，再用类型化配置对象做启动期校验，接着谈分层覆盖的优先级，然后处理密钥与轮换，最后盯住配置漂移。带着环境变量、类型与模块的概念来；学完能把配置做成可验证、可覆盖、可审计的输入，让错误在启动瞬间就暴露，而不是等某个分支被踩到。
 
-<CheckList id='P079' title="本讲目标" :items='["能说清十二要素与环境变量", "能说清pydantic-settings 校验", "能说清分层覆盖", "能说清密钥与轮换", "能说清启动期失败"]' />
 
-## 1. 先建立直觉
+## 密码硬编码在 settings.py，轮换只能全量改代码重新发版
 
-**十二要素与环境变量**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+一个服务把数据库密码硬编码在 `settings.py` 里，轮换时只能全量改代码重新发版；另一个服务把 DEBUG 写成字符串 'False'，解析时用 bool('False') 得到 True，结果生产环境开了调试模式，把堆栈打给了用户。
 
-**pydantic-settings 校验**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+还有更隐蔽的：某配置项写错，平时没人调用那个冷门接口，直到半夜第一次读到空字符串才崩，排查时完全对不上发布记录。配置错误的正确暴露时机是启动瞬间，而不是运行期某个分支。本讲把十二要素的环境变量、类型化校验、分层覆盖优先级、密钥轮换与配置漂移讲到能做成可验证、可审计的输入。
 
-**分层覆盖**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
 
-<ConceptDiagram type='compare2' title='第 079 讲 · 十二要素与环境变量' labels='十二要素与环境变量|pydantic-settings 校验|分层覆盖|密钥与轮换' caption='把配置做成可验证、可覆盖、可审计的输入' />
+## 十二要素、环境变量与 bool('False') 的类型陷阱
 
-上图用本讲的三个核心概念标出了主线：**十二要素与环境变量 → pydantic-settings 校验 → 分层覆盖**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
+十二要素应用要求配置与代码严格分离、通过环境变量注入：`os.environ` 是 `os._Environ`（MutableMapping），`os.getenv(key, default)` 取不到返回默认值，`os.environb` 提供字节版本。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 十二要素与环境变量 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 0 ok", "tone": "green"}, {"title": "深入边界", "desc": "厘清 pydantic-settings 校验 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 配置漂移 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+关键陷阱是所有环境变量的值都是 str：`os.environ` 底层是 C 的 char** 键值串，没有类型，port 必须 `int(...)`、开关必须自己解析，而 bool('False') 为 True（任何非空字符串都为真），必须用 parse_bool 把 '1'/'true'/'yes'/'on' 归一成布尔。
 
-## 2. 语法与规则：把行为跑出来
+.env 文件由 python-dotenv 的 `load_dotenv()` 读取，格式 `KEY=VALUE`，.env 必须进 .gitignore，提交的应是去掉值的 .`env.example` 占位文件。
 
-### 2.1 主示例
+标准库里 configparser 读 INI、tomllib（3.11+）读 TOML 且会解析成 bool/int/float 等原生类型、json 读配置；用 tomllib 解析 'debug = false' 得到 bool 而非字符串，正好和环境变量形成对照。
 
-**十二要素与环境变量**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+PEP 508 环境标记、argparse CLI 覆盖是另外两类入口。
 
-```python
-import subprocess, sys
-checks = [
-    [sys.executable, "-m", "compileall", "-q", "src"],
-    [sys.executable, "-c", "print('lint ok')"],
-]
-for cmd in checks:
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    print(r.returncode, r.stdout.strip() or "ok")
-```
+**环境变量与类型转换**
 
-<OutputBox title="运行结果" output='0 ok\n0 lint ok' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
-
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='import subprocess, sys\nchecks = [\n    [sys.executable, "-m", "compileall", "-q", "src"],\n    [sys.executable, "-c", "print(&#39;lint ok&#39;)"],\n]\nfor cmd in checks:\n    r = subprocess.run(cmd, capture_output=True, text=True)\n    print(r.returncode, r.stdout.strip() or "ok")' :notes='["把本地验证命令固化成脚本", "CI 跑同一组命令，行为才一致", "任一步失败即退出非零码阻断发布", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 079 讲 · 配置管理：环境变量、.env 与配置中心' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**pydantic-settings 校验**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
-
-```python
-import pathlib
-root = pathlib.Path("src") / "demo"
-print(root.parts)
-```
-
-<OutputBox title="对照写法的输出（先自己猜）" output='(&#39;src&#39;, &#39;demo&#39;)' guess="true" />
-
-<Compare :panels='[{"label": "主写法", "code": "import subprocess, sys\nchecks = [\n    [sys.executable, \"-m\", \"compileall\", \"-q\", \"src\"],\n    [sys.executable, \"-c\", \"print(&#39;lint ok&#39;)\"],\n]\nfor cmd in checks:\n    r = subprocess.run(cmd, capture_output=True, text=True)\n    print(r.returncode, r.stdout.strip() or \"ok\")", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "import pathlib\nroot = pathlib.Path(\"src\") / \"demo\"\nprint(root.parts)", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版」' />
-
-## 3. 深入一步：规则与边界
-
-**分层覆盖**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
-
-**密钥与轮换**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
-
-**启动期失败**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
-
-| 知识点 | 规则要点 | 常见误用 |
+| API / 写法 | 结果 / 类型 | 注意 |
 | --- | --- | --- |
-| 十二要素与环境变量 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版 |
-| pydantic-settings 校验 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版 |
-| 分层覆盖 | 这里的关键词是「什么时候」和「代价是什么」 | 把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版 |
-| 密钥与轮换 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版 |
-| 启动期失败 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版 |
+| os.environ['K'] | str 或 KeyError | 值永远是字符串 |
+| os.getenv('K', 'd') | str 或默认 | 环境变量缺失时用默认 |
+| bool('False') | True | 非空字符串皆真，必须 parse_bool |
+| int(os.environ['PORT']) | int | 非数字抛 ValueError |
+| tomllib.loads('debug=false') | &#123;'debug': False&#125; | TOML 3.11+ 解析成原生 bool |
+| configparser | INI 全为 str | 需 getboolean/getint 转换 |
+| os.environb | bytes 键值 | 底层 char** 的字节视图 |
 
-<Term word='十二要素与环境变量' text='配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸' />
+```python
+import os
 
-<Callout type="warn" title="易错点" text='把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版' />
+def parse_bool(v):
+    return v.strip().lower() in ('1', 'true', 'yes', 'on')
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：十二要素与环境变量", "body": "**十二要素与环境变量**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：pydantic-settings 校验", "body": "**pydantic-settings 校验**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：分层覆盖", "body": "**分层覆盖**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：密钥与轮换", "body": "**密钥与轮换**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+def load(env, dotenv_text='', overrides=None):
+    cfg = {'PORT': '8000', 'DEBUG': 'false', 'DB_HOST': 'localhost'}
+    for line in dotenv_text.splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            k, v = line.split('=', 1)
+            cfg[k.strip()] = v.strip()
+    for k in list(cfg):
+        if k in env:
+            cfg[k] = env[k]
+    if overrides:
+        cfg.update(overrides)
+    return {'port': int(cfg['PORT']), 'debug': parse_bool(cfg['DEBUG']),
+            'host': cfg['DB_HOST']}
 
-## 4. 工程实践
-
-用类型化配置对象、启动时全量校验、按环境分层覆盖，生产密钥交给托管服务并支持热更新 **配置漂移**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
-
-### 用命令行复现
-
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
-
-```bash
-python -m compileall -q . && python -m pytest -q
+env = {'PORT': '9100'}
+dotenv = 'PORT=9000' + chr(10) + 'DEBUG=true' + chr(10)
+c = load(env, dotenv, overrides={'DB_HOST': 'prod'})
+print('port', c['port'], 'debug', c['debug'], 'host', c['host'])
+os.environ['APP_MODE'] = 'prod'
+print('env var', os.environ['APP_MODE'])
+del os.environ['APP_MODE']
+print('bool trap', bool('false'))
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **十二要素与环境变量** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<OutputBox title='主示例运行结果' output='port 9100 debug True host prod\nenv var prod\nbool trap True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Callout type="idea" title="生产提示" text='把「配置漂移」写成检查项，并在 CI 里用最小用例守住它。' />
+<LineByLine code='import os\n\ndef parse_bool(v):\n    return v.strip().lower() in (&#39;1&#39;, &#39;true&#39;, &#39;yes&#39;, &#39;on&#39;)\n\ndef load(env, dotenv_text=&#39;&#39;, overrides=None):\n    cfg = {&#39;PORT&#39;: &#39;8000&#39;, &#39;DEBUG&#39;: &#39;false&#39;, &#39;DB_HOST&#39;: &#39;localhost&#39;}\n    for line in dotenv_text.splitlines():\n        line = line.strip()\n        if line and not line.startswith(&#39;#&#39;) and &#39;=&#39; in line:\n            k, v = line.split(&#39;=&#39;, 1)\n            cfg[k.strip()] = v.strip()\n    for k in list(cfg):\n        if k in env:\n            cfg[k] = env[k]\n    if overrides:\n        cfg.update(overrides)\n    return {&#39;port&#39;: int(cfg[&#39;PORT&#39;]), &#39;debug&#39;: parse_bool(cfg[&#39;DEBUG&#39;]),\n            &#39;host&#39;: cfg[&#39;DB_HOST&#39;]}\n\nenv = {&#39;PORT&#39;: &#39;9100&#39;}\ndotenv = &#39;PORT=9000&#39; + chr(10) + &#39;DEBUG=true&#39; + chr(10)\nc = load(env, dotenv, overrides={&#39;DB_HOST&#39;: &#39;prod&#39;})\nprint(&#39;port&#39;, c[&#39;port&#39;], &#39;debug&#39;, c[&#39;debug&#39;], &#39;host&#39;, c[&#39;host&#39;])\nos.environ[&#39;APP_MODE&#39;] = &#39;prod&#39;\nprint(&#39;env var&#39;, os.environ[&#39;APP_MODE&#39;])\ndel os.environ[&#39;APP_MODE&#39;]\nprint(&#39;bool trap&#39;, bool(&#39;false&#39;))' :notes='["导入 os 读取进程环境变量", "定义布尔归一：只认 1/true/yes/on", "模拟 pydantic-settings 的分层加载函数", "默认值层：端口 8000、DEBUG 关、主机 localhost", "逐行解析 .env 文本", "去掉首尾空白", "跳过空行、注释行与无等号行", "按第一个等号拆键值", "用 .env 的值覆盖默认值", "进程环境变量层：只对已知键生效", "env 里有同名键就覆盖上一层", "显式覆盖层：优先级最高", "overrides 最后写入", "把 PORT 转 int、DEBUG 归一 bool，得到类型化配置", "模拟进程环境变量：PORT=9100", "模拟 .env 文件：PORT=9000、DEBUG=true", "按四层加载并覆盖 DB_HOST 为 prod", "PORT 最终取 env 的 9100、DEBUG 取 .env、host 取覆盖", "演示 os.environ 写入后立即生效", "读出刚写入的环境变量", "清理该键，保持环境干净", "揭示 bool(&#39;false&#39;) 为 True 的经典类型陷阱", "密钥用 SecretStr/掩码、托管服务轮换；.env 进 .gitignore、提交 .env.example 占位", "tomllib（3.11+）把 TOML 解析成原生 bool/int；配置漂移靠版本、校验和与启动摘要审计", "十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool(&#39;False&#39;) 为 True"]' title='第 079 讲 · 配置管理：环境变量、.env 与配置中心' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-## 动手练一练
+```python
+class Secret:
+    def __init__(self, value):
+        self._value = value
+    def reveal(self):
+        return self._value
+    def __str__(self):
+        return '***'
+    __repr__ = __str__
 
-<Exercise title='动手：围绕「配置漂移」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 十二要素与环境变量 与 配置漂移 两个关注点，并说明你的取舍。' :hints='["回到 十二要素与环境变量 的规则", "留意易错点：把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版", "先让代码跑通，再补边界与异常分支"]' solution='import pathlib\nroot = pathlib.Path("src") / "demo"\nprint(root.parts)' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；用类型化配置对象、启动时全量校验、按环境分层覆盖，生产密钥交给托管服务并支持热更新' />
+def load_port(env):
+    raw = env.get('PORT', '8000')
+    if not raw.isdigit():
+        raise ValueError('PORT must be an integer')
+    return int(raw)
 
-## 随堂检测
+print('valid port', load_port({'PORT': '8080'}))
+try:
+    load_port({'PORT': 'eighty'})
+except ValueError as e:
+    print('startup fails fast', str(e))
+token = Secret('sk-live-abc123')
+print('log-safe', str(token), 'real', token.reveal())
+```
 
-<Quiz no='079-1' q='在本讲讨论的「十二要素与环境变量」语境下，下面哪一种说法是准确的？' :options='["配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸", "十二要素与环境变量 只影响代码的书写形式，不会改变任何运行时行为", "十二要素与环境变量 在所有 Python 实现与所有版本中表现完全一致", "只要用了 十二要素与环境变量，就不必再考虑 配置漂移 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 配置漂移 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+<OutputBox title='对照写法：先自己猜，再点开' output='valid port 8080\nstartup fails fast PORT must be an integer\nlog-safe *** real sk-live-abc123' guess="true" />
 
-<Predict no='079-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["0 ok\n0 lint ok", "0 ok\n（无更多输出）", "AttributeError: 十二要素与环境变量 不可用"]' answer="0" output='0 ok\n0 lint ok' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+`os.environ` 是 `os._Environ`，包装 C 运行时的 environ（char** 的 `KEY=VALUE` 串），因此所有值天然是 str，没有任何类型元数据；
 
-<FillBlank no='079-3' tpl='___subprocess, sys' :answers='["import"]' hint='回想本讲关于 十二要素与环境变量 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+bool('False') 之所以为 True，是因为 Python 的真值规则把任意非空字符串判为真，这正是开关配置要写 parse_bool 的原因。tomllib（3.11+）走另一条路：它按 TOML 规范把 false/8080 解析成 bool/int，与环境变量字符串形成对照。
 
-## 一页纸速记
+pydantic-settings 的 BaseSettings 用元类收集字段别名（环境变量名，默认大小写不敏感），按 init > env > dotenv > secrets > default 求值，再交给 pydantic 做类型校验；
 
-<KnowledgeCard :points='["十二要素与环境变量：十二要素与环境变量", "pydantic-settings 校验：pydantic-settings 校验", "分层覆盖：分层覆盖", "密钥与轮换：密钥与轮换"]' :pitfalls='["把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版", "忽略版本差异，把 配置漂移 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸' />
+缺必需字段或类型不符在构造对象那一刻抛 ValidationError，这就是「启动期失败」的实现机制。SecretStr 通过重写 `__str__`/`__repr__` 返回掩码，避免敏感值被日志格式化函数取到；热更新通常用后台监听加原子替换配置对象，而非就地改字段。
 
-## 小结与下一讲
+<ConceptDiagram type='compare2' title='第 079 讲 · 十二要素、环境变量与类型陷阱' labels='十二要素、环境变量与类型陷阱|分层覆盖与启动期失败|密钥、轮换与配置漂移' caption='把配置做成可验证、可覆盖、可审计的输入' />
 
-1. 十二要素与环境变量：十二要素与环境变量
-2. pydantic-settings 校验：pydantic-settings 校验
-3. 用类型化配置对象、启动时全量校验、按环境分层覆盖，生产密钥交给托管服务并支持热更新
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+## 分层覆盖、启动期失败与密钥轮换治理
+
+一份配置通常来自多层，优先级必须显式写清：默认值 < .env 文件 < 进程环境变量 < 显式覆盖 / CLI 参数。
+
+pydantic-settings 的 BaseSettings 进一步把顺序定为 init 参数 > 环境变量 > dotenv > secrets > 字段默认值，字段默认 `case_sensitive=False`（大写环境变量名），可用 env_prefix、env_nested_delimiter='__' 读嵌套结构、SettingsConfigDict(env_file='.env') 指定文件。
+
+它的核心价值是校验：字段带类型与约束，缺必需字段或类型不符会在构造对象时抛 ValidationError，从而「启动期失败」而不是等冷门接口首读才炸。工程上把配置收敛成一个类型化、启动后不可变的对象（frozen dataclass 或 BaseSettings 实例），全模块只从它读；
+
+启动时全量校验并打印非敏感字段摘要，任何缺失或越界都立刻退出。
+
+密钥绝不硬编码、绝不提交仓库：生产交给托管服务（Vault、AWS Secrets Manager、K8s Secret）并支持轮换与热更新，轮换不该触发全量发版。
+
+日志与异常里要防泄漏：用 SecretStr 之类包装，让 `__str__`/`__repr__` 只返回掩码（可验证：`str(token)` 是 '***' 而 `reveal()` 才给真值），默认不把完整请求体/响应写进日志。
+
+配置漂移指同一份配置在不同环境或不同时间悄悄不一致：对策是类型化配置对象加版本号/校验和、单一事实源、按环境分层覆盖（dev/staging/prod 前缀或独立文件）、每个键标注 owner 与默认值，并对变更留审计记录。启动时快照一份非敏感配置摘要进日志，线上就能回答「这次行为变化是不是配置改了」；
+
+把校验、分层与脱敏写进一个 Config 类，比散落在各处的 `os.getenv` 可靠得多。
+
+
+## 类型化不可变配置与启动期校验
+
+把散落各处的 `os.getenv` 收敛成一个 Config 对象：按默认值、.env、进程环境、显式覆盖四层合并，逐字段做类型转换与范围校验，越界立刻抛 ValueError 让进程起不来，公开视图只暴露非敏感字段。这样配置错误在启动瞬间暴露，密钥也不会出现在 `public()` 里。
+
+下面片段用标准库实现这套装载器，演示合法配置、端口越界被拒、以及密钥不进公开摘要三条契约，真实项目把校验换成 pydantic-settings 即可获得同样的启动期失败语义。
+
+```python
+import json
+
+DEFAULTS = {'PORT': '8000', 'DEBUG': 'false', 'WORKERS': '4'}
+
+def coerce_bool(v):
+    return v.strip().lower() in ('1', 'true', 'yes', 'on')
+
+class Config:
+    def __init__(self, env, dotenv=None, overrides=None):
+        merged = dict(DEFAULTS)
+        if dotenv:
+            merged.update(dotenv)
+        merged.update({k: v for k, v in env.items() if k in merged})
+        if overrides:
+            merged.update(overrides)
+        self.port = int(merged['PORT'])
+        self.debug = coerce_bool(merged['DEBUG'])
+        self.workers = int(merged['WORKERS'])
+        if self.port < 1 or self.port > 65535:
+            raise ValueError('PORT out of range')
+    def public(self):
+        return {'port': self.port, 'debug': self.debug, 'workers': self.workers}
+
+env = {'PORT': '9200'}
+dotenv = {'DEBUG': 'true'}
+cfg = Config(env, dotenv, overrides={'WORKERS': '8'})
+print('config', json.dumps(cfg.public(), sort_keys=True))
+try:
+    Config({'PORT': '70000'})
+except ValueError as e:
+    print('startup rejected', str(e))
+print('secret never in public', 'SECRET' not in cfg.public())
+```
+
+<Callout type="idea" title='落地提示' text='用类型化配置对象、启动时全量校验、按环境分层覆盖，生产密钥交给托管服务并支持热更新' />
+
+
+## 练习、自测与一页纸速记
+
+<Exercise title='基础：验证环境变量全是字符串并显式转型' task='写入 DEMO_N=&#39;5&#39;，打印 os.getenv、int 转型结果，并揭示 bool(&#39;False&#39;) 为真。' solution='import os\nos.environ[&#39;DEMO_N&#39;] = &#39;5&#39;\nprint(&#39;getenv&#39;, os.getenv(&#39;DEMO_N&#39;), &#39;cast&#39;, int(os.environ[&#39;DEMO_N&#39;]) * 2)\nprint(&#39;bool trap&#39;, bool(&#39;False&#39;))\ndel os.environ[&#39;DEMO_N&#39;]' explain='环境变量底层是字符串，端口要 int() 转、开关要 parse_bool；bool(&#39;False&#39;) 为 True 是典型误用，转型必须在读取处显式完成。' />
+
+<Exercise title='进阶：实现两层覆盖' task='默认值 PORT=8000，进程环境 PORT=9000，打印合并后的端口，说明覆盖优先级。' solution='defaults = {&#39;PORT&#39;: &#39;8000&#39;}\nenv = {&#39;PORT&#39;: &#39;9000&#39;}\ncfg = dict(defaults)\ncfg.update(env)\nprint(&#39;port&#39;, cfg[&#39;PORT&#39;])' explain='dict.update 表达「高优先级层覆盖低优先级层」；真实配置里顺序是默认值 &lt; .env &lt; 环境变量 &lt; 显式覆盖，且每步都要类型转换。' />
+
+<Quiz no='079-1' q='关于 os.environ 的值类型，正确的是？' :options='["全部是 str，端口/开关必须显式转型", "自动推断为 int / bool", "是 bytes", "缺键时返回 None 且类型为空"]' answer="0" explain='os.environ 包装 C 的 char** 键值串，没有类型；int(...) 与 parse_bool 必须自己写，bool(&#39;False&#39;) 会得到 True。' />
+
+<Quiz no='079-2' q='配置错误最合理的暴露时机是？' :options='["启动期全量校验，失败立即退出", "第一次读到该配置的冷门接口里", "每天定时巡检时", "用户报错后再回滚"]' answer="0" explain='把配置收敛成类型化对象并在构造时校验（pydantic-settings 的 ValidationError），错误就不会流到运行期某个分支才炸。' />
+
+<Quiz no='079-3' q='pydantic-settings 里环境变量与 .env 的优先级是？' :options='["进程环境变量高于 .env，init 参数最高", ".env 永远最高", "默认值最高", "按字母序决定"]' answer="0" explain='顺序是 init 参数 &gt; 环境变量 &gt; dotenv &gt; secrets &gt; 字段默认值；显式部署注入能盖住文件里的值，便于按环境分层覆盖。' />
+
+<Predict no='079-P' q='执行 bool(&#39;False&#39;) 的输出是？' :options='["True", "False", "TypeError"]' answer='0' output='True' explain='Python 的真值规则把任意非空字符串判为真，&#39;False&#39; 长度为 6 显然非空；开关配置必须写 parse_bool 或交给类型化配置对象校验，不能用 bool() 直接转。' />
+
+<FillBlank no='079-F' tpl='___ os' :answers='["import"]' hint='回想本讲关于 十二要素与环境变量 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 十二要素、环境变量与类型陷阱 的落点。' />
+
+<KnowledgeCard :points='["十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool(&#39;False&#39;) 为 True", "覆盖优先级：默认值 &lt; .env &lt; 进程环境变量 &lt; 显式覆盖/CLI；pydantic-settings 为 init &gt; env &gt; dotenv &gt; secrets &gt; default", "pydantic-settings BaseSettings 默认 case_sensitive=False，支持 env_prefix / env_nested_delimiter=&#39;__&#39;", "启动期全量校验抛 ValidationError，类型化不可变配置对象是单一事实源", "密钥用 SecretStr/掩码、托管服务轮换；.env 进 .gitignore、提交 .env.example 占位", "tomllib（3.11+）把 TOML 解析成原生 bool/int；配置漂移靠版本、校验和与启动摘要审计"]' :pitfalls='["用 bool(os.environ[&#39;DEBUG&#39;]) 解析开关", "硬编码密钥或把 .env 提交进仓库", "配置错误等运行期冷门分支才暴露", "把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版"]' summary='配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸' />
+
+1. 十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool('False') 为 True
+
+2. 覆盖优先级：默认值 < .env < 进程环境变量 < 显式覆盖/CLI；pydantic-settings 为 init > env > dotenv > secrets > default
+
+3. pydantic-settings BaseSettings 默认 case_sensitive=False，支持 env_prefix / env_nested_delimiter='__'
 
 [下一讲：打包与发布：pyproject、wheel 与 PyPI](/engineering/packaging)

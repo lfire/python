@@ -7,125 +7,261 @@ description: 从最简模型理解偏差方差与优化
 
 # 第 098 讲 · 经典算法：KNN、线性与逻辑回归
 
-> 线性模型是理解机器学习的最佳入口：损失、正则、优化、偏差方差都能用闭式或几行代码看清，不必藏着黑箱里。本讲的目标是「从最简模型理解偏差方差与优化」。先建立直觉，再用可运行代码把规则固定下来，最后放进工程场景里看边界与代价；全程建议边读边改参数、边猜输出。
+流程立住之后，终于可以往里放第一个模型。面对『这套房大概值多少』，稳妥的开场不是黑箱，而是先用几行能解释清楚的直线或近邻，把损失、优化和偏差方差看明白。经典算法值得先讲，因为每一步都摊得开，往后遇到复杂模型才有对照。
 
-## 这一讲你会得到什么
+从 KNN 与距离度量入手，说清不缩放特征时量纲大的列怎样独霸结果；再到最小二乘与梯度下降，看多项式回归次数一高怎样把噪声也背下来；最后走到逻辑回归与决策边界，用 L1 / L2 正则收住复杂度。需要上一讲的数据集划分、Pipeline 和 NumPy 向量化。做完这一讲，你能跑通并讲清一个可解释基线，也判断得出何时才需要更重的模型。
 
-<CheckList id='P098' title="本讲目标" :items='["能说清KNN 与距离度量", "能说清最小二乘与梯度下降", "能说清多项式回归与过拟合", "能说清逻辑回归与决策边界", "能说清正则化 L1 / L2"]' />
 
-## 1. 先建立直觉
+## 两个特征量纲差几个数量级，KNN 直接判错
 
-**KNN 与距离度量**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+一个流失预测模型用两个特征：用户年龄（20 到 70）和账户余额（0 到 50 万），KNN 上线后几乎把所有人都判成同一类，业务方说「年龄明明是最强的信号，模型却像没看见」。把距离拆开一看就明白了：欧氏距离里余额 5000 的差值是几千，年龄 5 岁的差值是 5，前者比后者大三个数量级，年龄这个真正有判别力的特征被彻底淹没。
 
-**最小二乘与梯度下降**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+另一处事故是有人用梯度下降拟合线性回归，学习率拍成 0.1，损失从几万涨到天文数字，最后溢出成 inf。朴素解法「把特征直接丢进模型」失败在尺度没有统一，「线性模型太简单换复杂模型」则错过了理解损失、优化与正则的最佳入口。
 
-**多项式回归与过拟合**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。
+本讲用纯 Python 把 KNN、最小二乘、梯度下降、逻辑回归与 L1/L2 全部跑通，让每个结论都有可核对的数字。
 
-<ConceptDiagram type='hub4' title='第 098 讲 · KNN 与距离度量' labels='KNN 与距离度量|最小二乘与梯度下降|多项式回归与过拟合|逻辑回归与决策边界' caption='从最简模型理解偏差方差与优化' />
+<Callout type="warn" title='先看一个真实会出错的写法' text='KNN / 梯度下降不缩放，结果被大尺度特征主导或收敛极慢：欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大' />
 
-上图用本讲的三个核心概念标出了主线：**KNN 与距离度量 → 最小二乘与梯度下降 → 多项式回归与过拟合**。点击可放大，滚轮与双指可缩放，拖拽可平移；读图时先顺着箭头走一遍，再回到代码里找对应的那几行。
 
-<FlowTimeline :steps='[{"title": "建立直觉", "desc": "先理解 KNN 与距离度量 解决什么问题", "tone": "blue"}, {"title": "跑通示例", "desc": "亲手执行主示例，核对 dict_keys([&#39;standardscaler", "tone": "green"}, {"title": "深入边界", "desc": "厘清 最小二乘与梯度下降 的失效条件", "tone": "orange"}, {"title": "工程落地", "desc": "把 可解释性 放进真实场景验证", "tone": "purple"}]' direction="horizontal" title="本讲的知识推进" />
+## KNN 与距离度量：最近邻由谁决定
 
-## 2. 语法与规则：把行为跑出来
+KNN 是惰性学习：没有显式的训练阶段，预测时才计算测试点到所有训练点的距离，取距离最小的 k 个邻居投票（分类取多数类）或平均（回归），因此训练 `O(1)`、单次预测 `O(n·d)`，n 是样本数、d 是特征数，大数据要靠 KD-tree / Ball-tree 加速，但维度升高后这类索引会退化到接近线性扫描，这就是维度灾难。
 
-### 2.1 主示例
+距离度量有欧氏距离（L2，`math.dist` 默认）、曼哈顿距离（L1）、闵可夫斯基距离（Lp）与余弦相似度；除余弦外都对特征的绝对尺度敏感。k 是偏差方差的旋钮：k 太小则决策边界锯齿、被单个噪声点带偏（高方差），k 太大则边界过度平滑、把小类吞掉（高偏差），通常用交叉验证选，并取奇数避免二分类平票。
 
-**KNN 与距离度量**。建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾。这三问能覆盖绝大多数线上问题，也是后续阶段反复使用的分析框架；能回答这三问，才算真正掌握而不是记住了 API 名字。
+特征缩放是硬要求：标准化 z=(x-均值)/标准差把各列变成均值 0、方差 1，归一化把值压到 [0,1]。不缩放时，量纲大的列在距离平方和里占绝对主导，同时把损失函数的等高线拉成狭长椭圆，梯度下降会在窄方向来回震荡、收敛极慢；缩放后等高线接近圆形，才能用更大的学习率。
 
-```python
-# 经典建模流程（示意，需 scikit-learn）
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score
-# X, y = load_data()
-pipe = make_pipeline(StandardScaler(), LogisticRegression())
-print(pipe.named_steps.keys())
-```
-
-<OutputBox title="运行结果" output='dict_keys([&#39;standardscaler&#39;, &#39;logisticregression&#39;])' note="输出可能随 Python 版本与平台略有差异；以你本机实际执行结果为准，差异本身也是很好的讨论素材。" />
-
-上面每一行在做什么，点开逐行看：
-
-<LineByLine code='# 经典建模流程（示意，需 scikit-learn）\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.model_selection import cross_val_score\n# X, y = load_data()\npipe = make_pipeline(StandardScaler(), LogisticRegression())\nprint(pipe.named_steps.keys())' :notes='["预处理放进 Pipeline，只在训练折拟合", "避免在全量数据上标准化造成泄漏", "交叉验证才能反映泛化能力", "第 4 行：与上文规则对照，观察它在整体流程里承担的角色", "第 5 行：与上文规则对照，观察它在整体流程里承担的角色", "第 6 行：与上文规则对照，观察它在整体流程里承担的角色", "第 7 行：与上文规则对照，观察它在整体流程里承担的角色", "第 8 行：与上文规则对照，观察它在整体流程里承担的角色"]' title='第 098 讲 · 经典算法：KNN、线性与逻辑回归' />
-
-换一种写法，重点观察**行为是否改变**以及**代价落在哪里**。**最小二乘与梯度下降**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。 两段代码的输出可以直接对照，差异往往就藏着本讲最关键的规则。
-
-### 2.2 对照写法
+加权 KNN 用距离倒数给近邻更大话语权，能缓解 k 固定带来的粗糙。
 
 ```python
-from collections import Counter
-y = [0, 0, 0, 1]
-print(Counter(y).most_common(1))
+import math
+
+def knn_predict(train, labels, q, k=3):
+    dists = []
+    for row, lab in zip(train, labels):
+        dists.append((math.dist(row, q), lab))
+    dists.sort()
+    votes = {}
+    for _, lab in dists[:k]:
+        votes[lab] = votes.get(lab, 0) + 1
+    return max(votes, key=votes.get)
+
+train = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]
+labels = ['A', 'A', 'A', 'B', 'B', 'B']
+q = [0.12, 5000]
+print('raw', knn_predict(train, labels, q))
+cols = list(zip(*train))
+means = [sum(c) / len(c) for c in cols]
+stds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 for m, c in zip(means, cols)]
+def scale(row):
+    return [(x - m) / s for x, m, s in zip(row, means, stds)]
+strain = [scale(r) for r in train]
+print('scaled', knn_predict(strain, labels, scale(q)))
 ```
 
-<OutputBox title="对照写法的输出（先自己猜）" output='[(0, 3)]' guess="true" />
+<OutputBox title='主示例运行结果' output='raw B\nscaled A' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<Compare :panels='[{"label": "主写法", "code": "# 经典建模流程（示意，需 scikit-learn）\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.model_selection import cross_val_score\n# X, y = load_data()\npipe = make_pipeline(StandardScaler(), LogisticRegression())\nprint(pipe.named_steps.keys())", "note": "本讲主示例，关注行为与输出"}, {"label": "对照写法", "code": "from collections import Counter\ny = [0, 0, 0, 1]\nprint(Counter(y).most_common(1))", "note": "换一种组织方式，对照可读性与代价"}]' title="两种写法对照" note='对照时关注「不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也会变」' />
+<LineByLine code='import math\n\ndef knn_predict(train, labels, q, k=3):\n    dists = []\n    for row, lab in zip(train, labels):\n        dists.append((math.dist(row, q), lab))\n    dists.sort()\n    votes = {}\n    for _, lab in dists[:k]:\n        votes[lab] = votes.get(lab, 0) + 1\n    return max(votes, key=votes.get)\n\ntrain = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]\nlabels = [&#39;A&#39;, &#39;A&#39;, &#39;A&#39;, &#39;B&#39;, &#39;B&#39;, &#39;B&#39;]\nq = [0.12, 5000]\nprint(&#39;raw&#39;, knn_predict(train, labels, q))\ncols = list(zip(*train))\nmeans = [sum(c) / len(c) for c in cols]\nstds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 for m, c in zip(means, cols)]\ndef scale(row):\n    return [(x - m) / s for x, m, s in zip(row, means, stds)]\nstrain = [scale(r) for r in train]\nprint(&#39;scaled&#39;, knn_predict(strain, labels, scale(q)))' :notes='["导入 math 使用 math.dist 计算欧氏距离", "定义 KNN 预测函数，k 默认 3，惰性学习无训练阶段", "dists 收集每个训练点到查询点的距离与标签", "逐条计算距离，特征未缩放时大尺度列主导差值", "math.dist 默认 L2 欧氏距离，对绝对尺度敏感", "按距离升序排序，最近的排在最前", "votes 统计 k 个近邻里各类别票数", "只取前 k 个近邻参与投票", "累加类别票数，多数类胜出", "返回票数最多的类别，等价于多数表决", "第一列是有判别力的小尺度特征、第二列是大尺度噪声", "前三条为 A 类、后三条为 B 类，仅第一列真正区分类别", "查询点第一列 0.12 明显属 A，第二列 5000 却更靠 B", "未缩放时距离被第二列主导，预测被带偏成 B", "按列转置，准备逐列计算均值与标准差", "每列均值，标准化 z=(x-均值)/标准差 的分子", "每列总体标准差，作为缩放的分母", "定义标准化函数，让两列等权参与距离", "逐列做 z-score，尺度差异被消除", "对训练集整体做同样的标准化", "对查询点用训练集的参数标准化后再预测，结果回到 A"]' title='第 098 讲 · 经典算法：KNN、线性与逻辑回归' />
 
-## 3. 深入一步：规则与边界
+读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-**多项式回归与过拟合**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。
 
-**逻辑回归与决策边界**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。
+## 特征缩放：z-score 之后近邻为什么变了
 
-**正则化 L1 / L2**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。
+```python
+w, lr, lam = 0.8, 0.1, 0.5
+w2 = [0.8]
+w1 = [0.8]
+for _ in range(10):
+    w2.append(w2[-1] * (1 - lr * lam))
+    v = w1[-1] - lr * lam
+    w1.append(max(0.0, v) if v > 0 else 0.0)
+print('L2 after 10', round(w2[-1], 4))
+print('L1 after 10', round(w1[-1], 4))
+```
 
-| 知识点 | 规则要点 | 常见误用 |
+<OutputBox title='原理验证' output='L2 after 10 0.479\nL1 after 10 0.3' />
+
+<Compare :panels='[{"label": "主示例", "code": "import math\n\ndef knn_predict(train, labels, q, k=3):\n    dists = []\n    for row, lab in zip(train, labels):\n        dists.append((math.dist(row, q), lab))\n    dists.sort()\n    votes = {}\n    for _, lab in dists[:k]:\n        votes[lab] = votes.get(lab, 0) + 1\n    return max(votes, key=votes.get)\n\ntrain = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]\nlabels = [&#39;A&#39;, &#39;A&#39;, &#39;A&#39;, &#39;B&#39;, &#39;B&#39;, &#39;B&#39;]\nq = [0.12, 5000]\nprint(&#39;raw&#39;, knn_predict(train, labels, q))\ncols = list(zip(*train))\nmeans = [sum(c) / len(c) for c in cols]\nstds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 for m, c in zip(means, cols)]\ndef scale(row):\n    return [(x - m) / s for x, m, s in zip(row, means, stds)]\nstrain = [scale(r) for r in train]\nprint(&#39;scaled&#39;, knn_predict(strain, labels, scale(q)))", "note": "KNN、距离度量与特征缩放"}, {"label": "对照 / 进阶", "code": "xs = [1, 2, 3, 4, 5]\nys = [2, 4, 5, 4, 5]\ndef mse(w, b): return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)\nmx, my = sum(xs) / 5, sum(ys) / 5\nw = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)\nb = my - w * mx\nprint(&#39;closed&#39;, round(w, 3), round(b, 3), round(mse(w, b), 3))\nwg, bg, lr = 0.0, 0.0, 0.05\nfor _ in range(2000):\n    dw = sum(2 * (wg * x + bg - y) * x for x, y in zip(xs, ys)) / 5\n    db = sum(2 * (wg * x + bg - y) for x, y in zip(xs, ys)) / 5\n    wg -= lr * dw; bg -= lr * db\nprint(&#39;gd&#39;, round(wg, 3), round(bg, 3), round(mse(wg, bg), 3))", "note": "最小二乘、梯度下降与多项式过拟合"}]' title='两种写法对照' note='差异集中在 KNN 与距离度量；先看输出，再找背后的规则。' />
+
+
+## 最小二乘：从损失到闭式解
+
+线性回归假设 `y = wᵀx` + b，用平方损失 L = (1/(2n))·Σ(y - ŷ)²。它有闭式解：正规方程 w = (XᵀX)⁻¹Xᵀy 一步得到全局最优，代价是求逆约 `O(d³)` 加构造 XᵀX 的 `O(n·d²)`，特征维度高或存在多重共线性时 XᵀX 接近奇异、解不稳定，这时改用梯度下降或加正则。
+
+梯度下降按 w ← w - η·∇L 迭代，∇L = (1/n)`Xᵀ(Xw - y)`，η 是学习率：它有收敛上界，平方损失下要求 η < 2/λ_max，λ_max 是 (1/n)XᵀX 的最大特征值；
+
+超过就会震荡并放大误差，实测在 `xs=1..5` 这个问题上 `η=0.1` 跑 30 轮损失就涨到 2.17e9 量级，而 `η=0.05` 跑 2000 轮能收敛到闭式解的 `w=0.6`、`b=2.2`。批量 GD 用全量算梯度、随机 GD 每次一个样本、小批量折中，是深度学习优化器的原型。
+
+多项式回归把 x 扩成 [x, x², …, xᵈ] 来拟合非线性，次数 d 越高训练误差越小，但验证误差先降后升：高次项把噪声也记住了，这是偏差方差权衡最直观的演示。线性模型的价值不只在预测，更在可解释性——系数直接表示「其余特征固定时，该特征每增一个单位对 y 的影响」，是任何复杂模型之前必须建立的基线。
+
+<Callout type="tip" title='核心心智模型' text='KNN 是惰性学习：没有显式的训练阶段，预测时才计算测试点到所有训练点的距离，取距离最小的 k 个邻居投票（分类取多数类）或平均（回归），因此训练 O(1)、单次预测 O(n·d)，n 是样本数、d 是特征数，大数据要靠 KD-tree / Ball-tree 加速，但维度升高后这类索引会退化到接近' />
+
+
+## 梯度下降：学习率与收敛的临界点
+
+```python
+xs = [1, 2, 3, 4, 5]
+ys = [2, 4, 5, 4, 5]
+def mse(w, b): return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+mx, my = sum(xs) / 5, sum(ys) / 5
+w = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sum((x - mx) ** 2 for x in xs)
+b = my - w * mx
+print('closed', round(w, 3), round(b, 3), round(mse(w, b), 3))
+wg, bg, lr = 0.0, 0.0, 0.05
+for _ in range(2000):
+    dw = sum(2 * (wg * x + bg - y) * x for x, y in zip(xs, ys)) / 5
+    db = sum(2 * (wg * x + bg - y) for x, y in zip(xs, ys)) / 5
+    wg -= lr * dw; bg -= lr * db
+print('gd', round(wg, 3), round(bg, 3), round(mse(wg, bg), 3))
+```
+
+<OutputBox title='对照写法：先自己猜，再点开' output='closed 0.6 2.2 0.48\ngd 0.6 2.2 0.48' guess="true" />
+
+**三个模型的机制与适用边界**
+
+| 模型 | 损失/准则 | 是否需缩放 | 可解释性 |
+| --- | --- | --- | --- |
+| KNN | 距离 + k 近邻投票 | 是，距离对尺度极敏感 | 低，靠邻居举例 |
+| 线性回归 | 平方损失，可闭式解 | 梯度下降求解时需要 | 高，系数即边际影响 |
+| 逻辑回归 | 交叉熵 + sigmoid | 建议做，利收敛 | 高，e^w 是优势比 |
+| 多项式回归 | 平方损失 + 高次特征 | 是，高次项放大尺度 | 中，次数高易过拟合 |
+
+
+## 多项式次数越加越高，训练集满分线上很差
+
+**L1 与 L2 正则对照**
+
+| 维度 | L1 (Lasso) | L2 (Ridge) |
 | --- | --- | --- |
-| KNN 与距离度量 | 工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、 | 不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也 |
-| 最小二乘与梯度下降 | 建议把它和相邻知识点连成一条线：输入是什么、状态存在哪里、失败时谁负责收尾 | 不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也 |
-| 多项式回归与过拟合 | 先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则 | 不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也 |
-| 逻辑回归与决策边界 | 这里的关键词是「什么时候」和「代价是什么」 | 不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也 |
-| 正则化 L1 / L2 | 从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上 | 不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也 |
+| 惩罚项 | λ·Σ\|w\| | λ·Σw² |
+| 梯度附加 | λ·sign(w) | 2λ·w |
+| 权重结果 | 部分恰好为 0，产生稀疏解 | 整体缩小，一般不为 0 |
+| 主要用途 | 特征选择 | 抑制共线性与过拟合 |
+| 10 步衰减(本讲 probe) | 0.8 线性减到 0.3 | 0.8 指数衰减到 0.479 |
 
-<Term word='KNN 与距离度量' text='线性模型是理解机器学习的最佳入口：损失、正则、优化、偏差方差都能用闭式或几行代码看清，不必藏着黑箱里' />
+<Callout type="warn" title='本讲最容易踩的坑' text='KNN / 梯度下降不缩放，结果被大尺度特征主导或收敛极慢：欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大' />
 
-<Callout type="warn" title="易错点" text='不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也会变慢' />
 
-<StepBox title="遇到异常时按这个顺序排查" :steps='[{"title": "第 1 步：KNN 与距离度量", "body": "**KNN 与距离度量**。先把这个概念放进可验证的场景：写一段最小代码，观察它的输出，再回头读规则。很多误解来自只记结论、没有亲手跑过边界情况；本讲要求把每一步的结论都用一段可运行代码固定下来，而不是停在「大概是这样」。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 2 步：最小二乘与梯度下降", "body": "**最小二乘与梯度下降**。这里的关键词是「什么时候」和「代价是什么」。Python 的机制大多不是非黑即白的开关，而是在可读性、性能与灵活性之间做的取舍。把取舍写清楚，遇到新版本或新框架时才能自己推导，而不是重新背一遍结论。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 3 步：多项式回归与过拟合", "body": "**多项式回归与过拟合**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。", "tip": "先用最小示例复现，再放大输入规模"}, {"title": "第 4 步：逻辑回归与决策边界", "body": "**逻辑回归与决策边界**。工程里最容易出问题的不是不会用，而是用在错误的边界上：数据规模变大、并发进入、依赖升级、跨平台部署之后，原本成立的假设会逐个失效。因此本讲同时给出适用条件、失效信号和一条可回退的路径。", "tip": "先用最小示例复现，再放大输入规模"}]' />
+## 逻辑回归与 sigmoid 决策边界
 
-<SequenceDiagram title='第 098 讲 · 调用时序' caption='从触发到收尾，标出可能失败的位置' :actors='["调用方", "处理逻辑", "依赖资源"]' :steps='[{"from": "调用方", "to": "处理逻辑", "label": "发起调用", "note": "KNN 与距离度量", "kind": "call"}, {"from": "处理逻辑", "to": "处理逻辑", "label": "校验状态", "note": "最小二乘与梯度下降", "kind": "self"}, {"from": "处理逻辑", "to": "依赖资源", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "依赖资源", "to": "处理逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "处理逻辑", "to": "调用方", "label": "返回或失败", "note": "清理资源", "kind": "return"}]' />
+逻辑回归名字带回归，实际是二分类：把线性得分 `z = wᵀx` + b 送进 sigmoid σ(z)=1/(1+e⁻ᶻ) 映射到 (0,1) 当概率，损失用交叉熵（对数损失）`L = -`[y·log p + (1-y)·`log(1-p)`]，不能再套平方损失，因为 sigmoid 之后平方损失对 w 非凸、且饱和区梯度趋近 0 会让训练停滞。
 
-## 4. 工程实践
+决策边界是 wᵀx + `b = 0` 的超平面，默认阈值 0.5 可按业务代价下调（保召回）或上调（保精确）。scikit-learn 的 LogisticRegression 默认就带 L2 正则，参数 C 是正则强度的倒数：C 越小正则越强、系数越收缩，C 越大越接近无约束拟合；
 
-先用线性模型建立基线与可解释性，复杂模型只有在指标确有增益且成本可接受时才上 **可解释性**。从实现角度看，这一层的行为最终会落到对象协议、字节码或运行时状态上。理解底层并不意味着每次都要写底层代码，而是当现象与直觉不符时，你知道该用 dis、inspect、tracemalloc 还是 cProfile 去验证，从而把猜测变成证据。 落地时把这条结论写进检查表或自动化测试，避免只停留在口头约定。
+LinearRegression 不带正则，Ridge / Lasso / ElasticNet 是独立估计器。L2（Ridge）在损失里加 λ·Σw²，梯度多出 2λw，让权重按比例整体缩小但一般不为 0；L1（Lasso）加 λ·Σ|w|，绝对值在 0 处不可导，最优解容易正好落在 0，于是产生稀疏解、顺带完成特征选择；
 
-### 用命令行复现
+ElasticNet 用两者的线性组合兼顾稳定与稀疏。λ 由交叉验证选。可解释性上，逻辑回归系数取指数 e^w 就是优势比（odds ratio）：某特征加一单位，事件发生的赔率乘以 e^w，这是它比黑箱模型更适合风控、医疗等场景的原因。
 
-本机不用起服务，一条命令就能把本讲的关键行为再验证一次：
+<ConceptDiagram type='hub4' title='第 098 讲 · KNN、距离度量与特征缩放' labels='KNN、距离度量与特征缩放|最小二乘、梯度下降与多项式过拟合|逻辑回归、决策边界与 L1/L2 正则' caption='从最简模型理解偏差方差与优化' />
 
-```bash
-python -c "from collections import Counter; print(Counter([0,0,1]).most_common(1))"
+这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+
+
+## L1 与 L2 正则：稀疏解还是平滑解
+
+**学习率与收敛（xs=1..5 实测）**
+
+| 学习率 | 轮数 | 结果 |
+| --- | --- | --- |
+| 0.05 | 2000 | 收敛到 w=0.6、b=2.2、mse=0.48 |
+| 0.1 | 30 | 损失涨到 2.17e9 量级并继续发散 |
+| 0.1 | 200 | 溢出为 inf 级别，权重达 1e27 |
+
+平方损失对 w 是二次函数，其 Hessian 为 (2/n)XᵀX，正定且特征值决定曲率。梯度下降 w ← w - η∇L 的收敛条件是 0 < η < 2/λ_max，λ_max 为 (1/n)XᵀX 的最大特征值；
+
+一旦越过上界，沿大曲率方向的迭代矩阵 |1-ηλ| > 1，误差逐轮指数放大，这就是 `η=0.1` 在本讲数据上 30 轮涨到 2.17e9 的原因。特征未缩放时 XᵀX 条件数（λ_max/λ_min）很大，等高线呈狭长椭圆，可取的 η 被最小的稳定步长卡住，只能配合大量迭代慢慢走；
+
+标准化把各列方差拉平、条件数接近 1，才能在较大 η 下快速收敛。KNN 的距离平方里，量纲大的列贡献与数值平方成正比，所以判别力会被尺度而非信息量决定。正则化改写目标为 损失 + λ·`R(w)`：L2 的 R 是光滑二次项，最优解满足 w = (XᵀX+λI)⁻¹Xᵀy，只是把权重整体收缩；
+
+L1 的 R 在 0 处有尖点，次梯度条件使一部分系数恰好取 0，从而产生稀疏性。逻辑回归用交叉熵配合 sigmoid，是因为它给出凸的、梯度不饱和太早的目标。
+
+
+## 平方损失、条件数与优化几何
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| KNN / 梯度下降不缩放，结果被大尺度特征主导或收敛极慢 | 欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大 | 训练前对每列做 z-score 标准化或 [0,1] 归一化，并把同样的参数用于验证与线上推理 |
+| 学习率设得过大，损失震荡溢出成 inf | η 超过 2/λ_max 时迭代矩阵谱半径大于 1，误差逐轮指数放大 | 先用较小学习率（如 0.05）或做学习率搜索，监控损失是否单调下降；必要时先标准化特征 |
+| 多项式回归次数越加越高，训练集满分线上很差 | 高次项把噪声也拟合进去，方差急剧增大，属于典型过拟合 | 用验证曲线选次数，加 L2 正则或限制次数，先与线性基线比较增益再决定 |
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：KNN / 梯度下降不缩放，结果被大尺度特征", "body": "欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大", "tip": "训练前对每列做 z-score 标准化或 [0,1] 归一化，并把同样的参数用于验证与线上推理"}, {"title": "第 2 步：学习率设得过大，损失震荡溢出成 inf", "body": "η 超过 2/λ_max 时迭代矩阵谱半径大于 1，误差逐轮指数放大", "tip": "先用较小学习率（如 0.05）或做学习率搜索，监控损失是否单调下降；必要时先标准化特征"}, {"title": "第 3 步：多项式回归次数越加越高，训练集满分线上很差", "body": "高次项把噪声也拟合进去，方差急剧增大，属于典型过拟合", "tip": "用验证曲线选次数，加 L2 正则或限制次数，先与线性基线比较增益再决定"}]' />
+
+
+## 流失预测基线：把缩放固化进推理管道
+
+一个二分类基线最容易被忽略的是「训练与推理用同一套缩放参数」：如果训练时标准化、线上却用原始值，或每次请求单独算均值方差，预测都会漂移。稳妥做法是把标准化函数、KNN 分类器与一组固定查询打包成一个可复跑的模块，缩放参数只在训练数据上算一次并随模型一起保存。
+
+下面用纯标准库实现这条管道：standardize 返回变换后的训练集与两列参数，knn 做距离投票，transform 让每条查询复用同一组参数，最后对三条查询批量给出类别。
+
+真实项目把 standardize 换成 sklearn 的 StandardScaler 并放进 Pipeline，把 knn 换成 KNeighborsClassifier，口径不变——关键是 fit 只发生在训练集，推理只做 transform。
+
+```python
+import math
+
+def standardize(rows):
+    cols = list(zip(*rows))
+    means = [sum(c) / len(c) for c in cols]
+    stds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 or 1.0
+           for m, c in zip(means, cols)]
+    out = [[(x - m) / s for x, m, s in zip(r, means, stds)] for r in rows]
+    return out, means, stds
+
+def knn(train, labels, q, k=3):
+    d = sorted((math.dist(row, q), lab) for row, lab in zip(train, labels))
+    votes = {}
+    for _, lab in d[:k]:
+        votes[lab] = votes.get(lab, 0) + 1
+    return max(votes, key=votes.get)
+
+raw = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]
+labels = ['A', 'A', 'A', 'B', 'B', 'B']
+train, means, stds = standardize(raw)
+def transform(r): return [(x - m) / s for x, m, s in zip(r, means, stds)]
+queries = [[0.12, 5000], [0.88, 7000], [0.5, 4500]]
+print('predictions', [knn(train, labels, transform(q)) for q in queries])
 ```
 
-把命令里的输入换成你自己的数据，观察输出是否仍符合 **KNN 与距离度量** 的规则；若结果不一致，先核对 Python 版本与依赖版本，再回到主示例逐行定位差异。这条命令也可以直接加进 CI，作为本讲结论的回归检查。
+<Callout type="idea" title='落地提示' text='先用线性模型建立基线与可解释性，复杂模型只有在指标确有增益且成本可接受时才上' />
 
-<Callout type="idea" title="生产提示" text='把「可解释性」写成检查项，并在 CI 里用最小用例守住它。' />
+<CheckList id='P098b' title='上线前自检' :items='["能复现并解释「KNN / 梯度下降不缩放，结果被大尺度特征主导或收敛极慢」", "能复现并解释「学习率设得过大，损失震荡溢出成 inf」", "能复现并解释「多项式回归次数越加越高，训练集满分线上很差」", "能用一条命令验证 KNN 与距离度量", "关键路径有自动化测试与失败分支"]' />
 
-把本讲结论接到真实系统时，至少回答三个问题：数据量上来后是否还成立；并发进入后状态由谁拥有；失败之后谁负责收尾与重试。回答不上来，就先补一个最小压测或故障注入，而不是直接上线。
 
-## 动手练一练
+## 练习与速记：缩放、学习率与正则
 
-<Exercise title='动手：围绕「可解释性」改写示例' task='在不改变输出语义的前提下改写本讲主示例，使其显式处理 KNN 与距离度量 与 可解释性 两个关注点，并说明你的取舍。' :hints='["回到 KNN 与距离度量 的规则", "留意易错点：不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也会变慢", "先让代码跑通，再补边界与异常分支"]' solution='from collections import Counter\ny = [0, 0, 0, 1]\nprint(Counter(y).most_common(1))' explain='对照写法展示了另一种组织方式。关键不是代码更短，而是把状态与失败路径显式化；先用线性模型建立基线与可解释性，复杂模型只有在指标确有增益且成本可接受时才上' />
+<Exercise title='基础：实现标准化并验证近邻变化' task='对 code 里的 train 计算逐列均值与标准差，说明为什么未缩放时查询点 q 被判成 B、缩放后判成 A，并写出缩放后的第一列近似值。' solution='train = [[0.1,100],[0.2,9000],[0.15,300],[0.9,8000],[0.8,200],[0.85,9500]]\ncols = list(zip(*train))\nmeans = [sum(c)/len(c) for c in cols]\nstds = [(sum((x-m)**2 for x in c)/len(c))**0.5 for m,c in zip(means,cols)]\nq = [0.12, 5000]\nprint(&#39;means&#39;, [round(m,2) for m in means])\nprint(&#39;scaled q&#39;, [round((x-m)/s,2) for x,m,s in zip(q,means,stds)])' explain='未缩放时第二列差值以千计、第一列差值只有零点几，距离被余额主导；标准化后两列同量纲，第一列 0.12 明显靠近 A 类的 0.1 到 0.2，近邻改成 A 类，预测翻转为 A。' />
 
-## 随堂检测
+<Exercise title='进阶：用数值实验找出学习率发散临界点' task='对 xs=1..5、ys=[2,4,5,4,5]，分别用 lr=0.05、0.08、0.1 跑 200 轮，打印最终 mse，解释为什么 0.1 会发散。' solution='xs=[1,2,3,4,5]; ys=[2,4,5,4,5]\ndef run(lr):\n    w=b=0.0\n    for _ in range(200):\n        dw=sum(2*(w*x+b-y)*x for x,y in zip(xs,ys))/5\n        db=sum(2*(w*x+b-y) for x,y in zip(xs,ys))/5\n        w-=lr*dw; b-=lr*db\n    return round(sum((w*x+b-y)**2 for x,y in zip(xs,ys))/5,3)\nfor lr in (0.05,0.08,0.1): print(lr, run(lr))' explain='收敛上界是 η &lt; 2/λ_max，本问题约 0.0845；0.05 与 0.08 收敛，0.1 越界后迭代矩阵谱半径大于 1，误差指数放大。' />
 
-<Quiz no='098-1' q='在本讲讨论的「KNN 与距离度量」语境下，下面哪一种说法是准确的？' :options='["线性模型是理解机器学习的最佳入口：损失、正则、优化、偏差方差都能用闭式或几行代码看清，不必藏着黑箱里", "KNN 与距离度量 只影响代码的书写形式，不会改变任何运行时行为", "KNN 与距离度量 在所有 Python 实现与所有版本中表现完全一致", "只要用了 KNN 与距离度量，就不必再考虑 可解释性 带来的约束"]' answer="0" explain='正确项来自本讲的核心洞察。其余三项是常见误解：把语言机制当成纯语法糖、忽略实现与版本差异、以及误以为某个特性能替代对 可解释性 的判断。遇到这类判断，回到可运行的最小示例验证，比记结论可靠。' />
+<Quiz no='098-1' q='两个特征分别是 0 到 1 的评分与 0 到 50 万的余额，直接跑欧氏距离 KNN 会怎样？' :options='["余额主导距离，评分这个强信号几乎不起作用", "两特征等量贡献", "自动按信息量加权", "抛异常提示尺度不一致"]' answer="0" explain='欧氏距离按各维差值的平方累加，量纲大的余额贡献是评分的几个数量级，距离几乎只反映余额，因此必须先做标准化。' />
 
-<Predict no='098-2' q='下面这段主示例在 CPython 3.10+ 中运行，最贴近的输出是哪一项？' :options='["dict_keys([&#39;standardscaler&#39;, &#39;logisticregression&#39;])", "dict_keys([&#39;standardscaler&#39;, &#39;logisticregression&#39;])\n（无更多输出）", "AttributeError: KNN 与距离度量 不可用"]' answer="0" output='dict_keys([&#39;standardscaler&#39;, &#39;logisticregression&#39;])' explain='真正输出是第一段。第二项漏掉了后续行的结果，第三项把「概念不理解」误当成运行时异常。建议先自己在本机跑一遍，再用 dis 或 print 把中间状态打出来对照。' />
+<Quiz no='098-2' q='关于逻辑回归，下面哪项准确？' :options='["用 sigmoid 映射概率、交叉熵作损失，系数取指数是优势比", "用平方损失训练最合适", "决策边界一定是曲线", "L1 正则让所有权重整体缩小且不为 0"]' answer="0" explain='逻辑回归是 sigmoid + 交叉熵的凸问题，决策边界是线性超平面；e^w 是优势比。L1 产生稀疏（部分为 0），L2 才是整体收缩。' />
 
-<FillBlank no='098-3' tpl='from sklearn.pipeline ___make_pipeline' :answers='["import"]' hint='回想本讲关于 KNN 与距离度量 的规则' explain='被挖掉的关键字决定了这一行的语义；补回去后再跑一遍，确认输出与上面的运行结果一致。' />
+<Quiz no='098-3' q='L1 与 L2 正则对权重的关键区别是？' :options='["L1 因绝对值在 0 处不可导易产生稀疏解，L2 让权重平滑缩小", "L1 一定比 L2 精度高", "L2 能做特征选择而 L1 不能", "两者数学上等价"]' answer="0" explain='L1 的惩罚在 0 处有尖点，次梯度条件使部分系数恰好取 0，可作特征选择；L2 是光滑二次项，只按比例收缩权重，一般不为 0。' />
 
-## 一页纸速记
+<Predict no='098-P' q='前面 code 里对 q 做标准化后再跑 3NN，预测的类别是？' :options='["A", "B", "无法确定"]' answer='0' output='scaled A' explain='标准化消除尺度差异后，第一列这个真正有判别力的特征起作用：q 的第一列 0.12 明显落在 A 类的 0.1 到 0.2 区间，近邻变为 A 类，输出 scaled A。' />
 
-<KnowledgeCard :points='["KNN 与距离度量：KNN 与距离度量", "最小二乘与梯度下降：最小二乘与梯度下降", "多项式回归与过拟合：多项式回归与过拟合", "逻辑回归与决策边界：逻辑回归与决策边界"]' :pitfalls='["不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也会变慢", "忽略版本差异，把 可解释性 的结论当成跨版本通用", "只看示例代码跑通，没有验证边界输入与失败路径"]' summary='本讲一句话：线性模型是理解机器学习的最佳入口：损失、正则、优化、偏差方差都能用闭式或几行代码看清，不必藏着黑箱里' />
+<FillBlank no='098-F' tpl='___ math' :answers='["import"]' hint='回想本讲关于 KNN 与距离度量 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 KNN、距离度量与特征缩放 的落点。' />
 
-## 小结与下一讲
+<KnowledgeCard :points='["KNN 惰性学习、预测 O(n·d)；k 小高方差、k 大高偏差，交叉验证选奇数 k", "欧氏距离对尺度敏感，KNN 与梯度下降前必须标准化 z=(x-μ)/σ", "正规方程 w=(XᵀX)⁻¹Xᵀy 一步最优但 O(d³)；梯度下降要求 η &lt; 2/λ_max", "学习率越界会指数发散；多项式次数过高把噪声也拟合，验证误差先降后升", "逻辑回归 = sigmoid + 交叉熵，边界是超平面；e^w 是优势比，默认带 L2 正则", "L2 平滑收缩权重，L1 产生稀疏解可做特征选择；λ 与 C 由交叉验证选"]' :pitfalls='["KNN / 梯度下降不缩放，结果被大尺度特征主导或收敛极慢", "学习率设得过大，损失震荡溢出成 inf", "多项式回归次数越加越高，训练集满分线上很差", "不做特征缩放就跑 KNN 或梯度下降，量纲大的特征会主导结果，收敛也会变慢"]' summary='线性模型是理解机器学习的最佳入口：损失、正则、优化、偏差方差都能用闭式或几行代码看清，不必藏着黑箱里' />
 
-1. KNN 与距离度量：KNN 与距离度量
-2. 最小二乘与梯度下降：最小二乘与梯度下降
-3. 先用线性模型建立基线与可解释性，复杂模型只有在指标确有增益且成本可接受时才上
+**速记索引**
+
+| 要记住的结论 | 用在哪一步 |
+| --- | --- |
+| KNN 惰性学习、预测 O(n·d)；k 小高方差、k 大高偏差，交叉验证选奇数 k | 建立直觉 |
+| 欧氏距离对尺度敏感，KNN 与梯度下降前必须标准化 z=(x-μ)/σ | 跑通示例 |
+| 正规方程 w=(XᵀX)⁻¹Xᵀy 一步最优但 O(d³)；梯度下降要求 η < 2/λ_max | 深入边界 |
+| 学习率越界会指数发散；多项式次数过高把噪声也拟合，验证误差先降后升 | 工程落地 |
+| 逻辑回归 = sigmoid + 交叉熵，边界是超平面；e^w 是优势比，默认带 L2 正则 | 随堂检测 |
+| L2 平滑收缩权重，L1 产生稀疏解可做特征选择；λ 与 C 由交叉验证选 | 复盘 |
+
+1. KNN 惰性学习、预测 O(n·d)；k 小高方差、k 大高偏差，交叉验证选奇数 k
+
+2. 欧氏距离对尺度敏感，KNN 与梯度下降前必须标准化 z=(x-μ)/σ
+
+3. 正规方程 w=(XᵀX)⁻¹Xᵀy 一步最优但 O(d³)；梯度下降要求 η < 2/λ_max
 
 [下一讲：SVM、核方法、决策树与随机森林](/data-ai/svm-trees)
