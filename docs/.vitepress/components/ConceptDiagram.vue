@@ -73,23 +73,42 @@ function cols(left: N[], right: N[], caption: string): Diagram {
 }
 
 /**
- * 概念图库（站点骨架：只保留中性占位图，不含任何课程内容）。
- * 上面 4 个布局函数 row / layers / hub / cols 是与内容无关的通用能力；
- * 编写课程时按 type 往 D 里追加条目即可，例如：
- *   'xxx': row([{ label, sub, tone }, ...], '图注')
- * 组件自带点击放大、滚轮 / 双指缩放、拖拽平移、ESC 关闭等交互，与数据完全解耦。
+ * 概念图布局模板（与课程内容无关）。
+ * 每讲通过 type 选布局、通过 labels/caption 覆盖节点文字，因此 132 讲各有专属图。
+ * 布局函数 row / layers / hub / cols 与全部缩放交互都在本文件里，数据只是参数。
  */
 const D: Record<string, Diagram> = {
+  flow3: row([
+    { label: '输入', sub: '起点与前置', tone: 'blue' },
+    { label: '处理', sub: '核心规则', tone: 'purple' },
+    { label: '输出', sub: '结果与代价', tone: 'green' },
+  ], '三段式流程：从输入到输出，中间是规则生效的地方'),
+  flow4: row([
+    { label: '触发', sub: '谁发起', tone: 'blue' },
+    { label: '检查', sub: '前置条件', tone: 'orange' },
+    { label: '执行', sub: '状态变化', tone: 'purple' },
+    { label: '收尾', sub: '结果与清理', tone: 'green' },
+  ], '四段式流程：注意检查与收尾两段最容易被省略'),
+  layers3: layers([
+    [{ label: '接口层', sub: '对外契约', tone: 'blue' }],
+    [{ label: '逻辑层', sub: '规则与状态', tone: 'purple' }, { label: '旁路', sub: '异常与降级', tone: 'orange' }],
+    [{ label: '资源层', sub: 'IO 与存储', tone: 'green' }],
+  ], '分层视角：每一层只依赖下一层提供的能力'),
+  hub4: hub(
+    { label: '核心机制', sub: '被多个环节共享', tone: 'purple' },
+    [{ label: '可读性', sub: '表达成本', tone: 'blue' },
+     { label: '性能', sub: '时间空间', tone: 'orange' },
+     { label: '正确性', sub: '边界与失败', tone: 'green' }],
+    '一个机制往往同时影响可读性、性能与正确性'),
+  compare2: cols(
+    [{ label: '方案 A', sub: '直接写法', tone: 'blue' }, { label: '特点', sub: '简单但边界少', tone: 'blue' }],
+    [{ label: '方案 B', sub: '工程写法', tone: 'green' }, { label: '特点', sub: '显式且可测', tone: 'green' }],
+    '两栏对照：差异通常不在结果，而在失败时的表现'),
   placeholder: row([
-    { label: '输入', sub: '从这里开始', tone: 'blue' },
-    { label: '处理', sub: '你的逻辑', tone: 'purple' },
-    { label: '输出', sub: '到这里结束', tone: 'green' },
-  ], '占位示意图：按 type 追加课程所需的节点与箭头即可。'),
-  'placeholder-layers': layers([
-    [{ label: '第一层', sub: '入口', tone: 'blue' }],
-    [{ label: '第二层', sub: '加工', tone: 'purple' }, { label: '旁路', sub: '可选分支', tone: 'gray' }],
-    [{ label: '第三层', sub: '结果', tone: 'green' }],
-  ], '占位分层图：验证 layers 布局与纵向连线。'),
+    { label: '概念一', sub: '建立直觉', tone: 'blue' },
+    { label: '概念二', sub: '验证规则', tone: 'purple' },
+    { label: '概念三', sub: '工程落地', tone: 'green' },
+  ], '占位示意图：按 type 与 labels 可替换为任意主题'),
 }
 
 const props = defineProps<{

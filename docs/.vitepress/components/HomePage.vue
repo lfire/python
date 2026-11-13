@@ -8,40 +8,32 @@ import FlowTimeline from './FlowTimeline.vue'
 import Callout from './Callout.vue'
 import Quiz from './Quiz.vue'
 
-// 站点骨架首页：这里只描述框架本身具备的能力，不含任何课程内容。
+// 由 tools/course/gen_course.py 生成：站点能力与课程规模数据。
 const features = [
-  { ico: '🧩', t: '随堂问答组件', d: '选择题、结果预测、代码填空都带即时反馈与解析，写正文时一行标签就能插入。' },
-  { ico: '🔬', t: '可放大的概念图', d: '点击放大、滚轮与双指缩放、拖拽平移、ESC 关闭 —— 抽象机制可以「看」着讲。' },
-  { ico: '▶️', t: '代码块工具条', d: '每个代码块自动带语言标签、复制按钮与结构折叠；长代码可整块收起，Python 代码块另配在线运行入口。' },
-  { ico: '🧭', t: '路线与场景矩阵', d: '阶段路线卡片、可按分类筛选的工程场景表已就位，等课程定稿后填入数据即可。' },
-  { ico: '📈', t: '本地学习进度', d: '逐页打卡、按阶段汇总、一键清空；数据只存在浏览器里，不会上传。' },
-  { ico: '🌗', t: '双主题与全文搜索', d: '浅色 / 深色两套配色，本地全文搜索、目录大纲、上一节 / 下一节都已配好。' },
+  { ico: '🔍', t: '逐行讲解', d: '示例代码可以一行行点开看，每一行在做什么、为什么这么写，都写在旁边，不靠猜。' },
+  { ico: '🎯', t: '先猜后看', d: '运行结果默认藏起来，先在脑子里跑一遍再揭晓；答错会解释错在哪，而不是只判对错。' },
+  { ico: '🧩', t: '随堂检测', d: '选择题、代码填空、结果预测、动手练习交替出现，每讲至少三次主动回忆。' },
+  { ico: '🖼️', t: '图文并重', d: '每讲配有可放大的专属概念图，另有分层蓝图与时序图；点击缩放、拖拽平移，抽象机制可以看着讲。' },
+  { ico: '🔬', t: '交互实验台', d: '状态逐语句演示、流程时间线、代码结构折叠与表格增强，把「以为懂了」变成能验证的步骤。' },
+  { ico: '📈', t: '进度与速记', d: '每讲可打卡，按 13 个阶段汇总；每讲结尾一页纸速记把要点和坑分开列清楚。' },
 ]
 const stats = [
-  { n: '27', t: '个交互组件' }, { n: '24', t: '个全局注册' },
-  { n: '0', t: '篇正文（待编写）' }, { n: '1', t: '条 Pages 流水线' },
+  { n: '13', t: '个递进阶段' }, { n: '132', t: '讲完整课程' },
+  { n: '50', t: '个工程场景' }, { n: '27', t: '个交互组件' },
 ]
-// 占位闭环：只用于演示 FlowTimeline 的横向流程交互，不代表已定稿的教学设计。
-const loop = [
-  { title: '建立直觉', desc: '类比 + 概念图，先知道它解决什么', tone: 'blue' },
-  { title: '可运行示例', desc: '每段代码都能跑，带输出', tone: 'green' },
-  { title: '逐行拆解', desc: '点开每一行看解释', tone: 'orange' },
-  { title: '猜输出 / 填空', desc: '主动回忆比多看一遍有效', tone: 'purple' },
-  { title: '动手练习', desc: '带提示与参考解的编程题', tone: 'red' },
-  { title: '速记卡', desc: '要点与易错点分开收束', tone: 'gray' },
-]
+const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道它解决什么", "tone": "blue"}, {"title": "可运行示例", "desc": "每段代码都能跑，带真实输出", "tone": "green"}, {"title": "逐行拆解", "desc": "点开每一行看解释", "tone": "orange"}, {"title": "猜输出 / 填空", "desc": "主动回忆比多看一遍有效", "tone": "purple"}, {"title": "动手练习", "desc": "带提示与参考解的编程题", "tone": "red"}, {"title": "速记卡", "desc": "要点与易错点分开收束", "tone": "gray"}]
 </script>
 
 <template>
   <div class="home">
     <section class="hp-hero">
-      <span class="hp-kicker">从零开始 · 交互式中文教程</span>
+      <span class="hp-kicker">从零基础到资深 · 交互式中文教程</span>
       <h1>把 <em>Python</em> 学成<br />你真正会用的语言</h1>
-      <p>站点框架、设计系统与交互组件已经就绪，教程正文正在编写中。这里会是一套从第一行代码走到工程实战、边读边练的 Python 中文教程。</p>
+      <p>不假设你有编程基础，也不停在「会写语法」。13 个递进阶段、132 讲，从第一行 print 一路走到解释器源码、高并发架构、数据智能与生产级工程 —— 每个难点都拆成能看懂、能动手、能自测的一小步。</p>
       <div class="hp-actions">
-        <a class="hp-btn main" :href="withBase('/guide/')">🚀 查看学习路线</a>
-        <a class="hp-btn alt" :href="withBase('/about/deploy')">🛠️ 本地运行与部署</a>
-        <a class="hp-btn alt" href="https://github.com/lfire/python" target="_blank" rel="noopener noreferrer">📦 GitHub 仓库</a>
+        <a class="hp-btn main" :href="withBase('/guide/opening')">🚀 从第 001 讲开始</a>
+        <a class="hp-btn alt" :href="withBase('/guide/curriculum')">📖 完整课程目录</a>
+        <a class="hp-btn alt" :href="withBase('/projects/')">🏗️ 直接看工程实战</a>
       </div>
       <div class="hp-stats">
         <div class="hp-stat" v-for="(s, i) in stats" :key="i"><b>{{ s.n }}</b><span>{{ s.t }}</span></div>
@@ -50,11 +42,11 @@ const loop = [
 
     <section class="hp-section">
       <div class="hp-section-head">
-        <div class="eyebrow">Site capabilities</div>
-        <h2>先有骨架，再填内容</h2>
-        <p>下面这些能力都已经可用且与课程正文解耦：组件靠属性接收数据，写正文时只需要在 Markdown 里插入标签。这一页出现的图示、路线与场景都是中性占位数据。</p>
+        <div class="eyebrow">How you learn</div>
+        <h2>不是把文档搬上来，而是重新设计学习过程</h2>
+        <p>同样的知识点，读一遍和「先猜、再验证、再练一遍」的留存率完全不同。整套课程把交互做成固定节奏：每一讲都按下面的闭环推进，难点另配可放大的图示和逐语句实验台。</p>
       </div>
-      <FlowTimeline :steps="loop" title="一讲的学习闭环（占位）" direction="horizontal" />
+      <FlowTimeline :steps="loop" title="一讲的学习闭环" direction="horizontal" />
       <div class="hp-grid" style="margin-top:1.6rem">
         <div class="hp-feature" v-for="(f, i) in features" :key="i">
           <div class="ico">{{ f.ico }}</div><h4>{{ f.t }}</h4><p>{{ f.d }}</p>
@@ -65,33 +57,33 @@ const loop = [
     <section class="hp-section" id="components">
       <div class="hp-section-head">
         <div class="eyebrow">Component check</div>
-        <h2>交互组件自检</h2>
-        <p>下面这个示例只用来确认全局组件注册与即时反馈已生效：随堂问答提交后会调用答案回顾组件给出逐项解析。它是组件用法演示，不是课程内容。</p>
+        <h2>先试试交互：组件自检</h2>
+        <p>下面这个示例用来确认全局组件注册、即时反馈与答案回顾都已生效；它同时也是全站交互形态的一个缩影。</p>
       </div>
       <Callout type="tip" title="组件已全局注册" text="在任意 Markdown 里直接写 Quiz、Callout、ConceptDiagram 等标签即可，无需单独 import。" />
       <div style="margin-top:1rem">
-        <Quiz no="D-1" q="下面哪个是本站已经注册好的交互组件？" :options='["Quiz 随堂问答", "数据库服务", "应用服务器"]' answer="0" explain="交互组件统一在 .vitepress/theme/index.ts 中全局注册；提交后的逐项解析来自 main 分支新增的 AnswerReview 组件。" />
+        <Quiz no="D-1" q="关于 Python 的默认值，下面哪种写法是安全的？" :options='["def f(x, buf=[])", "def f(x, buf=None) 并在函数内初始化", "把默认值写成全局列表", "默认值无需考虑可变性"]' answer="1" explain="默认值在定义时只求值一次，可变默认值会被所有调用共享；用 None 作哨兵并在函数体内初始化才是安全写法。" />
       </div>
     </section>
 
     <section class="hp-section" id="roadmap">
       <div class="hp-section-head">
         <div class="eyebrow">Learning path</div>
-        <h2>阶段路线（占位）</h2>
-        <p>路线卡片、概念图与侧栏共用同一份目录数据。阶段划分定稿后，替换组件里的占位数组并在配置里补齐导航即可。</p>
+        <h2>十三个阶段，一条不跳步的路线</h2>
+        <p>顺序按认知负担设计：先建直觉 → 再学语法 → 再拆底层 → 再做工程 → 最后做架构与源码。前一阶段的输出，正好是下一阶段的前置。</p>
       </div>
       <PathMap />
       <div style="margin-top:1.2rem">
-        <ConceptDiagram type="placeholder" title="占位示意图：可放大、缩放与拖拽" />
+        <ConceptDiagram type="flow4" title="一次学习的完整链路" labels="建立直觉|跑通示例|验证边界|工程落地" caption="每一讲都按这条链路组织" />
       </div>
-      <Callout type="tip" title="目录怎么维护？" text="课程页面清单写在 `docs/.vitepress/utils.ts` 的 `LESSONS`，导航与侧栏写在 `config.mts`；两处补齐后，进度汇总与阶段卡片会自动更新。" />
+      <Callout type="tip" title="已经有经验？" text="可以先做练习与速查里的能力自评，按短板切入对应阶段；每讲顶部都标了难度与前置，侧栏按阶段分组，随时能跳回来补。" />
     </section>
 
     <section class="hp-section" id="scenarios">
       <div class="hp-section-head">
         <div class="eyebrow">Engineering scenarios</div>
-        <h2>工程场景矩阵（占位）</h2>
-        <p>分类筛选、难度星级、表格列宽与横向滚动都已可用。场景定稿后替换数据行即可。</p>
+        <h2>12 类工程场景：分类 × 难度</h2>
+        <p>命令行、办公自动化、网络服务、爬虫、数据分析、存储、微服务、云原生、测试质量、AI 工程、安全治理与跨语言底层，每类内部从 ★ 走到 ★★★★★。点分类标签可以筛选。</p>
       </div>
       <ScenarioMatrix />
     </section>
@@ -100,20 +92,20 @@ const loop = [
       <div class="hp-section-head">
         <div class="eyebrow">Your progress</div>
         <h2>学到哪了，一眼看得见</h2>
-        <p>每讲顶部可以「标记学完」，这里会按阶段汇总。进度只保存在你自己的浏览器里，不会上传，也可以一键清空。目录尚未配置时这里会显示提示，属正常状态。</p>
+        <p>每讲顶部可以「标记学完」，这里会按 13 个阶段汇总。进度只保存在你自己的浏览器里，不会上传，也可以一键清空。</p>
       </div>
       <ProgressTracker />
     </section>
 
     <section class="hp-cta">
-      <h2>想把站点先跑起来？</h2>
-      <p style="color:var(--go-muted);font-size:14px;line-height:1.8;margin-bottom:1.3rem">安装依赖后执行 npm run dev 即可本地预览；推送到 main 会由 GitHub Actions 自动发布到 Pages。</p>
-      <a class="hp-btn main" style="background:var(--go-brand)" :href="withBase('/about/deploy')">查看运行与部署说明 →</a>
+      <h2>准备好写第一行 Python 了吗？</h2>
+      <p style="color:var(--go-muted);font-size:14px;line-height:1.8;margin-bottom:1.3rem">先花十分钟认识这门语言与它的取舍，第 002 讲就会带你把环境一次装好。</p>
+      <a class="hp-btn main" style="background:var(--go-brand)" :href="withBase('/guide/setup')">从装环境开始 →</a>
     </section>
 
     <div style="text-align:center;color:var(--go-muted);font-size:12px;line-height:1.8;margin:2rem 0 .5rem">
-      站点框架与交互组件已就绪 · 教程正文待编写<br />
-      <a :href="withBase('/about/')" style="text-decoration:none">关于本站 →</a>
+      为一遍学明白而设计 · 例子均可运行，图示可放大，进度只在本地<br />
+      <a :href="withBase('/about/')" style="text-decoration:none">关于本站与内容编排思路 →</a>
     </div>
   </div>
 </template>
