@@ -7,33 +7,35 @@ description: 能按成本选择合适操作
 
 # 第 018 讲 · list：动态数组、操作与时间复杂度
 
-几乎每个程序都躲不开一串按次序排好的数据：日志、待办、最近几条记录。上一讲把序列接口讲清了，这一讲收窄到最常用的 list，看它把数据放在哪儿、不同动作各付什么代价。
+几乎每个程序都躲不开一串按次序排好的数据：日志、待办、最近几条记录。上一讲把序列接口讲清了，这一讲收窄到最常用的 `list`，看它把数据放在哪儿、不同动作各付什么代价。
 
 一个日志脚本把六万条记录存进列表，每来一条都从头部插、尾部删，上线后处理器长期忙不过来；换成两头都省力的写法立刻平稳。我们先看列表的指针数组与预留容量，理解它存的是引用而非对象；再算尾部追加为何近乎常数、头部插入为何要搬动整排；最后把常用操作摆成复杂度对照，和双端队列一起按操作分布选容器。需要你已会索引、切片和遍历。学完你写循环前会先想数据从哪端进、哪端出，而不是凭习惯一路追加。
 
 
 ## 在列表头部反复 insert(0, x) 之后 CPU 打满了
 
-一个日志消费脚本把最近 6 万条记录存进 list，每条新记录都写 `records.insert(0, rec)` 再 `records.pop()` 保持长度。
+一个日志消费脚本把最近 6 万条记录存进 `list`，每条新记录都写 `records.insert(0, rec)` 再 `records.pop()` 保持长度。
 
 上线后 CPU 长期打满，吞吐却只有预期的十分之一。排查发现 `insert(0)` 每次都要把已有 6 万个引用整体后移一位，而 `pop()` 从尾部删几乎零成本；这两步放在一起，等于每条记录都做一次 `O(n)` 搬运，6 万条累计就是 `O(n²)`。
 
 换成 `collections.deque(maxlen=60000)` 后两端操作都变成 `O(1)`，CPU 立刻回落。
 
-另一个方向的坑是有人为了'少写一行'用 `a = b` 复制列表，接着 `a.append(x)` 把原列表也改了，因为赋值只复制引用。本讲把 list 的 PyObject* 指针数组布局、append 的摊还扩容、各操作的真实复杂度与容器选型拆开，目标是按操作分布选容器，而不是按习惯选。
+另一个方向的坑是有人为了「少写一行」用 `a = b` 复制列表，接着 `a.append(x)` 把原列表也改了，因为赋值只复制引用。本讲把 `list` 的 `PyObject*` 指针数组布局、`append` 的摊还扩容、各操作的真实复杂度与容器选型拆开，目标是按操作分布选容器，而不是按习惯选。
 
 
 ## list 存的是引用：先看清内存布局
 
-CPython 的 list 是 PyListObject：对象头里有 ob_size（逻辑长度）、ob_item（指向一块连续 PyObject* 数组的指针）与 allocated（已分配槽位数）。数组里存的是引用而不是对象本体，元素本体在堆上各自独立。
+CPython 的 `list` 是 `PyListObject`：对象头里有 `ob_size`（逻辑长度）、`ob_item`（指向一块连续 `PyObject*` 数组的指针）与 `allocated`（已分配槽位数）。数组里存的是引用而不是对象本体，元素本体在堆上各自独立。
 
-这解释了一串现象：一个 list 能混装 int、str、list 等任意类型；`len(a)` 直接读 ob_size 是 `O(1)`；a`[i]` 是一次指针偏移加一次解引用，也是 `O(1)`，但比 C 数组多一次间接寻址；
+这解释了一串现象：一个 `list` 能混装 `int`、`str`、`list` 等任意类型；`len(a)` 直接读 `ob_size` 是 `O(1)`；`a[i]` 是一次指针偏移加一次解引用，也是 `O(1)`，但比 C 数组多一次间接寻址；
 
 列表切片、`list(a)`、`a.copy()` 都只复制引用，是浅拷贝，改副本里的嵌套对象会穿透到原列表。
 
-内存上在 64 位 CPython 3.13 实测：`sys.getsizeof([])` 为 56 字节，每增加一个元素约多 8 字节指针，(1, 2, 3) 这个 tuple 为 64 字节，而 [1, 2, 3] 为 88 字节（多出的部分就是 allocated 过度分配），空 deque 为 760 字节（要维护分块与双端指针）。
+内存上在 64 位 CPython 3.13 实测：`sys.getsizeof([])` 为 56 字节，每增加一个元素约多 8 字节指针，`(1, 2, 3)` 这个 tuple 为 64 字节，而 `[1, 2, 3]` 为 88 字节（多出的部分就是 `allocated` 过度分配），空 `deque` 为 760 字节（要维护分块与双端指针）。
 
-密集同构数值若想省掉指针开销与对象头，可用 `array.array`('i') 直接存 C 整数本体，代价是类型受限、不能混装。预分配 `[None]` * n 会一次性按 n 个槽位分配，比循环 append 少若干次 realloc。
+密集同构数值若想省掉指针开销与对象头，可用 `array.array('i')` 直接存 C 整数本体，代价是类型受限、不能混装。
+
+预分配 `[None] * n` 会一次性按 n 个槽位分配，比循环 `append` 少若干次 `realloc`。
 
 ```python
 import sys
@@ -80,23 +82,25 @@ print('deque', list(d), d.popleft(), d.pop())
 
 ## 摊还扩容：append 为什么是 O(1)
 
-append 不每次都 realloc。CPython 的 list_resize 在容量不足时按 new_allocated = (newsize + (newsize >> 3) + 6) & ~3 计算新容量，大约是 1.125 倍加一个常数并按 4 对齐，然后 realloc 整块指针数组。
+`append` 不每次都 `realloc`。
 
-一次扩容能吸收后续多次 append，把 `O(n)` 的复制成本均摊掉，单次 append 摊还 `O(1)`。实测对空 list 连续 append 200 次，getsizeof 只变化 14 次，正是跳跃式扩容的证据；`sys.getsizeof` 只统计指针数组本身，不含被引用对象。
+CPython 的 `list_resize` 在容量不足时按 `new_allocated` 这个式子算新容量：`new_allocated = (newsize + (newsize >> 3) + 6) & ~3`，大约是 1.125 倍加一个常数并按 4 对齐，然后 `realloc` 整块指针数组。
 
-反过来 `insert(i, x)` 与 `pop(i)` 无法均摊：它们要用 memmove 把 i 之后的所有引用整体移动一位，复杂度 `O(n - i)`，因此 `insert(0)` / `pop(0)` 与 del a[0] 最贵，而 `pop()` 末尾只递减 ob_size 是 `O(1)`。
+一次扩容能吸收后续多次 `append`，把 `O(n)` 的复制成本均摊掉，单次 `append` 摊还 `O(1)`。实测对空 `list` 连续 append 200 次，`getsizeof` 只变化 14 次，正是跳跃式扩容的证据；`sys.getsizeof` 只统计指针数组本身，不含被引用对象。
 
-a + b 与 a * k 会构造新列表并复制全部引用，分别是 `O(n + m)` 与 `O(n·k)`；extend 则复用同一块数组，摊还 `O(k)`。`a.clear()`（3.3+）把长度置零并释放所有引用，是 `O(n)` 但只做一次减引用。判断瓶颈时先问：操作集中在尾部、头部还是中间，是否需要按下标随机访问。
+反过来 `insert(i, x)` 与 `pop(i)` 无法均摊：它们要用 `memmove` 把 i 之后的所有引用整体移动一位，复杂度 `O(n - i)`，因此 `insert(0)` / `pop(0)` 与 `del a[0]` 最贵，而 `pop()` 末尾只递减 `ob_size` 是 `O(1)`。
 
-CPython 的 list 是 PyListObject：头部含 ob_refcnt、ob_type、ob_size（逻辑长度），ob_item 指向一段连续的 PyObject* 数组，allocated 记录已分配槽位数。
+`a + b` 与 `a * k` 会构造新列表并复制全部引用，分别是 `O(n + m)` 与 `O(n·k)`；`extend` 则复用同一块数组，摊还 `O(k)`。`a.clear()`（3.3+）把长度置零并释放所有引用，是 `O(n)` 但只做一次减引用。
 
-数组元素是指针而非对象本体，所以混装任意类型、切片与浅拷贝都只复制指针，代价是每次访问多一次间接寻址、每个元素多 8 字节（64 位）指针开销。
+判断瓶颈时先问：操作集中在尾部、头部还是中间，是否需要按下标随机访问。
 
-append 触发 list_resize 时按 new_allocated = (newsize + (newsize >> 3) + 6) & ~3 计算新容量，约 1.125 倍并按 4 对齐，realloc 整块指针数组；把这次 `O(n)` 复制均摊到后续多次 append 上，得到摊还 `O(1)`。
+CPython 的 `list` 是 `PyListObject`：头部含 `ob_refcnt`、`ob_type`、`ob_size`（逻辑长度），`ob_item` 指向一段连续的 `PyObject*` 数组，`allocated` 记录已分配槽位数。
 
-insert 与 `pop(i)` 无法均摊：它们用 memmove 把 i 之后的引用整体平移，成本 `O(n-i)`，`pop()` 只减 ob_size 才是 `O(1)`。
+数组元素是指针而非对象本体，所以混装任意类型、切片与浅拷贝都只复制指针，代价是每次访问多一次间接寻址、每个元素多 8 字节（64 位）指针开销。`append` 触发 `list_resize` 时按约 1.125 倍的过度分配算出新容量并 `realloc` 整块指针数组；
 
-每次增删引用都要配合 Py_INCREF / Py_DECREF 维护对象引用计数，这也是 `clear()` 与 del 需要 `O(n)` 逐个处理的原因。
+把这次 `O(n)` 复制均摊到后续多次 `append` 上，得到摊还 `O(1)`。`insert` 与 `pop(i)` 无法均摊：它们用 `memmove` 把 i 之后的引用整体平移，成本 `O(n - i)`，`pop()` 只减 `ob_size` 才是 `O(1)`。
+
+每次增删引用都要配合 `Py_INCREF` / `Py_DECREF` 维护对象引用计数，这也是 `clear()` 与 `del` 需要 `O(n)` 逐个处理的原因。
 
 `collections.deque` 改为分块双向链表，每块固定 64 个槽，两端操作只动块内指针故 `O(1)`，但跨块按下标定位退化为 `O(n)`，且不支持切片。
 
@@ -132,6 +136,40 @@ print('deque.appendleft faster than insert(0)', t_deque < t_insert)
 
 ## 用 sys.getsizeof 实测扩容曲线
 
+把 append 的摊还 `O(1)` 变成可看的数，靠 `sys.getsizeof` 逐次采样：每 append 一个记一次字节数，得到阶梯曲线——多数步长度变、字节不动，只在 realloc 时跳一档，200 次 append 约跳 14 次。
+
+这对应 list_resize 约 1.125 倍的过度分配，预留的 allocated 就是那些平台。注意 getsizeof 只量对象头加指针数组、不含元素本体，3.13 下空 list 是 56 字节。后面的探针把曲线打出来。
+
+```python
+import sys, dis
+
+a = []
+cap = []
+for i in range(1, 40):
+    a.append(i)
+    cap.append(sys.getsizeof(a))
+changes = [i + 1 for i in range(1, len(cap)) if cap[i] != cap[i - 1]]
+print('growth is stepwise', 0 < len(changes) < 39)
+print('all growth positive', all(cap[i] >= cap[i - 1] for i in range(1, len(cap))))
+
+obj = []
+holder = [obj]
+print('container stores reference', holder[0] is obj)
+print('append compiles to CALL', 'CALL' in dis.Bytecode(lambda x: x.append(1)).dis())
+```
+
+<OutputBox title='原理验证' output='growth is stepwise True\nall growth positive True\ncontainer stores reference True\nappend compiles to CALL True' />
+
+**CPython 3.13 / 64 位实测容量与头部**
+
+| 表达式 | sys.getsizeof 字节数 | 说明 |
+| --- | --- | --- |
+| sys.getsizeof([]) | 56 | 空 list 对象头，含 ob_size 与 allocated |
+| sys.getsizeof((1, 2, 3)) | 64 | tuple 一次性分配，无过度分配 |
+| sys.getsizeof([1, 2, 3]) | 88 | list 有 allocated 冗余，故大于同元素 tuple |
+| sys.getsizeof(deque()) | 760 | 要维护分块数组与双端指针 |
+| 200 次 append 的容量变化次数 | 14 | getsizeof 只在 realloc 时跳变 |
+
 
 ## list 常用操作的时间复杂度
 
@@ -150,24 +188,26 @@ print('deque.appendleft faster than insert(0)', t_deque < t_insert)
 
 ## 复杂度全景与容器选型：list、deque、array
 
-把常见操作的成本列清楚，选型就不再是凭感觉：a`[i]`、`len(a)`、append、`pop()` 是 `O(1)` 或摊还 `O(1)`；`insert(i)`、`pop(i)`、del a`[i]` 是 `O(n - i)`；in、index、count、remove 是 `O(n)` 线性扫描并逐个比较；
+把常见操作的成本列清楚，选型就不再是凭感觉：`a[i]`、`len(a)`、`append`、`pop()` 是 `O(1)` 或摊还 `O(1)`；`insert(i)`、`pop(i)`、`del a[i]` 是 `O(n - i)`；
 
-`sort()` 最坏 `O(n log n)`。
+`in`、`index`、`count`、`remove` 是 `O(n)` 线性扫描并逐个比较；`sort()` 最坏 `O(n log n)`。
 
-`collections.deque` 是分块双向链表，内部按固定大小的 block（CPython 每块 64 个槽）组织，append / appendleft / pop / popleft 两端都是 `O(1)`，`deque(maxlen=n)` 在 append 时自动从另一端丢弃，特别适合队列与滑动窗口；
+`collections.deque` 是分块双向链表，内部按固定大小的 block（CPython 每块 64 个槽）组织，`append` / `appendleft` / `pop` / `popleft` 两端都是 `O(1)`，`deque(maxlen=n)` 在 append 时自动从另一端丢弃，特别适合队列与滑动窗口；
 
-代价是按下标随机访问要跨块遍历，是 `O(n)`，且它不支持切片。`array.array` 用类型码（如 'i'、'd'）存 C 层数值本体，内存与数值计算都更省，但元素必须是同构数值、不能混装对象。选型结论很直接：需要按下标随机访问或切片才用 list；两端增删用 deque；
+代价是按下标随机访问要跨块遍历，是 `O(n)`，且它不支持切片。`array.array` 用类型码（如 `'i'`、`'d'`）存 C 层数值本体，内存与数值计算都更省，但元素必须是同构数值、不能混装对象。选型结论很直接：需要按下标随机访问或切片才用 `list`；两端增删用 `deque`；
 
-密集同构数值用 `array.array` 或 NumPy；要按键查找应规整成 dict（第 021 讲），而不是反复对 list 做 in 判断。
+密集同构数值用 `array.array` 或 `NumPy`；要按键查找应规整成 `dict`（第 021 讲），而不是反复对 `list` 做 `in` 判断。
 
 
 ## 流式聚合：用 deque 做滑动窗口并用预分配 list 承接结果
 
-一个监控脚本要维护最近若干个采样点的滑动窗口，并周期性输出窗口均值。若用 list 且每步都 `window.pop(0)` 加 append，窗口一宽就变成每步 `O(n)` 的 memmove，采集频率一高便吃掉整核；
+一个监控脚本要维护最近若干个采样点的滑动窗口，并周期性输出窗口均值。若用 `list` 且每步都 `window.pop(0)` 加 `append`，窗口一宽就变成每步 `O(n)` 的 `memmove`，采集频率一高便吃掉整核；
 
-改用 `collections.deque(maxlen=width)`，append 时自动从另一端丢弃最旧样本，两端都是 `O(1)`。
+改用 `collections.deque(maxlen=width)`，`append` 时自动从另一端丢弃最旧样本，两端都是 `O(1)`。
 
-结果缓冲用 [0.0] * n 预分配再按位置写入，避免循环 append 反复扩容，最后用切片一次性把有效段交给下游。重点是按操作分布选容器：这里只需要两端增删与顺序遍历，不按下标随机访问，deque 正合适；只有下游要按下标取任意窗口才该换回 list。真实工程还要处理样本不足与异常值，但容器选型的边界在这几行里已经定死。
+结果缓冲用 `[0.0] * n` 预分配再按位置写入，避免循环 `append` 反复扩容，最后用切片一次性把有效段交给下游。重点是按操作分布选容器：这里只需要两端增删与顺序遍历，不按下标随机访问，`deque` 正合适；只有下游要按下标取任意窗口才该换回 `list`。
+
+真实工程还要处理样本不足与异常值，但容器选型的边界在这几行里已经定死。
 
 ```python
 from collections import deque
@@ -209,9 +249,9 @@ print('bounded deque', list(q), len(q))
 
 <Quiz no='018-3' q='CPython 的 list 里存的是什么？' :options='["对象本体，连续紧凑", "指向对象的引用（PyObject* 指针）", "序列化后的字节", "值的深拷贝"]' answer="1" explain='ob_item 是 PyObject* 指针数组，元素本体在堆上各自独立；这解释了混装任意类型、间接寻址开销，以及切片与 copy 都只复制引用。' />
 
-<Predict no='018-P' q='执行 a = [1, 2, 3]; b = a; a.append(4); print(len(b), b is a) 输出什么？' :options='["3 False", "4 True", "3 True"]' answer='1' output='4 True' explain='赋值 b = a 只复制对同一个 PyListObject 的引用，两者指向同一对象；append 原地修改该对象，所以 b 也看到 4 个元素，且 b is a 为 True。要独立副本用 a.copy()、a[:] 或 list(a)。' />
+<Predict no='018-4' q='执行 a = [1, 2, 3]; b = a; a.append(4); print(len(b), b is a) 输出什么？' :options='["3 False", "4 True", "3 True"]' answer='1' output='4 True' explain='赋值 b = a 只复制对同一个 PyListObject 的引用，两者指向同一对象；append 原地修改该对象，所以 b 也看到 4 个元素，且 b is a 为 True。要独立副本用 a.copy()、a[:] 或 list(a)。' />
 
-<FillBlank no='018-F' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 列表的连续存储 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 内存布局：指针数组、ob_size 与 allocated 的落点。' />
+<FillBlank no='018-5' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 列表的连续存储 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 内存布局：指针数组、ob_size 与 allocated 的落点。' />
 
 <KnowledgeCard :points='["CPython list 是 PyObject* 连续指针数组：ob_size 是逻辑长度、allocated 是容量，元素本体在堆上独立", "append 摊还 O(1)，list_resize 按约 1/8 过度分配并 realloc；64 位 3.13 下 sys.getsizeof([]) 为 56 字节", "a[i] 与 len(a) 是 O(1)；insert(i) / pop(i) 因 memmove 是 O(n-i)，pop() 末尾是 O(1)", "in / index / count / remove 是 O(n) 线性扫描；+ 拼接与 * 重复要复制引用", "collections.deque 是分块双向链表，两端 append / appendleft / pop / popleft 都是 O(1)，中间索引 O(n) 且不支持切片", "需要按下标随机访问或切片才用 list；队列与滑动窗口用 deque，密集同构数值用 array.array"]' :pitfalls='["在列表头部反复 insert(0, x) 导致 CPU 打满", "a = b 后改 a，b 跟着变", "以为 sys.getsizeof(list) 是列表总内存", "在列表头部反复 insert(0, x) 会搬移整个数组，数据量大时比 deque 慢几个数量级"]' summary='list 存的是对象引用而不是对象本身，所以一个列表里能混装任意类型，代价是每次访问都要间接寻址' />
 

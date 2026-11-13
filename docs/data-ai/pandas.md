@@ -9,33 +9,35 @@ description: 把脏数据变成可分析的数据集
 
 上一讲把一列数字算得飞快，可导出的记录不止一列：时间、地区、状态码混着，有的空着，同一个用户重复几行。直接求平均，结果会悄悄偏掉。本讲把带毛边的行收拢成能对齐、能分组的表，从『算得快』走到『摆得整齐』。
 
-先定好 Series 与 DataFrame 的索引，不少 NaN 并非缺失，而是标签没对上；接着处理缺失值与重复，再用 groupby / agg / transform 一次成型；往后是 merge 与 join、透视与重采样。需要上一讲的 ndarray、布尔索引和字典基础。这一讲结束，你能把乱表收成可分析的 DataFrame，按维度出汇总。
+先定好 Series 与 DataFrame 的索引——不少 NaN 并非数据缺失，而是标签没对上；接着处理缺失值与重复，再用 groupby、agg、transform 一次成型；往后是 merge 与 join、透视与重采样。需要上一讲的 ndarray、布尔索引和字典基础。这一讲结束，你能把乱表收成可分析的 DataFrame，按维度出汇总。
 
 
 ## 两列相加凭空多出 NaN 的工单
 
-两份销售报表合并后对不上账：A 表按「北京、上海、广州」排列，B 表按「上海、深圳、北京」排列，同事直接把两列数值相加，结果北京变成上海的、广州被配到深圳，还凭空多出 NaN。
+两份销售报表合并后对不上账：A 表按北京、上海、广州排列，B 表按上海、深圳、北京排列，同事直接把两列数值相加，结果北京变成上海的、广州被配到深圳，还凭空多出 NaN。
 
-另一个工单更隐蔽：分析师用 df[`df.region` == '华东'].`price = 0` 想清零，运行没报错，价格却一点没动，只在终端留下一行 SettingWithCopyWarning。还有人把整段清洗写成 iterrows 循环逐行赋值，十万行跑了四分钟。
+另一个工单更隐蔽：分析师想用一行链式索引把华东地区的价格清零，运行没报错，价格却一点没动，只在终端留下一行 `SettingWithCopyWarning`。
 
-这些故障都不是「数据脏」，而是没吃透 Pandas 的心智模型：Series 与 DataFrame 的一切运算都按标签对齐，而不是按位置对齐；链式索引可能返回一个临时副本，赋值落在副本上就静默丢失。把索引、缺失策略、分组聚合与写回时机定清楚，比事后对账省事得多。
+还有人把整段清洗写成 iterrows 循环逐行赋值，十万行跑了四分钟。这些故障都不是『数据脏』，而是没吃透 Pandas 的心智模型：Series 与 DataFrame 的一切运算都按标签对齐，而不是按位置对齐；链式索引可能返回一个临时副本，赋值落在副本上就静默丢失。
+
+把索引、缺失策略、分组聚合与写回时机定清楚，比事后对账省事得多。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='对布尔索引结果赋值不生效还伴随 SettingWithCopyWarning：df[df.region == &#39;华东&#39;][&#39;price&#39;] = 0 里的第一层索引可能返回临时副本，赋值落到副本上' />
 
-<Callout type="tip" title='核心心智模型' text='Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是「跳过」或「补 0」。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。s' />
+<Callout type="tip" title='核心心智模型' text='Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是『跳过』或『补 0』。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。举' />
 
 
 ## 标签对齐：多数 NaN 不是缺失而是索引没对上
 
-Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是「跳过」或「补 0」。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。
+Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是『跳过』或『补 0』。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。
 
-`s1 = pd.Series`([10, 20, 30], index=['北京','上海','广州']) 与 `s2 = pd.Series`([5, 8, 1], index=['上海','深圳','北京']) 相加，得到四个标签，其中广州、深圳为 NaN，北京为 11、上海为 25。
+举个例子，构造两个 `Series`：s1 的索引是北京、上海、广州，值 10、20、30；s2 的索引是上海、深圳、北京，值 5、8、1。两者相加得到四个标签，其中广州、深圳为 NaN，北京为 11、上海为 25。
 
-要「某边缺失按 0 补齐再相加」，必须用 `s1.add(s2, fill_value=0)`，这才得到广州 30、深圳 8；
+要『某边缺失按 0 补齐再相加』，必须用 `s1.add(s2, fill_value=0)`，这才得到广州 30、深圳 8；
 
-fill_value 只补一边缺失、两边都缺仍为 NaN。reindex 按给定标签重排并引入缺失，align 返回对齐后的两份副本，对称于运算前的隐式对齐。DataFrame 之间运算会同时对行索引与列索引做对齐，join 的 how 参数（left/right/inner/outer）决定并集还是交集。
+`fill_value` 只补一边缺失，两边都缺仍为 NaN。`reindex` 按给定标签重排并引入缺失，`align` 返回对齐后的两份副本，对称于运算前的隐式对齐。DataFrame 之间运算会同时对行索引与列索引做对齐，join 的 how 参数（left、right、inner、outer）决定并集还是交集。
 
-排查诡异 NaN 的第一步永远是打印两边 .index 与 .columns，看是不是顺序或标签不一致，而不是急着 `df.fillna(0)`——后者会把「没对齐」的真实问题掩盖成一个看似干净的错误结果。
+排查诡异 NaN 的第一步永远是打印两边的 `.index` 与 `.columns`，看是不是顺序或标签不一致，而不是急着 `df.fillna(0)`——后者会把『没对齐』的真实问题掩盖成一个看似干净的错误结果。
 
 ```python
 def align_add(a, b, fill=None):
@@ -79,15 +81,19 @@ print('fill0', align_add(s1, s2, fill=0))
 
 ## groupby、agg 与 transform 的三种返回形状
 
-groupby 的本质是 split-apply-combine：先按 key 把行拆成若干组，对每组应用函数，再把结果合并。agg（或 aggregate）对每组返回一个标量，结果索引是分组 key，长度等于组数，例如 `df.groupby`('region').`price.mean()` 得到每个地区一个均值；
+groupby 的本质是 split-apply-combine：先按 key 把行拆成若干组，对每组应用函数，再把结果合并。
 
-可以一次传多个聚合 ['sum','mean','count'] 或用字典对不同列指定不同函数。
+agg（或 aggregate）对每组返回一个标量，结果索引是分组 key，长度等于组数，例如 `df.groupby('region').price.mean()` 得到每个地区一个均值；
 
-transform 则必须返回与输入等长、且索引与原行一一对应的结果，最典型的用法是 `df.groupby`('region')['price'].transform('mean') 得到「每行所属组的均值」，从而写 df['dev'] = df['price'] - `df.groupby`('region')['price'].transform('mean') 做组内标准化，这是 agg 做不到的。
+可以一次传多个聚合 `['sum','mean','count']`，或用字典对不同列指定不同函数。
 
-apply 最灵活也最慢，返回形状由函数决定。过滤用 filter 保留满足条件的整组。还要注意分组键里的 NaN 默认被丢弃（`dropna=True`），分类键用 observed 参数控制是否列出未出现的类别。
+transform 则必须返回与输入等长、且索引与原行一一对应的结果，最典型的用法是 `df.groupby('region')['price'].transform('mean')` 得到『每行所属组的均值』，从而写 `df['dev']=df['price']-df.groupby('region')['price'].transform('mean')` 做组内标准化，这是 agg 做不到的。
 
-性能上，逐行 iterrows 会把每行构造成一个 Series、走 Python 层循环，十万行以上通常慢一个数量级；应优先用向量化的列运算、.loc 批量赋值，或 `groupby()`.transform 一次成型。
+apply 最灵活也最慢，返回形状由函数决定；过滤用 filter 保留满足条件的整组。还要注意分组键里的 NaN 默认被丢弃（`dropna=True`），分类键用 `observed` 参数控制是否列出未出现的类别。
+
+性能上，逐行 iterrows 会把每行构造成一个 Series、走 Python 层循环，十万行以上通常慢一个数量级；
+
+应优先用向量化的列运算、`.loc` 批量赋值，或 `groupby().transform` 一次成型。
 
 ```python
 from collections import defaultdict
@@ -107,17 +113,21 @@ print('lengths', len(means), len(rows))
 
 ## merge 行数膨胀与 validate 防线
 
-merge 按一列或多列的键做关系型连接，`pd.merge`(a, b, on='id', how='left', validate='many_to_one') 里的 validate 能在运行期检查连接基数，提前发现「本该一对一却膨胀成多行」的隐性错误；
+merge 按一列或多列的键做关系型连接，`pd.merge(a,b,on='id',how='left',validate='many_to_one')` 里的 `validate` 能在运行期检查连接基数，提前发现『本该一对一却膨胀成多行』的隐性错误；
 
-`indicator=True` 会加一列 _merge 标明每行来自左、右还是两边，便于核对。join 默认按索引连接，concat 按轴堆叠，三者别混用。
+`indicator=True` 会加一列 `_merge` 标明每行来自左、右还是两边，便于核对。join 默认按索引连接，concat 按轴堆叠，三者别混用。
 
-透视用 pivot_table(`index=...`, `columns=...`, `values=...`, aggfunc='mean')，它比 pivot 多了聚合步骤，因此能处理重复的 (index, columns) 组合；melt 是它的逆操作，把宽表拉成长表。
+透视用 `pivot_table(index=...,columns=...,values=...,aggfunc='mean')`，它比 `pivot` 多了聚合步骤，因此能处理重复的 (index, columns) 组合；
 
-时间序列的关键是先把列转成 datetime64`[ns]` 再 set_index，之后 resample('W') 按周、resample('M') 按月重采样，配合 .`mean()`/.`sum()` 聚合；`rolling(7)`.`mean()` 做滑动窗口；缺的日期用 asfreq 补齐。
+`melt` 是它的逆操作，把宽表拉成长表。时间序列的关键是先把列转成 `datetime64[ns]` 再 set_index，之后 `resample('W')` 按周、`resample('M')` 按月重采样，配合 `.mean()`、`.sum()` 聚合；
 
-采样规则里的 'M' 是月末、'MS' 是月初，混用会让对齐差一整期。内存优化方面，低基数字符串列应转成 category（重复值只存一份类别表加整数编码），数值列从 int64/float64 向下转成 int32/float32 或用 nullable 的 Int32 支持缺失，布尔列用 bool；
+`rolling(7).mean()` 做滑动窗口；
 
-用 `df.memory_usage(deep=True)` 逐列看真实占用，比 `df.info()` 的估算更准。
+缺的日期用 `asfreq` 补齐。采样规则里 'M' 是月末、'MS' 是月初，混用会让对齐差一整期；较新的 pandas 版本把月末别名写成 'ME'、'M' 会告警，迁移时要留意。
+
+`memory_usage(deep=True)` 逐列看真实占用，比 `df.info()` 的估算更准；
+
+内存优化上，低基数字符串列应转成 `category`（重复值只存一份类别表加整数编码），数值列从 int64/float64 向下转成 int32/float32 或用 nullable 的 `Int32` 支持缺失，布尔列用 bool。
 
 大表则可分块 `read_csv(chunksize=...)` 或改用 Polars。
 
@@ -149,13 +159,17 @@ print('category total approx', cat_bytes, 'ratio', round(str_bytes / cat_bytes, 
 
 ## 对齐按标签而非位置：SettingWithCopy 从何而来
 
-Pandas 建立在「带标签的数组」之上：每个 Series / DataFrame 都带一个 Index 对象，运算前先对参与双方的 index 求并集并重排，这个对齐步骤发生在数值计算之前，是它区别于 NumPy 纯位置语义的根本设计。
+Pandas 建立在『带标签的数组』之上：每个 Series 或 DataFrame 都带一个 Index 对象，运算前先对参与双方的 index 求并集并重排，这个对齐步骤发生在数值计算之前，是它区别于 NumPy 纯位置语义的根本设计。
 
 底层数据按列存在 BlockManager（新版本逐步迁向 Arrow 后端）里，同 dtype 的列尽量合成连续的块，因此列式向量运算能落到 C 层；而 iterrows 会把每一行额外封装成一个 Series，代价随行数线性放大且产生大量临时对象。
 
-groupby 先对分组键做哈希分解得到每组的行位置索引，agg 把每组约简成标量、transform 则把组结果按行位置广播回原长度，这解释了二者形状差异。链式索引 df`[cond]`.`col = v` 之所以危险，是因为 df`[cond]` 可能返回视图也可能返回副本，取决于底层块是否连续，解释器无法保证；
+groupby 先对分组键做哈希分解得到每组的行位置索引，agg 把每组约简成标量、transform 则把组结果按行位置广播回原长度，这解释了二者形状差异。
 
-.loc[cond, 'col'] = v 把定位与写入合成一次调用，才绕过这个不确定性。理解「标签对齐 + 列式存储 + 索引可能返回副本」三层，绝大多数诡异 NaN 与静默失败都能推导出来。
+链式索引 `df[cond].col = v` 之所以危险，是因为 `df[cond]` 可能返回视图也可能返回副本，取决于底层块是否连续，解释器无法保证；
+
+`loc[cond, 'col'] = v` 把定位与写入合成一次调用，才绕过这个不确定性。
+
+理解『标签对齐、列式存储、索引可能返回副本』这三层，绝大多数诡异 NaN 与静默失败都能推导出来。
 
 **错因速查**
 
@@ -174,11 +188,11 @@ groupby 先对分组键做哈希分解得到每组的行位置索引，agg 把�
 
 某电商每天收到一份分区销售明细，字段含 order_id、region、amount、ts，常见问题是地区名前后不一致、时间列是字符串、同一订单重复上报。
 
-可靠的清洗顺序是：先把 ts 转成 datetime 并设为索引，地区列规范后转 category，按 order_id 去重，再用一次 groupby 出「各地区日销售额」，最后用 transform 给每行打上「相对所属区域均值的偏差」标签。
+可靠的清洗顺序是：先把 ts 转成 datetime 并设为索引，地区列规范后转 `category`，按 order_id 去重，再用一次 groupby 出『各地区日销售额』，最后用 transform 给每行打上『相对所属区域均值的偏差』标签。
 
 下面用纯标准库模拟这条管道的关键步骤，重点看对齐、去重、分组聚合与组内广播如何一次成型，以及每步都保留可核对的记录数。
 
-真实项目把字典换成 DataFrame，groups 换成 groupby，其余结构不变，记得用 `memory_usage(deep=True)` 复核 category 的收益。
+真实项目把字典换成 DataFrame、groups 换成 groupby，其余结构不变，记得用 `memory_usage(deep=True)` 复核 category 的收益。
 
 ```python
 from collections import defaultdict
@@ -239,16 +253,16 @@ print('deviation', [(o, round(d, 1)) for o, d in dev])
 
 <Quiz no='094-3' q='想把每行数值减去它所在组的均值，应该用？' :options='["groupby(key).transform(&#39;mean&#39;) 后再做减法", "groupby(key).agg(&#39;mean&#39;) 后直接相减", "groupby(key).apply(lambda g: g - g.mean()) 一定最快", "rolling(3).mean()"]' answer="0" explain='transform 返回与原行等长、索引对齐的结果，可逐行做减法；agg 只返回每组一个标量、长度是组数，无法与原行逐位置相减。apply 灵活但通常更慢。' />
 
-<KnowledgeCard :points='["Pandas 运算按 index 标签对齐，单边标签得 NaN；按位置算要先 to_numpy() 或 reset_index", "s1.add(s2, fill_value=0) 用 0 补单边缺失；reindex / align 显式控制对齐", "agg 每组一个标量、长度等于组数；transform 与原行等长，用于组内标准化", "merge 用 validate 校验基数、indicator 标来源；透视用 pivot_table，逆操作是 melt", "链式索引可能返回副本，赋值一律用 .loc[cond, col] 一次定位；iterrows 慢，优先向量化", "低基数列转 category、数值列降精度、用 memory_usage(deep=True) 复核内存"]' :pitfalls='["对布尔索引结果赋值不生效还伴随 SettingWithCopyWarning", "两列相加凭空多出 NaN 与错配", "merge 后行数比左表还多", "用 inplace 链式操作、或在循环里逐行 iterrows，既慢又容易产生 SettingWithCopy 警告下的静默错误"]' summary='Pandas 的核心心智模型是「带标签的对齐运算」：很多诡异的 NaN 都来自索引没对齐而不是数据缺失' />
+<KnowledgeCard :points='["Series/DataFrame 运算先按 index 并集对齐再算，标签只在一边就出 NaN；与 NumPy 的按位置相反", "要缺失按 0 补齐用 s1.add(s2, fill_value=0)；fill_value 只补一边，两边都缺仍为 NaN", "agg 每组返回标量、长度等于组数；transform 返回等长结果，可做组内标准化；apply 最灵活也最慢", "链式索引 df[cond].col = v 可能落在副本上静默失败，改用 loc[cond, &#39;col&#39;] = v 一次定位写入", "merge 的 validate 与 indicator 检查连接基数与来源；pivot_table 带聚合、能处理重复组合", "时间序列先转 datetime64[ns] 再 set_index；&#39;M&#39; 月末、&#39;MS&#39; 月初（新版用 &#39;ME&#39;）；category 与 memory_usage(deep=True) 省内存"]' :pitfalls='["对布尔索引结果赋值不生效还伴随 SettingWithCopyWarning", "两列相加凭空多出 NaN 与错配", "merge 后行数比左表还多", "用 inplace 链式操作、或在循环里逐行 iterrows，既慢又容易产生 SettingWithCopy 警告下的静默错误"]' summary='Pandas 的核心心智模型是「带标签的对齐运算」：很多诡异的 NaN 都来自索引没对齐而不是数据缺失' />
 
-1. Pandas 运算按 index 标签对齐，单边标签得 NaN；按位置算要先 to_numpy() 或 reset_index
+1. Series/DataFrame 运算先按 index 并集对齐再算，标签只在一边就出 NaN；与 NumPy 的按位置相反
 
-2. s1.add(s2, fill_value=0) 用 0 补单边缺失；reindex / align 显式控制对齐
+2. 要缺失按 0 补齐用 s1.add(s2, fill_value=0)；fill_value 只补一边，两边都缺仍为 NaN
 
-3. agg 每组一个标量、长度等于组数；transform 与原行等长，用于组内标准化
+3. agg 每组返回标量、长度等于组数；transform 返回等长结果，可做组内标准化；apply 最灵活也最慢
 
 [下一讲：可视化：Matplotlib / Seaborn / Plotly 与图表选型](/data-ai/visualization)
 
-<Predict no='094-P' q='前面 code 里 align_add(s1, s2, fill=0) 对「广州」这一标签返回什么？' :options='["30", "None", "0"]' answer='0' output='30' explain='广州只在 s1 有值 30，s2 缺失。fill=0 时走 else 分支，a.get(&#39;广州&#39;, 0) 得 30、b.get(&#39;广州&#39;, 0) 得 0，相加为 30，对应 add(fill_value=0) 用 0 补齐单边缺失。' />
+<Predict no='094-4' q='前面 code 里 align_add(s1, s2, fill=0) 对「广州」这一标签返回什么？' :options='["30", "None", "0"]' answer='0' output='30' explain='广州只在 s1 有值 30，s2 缺失。fill=0 时走 else 分支，a.get(&#39;广州&#39;, 0) 得 30、b.get(&#39;广州&#39;, 0) 得 0，相加为 30，对应 add(fill_value=0) 用 0 补齐单边缺失。' />
 
-<FillBlank no='094-F' tpl='___ align_add(a, b, fill=None):' :answers='["def"]' hint='回想本讲关于 Series 与 DataFrame 索引 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 标签对齐：NaN 大多不是缺失，而是索引没对上 的落点。' />
+<FillBlank no='094-5' tpl='___ align_add(a, b, fill=None):' :answers='["def"]' hint='回想本讲关于 Series 与 DataFrame 索引 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 标签对齐：NaN 大多不是缺失，而是索引没对上 的落点。' />

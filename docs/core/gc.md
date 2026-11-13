@@ -9,7 +9,7 @@ description: 诊断并修复内存泄漏
 
 上一讲说引用计数归零就能立刻回收，行为可预测；但也留了个口子：两个对象互相指着对方，计数就永远降不到零。长驻服务跑几天内存悄悄涨、重启才回落，多半卡在这里。这一讲把计数兜不住的部分补齐。
 
-先看一个常见场景：父子双向引用的节点、或拿普通 dict 当缓存，外部早不引用了，对象却一直活着。本讲先讲循环引用为何让计数失效、分代 GC 的三代阈值与 gc.collect 的时机，再说 __del__ 的陷阱，最后落到 weakref 家族与用对象增量定位泄漏。需要第 52 讲的引用计数与第 43 讲的弱引用；学完你能诊断并修复内存泄漏，知道缓存该改用哪种引用。
+先看一个常见场景：父子双向引用的节点、或拿普通 `dict` 当缓存，外部早不引用了，对象却一直活着。本讲先讲循环引用为何让计数失效、分代 GC 的三代阈值与 `gc.collect` 的时机，再说 `__del__` 的陷阱，最后落到 `weakref` 家族与用对象增量定位泄漏。需要第 52 讲的引用计数与第 43 讲的弱引用；学完你能诊断并修复内存泄漏，知道缓存该改用哪种引用。
 
 
 ## 一个缓存跑几天内存就涨到告警的线上服务
@@ -18,9 +18,9 @@ description: 诊断并修复内存泄漏
 
 换用 `gc.get_objects()` 观察对象数量增量，才发现是父子双向引用的节点对象一直没被回收——两个对象互相指着对方，引用计数永远不为零。
 
-另一处坑在缓存：用普通 dict 存会话对象，外部早就不引用了，字典里的强引用却让它们一直活着，缓存越积越大。还有人给对象定义了 `__del__` 做清理，按老资料以为「带析构的循环垃圾回收不了」，在 3.4 之后的环境里结论已经变了，却据此写了一套复杂的手动断开逻辑。
+另一处坑在缓存：用普通 `dict` 存会话对象，外部早就不引用了，字典里的强引用却让它们一直活着，缓存越积越大。还有人给对象定义了 `__del__` 做清理，按老资料以为「带析构的循环垃圾回收不了」，在 3.4 之后的环境里结论已经变了，却据此写了一套复杂的手动断开逻辑。
 
-分代 GC、循环引用与 weakref 是诊断内存泄漏的核心工具。本讲把三代的触发阈值、`gc.collect` 的时机、PEP 442 之后的 `__del__` 行为、弱引用容器与泄漏定位方法逐条讲清楚。
+分代 GC、循环引用与 `weakref` 是诊断内存泄漏的核心工具。本讲把三代的触发阈值、`gc.collect` 的时机、PEP 442 之后的 `__del__` 行为、弱引用容器与泄漏定位方法逐条讲清楚。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用普通 dict 做对象缓存导致内存持续上涨：字典对每个值持有强引用，外部引用消失后对象仍被缓存挂着，计数不归零' />
 
@@ -40,13 +40,13 @@ description: 诊断并修复内存泄漏
 
 ## 循环引用为何让计数失效，以及三代 GC 的触发规则
 
-引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 ob_refcnt 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（list、dict、自定义实例等），在每个对象上维护 gc 链表与 gc_refs 计数。
+引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_refs` 计数。
 
-收集时先把 gc_refs 减去对象之间的内部引用，剩下的 gc_refs 大于 0 的是可达根，从根出发标记，未标记者即为不可达循环垃圾。
+收集时先把 `gc_refs` 减去对象之间的内部引用，剩下的 `gc_refs` 大于 0 的是可达根，从根出发标记，未标记者即为不可达循环垃圾。
 
 为压低扫描成本，采用「多数对象死得早」的经验假设分三代：新对象进 gen0，gen0 的净分配数（分配减释放）超过阈值（3.12 及以前 700、3.13 起 2000）就触发一次 gen0 收集，存活者晋升 gen1；gen1 每累计 10 次 gen0 收集触发一次；gen2 每累计 10 次 gen1 收集触发一次。
 
-这三个数由 `gc.get_threshold()` 返回，3.13 起默认 (2000, 10, 10)、3.12 及以前为 (700, 10, 10)，可用 `gc.set_threshold` 调整；
+这三个数由 `gc.get_threshold()` 返回，3.13 起默认 `(2000, 10, 10)`、3.12 及以前为 `(700, 10, 10)`，可用 `gc.set_threshold` 调整；
 
 `gc.get_count()` 返回各代当前计数，`gc.isenabled()` / `enable()` / `disable()` 控制开关，`gc.collect(generation=2)` 手动做全量收集并返回不可达对象数。
 
@@ -82,7 +82,7 @@ print('cache size after', len(cache))
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 ob_refcnt 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（list、dict、自定义实例等），在每个对象上维护 gc 链表与 gc_refs 计数。收集' />
+<Callout type="tip" title='核心心智模型' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_ref' />
 
 
 ### 三代 GC 的默认阈值与触发规则
@@ -101,13 +101,15 @@ print('cache size after', len(cache))
 
 ## 可达性分析与分代回收器的 C 层实现
 
-引用计数的盲区是循环：互相引用的对象 ob_refcnt 始终大于 0，永远等不到归零。分代 GC 只为可能成环的容器对象维护 gc 链表与 gc_refs 计数：收集时先把 gc_refs 减去对象间的内部引用，剩余 gc_refs 大于 0 的作为可达根做标记，未标记的整批就是不可达循环垃圾。
+引用计数的盲区是循环：互相引用的对象 `ob_refcnt` 始终大于 0，永远等不到归零。分代 GC 只为可能成环的容器对象维护 gc 链表与 `gc_refs` 计数：收集时先把 `gc_refs` 减去对象间的内部引用，剩余 `gc_refs` 大于 0 的作为可达根做标记，未标记的整批就是不可达循环垃圾。
 
-为摊薄扫描成本，它按「多数对象死得早」把对象分三代，gen0 净分配超过阈值（3.13 起 2000、旧版 700）就收集、存活者逐级晋升，gen1/gen2 的触发频率由阈值的后两个数控制。3.4 的 PEP 442 之前，带 finalizer 的循环垃圾因可能被复活而无法安全回收，被塞进 `gc.garbage`；
+为摊薄扫描成本，它按「多数对象死得早」把对象分三代，gen0 净分配超过阈值（3.13 起 2000、旧版 700）就收集、存活者逐级晋升，gen1 / gen2 的触发频率由阈值的后两个数控制。3.4 的 PEP 442 之前，带 finalizer 的循环垃圾因可能被复活而无法安全回收，被塞进 `gc.garbage`；
 
-之后改为先调用 finalizer 再回收，这类循环也能清理。weakref 完全不增加 ob_refcnt，只登记一个回调链表：对象归零时把弱引用标记为 dead、触发回调，WeakValueDictionary 借此删除对应条目。
+之后改为先调用 finalizer 再回收，这类循环也能清理。
 
-因此泄漏排查要先分清「对象还被强引用活着」与「内存只是没归还分配器」，前者用 `gc.get_objects()` 增量与 get_referrers 定位，后者属于正常的分配器行为。
+`weakref` 完全不增加 `ob_refcnt`，只登记一个回调链表：对象归零时把弱引用标记为 dead、触发回调，`WeakValueDictionary` 借此删除对应条目。
+
+因此泄漏排查要先分清「对象还被强引用活着」与「内存只是没归还分配器」，前者用 `gc.get_objects()` 增量与 `get_referrers` 定位，后者属于正常的分配器行为。
 
 <ConceptDiagram type='hub4' title='第 053 讲 · 循环引用为何让计数失效，以及三代 GC 的触发规则' labels='循环引用为何让计数失效，以及三代 GC 的触|__del__ 的陷阱与 PEP 442 之|weakref 家族与泄漏定位方法' caption='诊断并修复内存泄漏' />
 
@@ -118,7 +120,7 @@ print('cache size after', len(cache))
 
 <ConceptDiagram type='layers3' title='第 053 讲 · 分层视角' labels='循环引用为何让计数失效，以及三代 GC |__del__ 的陷阱与 PEP 442|weakref 家族与泄漏定位方法|objgraph 定位' caption='weakref 家族与泄漏定位方法' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **objgraph 定位** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 objgraph 定位 落在哪一层。
 
 
 ## __del__ 的陷阱与 PEP 442 之后的行为
@@ -168,17 +170,17 @@ print('refcount positive', sys.getrefcount(gc) > 0)
 
 ## weakref 家族与泄漏定位方法
 
-弱引用不增加 ob_refcnt，只在一个回调链表里登记；
+弱引用不增加 `ob_refcnt`，只在一个回调链表里登记；
 
-对象引用计数归零时把弱引用置为 dead 并执行回调，之后 `weakref.ref(obj)`() 返回 None。
+对象引用计数归零时把弱引用置为 dead 并执行回调，之后 `weakref.ref(obj)()` 返回 `None`。
 
-常用工具：`weakref.ref(obj[, callback])` 拿单个弱引用，`weakref.proxy(obj)` 拿到代理，WeakValueDictionary 的值、WeakKeyDictionary 的键、WeakSet 的元素都是弱引用，`weakref.finalize` 注册清理回调。
+常用工具：`weakref.ref` 拿单个弱引用，`weakref.proxy(obj)` 拿到代理，`WeakValueDictionary` 的值、`WeakKeyDictionary` 的键、`WeakSet` 的元素都是弱引用，`weakref.finalize` 注册清理回调。
 
-缓存、观察者、父子双向引用都应优先用弱引用容器：外部强引用一消失，条目自动移除，对象随即可被回收，不会因缓存本身而永生。限制要记牢：不是所有对象都支持弱引用，int、str、tuple 以及多数内置不可变类型会抛 TypeError: cannot create weak reference to 'int' object；
+缓存、观察者、父子双向引用都应优先用弱引用容器：外部强引用一消失，条目自动移除，对象随即可被回收，不会因缓存本身而永生。限制要记牢：不是所有对象都支持弱引用，`int`、`str`、`tuple` 以及多数内置不可变类型会抛 `TypeError`，提示不能创建弱引用；
 
-自定义类默认带 `__weakref__` 槽可弱引用，但声明了 `__slots__` 且没把 '__weakref__' 写进去的类不行（第 43 讲）。
+自定义类默认带 `__weakref__` 槽可弱引用，但声明了 `__slots__` 且没把 `'__weakref__'` 写进去的类不行（第 43 讲）。
 
-定位泄漏的推荐顺序：先用 `gc.get_objects()` 在稳定负载下看对象数增量，再用 `gc.get_referrers(obj)` 查是谁还引用着它，配合 `gc.set_debug(gc.DEBUG_SAVEALL)` 或第三方 objgraph 画出引用链；
+定位泄漏的推荐顺序：先用 `gc.get_objects()` 在稳定负载下看对象数增量，再用 `gc.get_referrers(obj)` 查是谁还引用着它，配合 `gc.set_debug(gc.DEBUG_SAVEALL)` 或第三方 `objgraph` 画出引用链；
 
 区分「引用还活着」与「分配器没归还内存」这两类完全不同的现象，再决定是断环、换弱引用容器还是接受缓存占用。
 
@@ -217,21 +219,23 @@ print('count', len(gc.get_count()) == 3)
 | WeakSet | 元素是弱引用 | 观察者集合 |
 | weakref.finalize（3.4+） | 注册消亡回调 | 替代 __del__ 做可取消的清理 |
 
-<Term word='循环引用为何计数失效' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 ob_refcnt 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（list、dict、自定义实例等），在每个对象上维护 gc 链表与 gc_refs 计数。收集时先把 gc_ref' />
+<Term word='循环引用为何计数失效' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_refs` 计数。收集时先' />
 
-<Term word='三代与阈值' text='历史上带 __del__（finalizer）的对象参与循环时，CPython 无法安全决定析构顺序，因为 finalizer 可能把对象重新复活；3.4 之前这类循环垃圾不可回收，会被放进 gc.garbage 列表，需要人工处理。PEP 442（3.4 起）重新设计了终结流程：先调用所有不可达对象的 finaliz' />
+<Term word='三代与阈值' text='历史上带 `__del__`（finalizer）的对象参与循环时，CPython 无法安全决定析构顺序，因为 finalizer 可能把对象重新复活；3.4 之前这类循环垃圾不可回收，会被放进 `gc.garbage` 列表，需要人工处理。PEP 442（3.4 起）重新设计了终结流程：先调用所有不可达对象的 fin' />
 
 
 ## 版本与调优：gc.collect 的时机和阈值调整
 
-<FlowTimeline :steps='[{"title": "循环引用为何让计数失效，以及三代 GC 的触发规则", "desc": "引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 ob_refcnt…", "tone": "blue"}, {"title": "__del__ 的陷阱与 PEP 442 之后的行为", "desc": "历史上带 __del__（finalizer）的对象参与循环时，CPython 无法…", "tone": "purple"}, {"title": "weakref 家族与泄漏定位方法", "desc": "弱引用不增加 ob_refcnt，只在一个回调链表里登记；对象引用计数归零时把弱引用…", "tone": "orange"}, {"title": "工程落地", "desc": "缓存泄漏诊断：强引用 dict 与 WeakValueDiction", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "循环引用为何让计数失效，以及三代 GC 的触发规则", "desc": "引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcn…", "tone": "blue"}, {"title": "__del__ 的陷阱与 PEP 442 之后的行为", "desc": "历史上带 `__del__`（finalizer）的对象参与循环时，CPython …", "tone": "purple"}, {"title": "weakref 家族与泄漏定位方法", "desc": "弱引用不增加 `ob_refcnt`，只在一个回调链表里登记；对象引用计数归零时把弱…", "tone": "orange"}, {"title": "工程落地", "desc": "缓存泄漏诊断：强引用 dict 与 WeakValueDiction", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用普通 dict 做对象缓存导致内存持续上涨", "body": "字典对每个值持有强引用，外部引用消失后对象仍被缓存挂着，计数不归零", "tip": "改用 weakref.WeakValueDictionary / WeakSet，或给缓存加容量与过期淘汰"}, {"title": "第 2 步：把关键释放逻辑写进 __del__ 并套用旧", "body": "PEP 442（3.4+）后带 finalizer 的循环可被回收，但 __del__ 抛出的异常只打印到 stderr、调用顺序不直观、对象还可能复活", "tip": "用显式 close() 或上下文管理器（第 42 讲），或 weakref.finalize 注册可取消的清理回调；__del__ 只做轻量兜底"}, {"title": "第 3 步：对 int、str、tuple 或无 __w", "body": "这些对象没有弱引用支持槽，weakref.ref 抛 TypeError: cannot create weak reference to &#39;int&#39; object", "tip": "只对支持弱引用的自定义类使用；slots 类把 &#39;__weakref__&#39; 显式写进 __slots__（第 43 讲）"}]' />
 
 
 ## 缓存泄漏诊断：强引用 dict 与 WeakValueDictionary 对照
 
-会话缓存里同时放了两份索引：一份用普通 dict 强引用，一份用 WeakValueDictionary 弱引用，都指向同一批 Session 对象。批量创建后做一次 `gc.collect`，强引用那份仍把全部对象挂着，弱引用那份在外部引用消失时会自动清空。
+会话缓存里同时放了两份索引：一份用普通 `dict` 强引用，一份用 `WeakValueDictionary` 弱引用，都指向同一批 `Session` 对象。
+
+批量创建后做一次 `gc.collect`，强引用那份仍把全部对象挂着，弱引用那份在外部引用消失时会自动清空。
 
 用 `gc.get_objects()` 的对象数增量确认「确实有对象没被回收」，再对比两个缓存的长度，就能把「缓存持有强引用导致泄漏」从猜测变成可核对的证据。
 
@@ -274,7 +278,7 @@ print('weak cache emptied', len(weak_cache) == 0)
 python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **循环引用为何计数失效** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 循环引用为何计数失效 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -299,9 +303,9 @@ python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 
 <Quiz no='053-3' q='关于现代 CPython 里带 __del__ 的循环垃圾，正确的是？' :options='["3.4 起 PEP 442 先调用 finalizer 再回收，这类循环可被正常清理", "一定进 gc.garbage 且永不回收", "__del__ 抛出的异常会向上传播给调用方", "必须手动断开 self 引用才能回收"]' answer="0" explain='3.4 之前的旧结论是带 finalizer 的循环不可回收、进 gc.garbage；PEP 442 改为先调 finalizer 再回收。但 __del__ 异常只打印到 stderr、顺序不直观，关键释放应改用 close() 或 weakref.finalize。' />
 
-<Predict no='053-P' q='WeakValueDictionary 里的对象在外部强引用删除并 gc.collect 后，会怎样？' :options='["对应条目自动移除，len 变为 0", "条目保留但值变成 None", "抛 ReferenceError"]' answer='0' output='cache size after 0' explain='弱引用不增加 ob_refcnt；对象归零时被标记 dead 并触发回调，WeakValueDictionary 据此删除条目。所以外部强引用一消失、收集一跑，缓存长度就归零，对象不会因缓存而永生。' />
+<Predict no='053-4' q='WeakValueDictionary 里的对象在外部强引用删除并 gc.collect 后，会怎样？' :options='["对应条目自动移除，len 变为 0", "条目保留但值变成 None", "抛 ReferenceError"]' answer='0' output='cache size after 0' explain='弱引用不增加 ob_refcnt；对象归零时被标记 dead 并触发回调，WeakValueDictionary 据此删除条目。所以外部强引用一消失、收集一跑，缓存长度就归零，对象不会因缓存而永生。' />
 
-<FillBlank no='053-F' tpl='___ gc, weakref' :answers='["import"]' hint='回想本讲关于 循环引用为何计数失效 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 循环引用为何让计数失效，以及三代 GC 的触发规则 的落点。' />
+<FillBlank no='053-5' tpl='___ gc, weakref' :answers='["import"]' hint='回想本讲关于 循环引用为何计数失效 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 循环引用为何让计数失效，以及三代 GC 的触发规则 的落点。' />
 
 <KnowledgeCard :points='["循环引用让 ob_refcnt 永不归零，纯引用计数回收不了，由分代 GC 兜底", "gc 默认阈值 3.13 起 (2000, 10, 10)、3.12 及以前 (700, 10, 10)；gen0 超阈值收集，存活者逐级晋升", "gc.collect(2) 返回不可达对象数；gc.get_count / get_threshold / get_objects 用于排查", "PEP 442（3.4+）先调 finalizer 再回收，带 __del__ 的循环也能清理；关键释放用 close 或 weakref.finalize", "weakref 不增加引用计数；WeakValueDictionary / WeakKeyDictionary / WeakSet 让缓存不持有强引用", "int/str/tuple 与未加 __weakref__ 的 slots 类不可弱引用；泄漏排查看 get_objects 增量与 get_referrers 引用链"]' :pitfalls='["用普通 dict 做对象缓存导致内存持续上涨", "把关键释放逻辑写进 __del__ 并套用旧版不可回收结论", "对 int、str、tuple 或无 __weakref__ 的 slots 类建弱引用", "定义了 __del__ 的对象参与循环时旧版本无法回收；缓存里用普通 dict 持有对象会让它们永远活着"]' summary='分代 GC 基于「多数对象死得早」的经验假设：新对象检查频繁、老对象很少扫描，用较低成本回收循环垃圾' />
 

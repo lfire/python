@@ -9,18 +9,28 @@ description: 理解实例内存成本并会做优化
 
 到此我们能定制类的行为，却还没低头看过实例怎么存。默认每个实例带一张属性字典，灵活但有固定开销；对象从几十变成上百万，这笔账就躲不掉。这是从「会用类」往「看懂对象」迈的一步。
 
-一个图服务把上百万节点存成普通实例，内存很快吃满，加了配置重启却几乎没变。本讲先从 __dict__ 开销与 __slots__ 的固定偏移布局讲起，再看继承里槽如何合并、哪几类会冲突，最后补上 weakref 适配与 tracemalloc 量化收益。需要第 6 讲的对象模型与继承顺序；学完你能算出 slots 省了多少，也能解释「加了槽为何还是不能被弱引用」。
+一个图服务把上百万节点存成普通实例，内存很快吃满，加了配置重启却几乎没变。本讲先从 `__dict__` 的开销与 `__slots__` 的固定偏移布局讲起，再看继承里槽如何合并、哪几类会冲突，最后补上 `weakref` 适配与 `tracemalloc` 量化收益。需要第 6 讲的对象模型与继承顺序；学完你能算出 `slots` 省了多少，也能解释「加了槽为何还是不能被弱引用」。
 
 
 ## 百万个坐标点把内存吃满的一次压测
 
-一个图计算服务把上百万个节点存成普通类实例，内存很快吃满，扩容两次都没解决。有人给节点加了 `__slots__` = ('x', 'y') 后重启，内存却几乎没变——因为父类没声明 `__slots__`，子类实例照样带着 `__dict__`，优化等于白做。
+一个图计算服务把上百万个节点存成普通类实例，内存很快吃满，扩容两次都没解决。
 
-另一处更隐蔽：缓存模块用 WeakValueDictionary 存这些节点，加了 slots 之后突然抛 TypeError: cannot create weak reference to 'Node' object，原来槽类默认不带 `__weakref__`。
+有人给节点加了 `__slots__ = ('x', 'y')` 后重启，内存却几乎没变——因为父类没声明 `__slots__`，子类实例照样带着 `__dict__`，优化等于白做。
 
-还有人试图在一个类里同时继承两个都定义了非空 `__slots__` 的基类，直接得到 TypeError: multiple bases have instance lay-out conflict。
+另一处更隐蔽：缓存模块用 `WeakValueDictionary` 存这些节点，加了 `slots` 之后突然抛 `TypeError: canno…`，原来槽类默认不带 `__weakref__`。
 
-`__slots__` 不是「省内存的开关」这么简单，它改的是实例的内存布局：从每个实例一张哈希表变成固定偏移的槽数组，随之带来一串约束。本讲把布局差异、继承合并规则、弱引用适配与 tracemalloc 验证方法讲清楚，让你能算出收益、也能解释报错。
+```text
+TypeError: cannot create weak reference to 'Node' object
+```
+
+还有人试图在一个类里同时继承两个都定义了非空 `__slots__` 的基类，直接得到 `TypeError: multi…`。
+
+```text
+TypeError: multiple bases have instance lay-out conflict
+```
+
+`__slots__` 不是「省内存的开关」这么简单，它改的是实例的内存布局：从每个实例一张哈希表变成固定偏移的槽数组，随之带来一串约束。本讲把布局差异、继承合并规则、弱引用适配与 `tracemalloc` 验证方法讲清楚，让你能算出收益，也能解释报错。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='只给子类加 __slots__，内存几乎没降：基类没声明 __slots__，实例继承的 __dict__ 仍在，子类只是多了固定槽、字典没被去掉' />
 
@@ -38,19 +48,29 @@ description: 理解实例内存成本并会做优化
 
 ## __dict__ 的成本与 __slots__ 的固定偏移布局
 
-普通 heap type 的实例用一张 PyDictObject（`__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。
+普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。
 
-定义 `__slots__` = ('x', 'y') 后，CPython 为每个名字创建一个 member_descriptor（PyMemberDef），记录它在实例结构体里的固定字节偏移；
+定义 `__slots__ = ('x', 'y')` 后，CPython 为每个名字创建一个 `member_descriptor`（`PyMemberDef`），记录它在实例结构体里的固定字节偏移；
 
-实例的 tp_basicsize 变成固定值，tp_dictoffset 置 0，属性读写从「查字典」变成「按偏移取槽 + 描述符分派」。收益来自去掉哈希表与允许更紧凑的对象分配，实例数越多越明显，用 tracemalloc 对十万级列表取差分即可量化。
+实例的 `tp_basicsize` 变成固定值，`tp_dictoffset` 置 0，属性读写从「查字典」变成「按偏移取槽 + 描述符分派」。收益来自去掉哈希表与允许更紧凑的对象分配，实例数越多越明显，用 `tracemalloc` 对十万级列表取差分即可量化。
 
-代价是三条硬约束：只能赋值槽里声明过的名字，写新属性抛 AttributeError；默认没有 `__dict__`，`vars(obj)` 抛 TypeError: `vars()` argument must have `__dict__` attribute；
+代价是三条硬约束：只能赋值槽里声明过的名字，写新属性抛 `AttributeError`；
 
-默认也没 `__weakref__`，`weakref.ref(obj)` 抛 TypeError: cannot create weak reference。
+默认没有 `__dict__`，`vars(obj)` 抛 `TypeError: vars(…`；
+
+```python
+TypeError: vars() argument must have __dict__ attribute
+```
+
+默认也没 `__weakref__`，`weakref.ref(obj)` 抛 `TypeError: canno…`。
+
+```text
+TypeError: cannot create weak reference
+```
 
 `__slots__` 可以写成单个字符串（这时就是一个槽名）或任意可迭代的字符串序列；
 
-要与 dataclass 组合时用 @`dataclass(slots=True)`（3.10 引入），它会重新创建类对象，因为槽必须在类创建时确定。
+要与 `dataclass` 组合时用 `@dataclass(slots=True)`（3.10 引入），它会重新创建类对象，因为槽必须在类创建时确定。
 
 ```python
 class Plain:
@@ -78,7 +98,7 @@ print('values', p.x, s.x)
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='普通 heap type 的实例用一张 PyDictObject（__dict__）存属性，还带一个 __weakref__ 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 __slots__ = (&#39;x&#39;, &#39;y&#39;) 后，CPython 为每个名' />
+<Callout type="tip" title='核心心智模型' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CP' />
 
 
 ### 普通实例与 __slots__ 实例对照
@@ -97,17 +117,27 @@ print('values', p.x, s.x)
 
 ## 继承中的槽合并与三类冲突
 
-槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `__slots__`，其实例就带 tp_dictoffset；子类即便声明了槽，也只是在固定槽之外再挂一张 `__dict__`，优化失效。
+槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `__slots__`，其实例就带 `tp_dictoffset`；子类即便声明了槽，也只是在固定槽之外再挂一张 `__dict__`，优化失效。
 
-所以正确写法是给链上每个基类都写 `__slots__` = ()（空元组，表示不占槽但也不给 `__dict__`），只有真正需要字段的那一层声明具体名字。
+所以正确写法是给链上每个基类都写 `__slots__ = ()`（空元组，表示不占槽但也不给 `__dict__`），只有真正需要字段的那一层声明具体名字。
 
-多继承时，CPython 要为每个基类选 best_base 并合并实例布局，若两个基类都带非空槽，它们的固定偏移无法放进同一份结构体，抛 TypeError: multiple bases have instance lay-out conflict；解法是只让一个基类带数据槽，其余用空槽或改成组合。
+多继承时，CPython 要为每个基类选 `best_base` 并合并实例布局，若两个基类都带非空槽，它们的固定偏移无法放进同一份结构体，抛 `TypeError: multi…`；
 
-第三类冲突是名字撞车：类变量与槽同名时，`type.__new__` 抛 ValueError: 'x' in `__slots__` conflicts with class variable，因为同名类变量会遮掉描述符。
+```text
+TypeError: multiple bases have instance lay-out conflict
+```
 
-还有两个细节：槽名 '__dict__' 与 '__weakref__' 是保留名，前者会重新给实例装回字典、后者显式开启弱引用支持；子类重复声明与父类同名的槽不会报错，但会浪费一份描述符并制造遮蔽，应当避免。
+解法是只让一个基类带数据槽，其余用空槽或改成组合。
 
-槽描述符本身是类属性，`type(Slotted.x)`.`__name__` 为 member_descriptor，可用它快速确认布局确实生效。
+第三类冲突是名字撞车：类变量与槽同名时，`type.__new__` 抛 `ValueError: 'x'…`，因为同名类变量会遮掉描述符。
+
+```python
+ValueError: 'x' in __slots__ conflicts with class variable
+```
+
+还有两个细节：槽名 `'__dict__'` 与 `'__weakref__'` 是保留名，前者会重新给实例装回字典、后者显式开启弱引用支持；子类重复声明与父类同名的槽不会报错，但会浪费一份描述符并制造遮蔽，应当避免。
+
+槽描述符本身是类属性，`type(Slotted.x).__name__` 为 `member_descriptor`，可用它快速确认布局确实生效。
 
 ```python
 import weakref
@@ -145,22 +175,28 @@ except ValueError as e:
 | 多继承两个非空槽基类 | TypeError: multiple bases have instance lay-out conflict | 只留一个数据槽基类，其余用空槽 |
 | 需要弱引用 | TypeError: cannot create weak reference | 槽里加入 '__weakref__' |
 
-<Term word='__dict__ 的开销' text='普通 heap type 的实例用一张 PyDictObject（__dict__）存属性，还带一个 __weakref__ 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 __slots__ = (&#39;x&#39;, &#39;y&#39;) 后，CPython 为每个名字创建一个 memb' />
+<Term word='__dict__ 的开销' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CPython 为每个名' />
 
-<Term word='__slots__ 的约束' text='槽的收益只有在继承链上每一层都没有 __dict__ 时才拿得到。基类没写 __slots__，其实例就带 tp_dictoffset；子类即便声明了槽，也只是在固定槽之外再挂一张 __dict__，优化失效。所以正确写法是给链上每个基类都写 __slots__ = ()（空元组，表示不占槽但也不给 __dict__）' />
+<Term word='__slots__ 的约束' text='槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `__slots__`，其实例就带 `tp_dictoffset`；子类即便声明了槽，也只是在固定槽之外再挂一张 `__dict__`，优化失效。所以正确写法是给链上每个基类都写 `__slots__ = ()`（空元组，表示不占槽但也不给' />
 
 
 ## 弱引用适配、tracemalloc 观测与选型边界
 
-槽类要支持弱引用，把 '__weakref__' 显式写进 `__slots__`；之后 `weakref.ref`、WeakValueDictionary、WeakKeyDictionary 才能工作。这对缓存尤其重要：用普通 dict 持有对象等于给每个对象加一条永生的强引用，缓存不淘汰对象就永不释放；
+槽类要支持弱引用，把 `'__weakref__'` 显式写进 `__slots__`；
 
-换成 WeakValueDictionary 后，外部强引用消失时条目自动移除，正是观察者与缓存场景的标准解。观测内存不要只看 `sys.getsizeof`：它只返回对象结构体本身加上 GC 头，算不到 `__dict__` 里哈希表、字符串内容或容器元素的开销，槽类与普通类在它眼里的差值不能代表真实占用。
+之后 `weakref.ref`、`WeakValueDictionary`、`WeakKeyDictionary` 才能工作。
 
-用 `tracemalloc.start()` 后分别构造同样数量的两类实例，`get_traced_memory()` 取净分配字节数做差分，才是可核对的收益。
+这对缓存尤其重要：用普通 `dict` 持有对象，等于给每个对象加一条永生的强引用，缓存不淘汰对象就永不释放；
 
-选型上，图节点、坐标、事件记录这类海量小对象优先 slots 或 NamedTuple；字段需要运行时动态增删、要被 pickle 友好处理、或要配合依赖 `__dict__` 的框架时，保留普通类更省事。
+换成 `WeakValueDictionary` 后，外部强引用消失时条目自动移除，正是观察者与缓存场景的标准解。
 
-3.10 起 @`dataclass(slots=True)` 让两者兼顾，但要注意它会返回新类对象，类装饰器与注册表里引用的旧类需要重新绑定。
+观测内存不要只看 `sys.getsizeof`：它只返回对象结构体本身加上 GC 头，算不到 `__dict__` 里哈希表、字符串内容或容器元素的开销，槽类与普通类在它眼里的差值不能代表真实占用。
+
+用 `tracemalloc.start()` 后分别构造同样数量的两类实例，再用 `get_traced_memory()` 取净分配字节数做差分，才是可核对的收益。
+
+选型上，图节点、坐标、事件记录这类海量小对象优先 `slots` 或 `NamedTuple`；字段需要运行时动态增删、要被 `pickle` 友好处理、或要配合依赖 `__dict__` 的框架时，保留普通类更省事。
+
+3.10 起 `@dataclass(slots=True)` 让两者兼顾，但要注意它会返回新类对象，类装饰器与注册表里引用的旧类需要重新绑定。
 
 ```python
 import tracemalloc
@@ -191,15 +227,19 @@ tracemalloc.stop()
 
 ## 实例对象在 C 层的内存布局
 
-CPython 的普通 heap type 实例在对象头之后带一个 PyDictObject 指针（tp_dictoffset）与一个弱引用链表头（tp_weaklistoffset）。
+CPython 的普通 heap type 实例在对象头之后带一个 `PyDictObject` 指针（`tp_dictoffset`）与一个弱引用链表头（`tp_weaklistoffset`）。
 
-PyObject_GenericSetAttr 写属性时走字典插入，开放定址哈希表为降低冲突会预留约三分之一空位，因此两三个字段也要承担整张表的分配。
+`PyObject_GenericSetAttr` 写属性时走字典插入，开放定址哈希表为降低冲突会预留约三分之一空位，因此两三个字段也要承担整张表的分配。
 
-声明 `__slots__` 后，type_new 为每个槽名分配 PyMemberDef 并生成 member_descriptor 类属性，把实例布局改成 tp_basicsize 固定的结构：读写变成按偏移访问，PyObject_GenericSetAttr 查到的是数据描述符，直接改槽。
+声明 `__slots__` 后，`type_new` 为每个槽名分配 `PyMemberDef` 并生成 `member_descriptor` 类属性，把实例布局改成 `tp_basicsize` 固定的结构：读写变成按偏移访问，`PyObject_GenericSetAttr` 查到的是数据描述符，直接改槽。
 
-子类实例化时若某个基类带 tp_dictoffset，合一后的布局仍保留该字典偏移，槽优化因此落空。多继承的 best_base 选择无法把两套非空固定偏移合并进一份结构体，于是抛出 lay-out conflict。
+子类实例化时若某个基类带 `tp_dictoffset`，合一后的布局仍保留该字典偏移，槽优化因此落空。
 
-tracemalloc 挂钩到 PyMem 分配器层，统计的是真实从分配器拿走的字节，所以能测到 `sys.getsizeof` 看不到的字典哈希表与对象分配差异。弱引用依赖 tp_weaklistoffset 非零，槽类默认把它设成 0，显式加入 '__weakref__' 才重新开启。
+多继承的 `best_base` 选择无法把两套非空固定偏移合并进一份结构体，于是抛出 `lay-out conflict`。
+
+`tracemalloc` 挂钩到 `PyMem` 分配器层，统计的是真实从分配器拿走的字节，所以能测到 `sys.getsizeof` 看不到的字典哈希表与对象分配差异。
+
+弱引用依赖 `tp_weaklistoffset` 非零，槽类默认把它设成 0，显式加入 `'__weakref__'` 才重新开启。
 
 <ConceptDiagram type='hub4' title='第 043 讲 · __dict__ 的成本与 __slots__ 的固定偏移布局' labels='__dict__ 的成本与 __slots_|继承中的槽合并与三类冲突|弱引用适配、tracemalloc 观测与选' caption='理解实例内存成本并会做优化' />
 
@@ -215,16 +255,22 @@ tracemalloc 挂钩到 PyMem 分配器层，统计的是真实从分配器拿走�
 | @dataclass(weakref_slot=True)（3.11+） | 给槽 dataclass 加 __weakref__ | 等价于手写保留槽名 |
 | 3.7+ dict 保序 | 类体 namespace 按定义顺序 | 槽声明顺序稳定可预期 |
 
-<FlowTimeline :steps='[{"title": "__dict__ 的成本与 __slots__ 的固定偏移布局", "desc": "普通 heap type 的实例用一张 PyDictObject（__dict__）…", "tone": "blue"}, {"title": "继承中的槽合并与三类冲突", "desc": "槽的收益只有在继承链上每一层都没有 __dict__ 时才拿得到。基类没写 __sl…", "tone": "purple"}, {"title": "弱引用适配、tracemalloc 观测与选型边界", "desc": "槽类要支持弱引用，把 &#39;__weakref__&#39; 显式写进 __slots__；之后…", "tone": "orange"}, {"title": "工程落地", "desc": "海量坐标点用 slots 省内存，并用弱引用缓存自动释放", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "__dict__ 的成本与 __slots__ 的固定偏移布局", "desc": "普通 heap type 的实例用一张 `PyDictObject`（即 `__di…", "tone": "blue"}, {"title": "继承中的槽合并与三类冲突", "desc": "槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `_…", "tone": "purple"}, {"title": "弱引用适配、tracemalloc 观测与选型边界", "desc": "槽类要支持弱引用，把 `&#39;__weakref__&#39;` 显式写进 `__slots__…", "tone": "orange"}, {"title": "工程落地", "desc": "海量坐标点用 slots 省内存，并用弱引用缓存自动释放", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 海量坐标点用 slots 省内存，并用弱引用缓存自动释放
 
-地图服务一次性构造五万个 Point，同时维护一个按 x 索引的热点缓存。若用普通类，每个实例都带字典，内存随实例数线性膨胀；若缓存用普通 dict，即使外部不再引用这些点，缓存里的强引用也会让它们一直活着，形成事实上的泄漏。
+地图服务一次性构造五万个 `Point`，同时维护一个按 `x` 索引的热点缓存。若用普通类，每个实例都带字典，内存随实例数线性膨胀；若缓存用普通 `dict`，即使外部不再引用这些点，缓存里的强引用也会让它们一直活着，形成事实上的泄漏。
 
-正确组合是 `__slots__` = ('x', 'y', '__weakref__')：前两个槽把布局压成固定大小，第三个槽让 weakref 生效；缓存改用 WeakValueDictionary，外部强引用（points 列表）清空并 `gc.collect()` 后，条目自动消失。
+正确组合是 `__slots__`：前两个槽把布局压成固定大小，第三个槽让 `weakref` 生效；
 
-下面用 tracemalloc 与 weakref 标准库跑通，打印点总数、缓存初始条目数、清空后的条目数以及 tracemalloc 仍在跟踪的状态。真实服务还应把坐标换成 array 或 NumPy 做列式存储，本例聚焦对象布局与弱引用生命周期。
+```python
+__slots__ = ('x', 'y', '__weakref__')
+```
+
+缓存改用 `WeakValueDictionary`，外部强引用（`points` 列表）清空并 `gc.collect()` 后，条目自动消失。
+
+下面用 `tracemalloc` 与 `weakref` 标准库跑通，打印点总数、缓存初始条目数、清空后的条目数以及 `tracemalloc` 仍在跟踪的状态。真实服务还应把坐标换成 `array` 或 `NumPy` 做列式存储，本例聚焦对象布局与弱引用生命周期。
 
 ```python
 import tracemalloc, weakref, gc
@@ -255,7 +301,7 @@ tracemalloc.stop()
 python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **__dict__ 的开销** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `__dict__` 的开销 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 只给子类加 __slots__、槽类进 WeakValueDictionary 的错因速查
@@ -285,9 +331,9 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 
 <Quiz no='043-3' q='关于 sys.getsizeof 与 tracemalloc，正确的是？' :options='["getsizeof 只算对象结构体，真实布局收益要用 tracemalloc 差分", "两者结果总是一致", "tracemalloc 只能测峰值不能测当前值", "getsizeof 会把 __dict__ 内容也算进去"]' answer="0" explain='getsizeof 返回浅层对象大小，算不到字典哈希表、字符串内容与容器元素；tracemalloc 挂钩 PyMem 分配器，统计真实分配字节，适合做同类对象的批量差分。' />
 
-<Predict no='043-P' q='类变量与 __slots__ 同名时，定义类会发生什么？' :options='["抛 ValueError: &#39;x&#39; in __slots__ conflicts with class variable", "正常创建，类变量遮蔽槽", "抛 TypeError: lay-out conflict"]' answer='0' output='ValueError: &#39;x&#39; in __slots__ conflicts with class variable' explain='type.__new__ 检测到同名类变量会与 member_descriptor 冲突，直接抛 ValueError。同名类变量会遮掉描述符，CPython 选择在类创建期就拒绝，而不是留到运行时出错。' />
+<Predict no='043-4' q='类变量与 __slots__ 同名时，定义类会发生什么？' :options='["抛 ValueError: &#39;x&#39; in __slots__ conflicts with class variable", "正常创建，类变量遮蔽槽", "抛 TypeError: lay-out conflict"]' answer='0' output='ValueError: &#39;x&#39; in __slots__ conflicts with class variable' explain='type.__new__ 检测到同名类变量会与 member_descriptor 冲突，直接抛 ValueError。同名类变量会遮掉描述符，CPython 选择在类创建期就拒绝，而不是留到运行时出错。' />
 
-<FillBlank no='043-F' tpl='___ __init__(self, x):' :answers='["def"]' hint='回想本讲关于 __dict__ 的开销 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 __dict__ 的成本与 __slots__ 的固定偏移布局 的落点。' />
+<FillBlank no='043-5' tpl='___ __init__(self, x):' :answers='["def"]' hint='回想本讲关于 __dict__ 的开销 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 __dict__ 的成本与 __slots__ 的固定偏移布局 的落点。' />
 
 <KnowledgeCard :points='["__slots__ 把实例从 __dict__ 哈希表改成固定偏移的 member_descriptor，省掉字典开销", "代价：不能动态加属性、默认无 __dict__、默认无 __weakref__", "继承链每一层都要写 __slots__（空元组即可），漏一层子类仍带 __dict__", "多继承两个非空槽基类抛 TypeError: multiple bases have instance lay-out conflict", "需要弱引用就把 &#39;__weakref__&#39; 加入槽；缓存用 WeakValueDictionary 而非普通 dict", "用 tracemalloc 差分量化收益，sys.getsizeof 只算浅层对象；@dataclass(slots=True) 3.10+ 会重建类"]' :pitfalls='["只给子类加 __slots__，内存几乎没降", "槽类放进 WeakValueDictionary 报 cannot create weak reference", "多继承两个带非空槽的基类报 lay-out conflict", "给基类忘了加 __slots__，子类依然带 __dict__，优化等于没做；多继承时槽还可能冲突"]' summary='默认实例用字典存属性，灵活但有固定开销；__slots__ 改成固定偏移的数组，实例多时可省下一半以上内存' />
 

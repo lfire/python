@@ -7,22 +7,26 @@ description: 让自定义类型像内置类型一样自然
 
 # 第 041 讲 · 特殊方法：repr、比较、算术与容器协议
 
-上一讲把属性访问交给描述符与 property，类已能按意愿响应取值赋值。再往前是个朴素问题：为什么 len(obj)、a + b 对内置类型天生成立，自己写的类却常常不理？答案是一组特殊方法的协议，实现一个常牵动另一处行为。
+上一讲把属性访问交给描述符与 `property`，类已能按意愿响应取值赋值。再往前是个朴素问题：为什么 `len(obj)`、`a + b` 对内置类型天生成立，自己写的类却常常不理？答案是一组特殊方法的协议，实现一个常牵动另一处行为。
 
-一份订单汇总脚本把金额对象当字典键，日志里却打印成面向开发者的串。本讲先从 repr 与 str 走起，再看 __eq__ 与哈希联动、len/bool/contains 的回退次序，最后落到算术反向方法。需要第 40 讲的描述符与阶段二的哈希要求；学完你能解释「加了比较方法为何当不了键」，写出可哈希的值对象。
+一份订单汇总脚本把金额对象当字典键，日志里却打印成面向开发者的串。本讲先从 `repr` 与 `str` 走起，再看 `__eq__` 与哈希联动、`len` / `bool` / `contains` 的回退次序，最后落到算术反向方法。需要第 40 讲的描述符与阶段二的哈希要求；学完你能解释「加了比较方法为何当不了键」，也能写出可哈希的值对象。
 
 
 ## 一个把 Money 当 dict 键却报 unhashable 的工单
 
-一个订单聚合脚本把 `Money(amount, currency)` 当作 dict 的键做汇总，第一次上线就抛 TypeError: unhashable type: 'Money'。
+一个订单聚合脚本把 `Money(amount, currency)` 当作 `dict` 的键做汇总，第一次上线就抛 `TypeError: unhas…`。
+
+```text
+TypeError: unhashable type: 'Money'
+```
 
 团队为了让两笔金额能比较相等，给类加了 `__eq__`，却不知道这一步会让类自动失去哈希能力。
 
-有人补救时写 `__hash__ = object.__hash__`，结果金额相等的两笔订单因为 id 不同得到不同哈希，聚合结果直接错乱；
+有人补救时写 `__hash__ = object.__hash__`，结果金额相等的两笔订单因为 `id` 不同得到不同哈希，聚合结果直接错乱；
 
-还有人只定义了 `__repr__`，日志里看着正常，运营看到的报表却是给开发者看的串，因为忘了 `__str__`。更隐蔽的一处：给容器写了 `__len__` 之后，if obj 的真假值也跟着变了，某个空对象突然被当成 False 跳过。这些都不是零散语法，而是数据模型协议的一整套联动：定义一个方法，别的行为会跟着被改。
+还有人只定义了 `__repr__`，日志里看着正常，运营看到的报表却是给开发者看的串，因为忘了 `__str__`。更隐蔽的一处：给容器写了 `__len__` 之后，`if obj` 的真假值也跟着变了，某个空对象突然被当成 `False` 跳过。
 
-本讲把 repr/str 回退、eq/hash 联动、len/bool/contains 优先级与算术反射调用逐条拆开，给出每一处的修复写法和失效信号。
+这些都不是零散语法，而是数据模型协议的一整套联动：定义一个方法，别的行为会跟着被改。本讲把 `repr` / `str` 回退、`eq` / `hash` 联动、`len` / `bool` / `contains` 优先级与算术反射调用逐条拆开，给出每一处的修复写法和失效信号。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='定义 __eq__ 后实例无法作为 dict 键或 set 元素：type.__new__ 把未显式定义 __hash__ 的类设为 __hash__ = None，hash() 抛 TypeError: unhashable type' />
 
@@ -42,24 +46,26 @@ description: 让自定义类型像内置类型一样自然
 
 ## 特殊方法怎样挂进 PyTypeObject 的槽位
 
-CPython 把每个特殊方法登记进 PyTypeObject 的槽（slot）：`__eq__`/`__lt__` 等填入 tp_richcompare，`__hash__` 填 tp_hash，`__len__` 填 sq_length，`__add__`/`__radd__` 填 nb_add 数值子结构。
+CPython 把每个特殊方法登记进 `PyTypeObject` 的槽（slot）：`__eq__` / `__lt__` 等填入 `tp_richcompare`，`__hash__` 填 `tp_hash`，`__len__` 填 `sq_length`，`__add__` / `__radd__` 填 `nb_add` 数值子结构。
 
-类创建结束时 PyType_Ready 依据 slotdefs 表把类字典里的 Python 函数包装成 slot_tp_richcompare 之类的 C 分派器，运算符最终落到 PyObject_RichCompare、PyNumber_Add 这些 C API。
+类创建结束时，`PyType_Ready` 依据 `slotdefs` 表把类字典里的 Python 函数包装成 `slot_tp_richcompare` 之类的 C 分派器，运算符最终落到 `PyObject_RichCompare`、`PyNumber_Add` 这些 C API。
 
-`type.__new__` 里有一段明确的修补：当类体出现 `__eq__` 而没有 `__hash__` 时，把 tp_hash 对应的 `__hash__` 设成 None（底层是 PyObject_HashNotImplemented），`hash()` 因而抛 TypeError。
+`type.__new__` 里有一段明确的修补：当类体出现 `__eq__` 而没有 `__hash__` 时，把 `tp_hash` 对应的 `__hash__` 设成 `None`（底层是 `PyObject_HashNotImplemented`），`hash()` 因而抛 `TypeError`。
 
-NotImplemented 是全局单例，PyNumber_Add 见到它才转去查另一侧的 nb_add；这正是「返回 NotImplemented 而非 False」能生效的原因。
+`NotImplemented` 是全局单例，`PyNumber_Add` 见到它才转去查另一侧的 `nb_add`；这正是「返回 `NotImplemented` 而非 `False`」能生效的原因。
 
-`__bool__` 走 nb_bool，`__len__` 走 sq_length，PyObject_IsTrue 先试 nb_bool 再试 sq_length，这条顺序决定了优先链。理解槽表与单例，比背方法名更能解释为什么改一个方法会牵动一整组行为。
+`__bool__` 走 `nb_bool`，`__len__` 走 `sq_length`，`PyObject_IsTrue` 先试 `nb_bool` 再试 `sq_length`，这条顺序决定了优先链。
 
-<Callout type="tip" title='核心心智模型' text='__repr__ 面向开发者，目标是无歧义、最好能被 eval 复原；__str__ 面向终端用户，目标是可读。print(obj)、str(obj)、f&#39;{obj}&#39; 与 format 的空转换走 __str__；repr(obj)、交互式回显、logging 的 %r、f&#39;{obj!r}&#39; 走 ' />
+理解槽表与单例，比背方法名更能解释为什么改一个方法会牵动一整组行为。
+
+<Callout type="tip" title='核心心智模型' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging' />
 
 
 ### slotdefs、PyType_Ready 与 NotImplemented 单例
 
-<Term word='__repr__ 与 __str__' text='__repr__ 面向开发者，目标是无歧义、最好能被 eval 复原；__str__ 面向终端用户，目标是可读。print(obj)、str(obj)、f&#39;{obj}&#39; 与 format 的空转换走 __str__；repr(obj)、交互式回显、logging 的 %r、f&#39;{obj!r}&#39; 走 __repr__。关' />
+<Term word='__repr__ 与 __str__' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging` 的 `%r`、`' />
 
-<Term word='__eq__ 与 __hash__ 联动' text='CPython 在 type.__new__ 里检查：若类体定义了 __eq__ 却没有定义 __hash__，就把类的 __hash__ 设成 None。于是 hash(obj) 抛 TypeError: unhashable type: &#39;X&#39;，obj 也进不了 set、当不了 dict 键。这样设计是为了守住哈希' />
+<Term word='__eq__ 与 __hash__ 联动' text='CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定义 `__hash__`，就把类的 `__hash__` 设成 `None`。于是 `hash(obj)` 抛 `TypeError: unhashable type: &#39;X&#39;`，`obj` 也进不了 `set`、当不了 ' />
 
 <ConceptDiagram type='flow4' title='第 041 讲 · repr 与 str 是两条独立输出路径，容器强制走 repr' labels='repr 与 str 是两条独立输出路径，容|定义 __eq__ 会让类失去哈希，除非显式|容器与数值协议：len、bool、conta' caption='让自定义类型像内置类型一样自然' />
 
@@ -68,17 +74,17 @@ NotImplemented 是全局单例，PyNumber_Add 见到它才转去查另一侧的 
 
 ## repr 与 str 是两条独立输出路径，容器强制走 repr
 
-`__repr__` 面向开发者，目标是无歧义、最好能被 eval 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、f'&#123;obj&#125;' 与 format 的空转换走 `__str__`；
+`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f'{obj}'` 与 `format` 的空转换走 `__str__`；
 
-`repr(obj)`、交互式回显、logging 的 %r、f'&#123;obj!r&#125;' 走 `__repr__`。关键回退规则：`object.__str__` 默认调用 `__repr__`，所以只实现 `__repr__` 就能同时覆盖两条路径，这是最小实现；
+`repr(obj)`、交互式回显、`logging` 的 `%r`、`f'{obj!r}'` 走 `__repr__`。关键回退规则：`object.__str__` 默认调用 `__repr__`，所以只实现 `__repr__` 就能同时覆盖两条路径，这是最小实现；
 
 反过来只实现 `__str__` 时，`repr(obj)` 会用 `object.__repr__` 给出带类名与内存地址的默认串，地址每次运行都变，不能写进快照测试。
 
-列表、元组、字典、集合打印元素时一律用 repr，因为容器需要无歧义表示而不是友好文案——`print([a])` 看到的是 repr 结果，哪怕 a 定义了漂亮的 `__str__`。f'&#123;obj!s&#125;' 与 f'&#123;obj!r&#125;' 分别强制两条路径。
+列表、元组、字典、集合打印元素时一律用 `repr`，因为容器需要无歧义表示而不是友好文案——`print([a])` 看到的是 `repr` 结果，哪怕 `a` 定义了漂亮的 `__str__`。`f'{obj!s}'` 与 `f'{obj!r}'` 分别强制两条路径。
 
 `datetime.date`、`decimal.Decimal` 等内置类型的 `__str__` 与 `__repr__` 明显不同，可直接对照。
 
-判断自己写对没有，用一个最小类同时打印 str、repr 与装进 list 的结果即可。
+判断自己写对没有，用一个最小类同时打印 `str`、`repr` 与装进 `list` 的结果即可。
 
 ```python
 class Vec:
@@ -114,19 +120,25 @@ print('contains', 2 in a, 9 in a)
 
 ## 定义 __eq__ 会让类失去哈希，除非显式补 __hash__
 
-CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定义 `__hash__`，就把类的 `__hash__` 设成 None。于是 `hash(obj)` 抛 TypeError: unhashable type: 'X'，obj 也进不了 set、当不了 dict 键。
+CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定义 `__hash__`，就把类的 `__hash__` 设成 `None`。
+
+于是 `hash(obj)` 抛 `TypeError: unhas…`，`obj` 也进不了 `set`、当不了 `dict` 键。
+
+```text
+TypeError: unhashable type: 'X'
+```
 
 这样设计是为了守住哈希契约——相等的对象必须有相等的哈希值；
 
-默认的 `object.__hash__` 基于身份 id，两个 `__eq__` 判等的不同实例哈希必然不同，留着它只会制造「相等却查不到」的诡异 bug。
+默认的 `object.__hash__` 基于身份 `id`，两个 `__eq__` 判等的不同实例哈希必然不同，留着它只会制造「相等却查不到」的诡异 bug。
 
 修复分两种意图：可变对象明确写 `__hash__ = None` 表明它就是不可哈希；
 
-值对象应冻结（frozen dataclass、NamedTuple）并对全部参与 `__eq__` 的字段求哈希，例如 return `hash((self.x, self.y)`)。
+值对象应冻结（`frozen dataclass`、`NamedTuple`）并对全部参与 `__eq__` 的字段求哈希，例如 `hash((self.x, self.y))`。
 
-哈希值必须是 int，且在对象生命周期内不变，所以参与哈希的字段不能事后被改。另一个易错点：`__eq__` 遇到不认识的类型应返回 NotImplemented 这个单例，而不是返回 False 或抛异常；返回 NotImplemented 后解释器会去试对方的反射方法，都失败才退化为 is 身份比较。
+哈希值必须是 `int`，且在对象生命周期内不变，所以参与哈希的字段不能事后被改。另一个易错点：`__eq__` 遇到不认识的类型应返回 `NotImplemented` 这个单例，而不是返回 `False` 或抛异常；返回 `NotImplemented` 后解释器会去试对方的反射方法，都失败才退化为 `is` 身份比较。
 
-Python 3 里 `__ne__` 由 `object.__ne__` 对 `__eq__` 取反，通常不用手写。str 的哈希会被缓存进对象，tuple 的哈希每次重新计算，这也是值对象优先用元组打包字段的原因之一。
+Python 3 里 `__ne__` 由 `object.__ne__` 对 `__eq__` 取反，通常不用手写。`str` 的哈希会被缓存进对象，`tuple` 的哈希每次重新计算，这也是值对象优先用元组打包字段的原因之一。
 
 ```python
 from functools import total_ordering
@@ -167,15 +179,26 @@ print('radd', repr(10 + Score(1)))
 
 ## 容器与数值协议：len、bool、contains 的回退链与反向运算
 
-`__len__` 必须返回非负整数，CPython 用 Py_ssize_t 接收：返回负数抛 ValueError: `__len__()` should return >= 0，超过 `sys.maxsize` 抛 OverflowError: cannot fit 'int' into an index-sized integer。
+`__len__` 必须返回非负整数，CPython 用 `Py_ssize_t` 接收：返回负数抛 `ValueError:`，超过 `sys.maxsize` 抛 `OverflowError: c…`。
 
-`bool(obj)` 与 if obj 先找 `__bool__`，它必须返回严格的 bool，返回 int 会抛 TypeError: `__bool__` should return bool, returned int；没有 `__bool__` 才回退 `__len__`，长度 0 为假。
+```python
+ValueError: __len__() should return >= 0
+OverflowError: cannot fit 'int' into an index-sized integer
+```
 
-in 先找 `__contains__`，没有则回退 `__iter__` 迭代，再没有回退旧的 `__getitem__` 下标协议。算术是一组对称协议：a + b 先调 `a.__add__(b)`，若返回 NotImplemented 再调 `b.__radd__(a)`；
+`bool(obj)` 与 `if obj` 先找 `__bool__`，它必须返回严格的 `bool`，返回 `int` 会抛 `TypeError: __boo…`；
 
-当右操作数是左操作数类型的子类且重写了反射方法时，反射方法反而优先，避免子类被基类的 `__add__` 抢走。a += b 先试 `__iadd__` 做原地修改，未定义才回退 `__add__` 再重新绑定，因此不可变类型的 += 会生成新对象。
+```python
+TypeError: __bool__ should return bool, returned int
+```
 
-`functools.total_ordering` 要求类至少定义 `__eq__` 与 `__lt__`/`__le__`/`__gt__`/`__ge__` 之一，装饰器补齐其余四个；
+没有 `__bool__` 才回退 `__len__`，长度 0 为假。`in` 先找 `__contains__`，没有则回退 `__iter__` 迭代，再没有回退旧的 `__getitem__` 下标协议。
+
+算术是一组对称协议：`a + b` 先调 `a.__add__(b)`，若返回 `NotImplemented` 再调 `b.__radd__(a)`；当右操作数是左操作数类型的子类且重写了反射方法时，反射方法反而优先，避免子类被基类的 `__add__` 抢走。
+
+`a += b` 先试 `__iadd__` 做原地修改，未定义才回退 `__add__` 再重新绑定，因此不可变类型的 `+=` 会生成新对象。
+
+`functools.total_ordering` 要求类至少定义 `__eq__` 与 `__lt__` / `__le__` / `__gt__` / `__ge__` 之一，装饰器补齐其余四个；
 
 它生成的是 Python 层组合方法，比逐个手写多一层调用，且强依赖 `__eq__` 已定义，适合字段少、比较不热的场景。
 
@@ -231,11 +254,15 @@ print('ne uses eq:', EqOnly() != object())
 
 ## 值对象 Money 用于 dict 聚合与 set 去重
 
-结算服务要把上千笔流水按币种汇总，还要对重复的金额对象去重。若用普通类，`__eq__` 一加就失去哈希，既当不了 dict 键也进不了 set；若用可变对象做键，事后改了字段会让哈希与相等性一起失效，账目再也查不出来。
+结算服务要把上千笔流水按币种汇总，还要对重复的金额对象去重。若用普通类，`__eq__` 一加就失去哈希，既当不了 `dict` 键也进不了 `set`；若用可变对象做键，事后改了字段会让哈希与相等性一起失效，账目再也查不出来。
 
-正确做法是把 Money 冻结成不可变值对象：frozen dataclass 在 `eq=True` 时自动生成按字段元组求值的 `__hash__`，于是相等对象哈希相等，聚合与去重都成立；`__add__` 里先校验币种一致再返回新实例，避免隐式跨币种相加。
+正确做法是把 `Money` 冻结成不可变值对象：`frozen dataclass` 在 `eq=True` 时自动生成按字段元组求值的 `__hash__`，于是相等对象哈希相等，聚合与去重都成立；
 
-下面用标准库 dataclasses 完整跑通：三笔 CNY 与一笔 USD 汇总、用 set 去重、并验证冻结后赋值会抛 FrozenInstanceError（它是 AttributeError 的子类）。真实项目还应把金额换成 Decimal 而不是 int，本例为聚焦协议用整数演示。
+`__add__` 里先校验币种一致再返回新实例，避免隐式跨币种相加。
+
+下面用标准库 `dataclasses` 完整跑通：三笔 `CNY` 与一笔 `USD` 汇总、用 `set` 去重、并验证冻结后赋值会抛 `FrozenInstanceError`（它是 `AttributeError` 的子类）。
+
+真实项目还应把金额换成 `Decimal` 而不是 `int`，本例为聚焦协议用整数演示。
 
 ```python
 from dataclasses import dataclass
@@ -272,7 +299,7 @@ except AttributeError as e:
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **__repr__ 与 __str__** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `__repr__` 与 `__str__` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 定义 __eq__ 后无法进 set、返回 False 的错因速查
@@ -302,9 +329,9 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 
 <Quiz no='041-3' q='关于 bool(obj) 的求值顺序，正确的是？' :options='["先找 __bool__，没有才回退 __len__，长度 0 为假", "先找 __len__，再找 __bool__", "只要定义了 __len__，__bool__ 永远被忽略", "bool(obj) 只取决于对象是否为空字典"]' answer="0" explain='PyObject_IsTrue 先试 nb_bool（__bool__），没有实现才试 sq_length（__len__）；__bool__ 必须返回严格 bool，否则抛 TypeError: __bool__ should return bool。' />
 
-<Predict no='041-P' q='定义 __eq__ 且未定义 __hash__ 的类，下面代码输出什么？' :options='["hash None / TypeError", "hash 一个整数 / 正常运行", "hash None / 正常运行"]' answer='0' output='hash None\nTypeError: unhashable type' explain='类属性 __hash__ 被 type.__new__ 置为 None，打印得 None；对它调用 hash() 会抛 TypeError: unhashable type。这是定义 __eq__ 的联动后果，不是哈希函数写错了。' />
+<Predict no='041-4' q='定义 __eq__ 且未定义 __hash__ 的类，下面代码输出什么？' :options='["hash None / TypeError", "hash 一个整数 / 正常运行", "hash None / 正常运行"]' answer='0' output='hash None\nTypeError: unhashable type' explain='类属性 __hash__ 被 type.__new__ 置为 None，打印得 None；对它调用 hash() 会抛 TypeError: unhashable type。这是定义 __eq__ 的联动后果，不是哈希函数写错了。' />
 
-<FillBlank no='041-F' tpl='___ __init__(self, x, y):' :answers='["def"]' hint='回想本讲关于 __repr__ 与 __str__ 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 repr 与 str 是两条独立输出路径，容器强制走 repr 的落点。' />
+<FillBlank no='041-5' tpl='___ __init__(self, x, y):' :answers='["def"]' hint='回想本讲关于 __repr__ 与 __str__ 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 repr 与 str 是两条独立输出路径，容器强制走 repr 的落点。' />
 
 <KnowledgeCard :points='["只实现 __repr__ 即可覆盖 print 与 repr 两条路径；容器打印元素强制用 repr", "定义 __eq__ 而未定义 __hash__ 时，CPython 把 __hash__ 置 None，实例不可哈希", "值对象冻结并对全部 eq 字段求哈希；可变对象显式写 __hash__ = None", "__eq__ 遇到不认识的类型返回 NotImplemented，不是 False；Py3 的 __ne__ 自动对 __eq__ 取反", "bool(obj) 先找 __bool__ 再回退 __len__；in 先找 __contains__ 再回退迭代", "a+b 先 __add__ 后 __radd__；a+=b 先试 __iadd__ 原地修改，未定义才回退 __add__"]' :pitfalls='["定义 __eq__ 后实例无法作为 dict 键或 set 元素", "__eq__ 里对不认识的类型直接 return False 或抛异常", "__len__ 返回负数，或 __bool__ 返回整数 0/1", "定义了 __eq__ 却忘记 __hash__，对象立刻不能进 set 或做 dict 键"]' summary='数据模型方法是一套协议而非语法糖：实现 __len__ 后 len() 与真值测试会一起生效，实现 __eq__ 则会让类自动变成不可哈希' />
 

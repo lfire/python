@@ -23,15 +23,15 @@ description: 用生成的输入发现手写用例想不到的边界
 
 ## 从「例子」到「性质」：属性测试问的问题不一样
 
-hypothesis 用 @`given(st.integers()`, `st.lists(st.text()`)) 声明输入空间，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)`) == s）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输出关系不变）、幂等（`f(f(x)`) == `f(x)`）。
+hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输出关系不变）、幂等（`f(f(x)) == f(x)`）。
 
-策略可用 `st.integers(min_value, max_value)`、`st.text()`、`st.lists`、`st.one_of`、`st.builds`、@`st.composite` 组合，`settings(max_examples=100, derandomize=True, deadline=...)` 控制规模与时限，@`example(...)` 把显式边界钉进用例。
+策略可用 `st.integers`、`st.text()`、`st.lists`、`st.one_of`、`st.builds`、`@st.composite` 组合，`settings` 控制规模与时限，`@example` 把显式边界钉进用例。
 
-发现失败后 hypothesis 会沿随机选择序列做 delta-debugging 收缩，把反例压到最小并存进 .hypothesis/examples 数据库，下次自动重放，等于把事故固化成回归用例。
+发现失败后 hypothesis 会沿随机选择序列做 delta-debugging 收缩，把反例压到最小并存进 `.hypothesis/examples` 数据库，下次自动重放，等于把事故固化成回归用例。
 
-可验证：对一个把换行替换成 NL 的非单射编码，穷举长度≤3 的小字母表得到 85 个候选、9 个反例，收缩后最小反例是字面量 'NL'。
+可验证：对一个把换行替换成 NL 的非单射编码，穷举长度不超过 3 的小字母表得到 85 个候选、9 个反例，收缩后最小反例是字面量 'NL'。
 
-<Callout type="tip" title='核心心智模型' text='hypothesis 用 @given(st.integers(), st.lists(st.text())) 声明输入空间，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（decode(encode(s)) == s）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输出' />
+<Callout type="tip" title='核心心智模型' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形' />
 
 **本讲定位**
 
@@ -59,9 +59,9 @@ hypothesis 用 @`given(st.integers()`, `st.lists(st.text()`)) 声明输入空间
 | RuleBasedStateMachine + @rule + Bundle | 状态机测试 | 操作序列一起收缩 |
 | HealthCheck.too_slow / filter_too_much | 失效信号 | 应修策略而非一律关闭 |
 
-<Term word='hypothesis 策略' text='hypothesis 用 @given(st.integers(), st.lists(st.text())) 声明输入空间，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（decode(encode(s)) == s）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输出关系不变）、幂等（f' />
+<Term word='hypothesis 策略' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输' />
 
-<Term word='收缩到最小反例' text='收缩的价值不只是「短」，而是把复杂的失败输入化简到能一眼看懂的本质：从 &#39;xNLy&#39;、&#39;NLNLNL&#39; 这类输入逐步删字符，只要删后仍触发失败就继续，最终停在 &#39;NL&#39;，正好暴露「编码不是单射」这个根因。状态机测试用 RuleBasedStateMachine + @initialize + @rule + Bundl' />
+<Term word='收缩到最小反例' text='收缩的价值不只是「短」，而是把复杂的失败输入化简到能一眼看懂的本质：从 &#39;xNLy&#39;、&#39;NLNLNL&#39; 这类输入逐步删字符，只要删后仍触发失败就继续，最终停在 &#39;NL&#39;，正好暴露「编码不是单射」这个根因。状态机测试用 `RuleBasedStateMachine` 配合 `@initialize`、`@rule`、`B' />
 
 
 ## 对照：手写用例与 @given 找到的反例
@@ -134,13 +134,13 @@ print('both correct', loop_sum(5000) == builtin_sum(5000))
 
 收缩的价值不只是「短」，而是把复杂的失败输入化简到能一眼看懂的本质：从 'xNLy'、'NLNLNL' 这类输入逐步删字符，只要删后仍触发失败就继续，最终停在 'NL'，正好暴露「编码不是单射」这个根因。
 
-状态机测试用 RuleBasedStateMachine + @initialize + @rule + Bundle 描述「对系统做一串操作后不变量仍成立」，例如内存字典模型与被测缓存对比：每步 @rule 随机挑一个操作执行并断言模型一致，hypothesis 连操作序列一起收缩，能抓到手写用例想不到的顺序组合。
+状态机测试用 `RuleBasedStateMachine` 配合 `@initialize`、`@rule`、`Bundle` 描述「对系统做一串操作后不变量仍成立」，例如内存字典模型与被测缓存对比：每步 `@rule` 随机挑一个操作执行并断言模型一致，hypothesis 连操作序列一起收缩，能抓到手写用例想不到的顺序组合。
 
-可复现靠 `derandomize=True`、@`seed(...)`、`print_blob=True`（打印重放 blob）与提交 example 数据库；
+可复现靠 `derandomize=True`、`@seed`、`print_blob=True`（打印重放 blob）与提交 example 数据库；
 
-`HealthCheck.too_slow` / filter_too_much / data_too_large 是策略写坏时的失效信号，不要一律关掉，而要修正策略写法本身；
+`HealthCheck.too_slow` / `filter_too_much` / `data_too_large` 是策略写坏时的失效信号，不要一律关掉，而要修正策略写法本身；
 
-找到的每个反例都应转成 @example 固定下来，让它长期守在回归套件里。
+找到的每个反例都应转成 `@example` 固定下来，让它长期守在回归套件里。
 
 ```python
 import random, sys
@@ -164,18 +164,18 @@ print('interpreter', sys.version_info[0], sys.version_info[1])
 python -m pytest -q --disable-warnings
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **hypothesis 策略** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 hypothesis 策略 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## hypothesis 把一次运行建模成选择序列的底层
 
-hypothesis 把一次测试运行建模为「从策略里抽取一串随机选择」：每个整数、字符都是选择序列上的一个节点，失败后 delta-debugging 逐段尝试删除/简化这些选择，只要删后仍失败就保留，直到得到最小选择序列，于是复杂输入被压成本质反例并将该序列哈希存进 .hypothesis/examples 供重放；
+hypothesis 把一次测试运行建模为「从策略里抽取一串随机选择」：每个整数、字符都是选择序列上的一个节点，失败后 delta-debugging 逐段尝试删除或简化这些选择，只要删后仍失败就保留，直到得到最小选择序列，于是复杂输入被压成本质反例并将该序列哈希存进 `.hypothesis/examples` 供重放；
 
-derandomize 固定熵源让整条序列确定。
+`derandomize` 固定熵源让整条序列确定。
 
-往返性质 `decode(encode(s)`) == s 要求编码是单射，而把换行替换成字面量 NL 违反了这一点（含 'NL' 的原文解码后变成换行），所以收缩停在两字符 'NL'。
+往返性质 `decode(encode(s)) == s` 要求编码是单射，而把换行替换成字面量 NL 违反了这一点（含 'NL' 的原文解码后变成换行），所以收缩停在两字符 'NL'。
 
-timeit 在计时期间 `gc.disable()`、执行 number 次并取多轮最小以降低调度噪声；`sum(range(n)`) 走 C 层循环，指令数远少于等价的 Python for 累加，方向稳定。
+`timeit` 在计时期间 `gc.disable()`、执行 number 次并取多轮最小以降低调度噪声；`sum(range(n))` 走 C 层循环，指令数远少于等价的 Python for 累加，方向稳定。
 
 覆盖率引导的 fuzzer 则给基本块插桩，只保留触发新分支的输入，与「结构化输入 + 语义收缩」的属性测试是互补的两套机制。
 
@@ -184,13 +184,11 @@ timeit 在计时期间 `gc.disable()`、执行 number 次并取多轮最小以�
 
 基准测量的是「多快」，属性/模糊测的是「对不对」。
 
-pytest-benchmark 提供 benchmark fixture：`benchmark(fn, *args)` 自动校准轮数（--benchmark-min-rounds）、给出 min/median/mean/ops 并写 JSON，--benchmark-compare 对比历史、--benchmark-autosave 存档，CI 里设回归阈值——某次提交让耗时翻倍就失败。
+`pytest-benchmark` 提供 benchmark fixture：`benchmark(fn, *args)` 自动校准轮数（`--benchmark-min-rounds`）、给出 min/median/mean/ops 并写 `JSON`，`--benchmark-compare` 对比历史、`--benchmark-autosave` 存档，CI 里设回归阈值——某次提交让耗时翻倍就失败。
 
-标准库 `timeit.timeit(stmt, number=...)` 计时期间会关掉 GC、跑 number 次取代表值，`timeit.repeat` 多轮取最小以压噪声；
+标准库 `timeit.timeit` 计时期间会关掉 GC、跑 number 次取代表值，`timeit.repeat` 多轮取最小以压噪声；内置 `sum(range(n))` 是 C 循环，稳定快于等价的 Python for 累加（可验证方向一致）。
 
-内置 `sum(range(n)`) 是 C 循环，稳定快于等价的 Python for 累加（可验证方向一致）。模糊测试（AFL/libFuzzer，Python 侧 atheris）生成无结构、偏边界的随机字节，靠插桩记录覆盖了哪些分支来保留「能走到新路径」的输入，目标是崩溃与越界，不做语义收缩；
-
-属性测试输入结构化、带收缩、验证性质。三者互补：纯函数与解析器加属性测试，热点加基准阈值，外部输入解析加模糊测试。
+模糊测试（AFL/libFuzzer，Python 侧 `atheris`）生成无结构、偏边界的随机字节，靠插桩记录覆盖了哪些分支来保留「能走到新路径」的输入，目标是崩溃与越界，不做语义收缩；属性测试输入结构化、带收缩、验证性质。三者互补：纯函数与解析器加属性测试，热点加基准阈值，外部输入解析加模糊测试。
 
 **三类测试的边界与选型**
 
@@ -218,7 +216,7 @@ pytest-benchmark 提供 benchmark fixture：`benchmark(fn, *args)` 自动校准�
 
 属性测试真正的工程价值在收尾：生成的输入发现失败后，要把收缩得到的最小反例写回测试套件，让这次事故永久守门。
 
-压缩连续空格的函数若只做一轮替换就不满足幂等性质 `compact(compact(s)`) == `compact(s)`，长空白串会触发失败；
+压缩连续空格的函数若只做一轮替换就不满足幂等性质 `compact(compact(s))==compact(s)`，长空白串会触发失败；
 
 对小字母表穷举候选、逐个收缩、去重成最小集合，再把它们序列化成回归清单随代码提交。下面片段用标准库走完「生成 → 找反例 → 收缩 → 固化」整条链路，重点看最小反例如何暴露根因，而不是记住某个具体输入。
 
@@ -284,9 +282,9 @@ print('pinned regression', json.dumps([repr(m) for m in minimal[:3]]))
 
 <Quiz no='077-3' q='pytest-benchmark 相比一次性 timeit 数字的关键增益是？' :options='["自动校准轮数、存历史 JSON、--benchmark-compare 对比并设回归阈值", "让代码跑得更快", "自动生成属性测试", "替代单元测试"]' answer="0" explain='benchmark fixture 校准轮数、给 min/median/ops、保存 JSON 供 compare；CI 设回归阈值后耗时翻倍会失败，避免性能退化静默累积。' />
 
-<Predict no='077-P' q='把换行替换成 NL 的编码，对候选串收缩后最小反例最可能是？' :options='["[&#39;NL&#39;]", "[&#39;xNLy&#39;]", "[]"]' answer='0' output='[&#39;NL&#39;]' explain='删字符只要仍触发往返失败就继续，&#39;xNLy&#39;、&#39;NLNLNL&#39; 都会被压到两字符 &#39;NL&#39;——它正是「编码非单射」的最小证据，再删任一字符性质就恢复成立。' />
+<Predict no='077-4' q='把换行替换成 NL 的编码，对候选串收缩后最小反例最可能是？' :options='["[&#39;NL&#39;]", "[&#39;xNLy&#39;]", "[]"]' answer='0' output='[&#39;NL&#39;]' explain='删字符只要仍触发往返失败就继续，&#39;xNLy&#39;、&#39;NLNLNL&#39; 都会被压到两字符 &#39;NL&#39;——它正是「编码非单射」的最小证据，再删任一字符性质就恢复成立。' />
 
-<FillBlank no='077-F' tpl='___ itertools' :answers='["import"]' hint='回想本讲关于 hypothesis 策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 属性测试：从「例子」到「性质」 的落点。' />
+<FillBlank no='077-5' tpl='___ itertools' :answers='["import"]' hint='回想本讲关于 hypothesis 策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 属性测试：从「例子」到「性质」 的落点。' />
 
 <KnowledgeCard :points='["属性测试问「对所有这类输入性质是否成立」：不变量、往返、神谕、变形、幂等", "hypothesis 用 @given + 策略生成输入，settings(max_examples, derandomize) 控规模与可复现", "失败沿随机选择序列做 delta-debugging 收缩到最小反例，存 .hypothesis/examples 并用 @example 固化", "RuleBasedStateMachine + @rule + Bundle 测状态不变量；HealthCheck 告警要修策略不要硬关", "pytest-benchmark 自动校准、存 JSON、--benchmark-compare 设回归阈值；timeit 关 GC 多轮取最小", "模糊测试（atheris/AFL）覆盖率引导、无结构输入、不收缩；与属性测试的输入与语义互补"]' :pitfalls='["只写正常输入的手工用例", "找到反例却不固化、或一律关掉 HealthCheck", "把基准当一次性数字、没有回归阈值", "只测正常输入，等于没测编码、空值、极值、Unicode 与超长字符串这些真实事故来源"]' summary='属性测试不问「这个输入对不对」，而问「对所有这类输入，性质是否成立」，因此能抓到手工用例永远不会写的组合' />
 

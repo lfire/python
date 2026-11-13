@@ -9,18 +9,18 @@ description: 能读懂并操作 Python 的编译中间产物
 
 阶段四收在「类是怎么被创建出来的」，从这里换一层视角：不看我们写的代码，看解释器拿到源码后先做了什么。第 3 讲只说源码会先变成字节码；这一讲把中间摊开，看有哪些可检查的产物。
 
-一个配置解析器把上传字符串直接当字典求值，另有人改完代码报错却指到不相干的行，都落在同一条链上。本讲先从词法与语法分析生成的 AST 和 ast 模块讲起，再用 compile 看清 code object 结构，最后说常量折叠与 AST 改写该守住的行号边界。需要第 3 讲的执行模型与函数；学完你能操作编译中间产物，把 lint 与代码生成建立在 AST 而非字符串替换上。
+一个配置解析器把上传字符串直接当字典求值，另有人改完代码报错却指到不相干的行，都落在同一条链上。本讲先从词法与语法分析生成的 AST 和 `ast` 模块讲起，再用 `compile` 看清 code object 结构，最后说常量折叠与 AST 改写该守住的行号边界。需要第 3 讲的执行模型与函数；学完你能操作编译中间产物，把 lint 与代码生成建立在 AST 而非字符串替换上。
 
 
 ## 一段外部配置触发 eval 注入的工单
 
-一个配置解析器把用户上传的字符串用 `eval()` 当字典求值，某天有人传了一段构造系统命令的表达式，服务直接被拿到执行入口——eval 会执行任意代码，不只是解析字面量。
+一个配置解析器把用户上传的字符串用 `eval()` 当字典求值，某天有人传了一段构造系统命令的表达式，服务直接被拿到执行入口——`eval` 会执行任意代码，不只是解析字面量。
 
-另一处更隐蔽：团队写了个 AST 改写工具给所有常量加前缀，改完却忘了给新建节点补 lineno 与 col_offset，compile 之后报错栈指向完全不相干的行，排查花了半天。
+另一处更隐蔽：团队写了个 AST 改写工具给所有常量加前缀，改完却忘了给新建节点补 `lineno` 与 `col_offset`，`compile` 之后报错栈指向完全不相干的行，排查花了半天。
 
-还有人在编译期优化里把 `1 + 2` 当成运行时加法，看到 co_consts 里直接是 3 时很困惑：源码明明有加法，反汇编却只剩一条 LOAD_CONST。这些现象都指向同一条链路：Python 不逐行解释源码，而是先做词法与语法分析生成 AST，再编译成字节码 code object，最后交给虚拟机执行。
+还有人在编译期优化里把 `1 + 2` 当成运行时加法，看到 `co_consts` 里直接是 3 时很困惑：源码明明有加法，反汇编却只剩一条 `LOAD_CONST`。这些现象都指向同一条链路：Python 不逐行解释源码，而是先做词法与语法分析生成 AST，再编译成字节码 code object，最后交给虚拟机执行。
 
-本讲把 ast 模块、compile 内置函数、code object 结构、常量折叠与 AST 改写的安全边界逐段拆开，让每个中间产物都能被检查和验证。
+本讲把 `ast` 模块、`compile` 内置函数、code object 结构、常量折叠与 AST 改写的安全边界逐一讲清楚，让每个中间产物都能被检查和验证。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 eval / exec 解析外部传入的字符串当数据：eval 会执行任意表达式，等于把上传内容变成代码执行入口' />
 
@@ -38,21 +38,19 @@ description: 能读懂并操作 Python 的编译中间产物
 
 ## 从源码到 AST：ast.parse、ast.dump 与字面量安全求值
 
-`ast.parse`(source, filename='&lt;unknown>', mode='exec', `type_comments=False`, `feature_version=None`) 返回 `ast.Module`（mode='eval' 时返回 Expression，mode='single' 用于交互式单句）。
+`ast.parse` 返回 `ast.Module`（`mode='eval'` 时返回 `Expression`，`mode='single'` 用于交互式单句），它只做解析，不执行任何代码；
 
-它只做解析，不执行任何代码。
+`mode`、`type_comments`、`feature_version` 等参数控制解析细节。
 
-`ast.dump(node, annotate_fields=True, include_attributes=False, indent=None)` 把树打成可读字符串，indent 参数（3.9+）可缩进；
+`ast.dump` 把树打成可读字符串，`indent` 参数（3.9+）可缩进，`include_attributes=True` 会带上 `lineno`、`col_offset`、`end_lineno`、`end_col_offset`，调试改写后的节点时很有用。
 
-`include_attributes=True` 会带上 lineno、col_offset、end_lineno、end_col_offset，调试改写后的节点时很有用。
+3.8 起 `Constant` 节点统一表示数字与字符串字面量（旧版是 `Num` / `Str` / `NameConstant`），写跨版本工具时要按版本兼容。
 
-3.8 起 Constant 节点统一表示数字与字符串字面量（旧版是 Num / Str / NameConstant），写跨版本工具时要按版本兼容。
-
-`ast.literal_eval` 只接受字面量节点（数字、字符串、元组、列表、字典、集合、布尔、None），遇到 Call、Name、属性访问抛 ValueError: malformed node or string，因此解析外部数据必须用它而不是 eval。
+`ast.literal_eval` 只接受字面量节点（数字、字符串、元组、列表、字典、集合、布尔、`None`），遇到 `Call`、`Name`、属性访问会抛 `ValueError`，因此解析外部数据必须用它而不是 `eval`。
 
 `ast.unparse`（3.9+）把 AST 还原成源码，`ast.walk` 与 `ast.NodeVisitor` 做遍历。
 
-检查产物最简单的方式是打印 `type(tree)`.`__name__` 与 `tree.body` 里每个节点的类型名，确认结构符合预期再往下走。
+检查产物最简单的方式是打印 `type(tree).__name__` 与 `tree.body` 里每个节点的类型名，确认结构符合预期再往下走。
 
 ```python
 import ast
@@ -88,7 +86,7 @@ print('mode eval returns', eval(folded))
 | dont_inherit | 默认 False | True 时不继承调用点的 __future__ 设置 |
 | optimize | -1 / 0 / 1 / 2 | -1 跟随 -O；1 移除 assert；2 再移除 docstring |
 
-<Callout type="tip" title='核心心智模型' text='ast.parse(source, filename=&#39;&lt;unknown&gt;&#39;, mode=&#39;exec&#39;, type_comments=False, feature_version=None) 返回 ast.Module（mode=&#39;eval&#39; 时返回 Expression，mode=&#39;single&#39;' />
+<Callout type="tip" title='核心心智模型' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。`' />
 
 **ast 模块 API 与安全边界**
 
@@ -101,22 +99,22 @@ print('mode eval returns', eval(folded))
 | ast.unparse | AST 还原源码 | 3.9+，改写后用来核对 |
 | ast.PyCF_ONLY_AST | 让 compile 返回 AST | 等价于 ast.parse |
 
-<Term word='词法与语法分析' text='ast.parse(source, filename=&#39;&lt;unknown&gt;&#39;, mode=&#39;exec&#39;, type_comments=False, feature_version=None) 返回 ast.Module（mode=&#39;eval&#39; 时返回 Expression，mode=&#39;single&#39; 用于交互式单句）。' />
+<Term word='词法与语法分析' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。`ast.dump` ' />
 
-<Term word='ast 模块与 ast.dump' text='compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1) 把源码或 AST 编成 code object，filename 会进 traceback 与 co_filename，别写成空串。mode 三选一：&#39;exec&#39; 编译模块' />
+<Term word='ast 模块与 ast.dump' text='`compile` 把源码或 AST 编成 code object，`filename` 会进 traceback 与 `co_filename`，别写成空串。`mode` 三选一：`&#39;exec&#39;` 编译模块语句、`&#39;eval&#39;` 编译单个表达式并返回值、`&#39;single&#39;` 编译交互式单句（会打印表达式结果）。`fl' />
 
 
 ## 编译器入口：词法、语法分析与 CPython 的 PEG parser
 
 CPython 的执行链路是 tokenizer → 语法分析 → AST → 编译器 → code object → ceval 虚拟机。3.9 起语法分析改用 PEG parser（此前是 `LL(1)`），生成的 AST 再交给 `compile.c`：先建符号表确定作用域，再遍历做常量折叠与窥孔优化，最后发射字节码。
 
-常量折叠把 `1 + 2` 这类编译期可算的 BinOp 直接替换为 `Constant(3)` 写入 co_consts，所以运行时没有 BINARY_OP；optimize 级别在同一阶段生效，1 丢弃 assert 与 if `__debug__` 分支，2 再丢弃 docstring。
+常量折叠把 `1 + 2` 这类编译期可算的 `BinOp` 直接替换为 `Constant(3)` 写入 `co_consts`，所以运行时没有 `BINARY_OP`；`optimize` 级别在同一阶段生效，`1` 丢弃 `assert` 与 `if __debug__` 分支，`2` 再丢弃 docstring。
 
-code object 是编译产物的不可变容器，co_code 存指令、co_linetable（3.10+）存字节码偏移到源码行的映射、co_exceptiontable（3.11+）存异常处理区间。
+code object 是编译产物的不可变容器，`co_code` 存指令、`co_linetable`（3.10+）存字节码偏移到源码行的映射、`co_exceptiontable`（3.11+）存异常处理区间。
 
-改写 AST 时新建节点若没有 lineno/col_offset，编译器无法填行号表，轻则抛错、重则 traceback 指向错误行，因此 fix_missing_locations 是必需步骤。
+改写 AST 时新建节点若没有 `lineno` / `col_offset`，编译器无法填行号表，轻则抛错、重则 traceback 指向错误行，因此 `fix_missing_locations` 是必需步骤。
 
-`ast.literal_eval` 只递归处理字面量节点，遇到 Call/Name 抛 ValueError，从而在协议层杜绝代码执行。
+`ast.literal_eval` 只递归处理字面量节点，遇到 `Call` / `Name` 抛 `ValueError`，从而在协议层杜绝代码执行。
 
 <ConceptDiagram type='compare2' title='第 049 讲 · 从源码到 AST：ast.parse、ast.dump 与字面量安全求值' labels='从源码到 AST：ast.parse、ast|compile 与 code object：|常量折叠与 AST 改写：优化发生在编译期，' caption='能读懂并操作 Python 的编译中间产物' />
 
@@ -125,19 +123,19 @@ code object 是编译产物的不可变容器，co_code 存指令、co_linetable
 
 ## compile 与 code object：mode、flags、optimize 三个维度
 
-`compile(source, filename, mode, flags=0, dont_inherit=False, optimize=-1)` 把源码或 AST 编成 code object，filename 会进 traceback 与 co_filename，别写成空串。
+`compile` 把源码或 AST 编成 code object，`filename` 会进 traceback 与 `co_filename`，别写成空串。`mode` 三选一：`'exec'` 编译模块语句、`'eval'` 编译单个表达式并返回值、`'single'` 编译交互式单句（会打印表达式结果）。
 
-mode 三选一：'exec' 编译模块语句、'eval' 编译单个表达式并返回值、'single' 编译交互式单句（会打印表达式结果）。
-
-flags 可用 `ast.PyCF_ONLY_AST` 让 compile 直接返回 AST（等价于 `ast.parse`），还可叠加 `__future__` 相关标志；
+`flags` 可用 `ast.PyCF_ONLY_AST` 让 `compile` 直接返回 AST（等价于 `ast.parse`），还可叠加 `__future__` 相关标志；
 
 `dont_inherit=True` 阻止继承调用点的 future 设置。
 
-optimize 默认 -1 跟随解释器的 -O 级别，显式 0 / 1 / 2 三档：1 移除 assert 与 if `__debug__` 分支，2 再移除文档字符串。
+`optimize` 默认 `-1` 跟随解释器的 `-O` 级别，显式 `0` / `1` / `2` 三档：`1` 移除 `assert` 与 `if __debug__` 分支，`2` 再移除文档字符串。
 
-code object 的关键属性：co_code 是字节码字节串，co_consts 是常量元组，co_names 是全局名字元组，co_varnames 是局部变量名，co_stacksize 是求值栈最大深度，co_flags 记录参数与生成器标志；
+code object 的关键属性：`co_code` 是字节码字节串，`co_consts` 是常量元组，`co_names` 是全局名字元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`co_flags` 记录参数与生成器标志；
 
-3.10 起 co_linetable 取代 co_lnotab 记录行号，3.11 起新增 co_exceptiontable（异常表）与 co_qualname。`dis.dis(code)` 把这些指令翻译成可读形式。注入或动态生成代码时，优先用 AST 而非字符串拼接，产物才可控。
+3.10 起 `co_linetable` 取代 `co_lnotab` 记录行号，3.11 起新增 `co_exceptiontable`（异常表）与 `co_qualname`。
+
+`dis.dis(code)` 把这些指令翻译成可读形式。注入或动态生成代码时，优先用 AST 而非字符串拼接，产物才可控。
 
 ```python
 import dis, sys
@@ -171,13 +169,15 @@ print('sys module ok', hasattr(sys, 'getsizeof'))
 
 ## 常量折叠与 AST 改写：优化发生在编译期，行号信息要保住
 
-常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 BinOp 会被直接折成 `Constant(3)` 塞进 co_consts，运行时只剩一条常量相关指令（3.11 及以前是 LOAD_CONST 加 RETURN_VALUE，3.12 起对常量返回改用 RETURN_CONST），完全没有 BINARY_OP。
+常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 `BinOp` 会被直接折成 `Constant(3)` 塞进 `co_consts`，运行时只剩一条常量相关指令（3.11 及以前是 `LOAD_CONST` 加 `RETURN_VALUE`，3.12 起对常量返回改用 `RETURN_CONST`），完全没有 `BINARY_OP`。
 
-用 compile('1 + 2', 'f', 'eval').co_consts 得到 (3,)，再用 dis 看指令，就能把「源码里有加法」和「字节码里没有加法」这一对看似矛盾的现象变成可验证的证据。这也意味着性能结论要看字节码而不是源码行数。
+用 `compile('1 + 2', 'f', 'eval').co_consts` 得到 `(3,)`，再用 `dis` 看指令，就能把「源码里有加法」和「字节码里没有加法」这一对看似矛盾的现象变成可验证的证据。
 
-`ast.NodeTransformer` 配合 visit_Constant / visit_BinOp 等方法改写树，但它不会自动给新建节点补位置：必须 `ast.copy_location(new_node, old_node)` 或在整棵树改写后调用 `ast.fix_missing_locations(tree)`，否则 compile 可能因缺 lineno 报错，或生成的 traceback 行号全错。
+这也意味着性能结论要看字节码而不是源码行数。
 
-改坏行号是自定义 lint、自动插桩、代码生成里最典型的隐蔽故障。改写后用 `ast.unparse` 打印结果、compile 试编、dis 抽查指令，三步就能确认改写既正确又保留了调试信息。产物一旦要给用户看，lineno 与 col_offset 就是契约的一部分。
+`ast.NodeTransformer` 配合 `visit_Constant` / `visit_BinOp` 等方法改写树，但它不会自动给新建节点补位置：要么用 `ast.copy_location` 从旧节点复制位置，要么在整棵树改写后调用 `ast.fix_missing_locations`，否则 `compile` 可能因缺 `lineno` 报错，或生成的 traceback 行号全错。
+
+改坏行号是自定义 lint、自动插桩、代码生成里最典型的隐蔽故障。改写后用 `ast.unparse` 打印结果、`compile` 试编、`dis` 抽查指令，三步就能确认改写既正确又保留了调试信息。产物一旦要给用户看，`lineno` 与 `col_offset` 就是契约的一部分。
 
 ```python
 import ast
@@ -201,18 +201,18 @@ print('result', eval(compile(new, 'r', 'eval')))
 
 ## 版本演进：co_code 与优化结论不能跨版本照搬
 
-<FlowTimeline :steps='[{"title": "从源码到 AST：ast.parse、ast.dump 与字面量安全求值", "desc": "ast.parse(source, filename=&#39;&lt;unknown&gt;&#39;, mo…", "tone": "blue"}, {"title": "compile 与 code object：mode、flags、optimize 三个维度", "desc": "compile(source, filename, mode, flags=0, d…", "tone": "purple"}, {"title": "常量折叠与 AST 改写：优化发生在编译期，行号信息要保住", "desc": "常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 BinOp 会被直…", "tone": "orange"}, {"title": "工程落地", "desc": "用 AST 写一个「禁用 eval」的最小 lint", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "从源码到 AST：ast.parse、ast.dump 与字面量安全求值", "desc": "`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` …", "tone": "blue"}, {"title": "compile 与 code object：mode、flags、optimize 三个维度", "desc": "`compile` 把源码或 AST 编成 code object，`filenam…", "tone": "purple"}, {"title": "常量折叠与 AST 改写：优化发生在编译期，行号信息要保住", "desc": "常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 `BinOp` 会…", "tone": "orange"}, {"title": "工程落地", "desc": "用 AST 写一个「禁用 eval」的最小 lint", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 eval / exec 解析外部传入的字", "body": "eval 会执行任意表达式，等于把上传内容变成代码执行入口", "tip": "解析字面量数据一律用 ast.literal_eval，它遇到非字面量节点抛 ValueError: malformed node or string"}, {"title": "第 2 步：NodeTransformer 改写后直接 ", "body": "新建节点没有 lineno / col_offset，行号表无法正确生成", "tip": "对替换节点用 ast.copy_location(new, old)，并在整棵树改写后调用 ast.fix_missing_locations(tree)"}, {"title": "第 3 步：把某一版本的 co_code 指令或优化结论", "body": "3.9 换 PEG parser、3.10 换行号表、3.11 换指令集与异常表，字节码持续变化", "tip": "在目标解释器上用 dis 现场验证，输出里注明版本范围，别把字节码写进跨版本断言"}]' />
 
 
 ## 用 AST 写一个「禁用 eval」的最小 lint
 
-团队要在 CI 里拦住源码里直接调用 eval 的写法。基于字符串替换的正则容易漏掉重命名、嵌套调用与多行写法；基于 AST 的检查只看节点类型，稳定且能报出精确行号与列偏移。
+团队要在 CI 里拦住源码里直接调用 `eval` 的写法。基于字符串替换的正则容易漏掉重命名、嵌套调用与多行写法；基于 AST 的检查只看节点类型，稳定且能报出精确行号与列偏移。
 
-下面用标准库 ast 实现：NodeVisitor 遍历所有 Call 节点，命中 func 为 Name 且 id 是 eval 时记录 (名字, lineno, col_offset)，再用 `ast.literal_eval` 演示对字面量安全、对函数调用抛 ValueError。
+下面用标准库 `ast` 实现：`NodeVisitor` 遍历所有 `Call` 节点，命中 `func` 为 `Name` 且 `id` 是 `eval` 时记下它的 `(lineno, col_offset)`，再用 `ast.literal_eval` 演示对字面量安全、对函数调用抛 `ValueError`。
 
-整个片段可直接运行，输出命中位置与被拒绝的表达式。要点有两个：遍历的是语法结构而非文本，以及保留 lineno/col_offset 让报告能指回源码。真实 lint 还会加载文件、按规则编号输出并接入预提交钩子，但骨架就是 visit_Call 加位置信息。
+整个片段可直接运行，输出命中位置与被拒绝的表达式。要点有两个：遍历的是语法结构而非文本，以及保留 `lineno` / `col_offset` 让报告能指回源码。真实 lint 还会加载文件、按规则编号输出并接入预提交钩子，但骨架就是 `visit_Call` 加位置信息。
 
 ```python
 import ast
@@ -246,7 +246,7 @@ except ValueError:
 python -c "import dis; dis.dis(lambda x: x+1)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **词法与语法分析** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 词法与语法分析 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -271,9 +271,9 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 
 <Quiz no='049-3' q='AST 改写后 traceback 行号错乱，最可能漏了哪一步？' :options='["没给新节点补 lineno/col_offset，即 copy_location 或 fix_missing_locations", "没调用 ast.unparse", "用了 mode=&#39;exec&#39;", "没打印 ast.dump"]' answer="0" explain='新建节点不带位置属性时，编译器无法生成正确行号表；copy_location 复制原位置、fix_missing_locations 兜底补齐，二者至少做其一。unparse 只是查看，不影响行号。' />
 
-<Predict no='049-P' q='optimize=2 编译含 assert 的源码，和 optimize=0 相比 co_code 长度如何？' :options='["更短，assert 与 docstring 都被移除", "更长，会插入更多检查", "完全相同"]' answer='0' output='optimize=2 的 co_code 更短' explain='optimize=1 移除 assert 与 if __debug__ 分支，optimize=2 再移除 docstring；因此 2 档生成的字节码比 0 档短。这条差异可用 len(co_code) 直接量化。' />
+<Predict no='049-4' q='optimize=2 编译含 assert 的源码，和 optimize=0 相比 co_code 长度如何？' :options='["更短，assert 与 docstring 都被移除", "更长，会插入更多检查", "完全相同"]' answer='0' output='optimize=2 的 co_code 更短' explain='optimize=1 移除 assert 与 if __debug__ 分支，optimize=2 再移除 docstring；因此 2 档生成的字节码比 0 档短。这条差异可用 len(co_code) 直接量化。' />
 
-<FillBlank no='049-F' tpl='___ ast' :answers='["import"]' hint='回想本讲关于 词法与语法分析 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 从源码到 AST：ast.parse、ast.dump 与字面量安全求值 的落点。' />
+<FillBlank no='049-5' tpl='___ ast' :answers='["import"]' hint='回想本讲关于 词法与语法分析 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 从源码到 AST：ast.parse、ast.dump 与字面量安全求值 的落点。' />
 
 <KnowledgeCard :points='["链路：源码 → tokenizer → PEG parser → AST → 编译器 → code object → ceval 虚拟机", "ast.parse 只解析不执行；ast.literal_eval 只求值字面量，遇非字面量抛 ValueError，替代 eval", "compile 的 mode 三选 exec/eval/single；optimize 1 移除 assert、2 再移除 docstring", "code object 存 co_code/co_consts/co_names/co_stacksize；3.10 换 co_linetable、3.11 加 co_exceptiontable", "常量折叠在编译期完成，co_consts 里直接出现结果，运行时没有 BINARY_OP", "NodeTransformer 改写后必须 copy_location 或 fix_missing_locations，否则行号表失真"]' :pitfalls='["用 eval / exec 解析外部传入的字符串当数据", "NodeTransformer 改写后直接 compile，traceback 行号错乱", "把某一版本的 co_code 指令或优化结论当语言规范", "把 ast.literal_eval 写成 eval，或在编译期优化里改坏行号信息，会让调试栈失去意义"]' summary='解释器执行的是编译后的字节码，源码只参与最前面一步；用 ast 改写代码结构比字符串替换可靠得多' />
 

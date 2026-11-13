@@ -9,14 +9,16 @@ description: 理解执行上下文如何被创建与销毁
 
 看过指令，接着看指令站在哪儿跑。每次函数调用都撑起一块执行上下文，放着局部变量与返回位置；函数一结束就拆掉，生成器却偏能挂起、过会儿接着用。理解这块「舞台」，报错栈和惰性求值就有着落。
 
-一个覆盖率工具结果偏低，因为有人改了 locals() 却期待变量跟着变；还有服务长期开着追踪回调。本讲先讲帧对象与 f_locals、f_globals，再走到调用栈与 tracing 回调，最后说生成器帧为何被保留、locals() 能否写回。需要阶段三的函数作用域与第 50 讲的字节码；学完你能说清 traceback 从哪来，写 profiler 时该动哪一层。
+一个覆盖率工具结果偏低，因为有人改了 `locals()` 却期待变量跟着变；还有服务长期开着追踪回调。本讲先讲帧对象与 `f_locals`、`f_globals`，再走到调用栈与 tracing 回调，最后说生成器帧为何被保留、`locals()` 能否写回。需要阶段三的函数作用域与第 50 讲的字节码；学完你能说清 traceback 从哪来，写 profiler 时该动哪一层。
 
 
 ## 一个 traceback 里 f_locals 和预期对不上的调试现场
 
-一个覆盖率工具上线后结果明显偏低：开发者在函数里通过 `locals()`['x'] = 99 修改局部变量，期待后续逻辑读到 99，实际变量纹丝不动，覆盖到的分支自然对不上；换成 `frame.f_locals` 又发现 3.13 上行为完全相反，老资料里的快照结论对不上了。
+一个覆盖率工具上线后结果明显偏低：开发者在函数里通过 `locals()['x'] = 99` 修改局部变量，期待后续逻辑读到 99，实际变量纹丝不动，覆盖到的分支自然对不上；
 
-另一处线上事故来自递归：一个没有正确收敛的解析函数在深层输入上抛 RecursionError: maximum recursion depth exceeded，有人把 `sys.setrecursionlimit` 一路调到十万，结果解释器直接崩溃。
+换成 `frame.f_locals` 又发现 3.13 上行为完全相反，老资料里的快照结论对不上了。
+
+另一处线上事故来自递归：一个没有正确收敛的解析函数在深层输入上抛 `RecursionError`（提示超过最大递归深度），有人把 `sys.setrecursionlimit` 一路调到十万，结果解释器直接崩溃。
 
 还有人把 `sys.settrace` 长期挂在服务里做埋点，p99 延迟涨了一截，因为每一行、每次调用都要回调 Python 函数。生成器能「暂停后继续」也常被讲成魔法，其实物理基础就是帧被挂起而没有销毁。帧、调用栈与命名空间是执行上下文的骨架。
 
@@ -40,13 +42,15 @@ description: 理解执行上下文如何被创建与销毁
 
 每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。
 
-常用属性：f_code 指向正在执行的 code object，f_locals 是局部命名空间的字典快照，f_globals 是模块全局字典，f_builtins 是内置命名空间，f_back 指向调用者帧（沿这条链往上就是调用栈），f_lasti 是上一条已执行指令的字节码偏移，f_lineno 是当前源码行，f_trace 是当前帧的局部追踪函数。
+常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者帧（沿这条链往上就是调用栈），`f_lasti` 是上一条已执行指令的字节码偏移，`f_lineno` 是当前源码行，`f_trace` 是当前帧的局部追踪函数。
 
 获取方式：`sys._getframe(depth)`（`depth=0` 是当前帧）或 `inspect.currentframe()`。
 
-关键差异在 f_globals is `globals()` 通常为 True——它是真实模块字典，往里写会立刻影响全局名字；而 `locals()` 是把 fast locals 数组同步出来的独立快照字典，写入不回写。
+关键差异在 `f_globals is globals()` 通常为 `True`——它是真实模块字典，往里写会立刻影响全局名字；
 
-CPython 3.11 起帧数据尽量内联在解释器的 _PyInterpreterFrame 里，只在被 `sys._getframe`、traceback 或生成器暴露时才物化成 PyFrameObject，降低了调用开销。
+而 `locals()` 是把 fast locals 数组同步出来的独立快照字典，写入不回写。
+
+CPython 3.11 起帧数据尽量内联在解释器的 `_PyInterpreterFrame` 里，只在被 `sys._getframe`、traceback 或生成器暴露时才物化成 `PyFrameObject`，降低了调用开销。
 
 3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理：写它会直接改变局部变量，而 `locals()` 仍是独立快照；3.12 及以前两者都是快照，写入都不生效。
 
@@ -94,40 +98,44 @@ print('result', probe())
 
 ## 执行上下文在 CPython 里如何创建与销毁
 
-CPython 每次 Python 函数调用都建立一个执行帧。3.11 之前帧是堆上的 PyFrameObject；
+CPython 每次 Python 函数调用都建立一个执行帧。3.11 之前帧是堆上的 `PyFrameObject`；
 
-3.11 起改成尽量内联的 _PyInterpreterFrame，放在解释器的数据栈 chunk 里，只有在 `sys._getframe()`、traceback 或生成器需要暴露时才物化出 PyFrameObject，从而减少分配与间接寻址。
+3.11 起改成尽量内联的 `_PyInterpreterFrame`，放在解释器的数据栈 chunk 里，只有在 `sys._getframe()`、traceback 或生成器需要暴露时才物化出 `PyFrameObject`，从而减少分配与间接寻址。
 
-局部变量存在 fast locals 数组里，LOAD_FAST 按索引读取；`locals()` 把这份数组同步成独立快照字典返回，写入不回写，而 `globals()` 直接返回模块字典、修改立即生效。
+局部变量存在 fast locals 数组里，`LOAD_FAST` 按索引读取；`locals()` 把这份数组同步成独立快照字典返回，写入不回写，而 `globals()` 直接返回模块字典、修改立即生效。
 
-3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理（写入直达 fast locals），`locals()` 则明确保持独立快照；3.12 及以前两者都是快照。生成器不销毁帧：gi_frame 保留局部变量与 f_lasti，`next()` 从断点恢复，耗尽后释放。
+3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理（写入直达 fast locals），`locals()` 则明确保持独立快照；3.12 及以前两者都是快照。生成器不销毁帧：`gi_frame` 保留局部变量与 `f_lasti`，`next()` 从断点恢复，耗尽后释放。
 
-递归深度由 C 层计数与 `sys.getrecursionlimit` 约束，超限抛 RecursionError；
+递归深度由 C 层计数与 `sys.getrecursionlimit` 约束，超限抛 `RecursionError`；
 
-调得过高会先耗尽 C 栈。traceback 是异常对象上的 tb 链，节点指向帧、行号与下一节点，traceback 模块沿链打印。settrace/setprofile 在 call/line/return/exception 事件上回调 Python 函数，开销与事件密度成正比。
+调得过高会先耗尽 C 栈。traceback 是异常对象上的 tb 链，节点指向帧、行号与下一节点，traceback 模块沿链打印。
+
+`sys.settrace` / `sys.setprofile` 在 `call` / `line` / `return` / `exception` 事件上回调 Python 函数，开销与事件密度成正比。
 
 <ConceptDiagram type='flow4' title='第 051 讲 · 帧对象：f_locals、f_globals、f_back 与属性查找' labels='帧对象：f_locals、f_globals|调用栈、递归深度与 tracing 回调|生成器帧保留与 locals() 语义边界' caption='理解执行上下文如何被创建与销毁' />
 
 这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：f_code 指向正在执行的 code object，f_locals 是局部命名空间的字典快照，f_globals 是模块全局字典，f_builtins 是内置命名空间，f_back 指向调用者帧（沿这条链往上就是' />
+<Callout type="tip" title='核心心智模型' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者' />
 
 
 ## 调用栈、递归深度与 tracing 回调
 
-调用栈由帧的 f_back 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。
+调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。
 
-递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 RecursionError: maximum recursion depth exceeded；
+递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`；
 
 `sys.setrecursionlimit(n)` 可调，但盲目调极高会让 C 栈先溢出，正确做法是给递归补收敛基线或改成迭代。
 
-`sys.settrace(fn)` 注册全局追踪函数，事件有 'call'、'line'、'return'、'exception'，局部追踪函数由 'call' 的返回值决定；
+`sys.settrace(fn)` 注册全局追踪函数，事件有 `'call'`、`'line'`、`'return'`、`'exception'`，局部追踪函数由 `'call'` 的返回值决定；
 
-`sys.setprofile(fn)` 事件更粗（call / return / c_call / c_return / c_exception），适合做 profiler 与覆盖率。
+`sys.setprofile(fn)` 事件更粗（`call` / `return` / `c_call` / `c_return` / `c_exception`），适合做 profiler 与覆盖率。
 
-两者只对当前线程生效，且每行、每次调用都回调 Python 函数，生产环境长期开启开销显著，用完必须 `sys.settrace(None)` / `setprofile(None)` 关闭。
+两者只对当前线程生效，且每行、每次调用都回调 Python 函数，生产环境长期开启开销显著，用完必须 `sys.settrace(None)` / `sys.setprofile(None)` 关闭。
 
-`sys.gettrace()` / `getprofile()` 可查当前注册状态。写覆盖率工具时，用 'line' 事件配合 `frame.f_lineno` 记录行号即可，不要试图通过写 f_locals 去改变程序状态。
+`sys.gettrace()` / `sys.getprofile()` 可查当前注册状态。
+
+写覆盖率工具时，用 `'line'` 事件配合 `frame.f_lineno` 记录行号即可，不要试图通过写 `f_locals` 去改变程序状态。
 
 ```python
 import sys
@@ -173,13 +181,13 @@ finally:
 
 ## 生成器帧保留与 locals() 语义边界
 
-普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁：gi_frame 仍指向该帧，f_lasti 记住上次 yield 的位置，局部变量原样存活，`next()` 从断点继续。
+普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁：`gi_frame` 仍指向该帧，`f_lasti` 记住上次 `yield` 的位置，局部变量原样存活，`next()` 从断点继续。
 
-`inspect.getgeneratorstate(g)` 返回 GEN_CREATED / GEN_RUNNING / GEN_SUSPENDED / GEN_CLOSED 四态之一，生成器耗尽或关闭后 gi_frame 被置 None。
+`inspect.getgeneratorstate(g)` 返回 `GEN_CREATED` / `GEN_RUNNING` / `GEN_SUSPENDED` / `GEN_CLOSED` 四态之一，生成器耗尽或关闭后 `gi_frame` 被置为 `None`。
 
-这正是惰性求值与协程能成立的物理基础，也解释了为什么生成器里的局部变量能跨多次 next 保留。`locals()` 的语义要按版本分层记：在函数里它返回独立快照字典，写入不改变局部变量；3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理，写它会真正改变局部变量（3.12 及以前仍是快照）；
+这正是惰性求值与协程能成立的物理基础，也解释了为什么生成器里的局部变量能跨多次 `next` 保留。`locals()` 的语义要按版本分层记：在函数里它返回独立快照字典，写入不改变局部变量；3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理，写它会真正改变局部变量（3.12 及以前仍是快照）；
 
-`globals()` 始终返回真实模块字典，修改立即生效。若业务确实需要「按名字改局部状态」，正确做法是直接赋值局部变量，或把状态放进一个可变容器（字典 / 对象属性）再改容器，不要依赖随版本翻转的 f_locals 行为。把 3.12 的快照结论套到 3.13，是写调试器与单测 mock 时最常见的误用。
+`globals()` 始终返回真实模块字典，修改立即生效。若业务确实需要「按名字改局部状态」，正确做法是直接赋值局部变量，或把状态放进一个可变容器（字典 / 对象属性）再改容器，不要依赖随版本翻转的 `f_locals` 行为。把 3.12 的快照结论套到 3.13，是写调试器与单测 mock 时最常见的误用。
 
 ```python
 import inspect
@@ -217,18 +225,18 @@ print('frame cleared', g.gi_frame is None)
 | x = 9 | 局部变量绑定 | 是 | 直接改 fast locals |
 | state['x']=9 | 可变容器 | 是 | 把状态放进字典再改容器 |
 
-<Term word='帧对象与 f_locals / f_globals' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：f_code 指向正在执行的 code object，f_locals 是局部命名空间的字典快照，f_globals 是模块全局字典，f_builtins 是内置命名空间，f_back 指向调用者帧（沿这条链往上就是调用栈），f_las' />
+<Term word='帧对象与 f_locals / f_globals' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者帧（沿这条链往上就是' />
 
-<Term word='调用栈与递归深度' text='调用栈由帧的 f_back 链构成，异常对象的 __traceback__ 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。递归深度由 C 层计数与 sys.getrecursionlimit()（默认 1000）共同约束，超过抛 RecursionError: maximum recursion d' />
+<Term word='调用栈与递归深度' text='调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`；`sys.setrecu' />
 
 
 ## 用 sys.settrace 写一个最小行覆盖率收集器
 
-覆盖率工具的核心不需要复杂框架：注册一个全局追踪函数，在 'call' 事件里为每个函数建一个行号集合并返回局部追踪函数，在 'line' 事件里把 `frame.f_lineno` 记进去，跑完目标函数后关闭追踪即可。
+覆盖率工具的核心不需要复杂框架：注册一个全局追踪函数，在 `'call'` 事件里为每个函数建一个行号集合并返回局部追踪函数，在 `'line'` 事件里把 `frame.f_lineno` 记进去，跑完目标函数后关闭追踪即可。
 
-下面用标准库实现一个能区分分支的版本：`branch(x)` 根据 x 正负走不同 return 行，分别传入正负值后，检查记录到的行是否多于一行，并确认关闭后 `sys.gettrace()` 为 None。要点是两个：追踪回调只在采样期间开启，以及用 f_lineno 而不是 f_locals 去观察执行状态。
+下面用标准库实现一个能区分分支的版本：`branch(x)` 根据 `x` 正负走不同 `return` 行，分别传入正负值后，检查记录到的行是否多于一行，并确认关闭后 `sys.gettrace()` 为 `None`。
 
-真实工具还会按文件过滤、合并多次运行、输出未覆盖行，但骨架就是 'call' 与 'line' 两个事件。
+要点是两个：追踪回调只在采样期间开启，以及用 `f_lineno` 而不是 `f_locals` 去观察执行状态。真实工具还会按文件过滤、合并多次运行、输出未覆盖行，但骨架就是 `'call'` 与 `'line'` 两个事件。
 
 ```python
 import sys
@@ -263,7 +271,7 @@ print('trace disabled after', sys.gettrace() is None)
 python -c "import dis; dis.dis(lambda x: x+1)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **帧对象与 f_locals / f_globals** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 帧对象与 f_locals / f_globals 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -277,7 +285,7 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在帧里改 locals() 期待改变局部变量", "body": "locals() 始终是独立快照，写入不回写；3.13 的 PEP 667 却把 frame.f_locals 改成写透代理，写入直接改局部变量，行为随版本翻转", "tip": "直接赋值局部变量，或把状态放进可变容器再改容器；跨版本代码不要把 f_locals 当可写命名空间，只用于读取观察"}, {"title": "第 2 步：生产服务长期开启 sys.settrace ", "body": "每行、每次调用都要回调 Python 函数，p99 延迟上升，且只对当前线程生效", "tip": "仅调试或覆盖率采样时短时开启，用完 settrace(None) / setprofile(None) 关闭；性能剖析改用采样 profiler"}, {"title": "第 3 步：递归爆栈后盲目把 setrecursionl", "body": "上限抬高后可能先耗尽 C 栈导致解释器崩溃，而不是安全返回", "tip": "给递归补收敛基线或改成迭代，必要时小幅上调并压测；RecursionError 应作为设计信号而非调参对象"}]' />
 
-<FlowTimeline :steps='[{"title": "帧对象：f_locals、f_globals、f_back 与属性查找", "desc": "每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：…", "tone": "blue"}, {"title": "调用栈、递归深度与 tracing 回调", "desc": "调用栈由帧的 f_back 链构成，异常对象的 __traceback__ 也沿这条…", "tone": "purple"}, {"title": "生成器帧保留与 locals() 语义边界", "desc": "普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁：gi_frame…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sys.settrace 写一个最小行覆盖率收集器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "帧对象：f_locals、f_globals、f_back 与属性查找", "desc": "每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：…", "tone": "blue"}, {"title": "调用栈、递归深度与 tracing 回调", "desc": "调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` …", "tone": "purple"}, {"title": "生成器帧保留与 locals() 语义边界", "desc": "普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁：`gi_fram…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sys.settrace 写一个最小行覆盖率收集器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 看得见调用栈
@@ -292,9 +300,9 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 
 <Quiz no='051-3' q='生成器为什么能在多次 next 之间保留局部变量？' :options='["帧被挂起而非销毁，gi_frame 与 f_lasti 保留执行状态", "局部变量被复制到全局字典", "每次 next 重新执行整个函数", "闭包 cell 保存了所有值"]' answer="0" explain='生成器挂起时帧保留，gi_frame 指向该帧、f_lasti 记住断点、局部变量存活；耗尽或关闭后帧释放、gi_frame 置 None。这是惰性求值的物理基础。' />
 
-<Predict no='051-P' q='递归超过 sys.getrecursionlimit() 后，最可能发生什么？' :options='["抛 RecursionError: maximum recursion depth exceeded", "自动改用迭代", "静默返回 0"]' answer='0' output='RecursionError: maximum recursion depth exceeded' explain='C 层递归计数达到 getrecursionlimit()（默认 1000）即抛 RecursionError。把它当设计信号补收敛基线，而不是盲目把上限调到极高导致 C 栈溢出。' />
+<Predict no='051-4' q='递归超过 sys.getrecursionlimit() 后，最可能发生什么？' :options='["抛 RecursionError: maximum recursion depth exceeded", "自动改用迭代", "静默返回 0"]' answer='0' output='RecursionError: maximum recursion depth exceeded' explain='C 层递归计数达到 getrecursionlimit()（默认 1000）即抛 RecursionError。把它当设计信号补收敛基线，而不是盲目把上限调到极高导致 C 栈溢出。' />
 
-<FillBlank no='051-F' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 帧对象与 f_locals / f_globals 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 帧对象：f_locals、f_globals、f_back 与属性查找 的落点。' />
+<FillBlank no='051-5' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 帧对象与 f_locals / f_globals 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 帧对象：f_locals、f_globals、f_back 与属性查找 的落点。' />
 
 <KnowledgeCard :points='["帧属性：f_code / f_locals / f_globals / f_back / f_lasti / f_lineno / f_trace", "f_globals 与 globals() 是同一份真实字典，写入生效；locals() 是独立快照，写入不回写", "3.13 PEP 667 把 frame.f_locals 改成写透代理（写入生效），3.12 及以前仍是快照；3.11 起帧内联为 _PyInterpreterFrame", "调用栈是 f_back 链，traceback 沿链记录帧与行号；递归超限抛 RecursionError", "settrace 有 call/line/return/exception，setprofile 更粗；仅当前线程、开销大，用完置 None", "生成器挂起时 gi_frame 保留局部变量与 f_lasti，耗尽后置 None；getgeneratorstate 有四态"]' :pitfalls='["在帧里改 locals() 期待改变局部变量，或把 3.12 的 f_locals 快照结论套到 3.13", "生产服务长期开启 sys.settrace / setprofile", "递归爆栈后盲目把 setrecursionlimit 调到极高", "在帧里修改 locals() 字典期待改变局部变量，在多数实现里不会生效"]' summary='每次函数调用都创建一个帧，生成器把帧挂起而不是销毁，这是惰性求值与协程能成立的物理基础' />
 

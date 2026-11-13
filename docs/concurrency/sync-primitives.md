@@ -9,31 +9,29 @@ description: 用正确的原语表达协作关系
 
 上一讲亲手复现了竞态：GIL 只保单条字节码，读—改—写仍是好几条。既然多个线程要改同一份状态，就得表达它们之间的关系，而不是到处补锁。把眼光挪一挪，线程同步描述的本是协作：一个生产者往缓冲放、几个消费者取，满了要等、空了也要等；或者让一批线程都到齐了再一起出发。
 
-从 Lock 与 RLock 起步，走到 Condition 的等待通知、Semaphore 的限流、Event 的一次广播和 Barrier 的汇合，最后谈死锁四条件与规避。需要你熟悉线程、共享变量与竞争条件；读完后能按「关系」挑对原语，按数据而非按代码定锁粒度，并用超时和可观测日志兜底。
+从 `Lock` 与 `RLock` 起步，走到 `Condition` 的等待通知、`Semaphore` 的限流、`Event` 的一次广播和 `Barrier` 的汇合，最后谈死锁四条件与规避。需要你熟悉线程、共享变量与竞争条件；读完后能按「关系」挑对原语，按数据而非按代码定锁粒度，并用超时和可观测日志兜底。
 
 
 ## 缓存预热器里同一把锁被重入，进程挂住
 
-一个缓存预热器用 `threading.Lock` 保护共享字典，回调里又调用了另一个也拿同一把锁的函数，进程偶发卡死；有人把 Lock 换成 RLock「就不死锁了」，掩盖的其实是回调链设计问题。另一次故障里生产者用 `notify()` 只唤一个消费者，某个消费者在 wait 里被虚假唤醒后没重新检查条件，拿了空列表直接崩。
+一个缓存预热器用 `threading.Lock` 保护共享字典，回调里又调用了另一个同样要拿这把锁的函数，进程偶发卡死；有人把 Lock 换成 `RLock`，说「就不死锁了」，其实只是把回调链的设计问题盖住了。
 
-还有人用全局 Event 做「一次性开闸」，却在每个请求里 `clear()`，导致后到的线程永久阻塞。这些现象都在问同一个问题：同步原语表达的是协作关系，不是「加锁」两个字。互斥用 Lock、条件等待用 Condition、容量用 Semaphore、一次性广播用 Event、多方汇合用 Barrier；
+另一次故障里生产者用 `notify()` 只唤醒一个消费者，某个消费者在 wait 里被虚假唤醒后没重新检查条件，拿了空列表直接崩。还有人拿全局 `Event` 做「一次性开闸」，却在每个请求里 `clear()`，结果后到的线程永久阻塞。这几件事都在问同一个问题：同步原语表达的是协作关系，不是「加锁」两个字。
 
-用错原语或漏了谓词重查，代码在压测下才会露出死锁与竞态。
+互斥用 Lock、条件等待用 `Condition`、容量用 `Semaphore`、一次性广播用 `Event`、多方汇合用 `Barrier`；原语选错，或是漏了谓词重查，代码往往要到压测下才露出死锁与竞态。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='在 wait 后直接用数据，不重新检查条件：wait 可能被虚假唤醒，或条件已被别的等待者消费，拿到的是旧状态或空值' />
 
 
 ## Lock 与 RLock 以及死锁的四个条件
 
-`threading.Lock` 是 C 层 `_thread.lock` 的包装，`acquire(blocking=True, timeout=-1)` 返回 bool，`release()` 放行，`locked()` 查询；
+`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。
 
-它不记录属主，任何线程都可 release，因此误 release 别的锁会静默破坏互斥。它是原始锁，同一线程二次 acquire 会死锁，必须用 with lock: 保证配对。RLock 可重入：内部记录属主线程与递归计数，只有属主能 release，且必须释放与获取同样次数。
+它是原始锁，同一线程第二次 acquire 就会死锁，必须用 `with lock:` 保证成对。RLock 可重入：内部记录属主线程与递归计数，只有属主能 release，且释放次数要与获取次数相同。Coffman 给出死锁的四个必要条件：互斥、持有并等待、不可剥夺、循环等待；
 
-Coffman 给出死锁四个必要条件：互斥、持有并等待、不可剥夺、循环等待；
+破坏任意一条即可，工程上最实用的是统一加锁顺序（破循环等待）与 `acquire(timeout=...)` 超时回退（破无限等待）。
 
-破坏任一条即可，工程上最实用的是统一加锁顺序（破循环等待）与 `acquire(timeout=...)` 加超时回退（破无限等待）。
-
-两个高频反模式：持锁时调用外部回调（对方可能反过来拿同一把锁）、以及在持锁段里做 IO（把临界区拖长并放大切换概率）。用 RLock 掩盖「回调里又取同一把锁」只是把死锁推迟到跨线程场景，正确做法是把调用移出临界区。
+两个高频反模式要避开：持锁时调用外部回调（对方可能反过来拿同一把锁），以及在持锁段里做 IO（把临界区拖长、放大切换概率）。用 RLock 掩盖「回调里又取同一把锁」，只是把死锁推迟到跨线程场景，正确做法是把那次调用移出临界区。
 
 **同步原语表达的关系与默认参数**
 
@@ -55,7 +53,7 @@ Coffman 给出死锁四个必要条件：互斥、持有并等待、不可剥夺
 | 不可剥夺 | 已持有的锁不能被抢 | acquire(timeout=...) 超时回退 |
 | 循环等待 | A 等 B、B 等 A 成环 | 全局锁编号，严格按编号递增获取 |
 
-<Callout type="tip" title='核心心智模型' text='threading.Lock 是 C 层 _thread.lock 的包装，acquire(blocking=True, timeout=-1) 返回 bool，release() 放行，locked() 查询；它不记录属主，任何线程都可 release，因此误 release 别的锁会静默破坏互斥' />
+<Callout type="tip" title='核心心智模型' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acqu' />
 
 <ConceptDiagram type='layers3' title='第 062 讲 · Lock / RLock 与死锁四个条件' labels='Lock / RLock 与死锁四个条件|Condition、Semaphore 与 |锁的粒度、超时与可观测性' caption='用正确的原语表达协作关系' />
 
@@ -151,19 +149,19 @@ with rl:
 
 ## Condition、Semaphore、Event 各表达什么关系
 
-`Condition(lock=None)` 默认自带一把 RLock，`wait(timeout=None)` 会先释放底层锁、阻塞、被唤醒后重新获取锁再返回，因此调用 wait/notify 前必须持锁。
+`Condition(lock=None)` 默认自带一把 `RLock`，`wait(timeout=None)` 会先释放底层锁、阻塞，被唤醒后重新拿到锁才返回，所以调用 wait/notify 之前必须持锁。
 
 `notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；
 
-被唤醒后条件可能已被别的线程改掉，所以必须配 `wait_for(predicate, timeout=None)`，它内部是 while not `predicate()`: `wait(...)` 的循环（`inspect.getsource` 能直接看到 while），天然抵御虚假唤醒。
+被唤醒之后条件可能已被别的线程改掉，所以必须配 `wait_for`，它内部是一段 `while not predicate()` 的谓词重查循环（`inspect.getsource` 能直接看到那个 while），天然抵御虚假唤醒。
 
-`Semaphore(value=1)` 维护一个计数器，acquire 减一、release 加一，用于限流而非互斥；
+`Semaphore(value=1)` 维护一个计数器，acquire 减一、release 加一，用来限流而非互斥；
 
-BoundedSemaphore 会在 release 超过初值时抛 ValueError，能抓到「放多了」的 bug。Event 是「一次置位、广播所有等待者」：`set()` 后 `is_set()` 恒为真，`wait()` 立即返回，直到显式 `clear()`；它表达的是状态闸门，不适合每次请求复用的开关。
+`BoundedSemaphore` 在 release 超过初值时抛 `ValueError`，能抓到「放多了」的 bug。
 
-`Barrier(parties, action=None, timeout=None)` 让 parties 个线程在 `wait()` 处汇合，最后一个到达时执行 action 再一起放行；
+`Event` 是「一次置位、广播所有等待者」：`set()` 之后 `is_set()` 恒为真，`wait()` 立即返回，直到显式 `clear()`；它表达的是状态闸门，不适合当成每个请求复用的开关。`Barrier` 让 parties 个线程在 `wait()` 处汇合，最后一个到达时执行 action 再一起放行；
 
-任一方超时或 `abort()` 会把屏障置为 broken，后续 wait 抛 BrokenBarrierError。
+任一方超时或调用 `abort()` 会把屏障置为 broken，后续 wait 抛 `BrokenBarrierError`。
 
 **wait / notify 与超时接口**
 
@@ -178,17 +176,19 @@ BoundedSemaphore 会在 release 超过初值时抛 ValueError，能抓到「放�
 
 ## _thread.lock 之上的 wait 语义
 
-threading 的同步原语都建在 C 层 `_thread.lock` 之上：Lock 是对它的薄包装，RLock 在 Python 层额外维护 _owner（线程 ident）与递归计数，Condition 持有一把锁加两个等待队列，wait 的语义是「释放锁 → 挂到等待队列 → 被 notify 移到锁队列 → 重新 acquire」，因此它天然要求调用者先持锁。
+threading 的同步原语都建在 C 层 `_thread.lock` 之上：`Lock` 是对它的薄包装，`RLock` 在 Python 层额外维护 _owner（线程 ident）与递归计数，`Condition` 持有一把锁加两个等待队列。
 
-notify 只是把等待者从一个队列挪到另一个，并不立刻让出锁，唤醒线程要等当前持锁者退出 with 才继续。Semaphore 用一个计数器加 Condition：acquire 在计数为零时 wait，release 加一并 notify；
+wait 的语义是「释放锁 → 挂到等待队列 → 被 notify 移到锁队列 → 重新 acquire」，因此它天然要求调用者先持锁；notify 只是把等待者从一个队列挪到另一个，并不立刻让出锁，被唤醒的线程要等当前持锁者退出 with 才能继续。
 
-BoundedSemaphore 额外记住初值，release 超过就抛 ValueError。Event 用一把锁加一个布尔标志，set 把标志置真并 notify_all，clear 只是把标志清回假，不会「唤醒」任何人——这就是每请求 clear 会漏掉后来者的原因。
+`Semaphore` 用一个计数器加 Condition：acquire 在计数为零时 wait，release 加一并 notify；
 
-死锁的四个条件在 CPython 里没有自动检测，只有靠统一锁顺序与超时把它变成可诊断的失败，而不是静默挂起。
+`BoundedSemaphore` 额外记住初值，release 超过就抛 `ValueError`。
 
-<Term word='Lock 与 RLock' text='threading.Lock 是 C 层 _thread.lock 的包装，acquire(blocking=True, timeout=-1) 返回 bool，release() 放行，locked() 查询；它不记录属主，任何线程都可 release，因此误 release 别的锁会静默破坏互斥。它是原始锁，同一线' />
+`Event` 用一把锁加一个布尔标志，set 把标志置真并 notify_all，clear 只是把标志清回假、不会「唤醒」任何人——这正是每请求 clear 会漏掉后来者的原因。死锁的四个条件在 CPython 里没有自动检测，只有靠统一锁顺序与超时把它变成可诊断的失败，而不是静默挂起。
 
-<Term word='Condition 等待通知' text='Condition(lock=None) 默认自带一把 RLock，wait(timeout=None) 会先释放底层锁、阻塞、被唤醒后重新获取锁再返回，因此调用 wait/notify 前必须持锁。notify(n=1) 只唤醒 n 个等待者，notify_all() 唤醒全部；被唤醒后条件可能已被别的线程改掉，所以' />
+<Term word='Lock 与 RLock' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acquire 就会死锁，必' />
+
+<Term word='Condition 等待通知' text='`Condition(lock=None)` 默认自带一把 `RLock`，`wait(timeout=None)` 会先释放底层锁、阻塞，被唤醒后重新拿到锁才返回，所以调用 wait/notify 之前必须持锁。`notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；被唤醒之后条件可' />
 
 ```python
 import inspect
@@ -208,20 +208,20 @@ print('switch interval', sys.getswitchinterval() == 0.005)
 
 ## 锁的粒度、超时与可观测性
 
-锁粒度要按数据而不是按代码行划分：保护同一个共享结构的读写用同一把锁，无关结构拆成不同锁以降竞争。缩短临界区比换更快的锁有效得多：只在读—改—写的几行持锁，计算、序列化、网络调用一律移出去。
+锁粒度要按数据而不是按代码行划分：保护同一个共享结构的读写用同一把锁，无关结构拆成不同锁以降低竞争。缩短临界区比换一把更快的锁有效得多：只在读—改—写的那几行持锁，计算、序列化、网络调用一律移出去。
 
-所有阻塞获取都给超时（`acquire(timeout=...)`、`Condition.wait(timeout=...)`），超时后记录一条带锁名、线程名与持有时长的日志并走降级，而不是无限等；
+所有阻塞获取都给超时（`acquire(timeout=...)`、`Condition.wait(timeout=...)`），超时后记一条带锁名、线程名与持有时长的日志并走降级，而不是无限等；
 
-这样线上死锁至少可诊断。可观测性还包括：给锁命名、统计等待时长分布、在持锁超过阈值时告警。Python 层的 Lock 与 GIL 是两层东西：GIL 保护解释器引用计数，Lock 保护你的业务数据，前者不会替后者做事。
+这样线上死锁至少是可诊断的。可观测性还包括：给锁命名、统计等待时长分布、在持锁超过阈值时告警。Python 层的 Lock 与 GIL 是两层东西：GIL 保护解释器的引用计数，Lock 保护你的业务数据，前者不会替后者做事。
 
 最后，threading 模块的这些原语都基于同一个 C 层锁实现，跨线程可用但不能跨进程，跨进程要用 multiprocessing 里的同名类。
 
 
 ## 有界缓冲区的生产者—消费者：容量、条件与优雅收尾
 
-一个采集端把日志批量写库，生产者快、消费者慢，需要限制在途条目数避免内存涨爆，还要在主线程发停止信号后把队列排空。用两个 Condition（not_full / not_empty）加一个固定容量 deque 表达：生产者在满时 wait，消费者在空时 wait，双方都用 wait_for 重查谓词；
+一个采集端把日志批量写库，生产者快、消费者慢，既要限制在途条目数避免内存涨爆，又要在主线程发出停止信号后把队列排空。用两个 `Condition`（not_full 与 not_empty）加一个固定容量 deque 来表达：生产者在缓冲满时 wait，消费者在空时 wait，双方都用 `wait_for` 重查谓词；
 
-停止用单独的 Event 置位并 notify_all 唤醒所有等待者，消费者在「队列空且已停止」时退出。所有 wait 都带超时，超时记一条日志，防止异常路径永久挂起。这个结构把 Semaphore 的容量、Condition 的条件、Event 的广播三者各归其位，是线程池有界队列的手写原型。
+停止用单独的 `Event` 置位并 `notify_all` 唤醒所有等待者，消费者在「队列空且已停止」时退出。所有 wait 都带超时，超时记一条日志，防止异常路径永久挂起。这个结构把 `Semaphore` 的容量、`Condition` 的条件、`Event` 的广播三者各归其位，是线程池有界队列的一个手写原型。
 
 ```python
 import collections
@@ -297,9 +297,9 @@ if __name__ == '__main__':
 
 <Quiz no='062-3' q='关于死锁四个条件，工程上最常用的两个破坏手段是？' :options='["统一加锁顺序 + acquire 超时回退", "把 Lock 全部换成 RLock", "增大 sys.getswitchinterval()", "只用 Event 不用锁"]' answer="0" explain='统一锁顺序破坏循环等待，超时回退破坏无限等待；换 RLock 只是掩盖重入，调 switchinterval 与死锁无关，Event 表达不了互斥。' />
 
-<Predict no='062-P' q='threading.BoundedSemaphore(2) 在 acquire 一次、release 一次后再连续 release 三次，会怎样？' :options='["第一次多余 release 就抛 ValueError", "三次都成功，计数器变成 5", "阻塞直到有人 acquire", "抛 RuntimeError"]' answer='0' output='ValueError' explain='BoundedSemaphore 记住初值 2，release 使计数超过初值时立即抛 ValueError，用来捕获「放多了」的 bug；普通 Semaphore 不会检查。' />
+<Predict no='062-4' q='threading.BoundedSemaphore(2) 在 acquire 一次、release 一次后再连续 release 三次，会怎样？' :options='["第一次多余 release 就抛 ValueError", "三次都成功，计数器变成 5", "阻塞直到有人 acquire", "抛 RuntimeError"]' answer='0' output='ValueError' explain='BoundedSemaphore 记住初值 2，release 使计数超过初值时立即抛 ValueError，用来捕获「放多了」的 bug；普通 Semaphore 不会检查。' />
 
-<FillBlank no='062-F' tpl='___ threading' :answers='["import"]' hint='回想本讲关于 Lock 与 RLock 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Lock / RLock 与死锁四个条件 的落点。' />
+<FillBlank no='062-5' tpl='___ threading' :answers='["import"]' hint='回想本讲关于 Lock 与 RLock 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Lock / RLock 与死锁四个条件 的落点。' />
 
 <KnowledgeCard :points='["同步原语表达关系：互斥 Lock、条件 Condition、容量 Semaphore、广播 Event、汇合 Barrier", "wait 前必须持锁，内部释放再重获；一律用 wait_for(predicate) 的 while 谓词循环防虚假唤醒", "notify(n=1) 只叫醒 n 个且不释放锁；notify_all + 谓词重查才是稳妥组合", "BoundedSemaphore release 超初值抛 ValueError；Event 是一次性置位，反复 clear 会漏通知", "死锁四条件：互斥、持有并等待、不可剥夺、循环等待；统一锁顺序 + acquire(timeout) 最实用", "锁粒度按数据划分，持锁段不做 IO 与外部回调；所有阻塞获取带超时并留可观测日志"]' :pitfalls='["在 wait 后直接用数据，不重新检查条件", "持锁时调用外部回调或做网络 IO", "每个请求都 event.clear() 复用同一个 Event", "用 RLock 掩盖设计问题、或在持锁时调用外部回调，是死锁最常见的两个来源"]' summary='同步原语表达的是关系而不是「加锁」：互斥用 Lock、条件等待用 Condition、容量用 Semaphore、一次性广播用 Event' />
 
@@ -326,4 +326,4 @@ if __name__ == '__main__':
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **Lock 与 RLock** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 Lock 与 RLock 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

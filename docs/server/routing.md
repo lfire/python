@@ -9,31 +9,33 @@ description: 把入口层做成可测试、可复用的薄层
 
 框架定下来，最先动手写的就是那些接请求的函数。它们看着简单，却最容易越长越胖：本讲把入口收回成薄薄一层，只做校验、编排与响应映射，业务逻辑留在框架之外，好让测试不必惊动整个服务。
 
-常见场面：下单函数里取当前用户、开数据库连接、查库存各写一遍，六十行二十行是重复样板；想补个参数校验的单测，才发现要先起服务、拼请求。我们看路径与查询参数怎么读进来，再用请求体与模型把校验挪出函数体，接着让依赖被声明、复用、也能整体替换，最后落到响应模型、状态码与统一错误处理。需要函数、装饰器、类型注解与依赖注入印象；学完能把路由层写得可单测、可替换。
+常见场面：下单函数里取当前用户、开数据库连接、查库存各写一遍，六十行里有二十行是重复样板；想补个参数校验的单测，才发现要先起服务、拼请求。我们看路径与查询参数怎么读进来，再用请求体与模型把校验挪出函数体，接着让依赖被声明、复用、也能整体替换，最后落到响应模型、状态码与统一错误处理。需要函数、装饰器、类型注解与依赖注入的印象；学完能把路由层写得可单测、可替换。
 
 
 ## 同一请求里 get_db 被解析三次，连接池被占满
 
-一个下单接口最初把『解析 token 拿当前用户』『开数据库连接』『校验库存』三段逻辑全写在路由函数里，六十行代码里有二十行是重复的样板。等要补单元测试时才发现：测一个参数校验分支都得先起服务、造数据库连接、构造完整 HTTP 请求，跑一轮要几百毫秒，失败信息还指向框架内部。
+一个下单接口最初把「解析 token 拿当前用户」「开数据库连接」「校验库存」三段逻辑全写在路由函数里，六十行代码里有二十行是重复的样板。等要补单元测试时才发现：测一个参数校验分支都得先起服务、造数据库连接、构造完整 `HTTP` 请求，跑一轮要几百毫秒，失败信息还指向框架内部。
 
-更麻烦的是同一个请求里 get_db 被调用了三次，连接池被无谓占满。有人把它改成全局单例连接，并发下又串了数据。这些症状的根都在入口层没有分层：依赖该被声明、被复用、被整体替换，而不是在函数体里手工拼。本讲用标准库实现一个最小的依赖注入容器与参数校验器，把路由层还原成可测试的薄层。
+更麻烦的是同一个请求里 `get_db` 被调用了三次，连接池被无谓占满。有人把它改成全局单例连接，并发下又串了数据。这些症状的根都在入口层没有分层：依赖该被声明、被复用、被整体替换，而不是在函数体里手工拼。本讲用标准库实现一个最小的依赖注入容器与参数校验器，把路由层还原成可测试的薄层。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='同一请求里 get_db 被解析三次，连接池被占满：把 use_cache 关掉或在函数体里手工调用依赖函数，绕过了请求级缓存' />
 
 
 ## 把依赖写成声明：Depends 与依赖树
 
-依赖注入的核心不是『自动传参』，而是把『我需要什么』与『怎么拿到』分开。
+依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。
 
-FastAPI 用 Depends 表达：def `endpoint(user=Depends(get_user)`, `db=Depends`(get_db))，Depends 对象作为默认值挂在函数的 `__defaults__` 里，框架启动时读 `inspect.signature` 与这些默认值，递归构建一棵依赖树。
+FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults__` 里，框架启动时读 `inspect.signature` 与这些默认值，递归构建一棵依赖树。
 
-关键规则是同一请求内依赖默认被缓存：`use_cache=True` 时，get_db 无论被 endpoint 直接依赖还是被 get_user 间接依赖，都只执行一次，结果存进请求级的缓存字典按 (callable, security_scopes) 取用；
+关键规则是同一请求内依赖默认被缓存：`use_cache=True` 时，`get_db` 无论被 `endpoint` 直接依赖还是被 `get_user` 间接依赖，都只执行一次，结果存进请求级的缓存字典按 `(callable, security_scopes)` 取用；
 
-这是连接池不被重复占用的原因，也是『同一请求里拿到同一个 session』的保证。
+这是连接池不被重复占用的原因，也是「同一请求里拿到同一个 session」的保证。
 
 把 `use_cache=False` 可强制每次重算，但会放大资源开销。
 
-依赖树还能整体替换：测试里用 dependency_overrides 把 get_db 指向返回内存 sqlite 的假实现，路由函数一行不改。生成器形式的依赖（yield）在响应后执行 finally 里的清理，正好用来提交或回滚事务、归还连接。
+依赖树还能整体替换：测试里用 `dependency_overrides` 把 `get_db` 指向返回内存 sqlite 的假实现，路由函数一行不改。
+
+生成器形式的依赖用 `yield` 交出资源，在响应后触发 `finally` 里的清理，正好用来提交或回滚事务、归还连接。
 
 ```python
 import inspect
@@ -76,7 +78,7 @@ print('cache keys', [f.__name__ for f in CACHE])
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='依赖注入的核心不是『自动传参』，而是把『我需要什么』与『怎么拿到』分开。FastAPI 用 Depends 表达：def endpoint(user=Depends(get_user), db=Depends(get_db))，Depends 对象作为默认值挂在函数的 __defaults__ 里，' />
+<Callout type="tip" title='核心心智模型' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults' />
 
 <ConceptDiagram type='compare2' title='第 084 讲 · 把依赖写成声明：默认参数里的 Depends 与依赖树' labels='把依赖写成声明：默认参数里的 Depends|参数校验：类型强制、约束与 422 的来源|薄路由层：编排、可测试与失效信号' caption='把入口层做成可测试、可复用的薄层' />
 
@@ -122,15 +124,23 @@ print('get_user param', list(inspect.signature(get_user).parameters))
 
 ## 参数校验：类型强制、约束与 422 的来源
 
-入口参数分三类：路径参数（/users/&#123;uid&#125;）、查询参数（?`page=1`&`size=20`）、请求体（JSON）。
+入口参数分三类：路径参数（`/users/{uid}`）、查询参数（`?page=1&size=20`）、请求体（`JSON`）。
 
-Pydantic v2 的 BaseModel 用 Field 声明约束：`Field(gt=0)`、`Field(ge=1, le=100)`、`Field(min_length=1, max_length=64)`、`Field(default=...)`，还支持 EmailStr、conint 等类型。
+Pydantic v2 的 `BaseModel` 用 `Field` 声明约束：`Field(gt=0)`、`Field(ge=1, le=100)`、`Field(min_length=1, max_length=64)`、`Field(default=...)`，还支持 `EmailStr`、`conint` 等类型。
 
-请求到达时框架按签名把原始字符串/JSON 喂给模型，model_validate 做类型强制（'36' 转成 int 36），任一约束不满足就收集所有错误抛 ValidationError，FastAPI 统一映射成 422 Unprocessable Entity，响应体带 loc、msg、type 字段定位到具体参数。
+请求到达时框架按签名把原始字符串或 `JSON` 喂给模型，`model_validate` 做类型强制（`'36'` 转成 `int` 的 `36`），任一约束不满足就收集所有错误抛 `ValidationError`，FastAPI 统一映射成 `422 Unprocessable Entity`，响应体带 `loc`、`msg`、`type` 字段定位到具体参数。
 
-这与手写 if 判断的差别不只是代码量：错误是结构化、可枚举、可测试的。响应侧用 response_model 约束出参与文档，status_code 声明成功状态（POST 常用 201），统一异常处理器把领域异常映射成一致的错误结构。版本化路由有两种常见做法：路径前缀 /v1、/v2，或按 Accept / 自定义头协商；
+手写校验往往要自己写成分支，例如下面这段代码；
 
-前者最直观，后者对 URL 更干净但缓存键要带上版本头。
+```python
+def check(x):
+    if x < 0:
+        raise ValueError(x)
+```
+
+参数一多，判断就散落各处。结构化的差别不只是代码量：错误是结构化、可枚举、可测试的。响应侧用 `response_model` 约束出参与文档，`status_code` 声明成功状态（`POST` 常用 `201`），统一异常处理器把领域异常映射成一致的错误结构。
+
+版本化路由有两种常见做法：路径前缀 `/v1`、`/v2`，或按 `Accept` / 自定义头协商；前者最直观，后者对 URL 更干净但缓存键要带上版本头。
 
 **入口参数三类与校验手段**
 
@@ -198,37 +208,39 @@ for bad in ({'page': 0, 'size': 20, 'q': 'py'}, {'page': 1, 'size': 'x', 'q': 'p
 
 ## 薄路由层：编排、失效信号与统一错误映射
 
-把路由层职责收窄成四件事：校验入参、鉴权、编排领域服务、映射响应。领域逻辑放进独立的、不 import 框架的模块，这样单元测试可以直接调函数，不必起 HTTP 服务；接口测试只验证薄的编排与状态码。依赖注入让『取当前用户』『拿连接』这些横切关注点从每个处理函数里消失，既能复用也能在测试里整体替换。
+把路由层职责收窄成四件事：校验入参、鉴权、编排领域服务、映射响应。领域逻辑放进独立的、不 `import` 框架的模块，这样单元测试可以直接调函数，不必起 `HTTP` 服务；接口测试只验证薄的编排与状态码。依赖注入让「取当前用户」「拿连接」这些横切关注点从每个处理函数里消失，既能复用也能在测试里整体替换。
 
-失效信号很具体：路由函数超过几十行、出现 SQL 或业务分支、同一个依赖在一次请求里被解析多次、测试必须起服务才能覆盖一个校验分支、错误响应在不同接口里格式不一，都说明分层被破坏。还要注意同步与异步依赖混跑：在 async 路由里声明一个同步阻塞的 def 依赖，框架会把它丢进线程池；
+失效信号很具体：路由函数超过几十行、出现 SQL 或业务分支、同一个依赖在一次请求里被解析多次、测试必须起服务才能覆盖一个校验分支、错误响应在不同接口里格式不一，都说明分层被破坏。还要注意同步与异步依赖混跑：在 `async` 路由里声明一个同步阻塞的 `def` 依赖，框架会把它丢进线程池；
 
-反过来在同步路由里 await 异步依赖是不允许的，会直接得到协程对象而非结果。生成器依赖的清理代码必须放在 finally，否则异常路径下连接不会归还。
+反过来在同步路由里 `await` 异步依赖是不允许的，会直接得到协程对象而非结果。生成器依赖的清理代码必须放在 `finally`，否则异常路径下连接不会归还。
 
 <Callout type="warn" title='本讲最容易踩的坑' text='同一请求里 get_db 被解析三次，连接池被占满：把 use_cache 关掉或在函数体里手工调用依赖函数，绕过了请求级缓存' />
 
 
 ## 请求校验在 Pydantic v2 里的执行链
 
-依赖注入在运行期是一张有向无环图：节点是可调用对象，边由参数默认值里的 Depends 标记给出，解析从端点函数出发做深度优先遍历。
+依赖注入在运行期是一张有向无环图：节点是可调用对象，边由参数默认值里的 `Depends` 标记给出，解析从端点函数出发做深度优先遍历。
 
-缓存的关键是把『一次请求』映射成一个共享的字典作用域——框架在请求进入时新建 cache、把 (callable, 安全作用域元组) 作键存解析结果，响应结束后整个字典丢弃，因此 get_db 无论出现在树的哪个位置都只解析一次，而不同请求之间不会串数据。
+缓存的关键是把「一次请求」映射成一个共享的字典作用域——框架在请求进入时新建 `cache`、把 `(callable, security_scopes)` 作键存解析结果，响应结束后整个字典丢弃，因此 `get_db` 无论出现在树的哪个位置都只解析一次，而不同请求之间不会串数据。
 
-若依赖写成 yield 生成器，框架用上下文管理协议：请求前推进到 yield 取值注入，响应发送后把生成器再推进一次触发 finally 完成提交/回滚与连接归还。
+若依赖写成 `yield` 生成器，框架用上下文管理协议：请求前推进到 `yield` 取值注入，响应发送后把生成器再推进一次触发 `finally` 完成提交或回滚与连接归还。
 
-校验侧，Pydantic v2 把每个字段的类型与 Field 约束编译成核心 schema，model_validate 在 Rust 核心里做类型强制与约束检查，一次性收集全部错误，FastAPI 再把这些错误序列化成带 loc 的 422 响应。
+校验侧，Pydantic v2 把每个字段的类型与 `Field` 约束编译成核心 schema，`model_validate` 在 Rust 核心里做类型强制与约束检查，一次性收集全部错误，FastAPI 再把这些错误序列化成带 `loc` 的 `422` 响应。
 
-参数抽取按 kind 分派：PATH、QUERY、BODY、HEADER 各有固定的取值来源，这正是同一注解能自动区分路径参数与查询参数的原因。
+参数抽取按 `kind` 分派：`PATH`、`QUERY`、`BODY`、`HEADER` 各有固定的取值来源，这正是同一注解能自动区分路径参数与查询参数的原因。
 
-<Term word='路径与查询参数' text='依赖注入的核心不是『自动传参』，而是把『我需要什么』与『怎么拿到』分开。FastAPI 用 Depends 表达：def endpoint(user=Depends(get_user), db=Depends(get_db))，Depends 对象作为默认值挂在函数的 __defaults__ 里，框架启动时读 ins' />
+<Term word='路径与查询参数' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults__` 里，框架启动' />
 
-<Term word='请求体与 Pydantic 模型' text='入口参数分三类：路径参数（/users/{uid}）、查询参数（?page=1&amp;size=20）、请求体（JSON）。Pydantic v2 的 BaseModel 用 Field 声明约束：Field(gt=0)、Field(ge=1, le=100)、Field(min_length=1, max_length=6' />
+<Term word='请求体与 Pydantic 模型' text='入口参数分三类：路径参数（`/users/{uid}`）、查询参数（`?page=1&amp;size=20`）、请求体（`JSON`）。Pydantic v2 的 `BaseModel` 用 `Field` 声明约束：`Field(gt=0)`、`Field(ge=1, le=100)`、`Field(min_length=' />
 
 
 ## 可测试的薄路由层：不启服务也能测校验分支
 
-下面把入口层做成一个不依赖 Web 框架的最小运行时：一个注册表把路径模板映射到处理函数，一个依赖解析器按 Depends 声明注入参数并做请求级缓存，一个调度器负责参数校验与把领域异常翻译成统一的状态码结构。
+下面把入口层做成一个不依赖 Web 框架的最小运行时：一个注册表把路径模板映射到处理函数，一个依赖解析器按 `Depends` 声明注入参数并做请求级缓存，一个调度器负责参数校验与把领域异常翻译成统一的状态码结构。
 
-领域函数 place_order 完全不知道 HTTP 与数据库来自哪里，只接收已校验的强类型值，因此单元测试可以直接调它。测试时用 dependency_overrides 把 get_db 换成返回内存字典的假实现，整条链路零网络、零真实连接。
+领域函数 `place_order` 完全不知道 `HTTP` 与数据库来自哪里，只接收已校验的强类型值，因此单元测试可以直接调它。
+
+测试时用 `dependency_overrides` 把 `get_db` 换成返回内存字典的假实现，整条链路零网络、零真实连接。
 
 这个骨架对应真实项目里的三件事：路由层只做编排、依赖可整体替换、错误响应格式全局一致。
 
@@ -305,7 +317,7 @@ print('orders', fake['orders'])
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **路径与查询参数** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 路径与查询参数 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 错因速查与排查顺序
@@ -333,9 +345,9 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 <Quiz no='084-3' q='请求体字段不满足 Field(gt=0) 时，FastAPI 返回什么？' :options='["422，响应体带 loc/msg/type 定位到具体字段", "400，只有一行文本说明", "500，因为校验器抛了未捕获异常", "200，字段被静默置为 0"]' answer="0" explain='校验失败抛 RequestValidationError（由 ValidationError 包装），框架统一映射成 422 Unprocessable Entity，结构化列出每个错误的位置与原因。' />
 
-<Predict no='084-P' q='对 def endpoint(user=Depends(get_user), db=Depends(get_db)) 读取 __defaults__，最可能得到什么？' :options='["两个元素，类型名都是 Depends", "两个 None", "一个 dict 与一个 list"]' answer='0' output='endpoint defaults [&#39;Depends&#39;, &#39;Depends&#39;]' explain='Depends 实例作为默认值挂在函数的 __defaults__ 元组里，框架靠 inspect.signature 读到 p.default 再识别它，这就是『依赖是声明而非调用』的证据。' />
+<Predict no='084-4' q='对 def endpoint(user=Depends(get_user), db=Depends(get_db)) 读取 __defaults__，最可能得到什么？' :options='["两个元素，类型名都是 Depends", "两个 None", "一个 dict 与一个 list"]' answer='0' output='endpoint defaults [&#39;Depends&#39;, &#39;Depends&#39;]' explain='Depends 实例作为默认值挂在函数的 __defaults__ 元组里，框架靠 inspect.signature 读到 p.default 再识别它，这就是『依赖是声明而非调用』的证据。' />
 
-<FillBlank no='084-F' tpl='___ inspect' :answers='["import"]' hint='回想本讲关于 路径与查询参数 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 把依赖写成声明：默认参数里的 Depends 与依赖树 的落点。' />
+<FillBlank no='084-5' tpl='___ inspect' :answers='["import"]' hint='回想本讲关于 路径与查询参数 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 把依赖写成声明：默认参数里的 Depends 与依赖树 的落点。' />
 
 <KnowledgeCard :points='["依赖是声明：Depends 实例藏在函数 __defaults__ 里，框架读签名递归建依赖树", "use_cache=True 默认按请求级缓存共享解析结果；dependency_overrides 让测试整体替换依赖", "yield 依赖在响应后触发 finally，用来提交/回滚与归还连接；清理必须写进 finally", "Pydantic v2 用 model_validate / model_dump；Field(gt/ge/le/min_length) 声明约束", "校验失败统一映射 422，响应体带 loc/msg/type；response_model 同时约束出参与文档", "路由层只做校验/鉴权/编排/响应映射；领域逻辑放不 import 框架的独立模块"]' :pitfalls='["同一请求里 get_db 被解析三次，连接池被占满", "yield 依赖里的 session.close() 没放在 finally，异常后连接泄漏", "测试一个校验分支也要起 HTTP 服务造完整请求", "把业务逻辑堆在路由函数里，接口测试就必须起服务、造 HTTP，速度慢且难定位"]' summary='依赖注入把「取当前用户」「拿数据库连接」从每个处理函数里抽出来，既不重复也方便在测试里整体替换' />
 

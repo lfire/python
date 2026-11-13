@@ -9,43 +9,47 @@ description: 把项目做成别人一行命令能装的东西
 
 配置与密钥都安顿好了，轮到把项目打包与发布出去：让别人一行命令就能装上。一个内部工具只传了源码包，用户安装时还得本地跑一遍构建，缺依赖就装不上；另一个把测试和本机绝对路径塞进产物，体积翻倍还漏了内部文件名。
 
-从构建后端与 PEP 517 说起，讲清 wheel 与 sdist 的差别，再用 console_scripts 声明命令行入口，接着整理版本号与元数据，最后用 build 加 twine check 校验。带着 pyproject、依赖与模块基础来；学完能把项目做成一行命令装得上的产物，版本号与 tag 交给流水线，也给下一讲的闭环留好起点。
+从构建后端与 PEP 517 说起，讲清 wheel 与 sdist 的差别，再用 `console_scripts` 声明命令行入口，接着整理版本号与元数据，最后用 `build` 加 `twine check` 校验。带着 `pyproject.toml`、依赖与模块基础来；学完能把项目做成一行命令装得上的产物，版本号与 `git tag` 交给流水线，也给下一讲的闭环留好起点。
 
 
 ## 只传了 sdist，用户 pip install 时还得本地跑一遍构建后端
 
-一个内部工具只往 PyPI 传了 sdist，用户 pip install 时还得在本地跑一遍构建后端，缺编译依赖就失败，工单里全是「装不上」；另一个包把 tests/ 和本地绝对路径一起打进了 wheel，体积翻了十倍还泄漏了内部文件名；还有人忘了声明 console_scripts，装完包命令行里压根没有可执行入口。
+一个内部工具只往 PyPI 传了 sdist，用户 `pip install` 时还得在本地跑一遍构建后端，缺编译依赖就失败，工单里全是「装不上」；另一个包把 `tests/` 和本地绝对路径一起打进了 wheel，体积翻了十倍还泄漏了内部文件名；
 
-打包的目标不是「能生成文件」，而是让别人一行命令装上、且装上的是组织好的产物而非源码。wheel 与 sdist 的差别、PEP 517 构建后端、入口点与元数据、发布流水线的校验，决定了这个目标能否达成。本讲把 pyproject、wheel 结构、console_scripts 与发布清单讲到能一条命令交付。
+还有人忘了声明 `console_scripts`，装完包命令行里压根没有可执行入口。
+
+打包的目标不是「能生成文件」，而是让别人一行命令装上、且装上的是组织好的产物而非源码。wheel 与 sdist 的差别、PEP 517 构建后端、入口点与元数据、发布流水线的校验，决定了这个目标能否达成。
+
+本讲把 `pyproject.toml`、wheel 结构、`console_scripts` 与发布清单讲到能一条命令交付。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='只上传 sdist 不上传 wheel：用户安装时还要跑构建后端，缺编译依赖或后端就失败' />
 
 
 ## PEP 517 构建前端与后端：隔离环境里发生了什么
 
-PEP 518 的 `[build-system]` 声明 requires（构建依赖，如 setuptools>=68）与 build-backend（如 `setuptools.build_meta`、`hatchling.build`、`flit_core.buildapi`、`poetry.core.masonry`.api）；
+`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools>=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`、`flit_core.buildapi`）；
 
-PEP 517 规定前端 python -m build 通过隔离环境调用后端的 build_sdist / build_wheel 钩子，产物落在 dist/，可用 --sdist、--wheel、--no-isolation 控制。
+PEP 517 规定前端在隔离环境里调用后端的 `build_sdist` / `build_wheel` 钩子，产物落在 `dist/`，可用 `--sdist`、`--wheel`、`--no-isolation` 控制。
 
-sdist 是源码分发（.`tar.gz`），含源码与 `pyproject.toml`/`setup.py`，安装时还要再跑一次构建后端，依赖构建工具、失败率更高。
+sdist 是源码分发（`.tar.gz`），含源码与 `pyproject.toml` / `setup.py`，安装时还要再跑一次构建后端，依赖构建工具、失败率更高。
 
-wheel（PEP 427）是已构建分发，本质是一个 ZIP，文件名遵循 &#123;name&#125;-&#123;version&#125;-&#123;python tag&#125;-&#123;abi tag&#125;-&#123;platform tag&#125;.whl：例如 pkg-1.2.3-py3-none-`any.whl`（纯 Python 通用）与 cp313-cp313-`macosx_11_0_arm64.whl`（特定 CPython 与平台）。
+wheel（PEP 427）是已构建分发，本质是一个 ZIP，文件名遵循 `{name}-{version}-{python}-{abi}-{platform}.whl`：`pkg-1.2.3-py3-none-any.whl`（纯 Python 通用）与 `cp313-cp313-macosx_11_0_arm64.whl`（特定 CPython 与平台）是两种典型，`abi3` 表示用了稳定 ABI。
 
-安装 wheel 只是把内容解压到 site-packages，不执行构建代码，因此应同时上传 sdist 与 wheel，且优先保证 wheel 可用。
+安装 wheel 只是把内容解压到 `site-packages`，不执行构建代码，因此应同时上传 sdist 与 wheel，且优先保证 wheel 可用。
 
-wheel 里含 &lt;name>/ 包目录与 &lt;name>-&lt;version>.dist-info/：METADATA、WHEEL、RECORD、`entry_points.txt`。
+wheel 里含包目录与 `{name}-{version}.dist-info/`：`METADATA`、`WHEEL`、`RECORD`、`entry_points.txt`。
 
-<Callout type="tip" title='核心心智模型' text='PEP 518 的 [build-system] 声明 requires（构建依赖，如 setuptools&gt;=68）与 build-backend（如 setuptools.build_meta、hatchling.build、flit_core.buildapi、poetry.core.maso' />
+<Callout type="tip" title='核心心智模型' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`、`' />
 
-python -m build 作为 PEP 517 前端，在隔离环境里安装 `[build-system]`.requires，再调用 build-backend 的 build_wheel/build_sdist 钩子；
+PEP 517 把「怎么构建」与「谁来驱动构建」解耦：`pip` 或 `build` 作为前端，先创建隔离虚拟环境、装入 `[build-system].requires` 声明的后端，再调用后端约定的 `build_wheel` / `build_sdist` 钩子。
 
-wheel 产物是符合 PEP 427 的 ZIP，文件名里的 python/abi/platform 三段标签让 pip 无需执行代码就能判断兼容性，纯 py3-none-any 装到 purelib、带 cp313 与平台标签的装到 platlib。
+wheel 产物是符合 PEP 427 的 ZIP，文件名里的 python/abi/platform 三段标签让 `pip` 无需执行代码就能判断兼容性，纯 `py3-none-any` 装到 purelib、带 `cp313` 与平台标签的装到 platlib。
 
-安装器把包目录解压到 site-packages，并把 .dist-info/METADATA（RFC 822 风格头，`email.message_from_bytes` 可解析）、WHEEL、RECORD、`entry_points.txt` 一并落地；
+安装器把包目录解压到 `site-packages`，并把 `.dist-info` 里的 `METADATA`（RFC 822 风格头，`email.message_from_bytes` 可解析）、`WHEEL`、`RECORD`、`entry_points.txt` 一并落地；
 
-RECORD 是 path,sha256=&lt;hash>,&lt;size> 的 CSV，pip 用它校验完整性并支持精确卸载。
+`RECORD` 是 `path,sha256=<hash>,<size>` 的 CSV，`pip` 用它校验完整性并支持精确卸载。
 
-`[console_scripts]` 下的 `name = module`:attr 被安装器翻译成平台相关的启动包装脚本，`importlib.metadata.distribution()`.entry_points 将其暴露成 EntryPoint 对象。
+`[console_scripts]` 下的 `name = module:attr` 被安装器翻译成平台相关的启动包装脚本，`importlib.metadata.distribution().entry_points` 将其暴露成 `EntryPoint` 对象。
 
 sdist 不含这些组织好的产物，安装时必须重跑构建钩子，这正是「只传 sdist 失败率高」的机制原因。
 
@@ -178,41 +182,43 @@ with tempfile.TemporaryDirectory() as d:
 | RECORD | path,sha256=&lt;hash>,&lt;size> | 完整性与卸载清单 |
 | entry_points.txt | [console_scripts] mycli = pkg.cli:main | 生成命令行包装脚本 |
 
-<Term word='构建后端与 PEP 517' text='PEP 518 的 [build-system] 声明 requires（构建依赖，如 setuptools&gt;=68）与 build-backend（如 setuptools.build_meta、hatchling.build、flit_core.buildapi、poetry.core.masonry.api）；P' />
+<Term word='构建后端与 PEP 517' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`、`flit_core.' />
 
-<Term word='wheel / sdist 差别' text='PEP 621 把元数据集中在 [project]：name、version、description、readme、requires-python、license、authors、dependencies、optional-dependencies、scripts、entry-points，版本也可 dynamic =' />
+<Term word='wheel / sdist 差别' text='PEP 621 把元数据集中在 `[project]`：`name`、`version`、`description`、`readme`、`requires-python`、`license`、`authors`、`dependencies`、`optional-dependencies`、`scripts`、`entr' />
 
 
 ## 元数据、console_scripts 入口点与版本
 
-PEP 621 把元数据集中在 `[project]`：name、version、description、readme、requires-python、license、authors、dependencies、optional-dependencies、scripts、entry-points，版本也可 dynamic = ['version'] 从 `__version__` 或 SCM 读取。
+PEP 621 把元数据集中在 `[project]`：`name`、`version`、`description`、`readme`、`requires-python`、`license`、`authors`、`dependencies`、`optional-dependencies`、`scripts`、`entry-points`，版本也可写成 `dynamic = ['version']` 从 `__version__` 或 SCM 读取。
 
-命令行入口写在 `[project.scripts]`：mycli = 'mypkg.cli:main'，安装器据此在 bin/Scripts 生成可执行包装脚本；
+命令行入口写在 `[project.scripts]`，形如 `mycli = 'mypkg.cli:main'`，安装器据此在 `bin` / `Scripts` 生成可执行包装脚本；
 
-运行时用 `importlib.metadata.distribution`('x').entry_points 或 entry_points(group='console_scripts')（3.10+ 的 select 式 API）读出 group/name/value，`importlib.metadata.version`('x') 读版本。
+运行时用 `importlib.metadata.distribution('x').entry_points` 或 `entry_points(group='console_scripts')`（Python 3.10 起的 select 式 API）读出 group/name/value，用 `importlib.metadata.version('x')` 读版本。
 
-版本号遵循 PEP 440：1.2.3、1.2.3rc1、1.2.3.post1、1.2.3.dev1、+local 分别表正式、预发布、修订、开发、本地版本；流水线统一用 git tag 生成版本与 CHANGELOG，避免手工改号漂移。
+版本号遵循 PEP 440：`1.2.3`、`1.2.3rc1`、`1.2.3.post1`、`1.2.3.dev1`、`+local` 分别表正式、预发布、修订、开发与本地版本，比较时 dev 版排在正式版之前、修订版排在正式版之后；流水线统一用 `git tag` 生成版本与 `CHANGELOG`，避免手工改号漂移。
 
-WHEEL 文件里的 Root-Is-Purelib: true 与 Tag: py3-none-any 决定装到 purelib 还是 platlib；RECORD 是 path,sha256=&lt;hash>,&lt;size> 的 CSV，供 pip 校验完整性与卸载。
+`WHEEL` 文件里的 `Root-Is-Purelib: true` 与 `Tag: py3-none-any` 决定装到 purelib 还是 platlib；
+
+`RECORD` 是 `path,sha256=<hash>,<size>` 的 CSV，供 `pip` 校验完整性与卸载。
 
 ```bash
 python -m pip check
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **构建后端与 PEP 517** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 构建后端与 PEP 517 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 发布流水线步骤与校验清单
 
-可靠发布是一条可重复的闸门：python -m build 同时产出 wheel 与 sdist → twine check dist/* 校验 METADATA 与 README 渲染 → 先传 TestPyPI 验证安装 → 再传 PyPI。
+可靠发布是一条可重复的闸门：用构建前端 `build` 同时产出 wheel 与 sdist，再用 `twine check dist/*` 校验 `METADATA` 与 `README` 渲染，先传一次 TestPyPI 验证安装，最后才传 PyPI。
 
-鉴权优先用 Trusted Publishing（OIDC，如 pypa/gh-action-pypi-publish，无需长期 token），退而求其次才用 `TWINE_USERNAME=__token__` + TWINE_PASSWORD。
+鉴权优先用 Trusted Publishing（`OIDC`，如 `pypa/gh-action-pypi-publish`，无需长期 token），退而求其次才用 `TWINE_USERNAME=__token__` 配 `TWINE_PASSWORD`。
 
-发布前用 zipfile 检查 wheel 内容：确认没有 tests/、临时路径、开发依赖被打包，确认 RECORD 行数与文件数吻合，确认 `entry_points.txt` 里 console_scripts 目标可导入。
+发布前用 `zipfile` 检查 wheel 内容：确认没有 `tests/`、临时路径、开发依赖被打包，确认 `RECORD` 行数与文件数吻合，确认 `entry_points.txt` 里 `console_scripts` 目标可导入。
 
-干净虚拟环境里 pip install dist/`x.whl` 后 import 并跑 --help，是「别人能一行命令装上」的最终验收；版本号、tag、CHANGELOG 由流水线统一管理，出问题用 yank 而非删除已上传版本。
+在干净虚拟环境里装上 `dist/x.whl` 后 `import` 并跑 `--help`，是「别人能一行命令装上」的最终验收；版本号、`git tag`、`CHANGELOG` 由流水线统一管理，出问题用 `yank` 而不是删除已上传版本。
 
-把 build、twine check、安装冒烟写成 CI 步骤，发布才不依赖某台机器的手工操作。
+把构建、`twine check`、安装冒烟写成 CI 步骤，发布才不依赖某台机器上的手工操作。
 
 **发布流水线步骤与校验**
 
@@ -225,14 +231,14 @@ python -m pip check
 | 鉴权 | Trusted Publishing (OIDC) | 避免长期 API token |
 | 版本与回滚 | git tag + CHANGELOG，异常用 yank | 版本由流水线统一，不删已传版本 |
 
-<FlowTimeline :steps='[{"title": "构建后端与 PEP 517，sdist vs wheel", "desc": "PEP 518 的 [build-system] 声明 requires（构建依赖，…", "tone": "blue"}, {"title": "元数据、入口点与版本", "desc": "PEP 621 把元数据集中在 [project]：name、version、des…", "tone": "purple"}, {"title": "发布流水线与校验清单", "desc": "可靠发布是一条可重复的闸门：python -m build 同时产出 wheel 与…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前自检：构建 wheel 并核对元数据与 RECORD", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "构建后端与 PEP 517，sdist vs wheel", "desc": "`pyproject.toml` 的 `[build-system]` 来自 PEP…", "tone": "blue"}, {"title": "元数据、入口点与版本", "desc": "PEP 621 把元数据集中在 `[project]`：`name`、`versio…", "tone": "purple"}, {"title": "发布流水线与校验清单", "desc": "可靠发布是一条可重复的闸门：用构建前端 `build` 同时产出 wheel 与 s…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前自检：构建 wheel 并核对元数据与 RECORD", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 发布前自检：构建 wheel 并核对元数据与 RECORD
 
-把发布前的校验写成脚本，比人工点开 dist/ 可靠得多：用 zipfile 组装一个符合 PEP 427 的最小 wheel（METADATA、WHEEL、`entry_points.txt`、包代码、RECORD），再用 email 解析 METADATA、用 hashlib 为 RECORD 生成每行的 sha256 与大小，最后读回验证 Name/Version/Requires-Dist、pure 标签与 RECORD 行数。
+把发布前的校验写成脚本，比人工点开 `dist/` 可靠得多：用 `zipfile` 组装一个符合 PEP 427 的最小 wheel（`METADATA`、`WHEEL`、`entry_points.txt`、包代码、`RECORD`），再用 `email` 解析 `METADATA`、用 `hashlib` 为 `RECORD` 生成每行的 sha256 与大小，最后读回验证 `Name` / `Version` / `Requires-Dist`、pure 标签与 `RECORD` 行数。
 
-真实项目把「组装」换成 python -m build 的产物、把读回换成 twine check 与干净 venv 安装冒烟即可。重点看 wheel 里每个文件都有可核对的元数据与完整性记录。
+真实项目把「组装」换成 `build` 的产物、把读回换成 `twine check` 与干净虚拟环境安装冒烟即可。重点看 wheel 里每个文件都有可核对的元数据与完整性记录。
 
 ```python
 import zipfile, os, tempfile, email, hashlib
@@ -298,9 +304,9 @@ with tempfile.TemporaryDirectory() as d:
 
 <Quiz no='080-3' q='发布前用 twine check dist/* 主要校验什么？' :options='["METADATA 与 README 的渲染是否合法", "wheel 运行速度", "单元测试是否通过", "依赖是否有 CVE"]' answer="0" explain='twine check 解析长描述与元数据、验证在 PyPI 页面能否正确渲染；配合 zipfile 查条目、干净 venv 装 whl 冒烟，构成发布闸门。' />
 
-<Predict no='080-P' q='对 demo-1.2.3-py3-none-any.whl 取末三段标签，输出是？' :options='["[&#39;py3&#39;, &#39;none&#39;, &#39;any&#39;]", "[&#39;cp313&#39;, &#39;cp313&#39;, &#39;any&#39;]", "[&#39;py3&#39;, &#39;none&#39;, &#39;macosx&#39;]"]' answer='0' output='[&#39;py3&#39;, &#39;none&#39;, &#39;any&#39;]' explain='wheel 文件名去掉 .whl 后按 &#39;-&#39; 切分，末三段依次是 python tag、abi tag、platform tag；py3-none-any 表示任意 Python 3、无 ABI 约束、任意平台。' />
+<Predict no='080-4' q='对 demo-1.2.3-py3-none-any.whl 取末三段标签，输出是？' :options='["[&#39;py3&#39;, &#39;none&#39;, &#39;any&#39;]", "[&#39;cp313&#39;, &#39;cp313&#39;, &#39;any&#39;]", "[&#39;py3&#39;, &#39;none&#39;, &#39;macosx&#39;]"]' answer='0' output='[&#39;py3&#39;, &#39;none&#39;, &#39;any&#39;]' explain='wheel 文件名去掉 .whl 后按 &#39;-&#39; 切分，末三段依次是 python tag、abi tag、platform tag；py3-none-any 表示任意 Python 3、无 ABI 约束、任意平台。' />
 
-<FillBlank no='080-F' tpl='___ zipfile, os, tempfile, email' :answers='["import"]' hint='回想本讲关于 构建后端与 PEP 517 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 构建后端与 PEP 517，sdist vs wheel 的落点。' />
+<FillBlank no='080-5' tpl='___ zipfile, os, tempfile, email' :answers='["import"]' hint='回想本讲关于 构建后端与 PEP 517 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 构建后端与 PEP 517，sdist vs wheel 的落点。' />
 
 <KnowledgeCard :points='["PEP 518 [build-system] 声明 requires 与 build-backend；PEP 517 前端 python -m build 调 build_wheel/build_sdist", "sdist 是源码、安装要重跑构建；wheel 是 PEP 427 ZIP、安装只解压，二者都要上传且优先保证 wheel", "wheel 名 {name}-{version}-{python}-{abi}-{platform}.whl；py3-none-any 通用，cp313-... 平台相关", ".dist-info 含 METADATA（PEP 621）、WHEEL（Root-Is-Purelib/Tag）、RECORD（path,sha256,size）、entry_points.txt", "[project.scripts] 声明 console_scripts 入口，importlib.metadata 读回；版本遵循 PEP 440 由流水线统一", "发布闸门：build → twine check → zipfile 查条目 → 干净 venv 装 whl 冒烟；鉴权用 Trusted Publishing(OIDC)"]' :pitfalls='["只上传 sdist 不上传 wheel", "把 tests/、本地路径、开发依赖打进 wheel", "不声明 console_scripts、版本与 tag 各改各的、用长期 token", "把测试数据、本地路径、开发依赖打进 wheel，会让包体积膨胀甚至泄漏内部文件"]' summary='wheel 是已经组织好的安装产物，sdist 是源码；只上传 sdist 会让用户在安装时还要跑一遍构建，失败率明显更高' />
 

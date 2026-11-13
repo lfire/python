@@ -23,9 +23,9 @@ description: 把风格争论交给工具
 
 ## 格式化管长相，lint 管对错：PEP 8 的取舍
 
-格式化工具（black、ruff format）只改空白、换行、引号、尾逗号，不改语义；ruff format 以 black 兼容为目标（0.1.2 起稳定），默认 `line-length=88`、把字符串规范化成双引号、保留 magic trailing comma。
+格式化工具（black、`ruff format`）只改空白、换行、引号、尾逗号，不改语义；`ruff format` 以 black 兼容为目标（0.1.2 起稳定），默认 `line-length=88`、把字符串规范化成双引号、保留 magic trailing comma。
 
-lint（ruff check、flake8）查的是疑似缺陷与风格违规：F 系列来自 Pyflakes（未使用导入 F401、未定义名 F821）、E/W 来自 pycodestyle（E501 行过长）、N 是 pep8-naming（N802 函数名应小写）、I 是 isort（I001 导入未排序）、UP 是 pyupgrade（旧写法升级）、B 是 flake8-bugbear、S 是 bandit 安全检查、RUF 是 ruff 自有规则。
+lint（`ruff check`、flake8）查的是疑似缺陷与风格违规：F 系列来自 Pyflakes（未使用导入 `F401`、未定义名 `F821`）、E/W 来自 pycodestyle（`E501` 行过长）、N 是 pep8-naming（`N802` 函数名应小写）、I 是 isort（`I001` 导入未排序）、UP 是 pyupgrade（旧写法升级）、B 是 flake8-bugbear、S 是 bandit 安全检查、RUF 是 ruff 自有规则。
 
 PEP 8 规定 4 空格缩进、顶层定义间 2 空行、行宽 79（文档/注释 72）、导入置顶分组；工程上普遍采用 88 列折中，关键是全仓统一并写进配置，而不是逐行争论。
 
@@ -47,13 +47,24 @@ PEP 8 规定 4 空格缩进、顶层定义间 2 空行、行宽 79（文档/注�
 
 ## ruff 快速上手与规则集、import 排序
 
-ruff 用 Rust 实现，把 lint、格式化、import 排序合进一个二进制，配置集中在 `pyproject.toml` 的 `[tool.ruff]`（line-length、target-version = 'py311'、exclude）与 `[tool.ruff.lint]`（select、ignore、per-file-ignores、fixable）。
+ruff 用 Rust 实现，把 lint、格式化、import 排序合进一个二进制，配置集中在 `pyproject.toml` 的 `[tool.ruff]`（line-length、`target-version = 'py311'`、exclude）与 `[tool.ruff.lint]`（select、ignore、per-file-ignores、fixable）。
 
-select = ['E','F','I','N','UP','B'] 是常见起点，ignore = ['E501'] 把行宽交给格式化器；per-file-ignores = &#123;'tests/*' = ['S101']&#125; 允许测试用 assert。
+`select=['E','F','I','N','UP','B']` 是常见起点，`ignore=['E501']` 把行宽交给格式化器；
 
-逐行抑制用 # noqa 或精确到码的 # noqa: E501，文件级用 # ruff: noqa: F401，但要配合 --warn-unused-ignores 治理。I001 要求导入分三组：标准库、第三方、本地，每组内按字典序排列、组间空一行；isort 用 profile = 'black' 与格式化器对齐。
+`per-file-ignores` 里让测试目录跳过 `S101`，允许测试用 assert。
 
-`ruff check --fix .` 只自动修可安全修复的规则，ruff format . 负责外观，二者分开跑才不会在评审里混进无关改动。
+逐行抑制用 `# noqa` 或精确到码的 `# noqa: E501`，文件级用文件顶部的一行 ruff 指令，但要配合 `--warn-unused-ignores` 治理。
+
+`I001` 要求导入分三组：标准库、第三方、本地，每组内按字典序排列、组间空一行；
+
+isort 用 `profile = 'black'` 与格式化器对齐。
+
+`ruff check` 只自动修可安全修复的规则，`ruff format` 负责外观，二者分开跑才不会在评审里混进无关改动。
+
+```bash
+ruff check --fix .
+ruff format .
+```
 
 ```python
 import ast, tomllib
@@ -127,29 +138,29 @@ print('I001 needs reorder', mods != groups['stdlib'] + groups['third'] + groups[
 
 <OutputBox title='对照写法：先自己猜，再点开' output='stdlib [&#39;os&#39;, &#39;sys&#39;]\nthird [&#39;requests&#39;]\nlocal [&#39;myapp&#39;]\nI001 needs reorder True' guess="true" />
 
-black/ruff 这类格式化器先把源码 parse 成具体语法树再按统一规则重新打印，输出只改变空白、括号与引号，不改变 AST 结构——用 `ast.dump` 对比 'x=1+2' 与 'x = 1 + 2' 完全一致，正是「格式化不改语义」的可验证证据。
+black/ruff 这类格式化器先把源码 parse 成具体语法树再按统一规则重新打印，输出只改变空白、括号与引号，不改变 AST 结构——用 `ast.dump` 对比 `x=1+2` 与 `x = 1 + 2` 完全一致，正是「格式化不改语义」的可验证证据。
 
-ruff 的 lint 则在同一份 AST/Token 流上跑数百条规则：F 系列做名字绑定分析（发现 F401/F821），E501 按 line-length 量每行字符数，N802 比对 `FunctionDef.name` 与其 `lower()` 形式，I001 把 Import/ImportFrom 归到标准库/第三方/本地三组并检查组内字典序。
+ruff 的 lint 则在同一份 AST/Token 流上跑数百条规则：F 系列做名字绑定分析（发现 `F401`/`F821`），`E501` 按 line-length 量每行字符数，`N802` 比对 `FunctionDef.name` 与其 `lower()` 形式，`I001` 把 Import/ImportFrom 归到标准库/第三方/本地三组并检查组内字典序。
 
-规则码前缀对应来源工具，select/ignore 决定启用集合，per-file-ignores 按路径覆盖。pre-commit 把钩子注册到 .git/hooks，提交时以暂存文件列表为参数调用钩子，所以「只查改动行」是文件级机制而非工具特性；把 rev 与配置提交，保证每个开发者与 CI 跑的是同一版本规则。
+规则码前缀对应来源工具，select/ignore 决定启用集合，per-file-ignores 按路径覆盖。pre-commit 把钩子注册到 `.git/hooks`，提交时以暂存文件列表为参数调用钩子，所以「只查改动文件」是文件级机制而非工具特性；把 rev 与配置提交，保证每个开发者与 CI 跑的是同一版本规则。
 
 
 ## pre-commit 钩子与渐进式接入 legacy
 
-pre-commit 用 `.pre-commit-config.yaml` 声明 repos/rev/hooks：pre-commit install 把钩子装进 .git/hooks，`pre-commit run --all-files 全量跑`，提交时默认只对暂存文件执行（pass_filenames: true 把文件名传给钩子），因此新代码天然按增量检查；
+pre-commit 用 `.pre-commit-config.yaml` 声明 repos/rev/hooks：`pre-commit install` 把钩子装进 `.git/hooks`，`pre-commit run --all-files` 全量跑，提交时默认只对暂存文件执行（`pass_filenames: true` 把文件名传给钩子），因此新代码天然按增量检查；
 
 stages 可选 pre-commit、pre-push、commit-msg。把 ruff、ruff-format、以及 trailing-whitespace/end-of-file-fixer 等 hook 固定 rev 并提交配置，开发者与 CI 用同一套命令。
 
-老仓库一次性开全量规则会产生海量无关 diff，正确路径是：先用 `ruff check --diff 看影响面`，把 legacy 目录放进 exclude 或 per-file-ignores，只对新代码和改动行逐步提高严格度，按目录把忽略清单清零；
+老仓库一次性开全量规则会产生海量无关 diff，正确路径是：先用 ruff 的 diff 模式看影响面，把 legacy 目录放进 exclude 或 per-file-ignores，只对新代码和改动行逐步提高严格度，按目录把忽略清单清零；
 
-用 tomllib 读配置、用 ast 判定 N802/E501，能证明「检查器读的是结构化配置、格式化不改 AST」。把命令写进 Makefile/justfile 与编辑器设置，评审里就只剩逻辑讨论。
+用 `tomllib` 读配置、用 `ast` 判定命名与行宽规则，能证明「检查器读的是结构化配置、格式化不改 AST」。把命令写进 Makefile/justfile 与编辑器设置，评审里就只剩逻辑讨论。
 
 
 ## 增量检查器：按路径应用 per-file-ignores
 
-老仓库接入规范时，最实用的中间层是一个「按路径决定严格度」的检查器：从 `pyproject.toml` 读出 select 与 per-file-ignores，对 legacy/ 下的文件跳过命名类规则、对新代码全查，用 ast 判定 N802 与 E501。这样既能在提交钩子中只查改动文件，又能把忽略清单逐步收敛。
+老仓库接入规范时，最实用的中间层是一个「按路径决定严格度」的检查器：从 `pyproject.toml` 读出 select 与 per-file-ignores，对 legacy/ 下的文件跳过命名类规则、对新代码全查，用 `ast` 判定函数命名与行宽。这样既能在提交钩子中只查改动文件，又能把忽略清单逐步收敛。
 
-下面片段用 tomllib 读配置、ast 检查两段源码，演示同一条规则在不同路径下得到不同结论，说明为什么「隔离旧代码、严查新代码」能避免海量无关改动。
+下面片段用 `tomllib` 读配置、`ast` 检查两段源码，演示同一条规则在不同路径下得到不同结论，说明为什么「隔离旧代码、严查新代码」能避免海量无关改动。
 
 ```python
 import ast, tomllib
@@ -197,9 +208,9 @@ for name, src in FILES.items():
 
 <Quiz no='073-3' q='证据 ast.dump(ast.parse(&#39;x=1+2&#39;)) == ast.dump(ast.parse(&#39;x = 1 + 2&#39;)) 说明？' :options='["格式化只改空白不改语法树，故不改语义", "两种写法语义不同", "ast.dump 会忽略所有运算符", "ruff 会拒绝第二种写法"]' answer="0" explain='ast.dump 对两份仅空白不同的源码输出一致，证明格式化器在语法树等价的前提下重排外观；这也是把风格交给工具、评审只谈逻辑的依据。' />
 
-<Predict no='073-P' q='用 ast 检查 def CalcTotal(a,b): 这个名字，N802 结果是？' :options='["True，命中命名违规", "False，名字合法", "抛 SyntaxError"]' answer='0' output='True，命中命名违规' explain='N802 要求函数名小写；CalcTotal 的全小写形式是 calctotal，两者不等，故判定违规。这是 lint 在 FunctionDef.name 上做的纯结构检查。' />
+<Predict no='073-4' q='用 ast 检查 def CalcTotal(a,b): 这个名字，N802 结果是？' :options='["True，命中命名违规", "False，名字合法", "抛 SyntaxError"]' answer='0' output='True，命中命名违规' explain='N802 要求函数名小写；CalcTotal 的全小写形式是 calctotal，两者不等，故判定违规。这是 lint 在 FunctionDef.name 上做的纯结构检查。' />
 
-<FillBlank no='073-F' tpl='___ ast, tomllib' :answers='["import"]' hint='回想本讲关于 PEP 8 的取舍 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 格式化与 lint 分工，以及 PEP 8 的取舍 的落点。' />
+<FillBlank no='073-5' tpl='___ ast, tomllib' :answers='["import"]' hint='回想本讲关于 PEP 8 的取舍 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 格式化与 lint 分工，以及 PEP 8 的取舍 的落点。' />
 
 <KnowledgeCard :points='["格式化器（black/ruff format）改外观不改 AST；lint（ruff check）查 F/E/N/I/UP/B/S 等规则", "PEP 8 建议 79 列，black/ruff 默认 line-length=88；全仓统一并写进 pyproject.toml", "ruff 规则码：F401 未用导入、F821 未定义名、E501 行过长、N802 函数名、I001 导入排序", "select/ignore/per-file-ignores 控制启用集合；精确抑制用 # noqa: E501，配 --warn-unused-ignores 治理", "isort 三组（标准库/第三方/本地）组内字典序，profile=&#39;black&#39; 与格式化器对齐", "pre-commit 提交时按暂存文件触发钩子；legacy 用 exclude/per-file-ignores 隔离，按改动行渐进接入"]' :pitfalls='["一次性对老仓库开全量规则并全量格式化", "在评审里争论 79 还是 88 列、单双引号", "满仓写 # noqa 或文件级 # ruff: noqa", "一次性对老仓库开全量规则，会产生上万行无关改动，掩盖真正的逻辑变更"]' summary='格式化工具负责「长什么样」，lint 负责「有没有问题」，二者分开才不会在评审里反复讨论空格' />
 

@@ -7,16 +7,16 @@ description: 按团队与场景选框架而不是按热度
 
 # 第 083 讲 · FastAPI / Flask / Django 选型
 
-上一讲弄清了请求怎么穿过 WSGI 或 ASGI 落到处理函数，这层契约得有框架承接。挑框架容易凭热度拍板；本讲给一把尺子——不记 API，只看分界在『替你决定多少』。
+上一讲弄清了请求怎么穿过 `WSGI` 或 `ASGI` 落到处理函数，这层契约得有框架承接。挑框架容易凭热度拍板；本讲给一把尺子——不记 API，只看分界在「替你决定多少」。
 
 设想一周交两样东西：给算法团队带类型化入参、自动出文档的接口，给运营一个内容站点。统一用最顺手的那套，前者校验与序列化得手写装饰器、文档和代码很快对不上，后者又得补插件凑齐用户与迁移。我们摆出三者定位差异，再比路由与依赖注入、校验与序列化，接着看 ORM 与迁移，最后落到团队成本。需要同步异步之分、函数注解与装饰器；读完能说清为何选 FastAPI、Flask 还是 Django。
 
 
 ## 微服务里硬套 Django 整套 ORM 之后
 
-一个五人小组要在一周内交付两个东西：一个是给算法团队用的、带类型化入参与自动生成文档的模型推理接口，另一个是给运营用的、带后台管理与权限的内容站点。有人提议统一用最熟悉的框架，理由是少学一套。结果推理接口为了凑校验与文档，手写了一堆装饰器与 JSON Schema，文档和代码很快不同步；
+一个五人小组要在一周内交付两个东西：一个是给算法团队用的、带类型化入参与自动生成文档的模型推理接口，另一个是给运营用的、带后台管理与权限的内容站点。有人提议统一用最熟悉的框架，理由是少学一套。结果推理接口为了凑校验与文档，手写了一堆装饰器与 `JSON Schema`，文档和代码很快不同步；
 
-内容站点为了后台、用户与迁移，又补装了一堆插件，启动依赖比业务代码还多。两次别扭都来自同一个误判：把框架当成语法风格的差别，而没看见它们真正的分界是『替你决定多少』。Flask 只给路由内核，FastAPI 把类型注解翻译成校验与 OpenAPI，Django 自带从 ORM 到 admin 的全套约定。
+内容站点为了后台、用户与迁移，又补装了一堆插件，启动依赖比业务代码还多。两次别扭都来自同一个误判：把框架当成语法风格的差别，而没看见它们真正的分界是「替你决定多少」。Flask 只给路由内核，FastAPI 把类型注解翻译成校验与 `OpenAPI`，Django 自带从 ORM 到 admin 的全套约定。
 
 本讲用可运行的签名分析把这条分界量出来，让选型落在团队与场景上。
 
@@ -25,13 +25,13 @@ description: 按团队与场景选框架而不是按热度
 
 ## 三者定位：内核、类型化校验到全栈约定
 
-Flask 是微框架，核心只依赖 Werkzeug（WSGI 工具与路由）与 Jinja2（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；
+Flask 是微框架，核心只依赖 `Werkzeug`（`WSGI` 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；
 
-校验、序列化、ORM、迁移、后台都要选插件（marshmallow / pydantic、SQLAlchemy、Alembic、Flask-Admin），灵活但每个决定都留给你。
+校验、序列化、ORM、迁移、后台都要选插件（`marshmallow` / `pydantic`、`SQLAlchemy`、`Alembic`、`Flask-Admin`），灵活但每个决定都留给你。
 
-FastAPI 建在 Starlette（ASGI）与 Pydantic 之上，把函数签名里的类型注解直接变成请求校验、序列化与 OpenAPI 文档：路径函数写 def get(uid: int, q: str = '')，框架在启动时读 `inspect.signature` 与 get_type_hints 生成参数模型，校验失败返回 422，文档在 /`openapi.json` 与 /docs 自动产出。
+FastAPI 建在 `Starlette`（`ASGI`）与 `Pydantic` 之上，把函数签名里的类型注解直接变成请求校验、序列化与 `OpenAPI` 文档：路径函数用 `uid: int`、`q: str = ''` 这样的类型注解声明入参，框架在启动时读 `inspect.signature` 与 `get_type_hints` 生成参数模型，校验失败返回 `422`，文档在 `/openapi.json` 与 `/docs` 自动产出。
 
-Django 是全栈框架，自带 ORM、迁移、认证、session、admin、表单与模板，采用 MTV 约定，`views.py` 接一个 request 对象、返回 HttpResponse；项目骨架、目录名、`settings.py` 都由框架规定。三者不是快慢之分，而是『框架替你做的决定』从少到多排成一条线。
+Django 是全栈框架，自带 ORM、迁移、认证、session、admin、表单与模板，采用 MTV 约定，`views.py` 接一个 `request` 对象、返回 `HttpResponse`；项目骨架、目录名、`settings.py` 都由框架规定。三者不是快慢之分，而是「框架替你做的决定」从少到多排成一条线。
 
 **三种框架的定位与内置能力**
 
@@ -44,7 +44,7 @@ Django 是全栈框架，自带 ORM、迁移、认证、session、admin、表单
 | ORM 与迁移 | 需 SQLAlchemy + Alembic | 不内置，常配 SQLAlchemy | 内置 ORM 与 makemigrations |
 | admin / 认证 | 需扩展 | 需自行实现 | 内置 admin、auth、session |
 
-<Callout type="tip" title='核心心智模型' text='Flask 是微框架，核心只依赖 Werkzeug（WSGI 工具与路由）与 Jinja2（模板），请求上下文靠 flask.request 这个代理对象，视图函数通常无参数，参数从 request.args / request.get_json() 里自己取；校验、序列化、ORM、迁移、后台都要选' />
+<Callout type="tip" title='核心心智模型' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、OR' />
 
 <ConceptDiagram type='hub4' title='第 083 讲 · 三者定位：从内核、类型化到全栈约定' labels='三者定位：从内核、类型化到全栈约定|版本与生态：哪些结论会随版本变|选型判据：把决定项列成可评分的表' caption='按团队与场景选框架而不是按热度' />
 
@@ -53,13 +53,15 @@ Django 是全栈框架，自带 ORM、迁移、认证、session、admin、表单
 
 ## 版本与生态：哪些结论会随版本变
 
-具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 Werkzeug/itsdangerous 的兼容 shim，并把部分扩展迁到 flask 命名空间之外；
+具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 `Werkzeug` / `itsdangerous` 的兼容 shim，并把部分扩展迁到 `flask` 命名空间之外；
 
-它自 2.0 起支持 async def 视图，但底层仍是 WSGI，异步视图实际在线程池里跑，不具备 ASGI 的长连接能力。
+它自 2.0 起支持 `async def` 视图，但底层仍是 `WSGI`，异步视图实际在线程池里跑，不具备 `ASGI` 的长连接能力。
 
-FastAPI 0.100（2023 年）起全面支持 Pydantic v2，后者用 Rust 编写核心，校验性能显著提升，且模型方法从 parse_obj / dict 迁到 model_validate / model_dump；OpenAPI 也从 3.0 升到 3.1（对齐 JSON Schema 2020-12）。
+FastAPI 0.100（2023 年）起全面支持 Pydantic v2，后者用 Rust 编写核心，校验性能显著提升，且模型方法从 `parse_obj` / `dict` 迁到 `model_validate` / `model_dump`；
 
-Django 4.2 是 LTS，社区支持到 2026 年 4 月，Django 5.0 要求 Python 3.10 及以上并引入生成字段等特性；Django 3.1 起有异步视图，4.1 起有异步 ORM 接口，但 ORM 主体仍是同步设计。生态上，内容型后台、需要快速交付 admin 的场景 Django 省事最多；
+`OpenAPI` 也从 3.0 升到 3.1（对齐 `JSON Schema 2020-12`）。
+
+Django 4.2 是 LTS，社区支持到 2026 年 4 月；Django 5.0 要求 Python 3.10 及以上并引入生成字段，Django 3.1 起有异步视图、4.1 起有异步 ORM 接口，但 ORM 主体仍是同步设计。生态上，内容型后台、需要快速交付 admin 的场景 Django 省事最多；
 
 类型化 API、要客户端 SDK 生成的场景 FastAPI 最省；小工具、脚本包装、已有同步栈的场景 Flask 最轻。
 
@@ -153,32 +155,34 @@ for pname, p in sig.parameters.items():
 
 ## 选型判据：框架到底替你决定多少
 
-把『用哪个框架』拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admin（是 → Django）；接口是否需要严格类型化契约与自动文档（是 → FastAPI）；是否要维持大量长连接或 WebSocket（是 → ASGI 栈的 FastAPI / Starlette）；
+把「用哪个框架」拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admin（是 → Django）；接口是否需要严格类型化契约与自动文档（是 → FastAPI）；是否要维持大量长连接或 WebSocket（是 → `ASGI` 栈的 FastAPI / Starlette）；
 
-团队是否已有一套同步 ORM 与部署栈（是 → Flask 迁移成本最低）；是否需要把业务框架无关、方便替换（微框架更易解耦）；发布节奏是否要求框架替你兜住迁移与权限（Django 内置最全）。同一仓库里不要混两套范式：把 Django 的 ORM 与 admin 塞进微服务，会背上用不到的启动与依赖成本；
+团队是否已有一套同步 ORM 与部署栈（是 → Flask 迁移成本最低）；是否需要把业务做成框架无关、方便替换（微框架更易解耦）；发布节奏是否要求框架替你兜住迁移与权限（Django 内置最全）。同一仓库里不要混两套范式：把 Django 的 ORM 与 admin 塞进微服务，会背上用不到的启动与依赖成本；
 
 把 FastAPI 项目里所有校验再手写一遍，等于放弃了它最大的价值。还要算团队成本：Pydantic v2 的类型系统与异步调试有学习曲线，Django 的约定多但文档与人事供给充足，Flask 灵活却要求团队自己守住结构纪律。选型的产出应是一张带权重的评分表，而不是一句结论。
 
-FastAPI 的自动化来自『把运行时的函数签名当作声明』：路由注册时并不立即处理请求，而是先调用 `inspect.signature` 拿到每个参数的名称、默认值与 kind，再用 `typing.get_type_hints` 把注解解析成类型对象；
+FastAPI 的自动化来自「把运行时的函数签名当作声明」：路由注册时并不立即处理请求，而是先调用 `inspect.signature` 拿到每个参数的名称、默认值与 `kind`，再用 `typing.get_type_hints` 把注解解析成类型对象；
 
-对 Pydantic BaseModel 子类生成 JSON Schema，对标量参数生成 query / path / body 的位置规则，最后汇总成 OpenAPI 的 paths 与 components。
+对 `Pydantic` 的 `BaseModel` 子类生成 `JSON Schema`，对标量参数生成 query / path / body 的位置规则，最后汇总成 `OpenAPI` 的 `paths` 与 `components`。
 
-请求到达时，框架按这张预生成的表抽取并校验数据，失败抛 RequestValidationError 并映射为 422，成功则把强类型值传入路径函数。这解释了为什么注解必须写真实类型而非字符串、为什么 response_model 能同时约束输出与文档、以及为什么改了签名文档会同步变化——文档不是另写的，而是签名的投影。
+请求到达时，框架按这张预生成的表抽取并校验数据，失败抛 `RequestValidationError` 并映射为 `422`，成功则把强类型值传入路径函数。
 
-Flask 没有这层反射，request 是一个绑定到当前上下文的 LocalProxy，参数靠开发者手动取；Django 则把约定固化在 `settings.py` 与 MTV 目录结构里，靠框架自带的反射与注册表把模型、admin、URLconf 串起来。三者开销的差异，本质是『反射与约定放在哪一层』的差异。
+这解释了为什么注解必须写真实类型而非字符串、为什么 `response_model` 能同时约束输出与文档、以及为什么改了签名文档会同步变化——文档不是另写的，而是签名的投影。Flask 没有这层反射，`request` 是一个绑定到当前上下文的 `LocalProxy`，参数靠开发者手动取；
 
-<Term word='三者定位差异' text='Flask 是微框架，核心只依赖 Werkzeug（WSGI 工具与路由）与 Jinja2（模板），请求上下文靠 flask.request 这个代理对象，视图函数通常无参数，参数从 request.args / request.get_json() 里自己取；校验、序列化、ORM、迁移、后台都要选插件（marshma' />
+Django 则把约定固化在 `settings.py` 与 MTV 目录结构里，靠框架自带的反射与注册表把模型、admin、`URLconf` 串起来。三者开销的差异，本质是「反射与约定放在哪一层」的差异。
 
-<Term word='路由与依赖注入' text='具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 Werkzeug/itsdangerous 的兼容 shim，并把部分扩展迁到 flask 命名空间之外；它自 2.0 起支持 async def 视图，但底层仍是 WSGI，异步视图' />
+<Term word='三者定位差异' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、ORM、迁移、后台都要选' />
 
-<FlowTimeline :steps='[{"title": "三者定位：从内核、类型化到全栈约定", "desc": "Flask 是微框架，核心只依赖 Werkzeug（WSGI 工具与路由）与 Jin…", "tone": "blue"}, {"title": "版本与生态：哪些结论会随版本变", "desc": "具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要…", "tone": "purple"}, {"title": "选型判据：把决定项列成可评分的表", "desc": "把『用哪个框架』拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admi…", "tone": "orange"}, {"title": "工程落地", "desc": "把选型写成可复算的评分脚本", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<Term word='路由与依赖注入' text='具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 `Werkzeug` / `itsdangerous` 的兼容 shim，并把部分扩展迁到 `flask` 命名空间之外；它自 2.0 起支持 `async def` 视图，但底层仍是' />
+
+<FlowTimeline :steps='[{"title": "三者定位：从内核、类型化到全栈约定", "desc": "Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `…", "tone": "blue"}, {"title": "版本与生态：哪些结论会随版本变", "desc": "具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要…", "tone": "purple"}, {"title": "选型判据：把决定项列成可评分的表", "desc": "把「用哪个框架」拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admi…", "tone": "orange"}, {"title": "工程落地", "desc": "把选型写成可复算的评分脚本", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 把选型写成可复算的评分脚本
 
-架构评审里争『用哪个框架』常停在印象，下面把它变成一张能跑的评分表：每个框架在六个维度上预置契合度分数，每个候选项目带一组权重，脚本按权重算加权总分并输出排序。样例一给『类型化推理接口』高权重放在类型契约与文档，样例二给『运营内容后台』高权重放在 admin 与快速交付。
+架构评审里争「用哪个框架」常停在印象，下面把它变成一张能跑的评分表：每个框架在六个维度上预置契合度分数，每个候选项目带一组权重，脚本按权重算加权总分并输出排序。样例一给「类型化推理接口」高权重放在类型契约与文档，样例二给「运营内容后台」高权重放在 admin 与快速交付。
 
-这样结论可复算、可复盘：换权重就换结论，而不是换个人就换结论。真实项目把维度替换成团队实际约束（现有栈、招聘、部署平台、SLA），分数由团队共同校准；脚本本身不替你做决定，它保证决定依据被显式写出来。这段代码只用标准库，方便嵌进 ADR 文档一起提交。
+这样结论可复算、可复盘：换权重就换结论，而不是换个人就换结论。真实项目把维度替换成团队实际约束（现有栈、招聘、部署平台、SLA），分数由团队共同校准；脚本本身不替你做决定，它保证决定依据被显式写出来。这段代码只用标准库，方便嵌进 `ADR` 文档一起提交。
 
 ```python
 SCORES = {
@@ -210,7 +214,7 @@ print('different winners', best_api != best_cms)
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **三者定位差异** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 三者定位差异 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -237,9 +241,9 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 <Quiz no='083-3' q='Flask 2.0+ 的 async def 视图意味着什么？' :options='["它仍在 WSGI 模型下跑，异步视图被丢进线程池，不支持 ASGI 长连接", "底层自动切换成 ASGI，可原生跑 WebSocket", "所有同步库自动变为非阻塞", "不再需要 WSGI 服务器"]' answer="0" explain='Flask 的异步支持是为兼容 async 库提供的桥接，底层仍是一请求一响应的 WSGI；要长连接与双工消息必须换 ASGI 栈。' />
 
-<Predict no='083-P' q='对一个 Flask 风格无参视图、一个带注解的 FastAPI 视图、一个接 request 的 Django 视图分别取签名，最可能看到哪组参数？' :options='["[]、[&#39;name&#39;, &#39;age&#39;]、[&#39;request&#39;]", "三者都是 [&#39;request&#39;]", "[&#39;environ&#39;, &#39;start_response&#39;] 三次"]' answer='0' output='flask_view params [] ann {}; fastapi_view params [&#39;name&#39;, &#39;age&#39;] ann {&#39;name&#39;: &#39;str&#39;, &#39;age&#39;: &#39;int&#39;}; django_view params [&#39;request&#39;] ann {}' explain='Flask 靠 request 上下文代理取参故视图无参，FastAPI 把参数与注解写在签名上，Django 约定接一个 request 对象——签名差异正是『替你决定多少』的直接证据。' />
+<Predict no='083-4' q='对一个 Flask 风格无参视图、一个带注解的 FastAPI 视图、一个接 request 的 Django 视图分别取签名，最可能看到哪组参数？' :options='["[]、[&#39;name&#39;, &#39;age&#39;]、[&#39;request&#39;]", "三者都是 [&#39;request&#39;]", "[&#39;environ&#39;, &#39;start_response&#39;] 三次"]' answer='0' output='flask_view params [] ann {}; fastapi_view params [&#39;name&#39;, &#39;age&#39;] ann {&#39;name&#39;: &#39;str&#39;, &#39;age&#39;: &#39;int&#39;}; django_view params [&#39;request&#39;] ann {}' explain='Flask 靠 request 上下文代理取参故视图无参，FastAPI 把参数与注解写在签名上，Django 约定接一个 request 对象——签名差异正是『替你决定多少』的直接证据。' />
 
-<FillBlank no='083-F' tpl='___ inspect' :answers='["import"]' hint='回想本讲关于 三者定位差异 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三者定位：从内核、类型化到全栈约定 的落点。' />
+<FillBlank no='083-5' tpl='___ inspect' :answers='["import"]' hint='回想本讲关于 三者定位差异 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三者定位：从内核、类型化到全栈约定 的落点。' />
 
 <KnowledgeCard :points='["分界是『替你决定多少』：Flask 只给内核、FastAPI 把注解变成校验与文档、Django 自带全栈约定", "FastAPI 启动时读 inspect.signature + get_type_hints 生成参数模型与 OpenAPI，校验失败返 422", "Pydantic v2 用 Rust 核心，model_validate / model_dump 取代 parse_obj / dict", "Flask 3.0 需 Python&gt;=3.8；async 视图仍跑 WSGI 线程池，长连接要 ASGI 栈", "Django 4.2 是 LTS（支持到 2026-04），5.0 需 Python&gt;=3.10；内置 ORM/迁移/admin/auth", "同仓不要混两套范式；选型产出应是带权重的评分表，而非热度结论"]' :pitfalls='["FastAPI 路径函数参数写成字符串注解或 Any，文档里没有校验规则", "从 Pydantic v1 升到 v2 后 obj.dict() 与 parse_obj 报警告或报错", "在 Flask 里用 async def 视图却期待并发长连接", "微服务里硬套 Django 的整套 ORM 与 admin，会背上用不到的启动与依赖成本"]' summary='框架差异主要在「替你决定多少」：Flask 只给内核、FastAPI 把类型注解变成校验与文档、Django 自带全栈约定' />
 

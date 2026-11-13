@@ -14,9 +14,9 @@ description: 处理生产环境里的装饰器组合
 
 ## 一次越权结果被缓存的线上事故
 
-给接口加缓存和鉴权两个装饰器，写成 @cache 在上还是 @auth 在上，团队里争了半天，上线后选错顺序：缓存把鉴权失败的结果也缓存了下来，未授权用户在 TTL 内一直拿到不该看的响应。
+给接口加缓存和鉴权两个装饰器，写成 `@cache` 在上还是 `@auth` 在上，团队里争了半天，上线后选错顺序：缓存把鉴权失败的结果也缓存了下来，未授权用户在 TTL 内一直拿到不该看的响应。
 
-另一个新人写带参装饰器 @`repeat(3)` 时少返回一层，得到 TypeError 提示某个对象不可调用、或看似无关的缺少参数报错，查半天定位不到是哪一层断了。
+另一个新人写带参装饰器 `@repeat(3)` 时少返回一层，得到 `TypeError` 提示某个对象不可调用、或看似无关的缺少参数报错，查半天定位不到是哪一层断了。
 
 本讲把三层函数结构、从下往上包装从上往下执行、类装饰器用 `__call__` 与状态保存讲清楚，并给出可 bypass 的工程写法，让装饰器组合从碰运气变成可推导。
 
@@ -33,18 +33,16 @@ description: 处理生产环境里的装饰器组合
 | 一句话目标 | 处理生产环境里的装饰器组合 |
 | 为下一讲铺垫 | 偏函数、可调用对象与函数式工具 |
 
-<Callout type="tip" title='核心心智模型' text='带参装饰器其实是装饰器工厂：def repeat(n): def deco(fn): def wrapper(*a, **k): ...; return wrapper; return deco。@repeat(3) 先调用 repeat(3) 得到 deco，再把 deco 应用到函数。三层职责分' />
+<Callout type="tip" title='核心心智模型' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用 `repeat(' />
 
 
 ## 三层函数结构与少一层的报错
 
-带参装饰器其实是装饰器工厂：def `repeat(n)`: def `deco(fn)`: def `wrapper(*a, **k)`: ...; return wrapper; return deco。
+带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。
 
-@`repeat(3)` 先调用 `repeat(3)` 得到 deco，再把 deco 应用到函数。三层职责分明：外层接收配置参数、中层接收被装饰函数、内层接收每次调用的实参。
+`@repeat(3)` 先调用 `repeat(3)` 得到 deco，再把 deco 应用到函数。常见断点有三类：中层忘了 return wrapper，deco 返回 None，于是 f 变成 None，调用时报 `TypeError`（'NoneType' object is not callable）；
 
-常见断点有三类：中层忘了 return wrapper，deco 返回 None，于是 f 变成 None，调用时报 TypeError: 'NoneType' object is not callable；外层忘了 return deco，`repeat(3)` 直接返回 None，@ 应用阶段就报同样的错；
-
-写成 @repeat 漏了括号，则把函数对象本身当成配置 n 传进去，配置被当函数用，报出各种看似无关的 TypeError。
+外层忘了 return deco，`repeat(3)` 直接返回 None，`@` 应用阶段就报同样的错；写成 `@repeat` 漏了括号，则把函数对象本身当成配置 n 传进去，配置被当函数用，报出各种看似无关的 `TypeError`。
 
 定位方法是逐层打印中间返回值，或用 `inspect.signature(repeat)` 确认外层只收配置。
 
@@ -92,13 +90,13 @@ print(work.__name__)
 
 ## 叠加顺序：包装自下而上、执行自上而下
 
-@d1 / @d2 / def f 等价于 `f = d1`(`d2(f)`)：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 `d1.wrapper` → `d2.wrapper` → f，也就是从上往下执行；返回时各层的 finally 清理再逆序退出。
+`@d1` / `@d2` / `def f` 等价于 `f = d1(d2(f))`：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 `d1.wrapper` → `d2.wrapper` → f，也就是从上往下执行；返回时各层的 `finally` 清理再逆序退出。
 
-顺序错会出真实事故：@cache 在外、@auth 在内时，最外层 cache 一旦命中就直接返回，根本不会调用内层 auth，于是未授权结果被写进缓存并在 TTL 内反复返回；@auth 在外、@cache 在内才对。一般规律是越便宜、越该早失败的（鉴权、限流、参数校验）放外层，越昂贵、越依赖结果的（缓存、重试、计时）放靠内。
+顺序错会出真实事故：`@cache` 在外、`@auth` 在内时，最外层 cache 一旦命中就直接返回，根本不会调用内层 auth，于是未授权结果被写进缓存并在 TTL 内反复返回；`@auth` 在外、`@cache` 在内才对。
 
-验证手段很直接：每个 wrapper 在调用前后各打印一条进入 / 退出标记，调用一次就能看到真实顺序；也可用 `__wrapped__` 链从外向内 unwrap。
+一般规律是越便宜、越该早失败的（鉴权、限流、参数校验）放外层，越昂贵、越依赖结果的（缓存、重试、计时）放靠内。验证手段很直接：每个 wrapper 在调用前后各打印一条进入 / 退出标记，调用一次就能看到真实顺序；也可用 `__wrapped__` 链从外向内 unwrap。
 
-与 classmethod / staticmethod / property 叠加时，内置装饰器要放最外层（staticmethod 最外），否则方法绑定与签名会错乱。
+与 `classmethod` / `staticmethod` / `property` 叠加时，内置装饰器要放最外层（`staticmethod` 最外），否则方法绑定与签名会错乱。
 
 **叠加顺序与执行方向**
 
@@ -139,17 +137,21 @@ print(callable(stacked), type(stacked).__name__)
 
 ## 类装饰器、__call__ 与状态保存
 
-类也可以作装饰器：@Cls 等价于 `f = Cls`(f)，要求返回的是可调用对象，因此类实例要实现 `__call__(self, *a, **k)`；
+类也可以作装饰器：`@Cls` 等价于 `f = Cls(f)`，要求返回的是可调用对象，因此类实例要实现 `__call__(self, *a, **k)`；
 
 类同样可以装饰另一个类，此时 `__call__` 接收类、返回类。用类保存状态比闭包清晰：计数器、命中率、配置都是实例属性，天然可读可测；
 
-配合 `functools.update_wrapper(self, fn)` 把 `__name__`、`__doc__`、`__wrapped__` 等搬到实例上（update_wrapper 对任何带 `__dict__` 的对象都可用）。
+配合 `functools.update_wrapper` 把 `__name__`、`__doc__`、`__wrapped__` 等搬到实例上（`update_wrapper` 对任何带 `__dict__` 的对象都可用）。
+
+```python
+functools.update_wrapper(self, fn)
+```
 
 带参类装饰器可以让 `__init__` 收配置、`__call__` 收函数并返回 self，或直接在 `__init__` 里存下函数。
 
 要留意描述符交互：函数对象本身是非数据描述符（实现了 `__get__`），而普通类实例没有 `__get__`，所以把类装饰器实例放进类属性当方法用时不会自动绑定 self，这是第 040 讲描述符协议要处理的点。
 
-对外发布的装饰器应提供参数化开关与 bypass 路径（`enabled=False` 直接返回原函数），方便测试与灰度绕开；类型注解侧可用 ParamSpec / TypeVar（第 036 讲）表达保持被装饰函数签名，避免静态类型退化成 Any。
+对外发布的装饰器应提供参数化开关与 bypass 路径（`enabled=False` 直接返回原函数），方便测试与灰度绕开；类型注解侧可用 `ParamSpec` / `TypeVar`（第 036 讲）表达保持被装饰函数签名，避免静态类型退化成 `Any`。
 
 ```python
 from functools import update_wrapper
@@ -182,7 +184,7 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 <OutputBox title='对照写法：先自己猜，再点开' output='3 7 2 add\nfunction 9 False' guess="true" />
 
-<Predict no='033-P' q='@tag(&#39;A&#39;) 与 @tag(&#39;B&#39;) 叠加，每个 wrapper 进入时打印标签，调用 f() 的输出顺序是？' :options='["enter A\nenter B", "enter B\nenter A", "只有 enter A"]' answer='0' output='enter A\nenter B' explain='包装自下而上（B 先包、A 后包成为最外层），调用从最外层进入，因此 A 的进入标记先打印，再打印 B 的。' />
+<Predict no='033-1' q='@tag(&#39;A&#39;) 与 @tag(&#39;B&#39;) 叠加，每个 wrapper 进入时打印标签，调用 f() 的输出顺序是？' :options='["enter A\nenter B", "enter B\nenter A", "只有 enter A"]' answer='0' output='enter A\nenter B' explain='包装自下而上（B 先包、A 后包成为最外层），调用从最外层进入，因此 A 的进入标记先打印，再打印 B 的。' />
 
 **类装饰器与内置装饰器叠加规则**
 
@@ -197,11 +199,11 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 ## 底层：三层闭包与描述符如何共同生效
 
-@ 展开后是模块字节码里连续的 CALL：先算出装饰器表达式的值（带参时先 CALL `repeat(n)` 得到 deco），再把函数对象作为参数 CALL 一次，把返回值 STORE 回名字。多层装饰时这些 CALL 从内向外依次发生，因此离 def 最近的先包装、最远的最后包装并成为最外层对象。
+`@` 展开后是模块字节码里连续的 `CALL`：先算出装饰器表达式的值（带参时先 `CALL` `repeat(n)` 得到 deco），再把函数对象作为参数 `CALL` 一次，把返回值 `STORE` 回名字。多层装饰时这些 `CALL` 从内向外依次发生，因此离 def 最近的先包装、最远的最后包装并成为最外层对象。
 
 每个 wrapper 通过 `__wrapped__` 串成一条链：`inspect.signature` 与 `inspect.unwrap` 沿链向内走，最外层决定调用入口、最内层才是原逻辑；
 
-调用时外层 wrapper 先执行前置逻辑再调 fn（也就是下一层 wrapper），返回时各层 finally 逆序退出。类装饰器走同一条路径，只是返回的是实现了 `__call__` 的实例。
+调用时外层 wrapper 先执行前置逻辑再调 fn（也就是下一层 wrapper），返回时各层 `finally` 逆序退出。类装饰器走同一条路径，只是返回的是实现了 `__call__` 的实例。
 
 函数对象本身是非数据描述符（有 `__get__`），而普通类实例没有 `__get__`，所以把类装饰器实例放进类属性时不会自动绑定 self，这正是描述符协议（第 040 讲）要处理的问题。
 
@@ -209,16 +211,16 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：带参装饰器少写一层 return，报 Typ", "body": "外层没返回 deco 或中层没返回 wrapper，得到 None 却被当函数调用", "tip": "牢记三层：外层 return deco、中层 return wrapper、内层 return fn(*a, **k)；逐层打印返回值定位断点"}, {"title": "第 2 步：@cache 写在 @auth 外面，未授权", "body": "最外层 cache 命中后直接返回，根本不会调用内层 auth", "tip": "把鉴权、限流这类早失败的装饰器放外层，缓存放内侧；用进入 / 退出打印验证顺序"}, {"title": "第 3 步：类装饰器实例放进类里当方法用，self 没自", "body": "普通实例没有 __get__，不是描述符，不会做方法绑定", "tip": "给类实现 __get__ 返回绑定方法，或改用闭包函数装饰器；理解函数描述符后再设计"}]' />
 
-<Term word='三层函数结构' text='带参装饰器其实是装饰器工厂：def repeat(n): def deco(fn): def wrapper(*a, **k): ...; return wrapper; return deco。@repeat(3) 先调用 repeat(3) 得到 deco，再把 deco 应用到函数。三层职责分明：外层接收配置参数' />
+<Term word='三层函数结构' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用 `repeat(3)` 得到 dec' />
 
-<Term word='叠加顺序由近及远' text='@d1 / @d2 / def f 等价于 f = d1(d2(f))：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 d1.wrapper → d2.wrapper → f，也就是从上往下执行；返回时各层的 finally 清理再逆序退出。顺序错会出真实事故：@cac' />
+<Term word='叠加顺序由近及远' text='`@d1` / `@d2` / `def f` 等价于 `f = d1(d2(f))`：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 `d1.wrapper` → `d2.wrapper` → f，也就是从上往下执行；返回时各层的 `finally` 清理再逆序退出。' />
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "from functools import wraps\n\ndef tag(label):\n    def deco(fn):\n        @wraps(fn)\n        def wrapper(*a, **k):\n            print(&#39;enter&#39;, label)\n            r = fn(*a, **k)\n            print(&#39;exit&#39;, label)\n            return r\n        return wrapper\n    return deco\n\n@tag(&#39;outer&#39;)\n@tag(&#39;inner&#39;)\ndef work(x):\n    print(&#39;run&#39;, x)\n    return x + 1\n\nprint(work(1))\nprint(work.__name__)", "note": "三层函数结构与少一层的报错"}, {"label": "对照 / 进阶", "code": "from functools import update_wrapper\n\nclass Count:\n    def __init__(self, fn):\n        self.fn = fn\n        self.calls = 0\n        update_wrapper(self, fn)\n    def __call__(self, *a, **k):\n        self.calls += 1\n        return self.fn(*a, **k)\n\n@Count\ndef add(a, b):\n    return a + b\n\nprint(add(1, 2), add(3, 4), add.calls, add.__name__)\n\ndef maybe(enabled):\n    def deco(fn):\n        return fn if not enabled else Count(fn)\n    return deco\n\n@maybe(False)\ndef raw(x):\n    return x\nprint(type(raw).__name__, raw(9), hasattr(raw, &#39;__wrapped__&#39;))", "note": "叠加顺序：包装自下而上、执行自上而下"}]' title='两种写法切换看' />
 
 
 ## 鉴权与缓存的组合：用顺序杜绝越权结果被缓存
 
-报表接口要先鉴权、再查缓存。若把 @cache 写在 @auth 上面，最外层缓存一旦命中就跳过鉴权，guest 拿到的 denied 也会被缓存，甚至可能把 admin 的结果反向暴露。正确顺序是 @auth 在外、@cache 在内：每次请求先经过鉴权，未授权直接返回 denied，根本不会触及缓存。
+报表接口要先鉴权、再查缓存。若把 `@cache` 写在 `@auth` 上面，最外层缓存一旦命中就跳过鉴权，guest 拿到的 denied 也会被缓存，甚至可能把 admin 的结果反向暴露。正确顺序是 `@auth` 在外、`@cache` 在内：每次请求先经过鉴权，未授权直接返回 denied，根本不会触及缓存。
 
 下面实现两个带参装饰器：auth 用 wraps 保留元数据，cache 用一个字典按 (位置参数, 排序后的关键字参数) 构造可哈希键，并演示 admin、guest、admin 三次调用的结果，以及关闭开关时绕过包装。真实项目还要给缓存加 TTL、上限和线程锁，那是第 037 讲的内容。
 
@@ -268,7 +270,7 @@ print(report.__name__)
 python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print(f(4))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **三层函数结构** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 三层函数结构 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 少一层 return、顺序颠倒与 self 丢失
@@ -292,13 +294,13 @@ python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print
 
 <Exercise title='进阶：打印标记验证叠加顺序' task='用带参装饰器 mark(tag) 在每个 wrapper 进入时打印 tag，叠加 @mark(&#39;A&#39;) 与 @mark(&#39;B&#39;) 后调用一次，解释为什么 A 先打印。' solution='from functools import wraps\n\ndef mark(tag):\n    def deco(fn):\n        @wraps(fn)\n        def wrapper(*a, **k):\n            print(&#39;in&#39;, tag)\n            return fn(*a, **k)\n        return wrapper\n    return deco\n\n@mark(&#39;A&#39;)\n@mark(&#39;B&#39;)\ndef f():\n    return 0\nprint(f())' explain='展开为 f = mark(&#39;A&#39;)(mark(&#39;B&#39;)(f))：B 先包装、A 后包装成为最外层，调用从最外层进入，所以先打印 in A 再 in B。' />
 
-<Quiz no='033-1' q='@d1 在 @d2 之上、下面是 def f，等价展开是？' :options='["f = d1(d2(f))", "f = d2(d1(f))", "d1(d2)(f)", "d2(f) 与 d1(f) 各调用一次"]' answer="0" explain='定义时离 def 最近的 d2 先包装，d1 最后包装并成为最外层，故展开为 f = d1(d2(f))。' />
+<Quiz no='033-2' q='@d1 在 @d2 之上、下面是 def f，等价展开是？' :options='["f = d1(d2(f))", "f = d2(d1(f))", "d1(d2)(f)", "d2(f) 与 d1(f) 各调用一次"]' answer="0" explain='定义时离 def 最近的 d2 先包装，d1 最后包装并成为最外层，故展开为 f = d1(d2(f))。' />
 
-<Quiz no='033-2' q='@cache 在外、@auth 在内的真实风险是？' :options='["缓存命中会跳过鉴权，未授权结果被缓存", "鉴权变慢", "cache 装饰器完全不生效", "抛 TypeError"]' answer="0" explain='最外层 cache 命中即返回，不会调用内层 auth；于是 denied 或越权响应被写进缓存并在有效期内反复返回。' />
+<Quiz no='033-3' q='@cache 在外、@auth 在内的真实风险是？' :options='["缓存命中会跳过鉴权，未授权结果被缓存", "鉴权变慢", "cache 装饰器完全不生效", "抛 TypeError"]' answer="0" explain='最外层 cache 命中即返回，不会调用内层 auth；于是 denied 或越权响应被写进缓存并在有效期内反复返回。' />
 
-<Quiz no='033-3' q='带参装饰器 @repeat(3) 需要几层函数？' :options='["三层：工厂、装饰器、wrapper", "两层", "一层", "四层"]' answer="0" explain='外层 repeat(n) 收配置返回 deco，中层 deco(fn) 收函数返回 wrapper，内层 wrapper(*a, **k) 收实参；不带参装饰器才是两层。' />
+<Quiz no='033-4' q='带参装饰器 @repeat(3) 需要几层函数？' :options='["三层：工厂、装饰器、wrapper", "两层", "一层", "四层"]' answer="0" explain='外层 repeat(n) 收配置返回 deco，中层 deco(fn) 收函数返回 wrapper，内层 wrapper(*a, **k) 收实参；不带参装饰器才是两层。' />
 
-<FillBlank no='033-F' tpl='from functools  ___ wraps' :answers='["import"]' hint='回想本讲关于 三层函数结构 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三层函数结构与少一层的报错 的落点。' />
+<FillBlank no='033-5' tpl='from functools  ___ wraps' :answers='["import"]' hint='回想本讲关于 三层函数结构 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三层函数结构与少一层的报错 的落点。' />
 
 <KnowledgeCard :points='["带参装饰器是三层：外层收配置返回 deco、中层收函数返回 wrapper、内层收调用实参", "少一层 return 会得到 NoneType not callable；@repeat 漏括号会把函数对象当成配置", "@d1 / @d2 / def f 等价 f = d1(d2(f))：包装自下而上、调用进入自上而下、finally 逆序退出", "鉴权 / 限流放外层、缓存 / 重试放内侧；顺序错会把未授权结果缓存", "类装饰器要求实例实现 __call__，用 functools.update_wrapper(self, fn) 搬元数据；实例不是描述符不会自动绑定 self", "staticmethod 置最外层；对外装饰器要提供 enabled=False 的 bypass 与可单测路径"]' :pitfalls='["带参装饰器少写一层 return，报 TypeError: &#39;NoneType&#39; object is not callable", "@cache 写在 @auth 外面，未授权结果被缓存", "类装饰器实例放进类里当方法用，self 没自动传入", "带参装饰器少写一层返回值，会得到「缺少参数」这类看似无关的报错"]' summary='多个装饰器从下往上包装、从上往下执行，顺序错了会让缓存包住鉴权，把未授权结果也缓存下来' />
 

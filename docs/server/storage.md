@@ -7,31 +7,31 @@ description: 补齐服务端的外部依赖版图
 
 # 第 091 讲 · 文件、对象存储、搜索与 gRPC
 
-路由、数据、缓存、身份都齐了，服务还差几块外部依赖：大文件放哪、内容怎么被搜到、内部服务怎么说话。这一讲把版图补齐，让服务不再只靠本机磁盘和一条 SQL 撑着。
+路由、数据、缓存、身份都齐了，服务还差几块外部依赖：大文件放哪、内容怎么被搜到、内部服务之间怎么说话。这一讲把版图补齐，让服务不再只靠本机磁盘和一条 SQL 撑着。
 
-上传视频先落本地盘，容器重启还没转存的就丢了，扩到两台后 A 写、B 读便读不到；文章用 LIKE 到百万行全表扫描，匹配不到同义词；内部用 JSON 传字段，改了名字线上才炸。我们从上传与断点续传、预签名 URL 讲起，再谈对象存储一致性、倒排索引与 ES，最后落到 gRPC 与 Protobuf 的错误传播。需要 HTTP、哈希签名与序列化；学完能为服务选对文件、搜索与通信方案。
+上传视频先落本地盘，容器一重启还没转存的就丢了，扩到两台后 A 写、B 读便读不到；文章用 `LIKE` 到百万行全表扫描，还匹配不到同义词；内部用 `JSON` 传字段，改了名字线上才炸。我们从上传与断点续传、预签名 URL 讲起，再谈对象存储一致性、倒排索引与 ES，最后落到 gRPC 与 Protobuf 的错误传播。需要 `HTTP`、哈希签名与序列化；学完能为服务选对文件、搜索与通信方案。
 
 
 ## 容器一重启，用户刚上传的文件就读不到了
 
 一个内容平台把用户上传的视频先落到应用服务器的本地磁盘，再由后台任务转存到对象存储。容器一次重启，还没转存的文件全丢了；扩容到两个实例后，上传请求打到 A、下载请求打到 B，B 的磁盘上根本没有这个文件。第二次改造让文件经应用服务器中转，带宽与内存立刻被大文件吃满。
 
-搜索也出问题：用 SQL 的 LIKE '%关键词%' 查文章，数据到百万行后全表扫描把库拖慢，还匹配不到同义词。内部服务之间用 JSON over HTTP 来回传，字段改了没有编译期约束，线上才炸。四类问题分属四个外部依赖：对象存储、上传协议、倒排索引、RPC 序列化。
+搜索也出问题：用 SQL 的 `LIKE` 配 '%关键词%' 做模糊查询，数据到百万行后全表扫描把库拖慢，还匹配不到同义词。内部服务之间用 `JSON` over `HTTP` 来回传，字段改了没有编译期约束，线上才炸。四类问题分属四个外部依赖：对象存储、上传协议、倒排索引、RPC 序列化。
 
-本讲用标准库实现倒排索引与 BM25、预签名签名和 Protobuf varint，把『为什么这样设计』变成可跑的证据。
+本讲用标准库实现倒排索引与 `BM25`、预签名签名和 Protobuf varint，把『为什么这样设计』变成可跑的证据。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失/读不到：本地磁盘是实例级、非共享且非持久，另一实例没有该文件' />
 
 
 ## 上传、断点续传与预签名直传
 
-大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3 / MinIO / COS），带宽与内存压力转给存储。
+大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。
 
-签名思路（AWS SigV4）：把 HTTP method、资源 path、过期时间、日期等按规范拼成待签串，用 HMAC-SHA256 派生出签名放进查询参数（X-Amz-Algorithm、X-Amz-Date、X-Amz-Expires、X-Amz-Signature），篡改 path 或过期时间都会让服务端重算的签名不匹配；
+签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出签名放进查询参数（`X-Amz-Algorithm`、`X-Amz-Date`、`X-Amz-Expires`、`X-Amz-Signature`），篡改 path 或过期时间都会让服务端重算的签名不匹配；
 
-签发时还要限定 Content-Type、最大大小与有效期（如 900 秒）。分片上传：initiate 拿 uploadId → 逐片 PUT（带 partNumber，返回 ETag）→ complete 合并；
+签发时还要限定 Content-Type、最大大小与有效期（如 900 秒）。分片上传是 initiate 拿 `uploadId`、逐片 PUT（带 `partNumber`，返回 `ETag`）、complete 合并；
 
-失败只重传某片，断点续传靠客户端记录已传 part 或服务端返回 offset，续传带 Range 或 uploadId。对象存储一致性：S3 自 2020 年 12 月起对 PUT/GET/DELETE/LIST 提供强一致的 read-after-write，旧教程里『最终一致』的结论已过时；
+失败只重传某片，断点续传靠客户端记录已传 part 或服务端返回 offset，续传带 Range 或 uploadId。对象存储一致性有个常被写错的结论：S3 自 2020 年 12 月起对 PUT、GET、`DELETE`、`LIST` 提供强一致的 read-after-write，旧教程里『最终一致』的说法已经过时；
 
 但 CDN 缓存与跨区域复制仍有延迟，元数据（原始名、owner、size、hash）要存自己的数据库，不能只信对象存储。
 
@@ -45,7 +45,7 @@ description: 补齐服务端的外部依赖版图
 | 分片 | initiate → PUT part(ETag) → complete | 失败只重传某片 |
 | 续传 | 记录 uploadId / 已传 part 或 Range | 别整文件重传 |
 
-<Callout type="tip" title='核心心智模型' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3 / MinIO / COS），带宽与内存压力转给存储。签名思路（AWS SigV4）：把 HTTP method、资源 path、过期时间、日期等按规范拼成待签串，用 HMAC-' />
+<Callout type="tip" title='核心心智模型' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-S' />
 
 
 ## 主示例：给路径与有效期签一个不可篡改的名
@@ -135,15 +135,19 @@ print('expiry bound', a.split('Signature=')[1] != c.split('Signature=')[1])
 
 ## 倒排索引与搜索打分
 
-倒排索引把『文档 → 词』反转为『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。
+倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。
 
-查询时对多个 term 取 posting list 合并，用 BM25 打分：`idf = ln`(1 + (N - df + 0.5)/(df + 0.5))，df 越高区分度越低；
+查询时对多个 term 取 posting list 合并，用 `BM25` 打分：逆文档频率 `idf=ln(1+(N-df+0.5)/(df+0.5))`，df 越高区分度越低；
 
-词频饱和项 tf*(k1+1)/(tf + k1*(1-b + b*dl/avgdl))，k1 常取 1.2、b 取 0.75，避免长文档靠堆词占优。倒排把『包含某词』从全表扫描 `O(N)` 降到直接定位 posting list，是 Lucene / Elasticsearch 的核心。
+词频饱和项 `tf*(k1+1)/(tf+k1*(1-b+b*dl/avgdl))`，k1 常取 1.2、b 取 0.75，避免长文档靠堆词占优。
 
-ES 之上还有分片与副本、analyzer、mapping、评分与高亮。索引与业务库的一致性靠异步双写（经消息队列解耦）或 CDC 订阅 binlog，做到最终一致；重建索引用别名切换（reindex 到新索引再原子换 alias）避免停服。
+倒排把『包含某词』从全表扫描 `O(N)` 降到直接定位 posting list，是 Lucene 与 Elasticsearch 的核心。ES 之上还有分片与副本、analyzer、mapping、评分与高亮。索引与业务库的一致性靠异步双写（经消息队列解耦）或 CDC 订阅 binlog，做到最终一致；
 
-深翻页用 search_after 而非 from+size，后者受 max_result_window 默认 10000 限制且深页数成本高。选型上，关键词检索、模糊匹配、聚合用 ES，精确主键查询仍走数据库。
+重建索引用别名切换（reindex 到新索引再原子换 alias）避免停服。
+
+深翻页用 `search_after` 而非 `from+size`，后者受 `max_result_window` 默认 10000 限制且深页数成本高。
+
+选型上，关键词检索、模糊匹配、聚合用 ES，精确主键查询仍走数据库。
 
 **倒排索引 / BM25 与 ES**
 
@@ -158,15 +162,15 @@ ES 之上还有分片与副本、analyzer、mapping、评分与高亮。索引�
 
 ## gRPC、Protobuf 与跨服务错误传播
 
-gRPC 基于 HTTP/2 多路复用与 Protobuf 二进制编码：在 .proto 里定义 service 与 message，字段用 varint（每字节 7 位有效数据、最高位表示是否还有后续字节）与 zigzag 编码有符号整数，字段号加 wire type 打标签，比 JSON 更省带宽且强类型；
+gRPC 基于 `HTTP/2` 多路复用与 Protobuf 二进制编码：在 .proto 里定义 service 与 message，字段用 varint（每字节 7 位有效数据、最高位表示是否还有后续字节）与 zigzag 编码有符号整数，字段号加 wire type 打标签，比 `JSON` 更省带宽且强类型；
 
 代码生成产出客户端 stub 与服务端基类，契约由 .proto 唯一确定。四种流式：unary、server streaming、client streaming、bidirectional。
 
-错误传播用标准 status code：`OK=0`、`CANCELLED=1`、`DEADLINE_EXCEEDED=4`、`NOT_FOUND=5`、`ALREADY_EXISTS=6`、`PERMISSION_DENIED=7`、`RESOURCE_EXHAUSTED=8`、`INVALID_ARGUMENT=3`、`INTERNAL=13`、`UNAVAILABLE=14`、`UNAUTHENTICATED=16`，别把业务错误塞进 HTTP 200 的 body。
+错误传播用标准 status code，按数值排开是 `OK=0`、`CANCELLED=1`、`INVALID_ARGUMENT=3`、`DEADLINE_EXCEEDED=4`、`NOT_FOUND=5`、`ALREADY_EXISTS=6`、`PERMISSION_DENIED=7`、`RESOURCE_EXHAUSTED=8`、`INTERNAL=13`、`UNAVAILABLE=14`、`UNAUTHENTICATED=16`，别把业务错误塞进 `HTTP` 200 的 body。
 
-跨服务用 metadata 传 trace_id 串起链路，设置 deadline 与重试（仅对幂等调用）、对 UNAVAILABLE 做退避、对 RESOURCE_EXHAUSTED 做限流。生产还要配负载均衡、健康检查与 TLS/mTLS。选型：内部高频、强契约、多语言用 gRPC；
+跨服务用 metadata 传 `trace_id` 串起链路，设置 deadline 与重试（仅对幂等调用）、对 `UNAVAILABLE` 做退避、对 `RESOURCE_EXHAUSTED` 做限流。
 
-对外、需人类可读与浏览器直连用 REST/JSON。
+生产还要配负载均衡、健康检查与 TLS/mTLS。选型：内部高频、强契约、多语言用 gRPC；对外、需人类可读与浏览器直连用 `REST/JSON`。
 
 **gRPC status code 与场景**
 
@@ -179,24 +183,26 @@ gRPC 基于 HTTP/2 多路复用与 Protobuf 二进制编码：在 .proto 里定�
 | 8 / 14 | RESOURCE_EXHAUSTED / UNAVAILABLE | 限流 / 退避重试 |
 | 16 | UNAUTHENTICATED | 刷新凭据 |
 
-预签名 URL 把信任从『传输通道』转移到『一次性签名』：服务端用自己的密钥对 method、path、过期时间等做 HMAC，客户端凭签名直接对存储发起请求，存储用同一密钥重算比对；因为签名绑定了具体资源与时刻，攻击者改路径或拖到过期之后都会校验失败，服务端也就无需代理文件字节。
+预签名 URL 把信任从『传输通道』转移到『一次性签名』：服务端用自己的密钥对 method、path、过期时间等做 `HMAC`，客户端凭签名直接对存储发起请求，存储用同一密钥重算比对；因为签名绑定了具体资源与时刻，攻击者改路径或拖到过期之后都会校验失败，服务端也就无需代理文件字节。
 
-倒排索引是空间换时间的典型：建索引时把每篇文档切成 term，写进 term → [(doc_id, tf, positions)] 的映射，查询时只需对查询词取对应链表做归并，把全表扫描的 `O(N)` 变成与命中文档数相关；BM25 用 idf 压低高频词、用 k1 让词频饱和，避免长文档靠重复词刷分。
+倒排索引是空间换时间的典型：建索引时把每篇文档切成 term，写进 term 到 (doc_id, tf, positions) 列表的映射，查询时只需对查询词取对应链表做归并，把全表扫描的 `O(N)` 变成与命中文档数相关；`BM25` 用 idf 压低高频词、用 k1 让词频饱和，避免长文档靠重复词刷分。
 
-Protobuf 的 varint 用最高位作续位标志、每字节存 7 位有效数据，小整数只占 1 字节；zigzag 把 -1、1 这类小负数映射成小正数，配合 varint 省去符号位浪费；字段名不进编码、只传字段号 + wire type，是它比 JSON 紧凑的根本原因。
+Protobuf 的 varint 用最高位作续位标志、每字节存 7 位有效数据，小整数只占 1 字节；zigzag 把 -1、1 这类小负数映射成小正数，配合 varint 省去符号位浪费；字段名不进编码、只传字段号加 wire type，是它比 `JSON` 紧凑的根本原因。
 
-gRPC 借 HTTP/2 的多路复用在一条连接上并发多个 stream，状态码把错误语义标准化，避免各服务自定义 body 错误。
+gRPC 借 `HTTP/2` 的多路复用在一条连接上并发多个 stream，状态码把错误语义标准化，避免各服务自定义 body 错误。
 
-<Term word='上传与断点续传' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3 / MinIO / COS），带宽与内存压力转给存储。签名思路（AWS SigV4）：把 HTTP method、资源 path、过期时间、日期等按规范拼成待签串，用 HMAC-SHA256 派生出' />
+<Term word='上传与断点续传' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出' />
 
-<Term word='预签名 URL' text='倒排索引把『文档 → 词』反转为『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。查询时对多个 term 取 posting list 合并，用 BM25 打分：i' />
+<Term word='预签名 URL' text='倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。查询时对多个 term 取 posting list 合并，用 `BM25` 打分' />
 
 
 ## 预签名直传加倒排检索的最小服务层
 
-下面把两个外部依赖拼成一个自包含服务层：presign 用 HMAC 把 method、path、有效期绑进签名，verify_sig 在服务端重算比对，模拟客户端拿 URL 直传前的校验；InvertedIndex 建 term → doc_id 的倒排表并用简化 BM25 打分，add/search 分别对应写入与检索。
+下面把两个外部依赖拼成一个自包含服务层：`presign` 用 `HMAC` 把 method、path、有效期绑进签名，`verify_sig` 在服务端重算比对，模拟客户端拿 URL 直传前的校验；
 
-重点看两个『边界』：签名把资源与过期时间绑定，改一个字节就失效；索引把查询从扫全表变成查 posting list。真实项目把 presign 换成 SDK 的 generate_presigned_url、把内存索引换成 ES、把业务库到索引的同步换成 CDC 或消息队列双写，鉴权、签名绑定、倒排打分这三层结构不变。
+`InvertedIndex` 建 term 到 doc_id 的倒排表并用简化 `BM25` 打分，`add`/`search` 分别对应写入与检索。重点看两个『边界』：签名把资源与过期时间绑定，改一个字节就失效；索引把查询从扫全表变成查 posting list。
+
+真实项目把 `presign` 换成 SDK 的 `generate_presigned_url`、把内存索引换成 ES、把业务库到索引的同步换成 CDC 或消息队列双写，鉴权、签名绑定、倒排打分这三层结构不变。
 
 ```python
 import hmac, hashlib, math
@@ -245,9 +251,9 @@ print('search redis cache', idx.search('redis cache'))
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **上传与断点续传** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 上传与断点续传 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<FlowTimeline :steps='[{"title": "上传、断点续传与预签名直传", "desc": "大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签…", "tone": "blue"}, {"title": "倒排索引与搜索打分", "desc": "倒排索引把『文档 → 词』反转为『词 → 文档列表』（posting list）：先…", "tone": "purple"}, {"title": "gRPC、Protobuf 与跨服务错误传播", "desc": "gRPC 基于 HTTP/2 多路复用与 Protobuf 二进制编码：在 .pro…", "tone": "orange"}, {"title": "工程落地", "desc": "预签名直传 + 倒排检索的最小服务层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "上传、断点续传与预签名直传", "desc": "大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签…", "tone": "blue"}, {"title": "倒排索引与搜索打分", "desc": "倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先…", "tone": "purple"}, {"title": "gRPC、Protobuf 与跨服务错误传播", "desc": "gRPC 基于 `HTTP/2` 多路复用与 Protobuf 二进制编码：在 .p…", "tone": "orange"}, {"title": "工程落地", "desc": "预签名直传 + 倒排检索的最小服务层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 **错因速查**
 
@@ -274,27 +280,27 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 <Quiz no='091-3' q='关于 Protobuf 的 varint 编码，下面哪项准确？' :options='["每字节存 7 位数据、最高位表示是否有后续字节，小整数只占 1 字节", "每个整数固定 4 字节", "把字段名一起写进编码", "只能编码非负整数"]' answer="0" explain='varint 用续位标志变长存储，1 字节存 0..127；zigzag 让小负数也映射成小正数；字段名不进编码，只传字段号 + wire type，这是比 JSON 紧凑的根本原因。' />
 
-<Predict no='091-P' q='对整数 150 做 Protobuf varint 编码，最可能得到哪组字节？' :options='["[150, 1]", "[150]", "[1, 150]"]' answer='0' output='150 -&gt; [150, 1]' explain='150 = 0x96，低 7 位是 0x16(22)，加续位得 0x96(150)；剩余 1 编成 0x01。这正是 Protobuf 文档里的经典示例，证明小整数用两字节而非固定四字节。' />
+<Predict no='091-4' q='对整数 150 做 Protobuf varint 编码，最可能得到哪组字节？' :options='["[150, 1]", "[150]", "[1, 150]"]' answer='0' output='150 -&gt; [150, 1]' explain='150 = 0x96，低 7 位是 0x16(22)，加续位得 0x96(150)；剩余 1 编成 0x01。这正是 Protobuf 文档里的经典示例，证明小整数用两字节而非固定四字节。' />
 
-<FillBlank no='091-F' tpl='___ math' :answers='["import"]' hint='回想本讲关于 上传与断点续传 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 上传、断点续传与预签名直传 的落点。' />
+<FillBlank no='091-5' tpl='___ math' :answers='["import"]' hint='回想本讲关于 上传与断点续传 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 上传、断点续传与预签名直传 的落点。' />
 
-<KnowledgeCard :points='["预签名 URL：服务端 HMAC 签名绑定 method/path/过期时间，客户端直传对象存储", "S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致（read-after-write）；CDN 与跨区复制仍有延迟", "分片上传 initiate → part(ETag) → complete，续传靠 uploadId/Range，元数据存自己的库", "倒排索引是 term → posting list，把 O(N) 扫描降为定位；BM25 用 idf + k1=1.2/b=0.75 打分", "ES 深翻页用 search_after（from+size 受 max_result_window 默认 10000 限制），索引用别名切换重建", "gRPC = HTTP/2 + Protobuf(varint/zigzag, 字段号+wire type) + 标准 status code；错误不塞进 200 body"]' :pitfalls='["把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失/读不到", "用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表扫描拖垮库", "内部服务把业务错误塞进 HTTP 200 的 body，字段改了线上才炸", "把上传文件直接写本地磁盘，容器重启即丢，扩容后另一实例也读不到"]' summary='大文件不该经过应用服务器：预签名直传把带宽与内存压力交给对象存储，服务端只做鉴权与元数据' />
+<KnowledgeCard :points='["大文件不该经过应用服务器：预签名 URL 用 HMAC-SHA256 绑定 method/path/有效期，客户端直传对象存储", "分片上传 initiate→逐片 PUT(partNumber, ETag)→complete；断点续传只重传某片，带 Range 或 uploadId", "S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致 read-after-write；CDN 与跨区复制仍有延迟", "倒排索引把『文档→词』反转成『词→posting list』；BM25 用 idf 与词频饱和项打分，k1=1.2、b=0.75", "Protobuf varint 每字节 7 位+续位标志、zigzag 压缩小负数，字段号+wire type 打标签，比 JSON 紧凑", "gRPC 用 HTTP/2 多路复用与标准 status code；内部高频强契约用 gRPC，对外可读用 REST/JSON"]' :pitfalls='["把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失/读不到", "用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表扫描拖垮库", "内部服务把业务错误塞进 HTTP 200 的 body，字段改了线上才炸", "把上传文件直接写本地磁盘，容器重启即丢，扩容后另一实例也读不到"]' summary='大文件不该经过应用服务器：预签名直传把带宽与内存压力交给对象存储，服务端只做鉴权与元数据' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| 预签名 URL：服务端 HMAC 签名绑定 method/path/过期时间，客户端直传对象存储 | 建立直觉 |
-| S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致（read-after-write）；CDN 与跨区复制仍有延迟 | 跑通示例 |
-| 分片上传 initiate → part(ETag) → complete，续传靠 uploadId/Range，元数据存自己的库 | 深入边界 |
-| 倒排索引是 term → posting list，把 O(N) 扫描降为定位；BM25 用 idf + k1=1.2/b=0.75 打分 | 工程落地 |
-| ES 深翻页用 search_after（from+size 受 max_result_window 默认 10000 限制），索引用别名切换重建 | 随堂检测 |
-| gRPC = HTTP/2 + Protobuf(varint/zigzag, 字段号+wire type) + 标准 status code；错误不塞进 200 body | 复盘 |
+| 大文件不该经过应用服务器：预签名 URL 用 HMAC-SHA256 绑定 method/path/有效期，客户端直传对象存储 | 建立直觉 |
+| 分片上传 initiate→逐片 PUT(partNumber, ETag)→complete；断点续传只重传某片，带 Range 或 uploadId | 跑通示例 |
+| S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致 read-after-write；CDN 与跨区复制仍有延迟 | 深入边界 |
+| 倒排索引把『文档→词』反转成『词→posting list』；BM25 用 idf 与词频饱和项打分，k1=1.2、b=0.75 | 工程落地 |
+| Protobuf varint 每字节 7 位+续位标志、zigzag 压缩小负数，字段号+wire type 打标签，比 JSON 紧凑 | 随堂检测 |
+| gRPC 用 HTTP/2 多路复用与标准 status code；内部高频强契约用 gRPC，对外可读用 REST/JSON | 复盘 |
 
-1. 预签名 URL：服务端 HMAC 签名绑定 method/path/过期时间，客户端直传对象存储
+1. 大文件不该经过应用服务器：预签名 URL 用 HMAC-SHA256 绑定 method/path/有效期，客户端直传对象存储
 
-2. S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致（read-after-write）；CDN 与跨区复制仍有延迟
+2. 分片上传 initiate→逐片 PUT(partNumber, ETag)→complete；断点续传只重传某片，带 Range 或 uploadId
 
-3. 分片上传 initiate → part(ETag) → complete，续传靠 uploadId/Range，元数据存自己的库
+3. S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致 read-after-write；CDN 与跨区复制仍有延迟
 
 [下一讲：阶段综合：生产级短链服务](/server/capstone)

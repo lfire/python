@@ -9,18 +9,22 @@ description: 在灵活与契约之间做出正确取舍
 
 会写类、会定制类之后，问题从「一个类怎么样」变成「一群类之间怎么约定」。插件体系里常只关心对象有没有某个方法，不想强制它继承谁；Python 给了两条路：靠继承显式声明，或靠结构隐式匹配。
 
-一个插件平台为让所有导出器都有 export，给十几个内部类型套了基类，层次多了三层却没复用实现，第三方对象更进不来。本讲先从鸭子类型与 EAFP 说起，再讲 abc.ABC 与 register 的边界，看 Protocol 怎样零侵入，最后比较运行时代价与选型。需要类与继承、阶段三的类型注解；学完你能对外部用最小需求描述接口，在框架内部用 ABC 复用实现。
+一个插件平台为让所有导出器都有 `export`，给十几个内部类型套了基类，层次多了三层却没复用实现，第三方对象更进不来。本讲先从鸭子类型与 `EAFP` 说起，再讲 `abc.ABC` 与 `register` 的边界，看 `Protocol` 怎样做到零侵入，最后比较运行时代价与选型。需要类与继承、阶段三的类型注解；学完你能对外部用最小需求描述接口，在框架内部用 `ABC` 复用实现。
 
 
 ## 插件接入时该信 isinstance 还是该信方法名
 
-一个插件平台为了让「所有导出器都有 export 方法」，给十几个内部类型都套了一层抽象基类，结果继承树多出三层、默认实现却一个没复用，代码评审时没人说得清这层约束到底带来了什么。
+一个插件平台为了让「所有导出器都有 `export` 方法」，给十几个内部类型都套了一层抽象基类，结果继承树多出三层、默认实现却一个没复用，代码评审时没人说得清这层约束到底带来了什么。
 
-另一边，接入第三方 SDK 的对象根本无法继承自家基类，于是有人用 `ABCMeta.register` 把它们注册成虚拟子类，注册后 isinstance 确实返回 True，调用 export 时却抛 AttributeError——register 只改类型判定，不会凭空长出方法。
+另一边，接入第三方 SDK 的对象根本无法继承自家基类，于是有人用 `ABCMeta.register` 把它们注册成虚拟子类，注册后 `isinstance` 确实返回 `True`，调用 `export` 时却抛 `AttributeError`——`register` 只改类型判定，不会凭空长出方法。
 
-还有团队把 `typing.Protocol` 当运行时校验用，对没加 @runtime_checkable 的 Protocol 直接 isinstance，得到 TypeError: Instance and class checks can only be used with @runtime_checkable protocols；
+还有团队把 `typing.Protocol` 当运行时校验用，对没加 `@runtime_checkable` 的 `Protocol` 直接 `isinstance`，得到 `TypeError: Insta…`；
 
-加了装饰器后又误以为它检查方法签名，结果一个签名完全不对的类被判合格。Python 里「契约」有两条完全不同的实现路径：ABC 靠继承显式声明，Protocol 靠结构隐式匹配。本讲把两条路径的判定机制、运行时代价与选型边界讲透。
+```python
+TypeError: Instance and class checks can only be used with @runtime_checkable protocols
+```
+
+加了装饰器后又误以为它检查方法签名，结果一个签名完全不对的类被判合格。Python 里「契约」有两条完全不同的实现路径：`ABC` 靠继承显式声明，`Protocol` 靠结构隐式匹配。本讲把两条路径的判定机制、运行时代价与选型边界讲透。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='为了规范给所有内部类型套一层 ABC：ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束' />
 
@@ -49,7 +53,7 @@ description: 在灵活与契约之间做出正确取舍
 | 能否提供默认实现 | 能，基类可写具体方法 | 不能，方法体通常是 ... |
 | 主要作用层 | 运行时分派与复用 | 静态检查（mypy / pyright） |
 
-<Callout type="tip" title='核心心智模型' text='Python 的默认风格是鸭子类型配 EAFP（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 AttributeError/TypeError，而不是先做一串 LBYL 的 isinstance 检查。abc 模块提供的是显式契约：类' />
+<Callout type="tip" title='核心心智模型' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。`abc' />
 
 
 ## 关键 API、版本与行为
@@ -65,24 +69,28 @@ description: 在灵活与契约之间做出正确取舍
 | @runtime_checkable | 开放 isinstance，仅查成员名 | 不校验签名与返回类型，别当校验器 |
 | @dataclass 结合 Protocol | 注解不产生运行时约束 | 脏数据校验交给 pydantic |
 
-<Term word='鸭子类型与 EAFP' text='Python 的默认风格是鸭子类型配 EAFP（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 AttributeError/TypeError，而不是先做一串 LBYL 的 isinstance 检查。abc 模块提供的是显式契约：类继承 abc.ABC' />
+<Term word='鸭子类型与 EAFP' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。`abc` 模块提供的是显式' />
 
-<Term word='abc.ABC 与 abstractmethod' text='typing.Protocol（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 Protocol 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。Protocol 类本身带 _is_protocol = True，且不可实例化（直接调用抛 TypeError: P' />
+<Term word='abc.ABC 与 abstractmethod' text='`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 `Protocol` 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 `Typ' />
 
 
 ## 鸭子类型、EAFP 与 ABC 的显式契约
 
-Python 的默认风格是鸭子类型配 EAFP（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 AttributeError/TypeError，而不是先做一串 LBYL 的 isinstance 检查。
+Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。
 
-abc 模块提供的是显式契约：类继承 `abc.ABC`（其元类是 ABCMeta）并用 @abstractmethod 标记方法，`type.__new__` 会把这些方法名收进 `__abstractmethods__`（frozenset），实例化时解释器检查该集合非空就抛 TypeError: Can't instantiate abstract class。
+`abc` 模块提供的是显式契约：类继承 `abc.ABC`（其元类是 `ABCMeta`）并用 `@abstractmethod` 标记方法，`type.__new__` 会把这些方法名收进 `__abstractmethods__`（`frozenset`），实例化时解释器检查该集合非空就抛 `TypeError: Can't…`。
 
-关键细节：@abstractmethod 只有配合 ABCMeta 才生效，标在普通类上只是给函数加了个 `__isabstractmethod__` 标记，类仍可实例化。
+```python
+TypeError: Can't instantiate abstract class
+```
 
-ABC 的真正价值是「复用」——在基类里写公共方法与默认实现，子类只补抽象方法；若只是为了「规范」给每个内部类型套一层，只增加层次不增加约束。
+关键细节：`@abstractmethod` 只有配合 `ABCMeta` 才生效，标在普通类上只是给函数加了个 `__isabstractmethod__` 标记，类仍可实例化。
 
-`ABCMeta.register(SomeClass)` 建立虚拟子类：issubclass/isinstance 立刻返回 True，但被注册类不继承任何方法体，也不校验它是否真的有那些方法，所以调用前仍要自己兜底。
+`ABC` 的真正价值是「复用」——在基类里写公共方法与默认实现，子类只补抽象方法；若只是为了「规范」给每个内部类型套一层，只增加层次不增加约束。
 
-`collections.abc` 里的 Sized、Iterable 等大量用 `__subclasshook__` 做结构化判定：只要类实现了 `__len__` 就被认作 Sized，无需继承。
+`ABCMeta.register(SomeClass)` 建立虚拟子类：`issubclass` / `isinstance` 立刻返回 `True`，但被注册类不继承任何方法体，也不校验它是否真的有那些方法，所以调用前仍要自己兜底。
+
+`collections.abc` 里的 `Sized`、`Iterable` 等大量用 `__subclasshook__` 做结构化判定：只要类实现了 `__len__` 就被认作 `Sized`，无需继承。
 
 ```python
 from abc import ABC, abstractmethod
@@ -127,17 +135,23 @@ print('registered', isinstance(Duck(), Reader), 'has read:', hasattr(Duck(), 're
 
 ## Protocol 的结构化子类型与 runtime_checkable 边界
 
-`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 Protocol 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。
+`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 `Protocol` 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。
 
-Protocol 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 TypeError: Protocols cannot be instantiated）；
+`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 `TypeError: Proto…`）；
 
-它的方法体通常写 ... 或加 @abstractmethod。默认情况下 Protocol 只作用于静态检查（mypy / pyright），不能用于 isinstance/issubclass；
+```text
+TypeError: Protocols cannot be instantiated
+```
 
-加上 @`typing.runtime_checkable` 才把 `__instancecheck__` 换成运行时成员检查。
+它的方法体通常写 `...` 或加 `@abstractmethod`。
 
-这个检查非常浅：它遍历协议声明的属性名做 hasattr 式判断，只确认名字存在，不调用方法、也不比对签名、不校验返回类型，因此一个 `export(self, x, y, z)` 的类也会被判为符合 `export(self, rows)`。
+默认情况下 `Protocol` 只作用于静态检查（`mypy` / `pyright`），不能用于 `isinstance` / `issubclass`；
 
-正因为如此，运行时用它做插件准入时必须再补一层：白名单注册表、显式调用探测，或直接让插件走真实调用并记录异常。泛型协议可写 Protocol`[T]` 约束成员类型，但这些注解同样只在静态期起作用。
+加上 `@typing.runtime_checkable` 才把 `__instancecheck__` 换成运行时成员检查。
+
+这个检查非常浅：它遍历协议声明的属性名做 `hasattr` 式判断，只确认名字存在，不调用方法、也不比对签名、不校验返回类型，因此一个 `export(self, x, y, z)` 的类也会被判为符合 `export(self, rows)`。
+
+正因为如此，运行时用它做插件准入时必须再补一层：白名单注册表、显式调用探测，或直接让插件走真实调用并记录异常。泛型协议可写 `Protocol[T]` 约束成员类型，但这些注解同样只在静态期起作用。
 
 ```python
 from abc import ABCMeta
@@ -200,34 +214,36 @@ print('is_protocol:', PlainProtocol._is_protocol)
 
 ## 选型与运行时成本：两条契约各自落在哪一层
 
-把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 isinstance 分派时，用 ABC；需要描述「对外部对象的最小需求」、允许任何第三方类型零改接入时，用 Protocol，尤其适合插件体系与回调接口。
+把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 `isinstance` 分派时，用 `ABC`；需要描述「对外部对象的最小需求」、允许任何第三方类型零改接入时，用 `Protocol`，尤其适合插件体系与回调接口。
 
-ABC 的 isinstance 走 `ABCMeta.__instancecheck__`，结果会进 _abc_cache 与 _abc_negative_cache 的弱引用缓存，并遍历 _abc_registry，重复调用后接近常数，但比普通类型判定多一层 Python 逻辑；
+`ABC` 的 `isinstance` 走 `ABCMeta.__instancecheck__`，结果会进 `_abc_cache` 与 `_abc_negative_cache` 的弱引用缓存，并遍历 `_abc_registry`，重复调用后接近常数，但比普通类型判定多一层 Python 逻辑；
 
-Protocol 的运行时检查要遍历协议成员集合逐个 hasattr，成员多时代价线性增长。两者都不要当成数据校验器：类型注解与协议都不在实例化时拦脏数据，那是 pydantic 或显式校验的活（第 47 讲）。接口隔离同样重要：协议应只声明真正会调用的最小成员，声明越多、满足它的类型越少、运行时检查越慢。
+`Protocol` 的运行时检查要遍历协议成员集合逐个 `hasattr`，成员多时代价线性增长。两者都不要当成数据校验器：类型注解与协议都不在实例化时拦脏数据，那是 `pydantic` 或显式校验的活（第 47 讲）。接口隔离同样重要：协议应只声明真正会调用的最小成员，声明越多、满足它的类型越少、运行时检查越慢。
 
-实践里最常见的错是把 ABC 当命名空间、把 register 当继承、把 runtime_checkable 当签名校验；认清「ABC 管继承与复用、Protocol 管结构与静态描述、运行时检查只保证名字存在」，这三类误用就能一次性避开。
+实践里最常见的错，是把 `ABC` 当命名空间、把 `register` 当继承、把 `runtime_checkable` 当签名校验；
 
-isinstance 与 issubclass 的入口是 PyObject_IsInstance / PyObject_IsSubclass，它们会优先调用类型（元类）上定义的 `__instancecheck__` / `__subclasscheck__` 钩子，而不是只比对 tp_base 链。
+认清「`ABC` 管继承与复用、`Protocol` 管结构与静态描述、运行时检查只保证名字存在」，这三类误用就能一次性避开。
 
-ABCMeta 重写了这两个方法：先查 _abc_cache（WeakSet）与 _abc_negative_cache 缓存，未命中再遍历 MRO 与 _abc_registry（register 写入的弱引用集合），并可调用 `__subclasshook__` 做结构化判定，结果写回缓存，因此重复检查接近常数。
+`isinstance` 与 `issubclass` 的入口是 `PyObject_IsInstance` / `PyObject_IsSubclass`，它们会优先调用类型（元类）上定义的 `__instancecheck__` / `__subclasscheck__` 钩子，而不是只比对 `tp_base` 链。
 
-Protocol 由 _ProtocolMeta（继承 ABCMeta）实现，@runtime_checkable 把 `__instancecheck__` 换成一个只遍历 `__protocol_attrs__` 做 hasattr 的轻量实现，成员存在即返回 True，完全不触碰签名对象。
+`ABCMeta` 重写了这两个方法：先查 `_abc_cache`（`WeakSet`）与 `_abc_negative_cache` 缓存，未命中再遍历 `MRO` 与 `_abc_registry`（`register` 写入的弱引用集合），并可调用 `__subclasshook__` 做结构化判定，结果写回缓存，因此重复检查接近常数。
 
-PEP 544 的「结构化」发生在静态检查期：mypy 把类的成员集合与协议声明做集合包含判断，与运行时继承无关。
+`Protocol` 由 `_ProtocolMeta`（继承 `ABCMeta`）实现，`@runtime_checkable` 把 `__instancecheck__` 换成一个只遍历 `__protocol_attrs__` 做 `hasattr` 的轻量实现，成员存在即返回 `True`，完全不触碰签名对象。
 
-这解释了三个事实：普通类上的 abstractmethod 无效（没有 ABCMeta 计算 `__abstractmethods__`）、register 不产生方法体、runtime_checkable 会放过签名不符的类——三者分别落在元类钩子、继承语义与浅层成员检查上。
+PEP 544 的「结构化」发生在静态检查期：`mypy` 把类的成员集合与协议声明做集合包含判断，与运行时继承无关。
+
+这解释了三个事实：普通类上的 `abstractmethod` 无效（没有 `ABCMeta` 计算 `__abstractmethods__`）、`register` 不产生方法体、`runtime_checkable` 会放过签名不符的类——三者分别落在元类钩子、继承语义与浅层成员检查上。
 
 <Compare :panels='[{"label": "主示例", "code": "from abc import ABC, abstractmethod\nfrom typing import Protocol, runtime_checkable\n\nclass Reader(ABC):\n    @abstractmethod\n    def read(self):\n        pass\nclass FileReader(Reader):\n    def read(self):\n        return &#39;file-data&#39;\n\ntry:\n    Reader()\nexcept TypeError as e:\n    print(type(e).__name__, &#39;abstract&#39;)\nprint(&#39;isinstance&#39;, isinstance(FileReader(), Reader))\n\n@runtime_checkable\nclass HasRead(Protocol):\n    def read(self) -&gt; str:\n        ...\nclass Duck:\n    def read(self):\n        return &#39;duck-data&#39;\nprint(&#39;protocol isinstance&#39;, isinstance(Duck(), HasRead))\nReader.register(Duck)\nprint(&#39;registered&#39;, isinstance(Duck(), Reader), &#39;has read:&#39;, hasattr(Duck(), &#39;read&#39;))", "note": "鸭子类型、EAFP 与 ABC 的显式契约"}, {"label": "对照 / 进阶", "code": "from abc import ABCMeta\n\nclass Meta(metaclass=ABCMeta):\n    pass\nclass NoMethods:\n    pass\nMeta.register(NoMethods)\nprint(&#39;registered subclass:&#39;, issubclass(NoMethods, Meta))\nprint(&#39;has missing method:&#39;, hasattr(NoMethods(), &#39;read&#39;))\ntry:\n    NoMethods().read()\nexcept AttributeError as e:\n    print(type(e).__name__, &#39;no real method&#39;)", "note": "Protocol 的结构化子类型与 runtime_checkable 边界"}]' title='两种写法对照' note='差异集中在 鸭子类型与 EAFP；先看输出，再找背后的规则。' />
 
 
 ## 插件平台用 Protocol 描述最小接口并配白名单准入
 
-报表平台允许各业务方提供导出器，平台既不能要求对方继承自家基类，也要防止把缺方法的对象注册进路由造成线上 AttributeError。用 Protocol 描述「只要有 `export(rows)` 就能用」这一最小需求，对第三方类型零侵入；
+报表平台允许各业务方提供导出器，平台既不能要求对方继承自家基类，也要防止把缺方法的对象注册进路由、造成线上 `AttributeError`。用 `Protocol` 描述「只要有 `export(rows)` 就能用」这一最小需求，对第三方类型零侵入；
 
-再配一张显式注册表做准入：注册时用 @runtime_checkable 的 isinstance 先做粗筛，通过后再由真实调用兜底，并把允许的名字收敛到白名单，避免反射任意方法。下面用标准库跑通：CsvExporter 结构合规被收录，Broken 只有 run 方法被拒绝，最后打印已注册插件与一次真实导出结果。
+再配一张显式注册表做准入：注册时用 `@runtime_checkable` 的 `isinstance` 先做粗筛，通过后再由真实调用兜底，并把允许的名字收敛到白名单，避免反射任意方法。
 
-要点是 Protocol 负责描述结构、注册表负责收敛可调用集合、两者都不承担数据校验——脏数据要在 export 内部或边界层单独处理。
+下面用标准库跑通：`CsvExporter` 结构合规被收录，`Broken` 只有 `run` 方法被拒绝，最后打印已注册插件与一次真实导出结果。要点是 `Protocol` 负责描述结构、注册表负责收敛可调用集合、两者都不承担数据校验——脏数据要在 `export` 内部或边界层单独处理。
 
 ```python
 from typing import Protocol, runtime_checkable
@@ -267,7 +283,7 @@ print('output:', registry['csv'].export([1, 2, 3]))
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **鸭子类型与 EAFP** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 鸭子类型与 `EAFP` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -279,7 +295,7 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='为了规范给所有内部类型套一层 ABC：ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束' />
 
-<FlowTimeline :steps='[{"title": "鸭子类型、EAFP 与 ABC 的显式契约", "desc": "Python 的默认风格是鸭子类型配 EAFP（Easier to Ask Forg…", "tone": "blue"}, {"title": "Protocol 的结构化子类型与 runtime_checkable 边界", "desc": "typing.Protocol（PEP 544，3.8 引入）表达的是结构化子类型：…", "tone": "purple"}, {"title": "选型与运行时成本：两条契约各自落在哪一层", "desc": "把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 isin…", "tone": "orange"}, {"title": "工程落地", "desc": "插件平台用 Protocol 描述最小接口并配白名单准入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "鸭子类型、EAFP 与 ABC 的显式契约", "desc": "Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Fo…", "tone": "blue"}, {"title": "Protocol 的结构化子类型与 runtime_checkable 边界", "desc": "`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类…", "tone": "purple"}, {"title": "选型与运行时成本：两条契约各自落在哪一层", "desc": "把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 `isi…", "tone": "orange"}, {"title": "工程落地", "desc": "插件平台用 Protocol 描述最小接口并配白名单准入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 把取舍写进练习与自检
@@ -294,9 +310,9 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 
 <Quiz no='044-3' q='@runtime_checkable 的 Protocol 通过 isinstance 意味着什么？' :options='["对象具备协议声明的成员名，但签名与返回类型未必匹配", "方法签名完全一致", "对象已继承该 Protocol", "对象通过了完整的数据校验"]' answer="0" explain='运行时检查遍历 __protocol_attrs__ 做 hasattr，只确认名字存在，不调用方法也不比对签名。签名一致性由 mypy / pyright 在静态期判断，数据校验更不属于协议职责。' />
 
-<Predict no='044-P' q='普通类上用 @abstractmethod 标记方法，实例化会怎样？' :options='["正常实例化，不报错", "抛 TypeError: Can&#39;t instantiate abstract class", "抛 AttributeError"]' answer='0' output='正常实例化，__abstractmethods__ 不存在' explain='@abstractmethod 只是给函数加 __isabstractmethod__ 标记；只有 ABCMeta（继承 ABC）才会在 type.__new__ 里收集 __abstractmethods__ 并在实例化时检查。普通类元类是 type，没有这层逻辑。' />
+<Predict no='044-4' q='普通类上用 @abstractmethod 标记方法，实例化会怎样？' :options='["正常实例化，不报错", "抛 TypeError: Can&#39;t instantiate abstract class", "抛 AttributeError"]' answer='0' output='正常实例化，__abstractmethods__ 不存在' explain='@abstractmethod 只是给函数加 __isabstractmethod__ 标记；只有 ABCMeta（继承 ABC）才会在 type.__new__ 里收集 __abstractmethods__ 并在实例化时检查。普通类元类是 type，没有这层逻辑。' />
 
-<FillBlank no='044-F' tpl='from abc  ___ ABC, abstractmethod' :answers='["import"]' hint='回想本讲关于 鸭子类型与 EAFP 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 鸭子类型、EAFP 与 ABC 的显式契约 的落点。' />
+<FillBlank no='044-5' tpl='from abc  ___ ABC, abstractmethod' :answers='["import"]' hint='回想本讲关于 鸭子类型与 EAFP 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 鸭子类型、EAFP 与 ABC 的显式契约 的落点。' />
 
 <KnowledgeCard :points='["鸭子类型配 EAFP 是默认风格；ABC 的价值在复用默认实现与强制补齐，不在「规范」本身", "@abstractmethod 必须配合 ABCMeta / ABC 才生效，结果写入 __abstractmethods__", "ABCMeta.register 建虚拟子类，只改 issubclass/isinstance，不继承方法体也不校验成员", "typing.Protocol（3.8 / PEP 544）按结构隐式匹配，对第三方类型零侵入，主要服务静态检查", "@runtime_checkable 只做成员名 hasattr 判定，放过签名不符的类；运行时准入要补白名单或真实调用", "isinstance 走元类 __instancecheck__ 钩子；ABC 有缓存，Protocol 检查代价随成员数线性增长"]' :pitfalls='["为了规范给所有内部类型套一层 ABC", "用 register 让第三方类通过 isinstance 后直接调用方法", "对未加 @runtime_checkable 的 Protocol 用 isinstance，或把通过检查当成签名合规", "为了「规范」给所有内部类型套一层抽象基类，只会增加层次而不增加约束"]' summary='Python 有两种契约：ABC 靠继承显式声明，Protocol 靠结构隐式匹配；后者对第三方类型零侵入，特别适合插件体系' />
 

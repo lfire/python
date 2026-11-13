@@ -9,14 +9,18 @@ description: 在接口边界上控制对象所有权
 
 属性访问能精确定位到一份状态了，紧跟着的问题是：这份状态归谁。放多个线程进去之前，得先在单线程里把可变性、拷贝与归属三件事分开，否则「同时改它」只会把含糊放大成事故。一个平和的画面：函数把内部列表返回出去，调用方随手追加一项，你的私有数据跟着变了；一份配置字典传给几个模块，谁动过都对不上账。
 
-由浅往深：先看赋值与浅拷贝为何仍共享内部对象，再看 deepcopy 如何维护记忆表处理循环结构，接着谈不可变的好处，最后落到接口边界上的所有权与防御性拷贝。前置是容器、函数传参与引用的概念；读完后你能在库的边界决定返回副本还是只读视图，把对象所有权讲清楚。
+由浅往深：先看赋值与浅拷贝为何仍共享内部对象，再看 `copy.deepcopy` 如何靠一张记忆表处理循环结构，接着谈不可变的好处，最后落到接口边界上的所有权与防御性拷贝。前置是容器、函数传参与引用的概念；读完后你能在库的边界决定返回副本还是只读视图，把对象所有权讲清楚。
 
 
 ## 上一个用户的筛选条件串到了下一个请求
 
-配置中心返回一个嵌套字典，业务代码把它存进实例后顺手 return 给调用方；调用方改了一个内层列表，结果另一个请求的默认值跟着变了，线上出现「上一个用户的筛选条件串到下一个用户」。第一反应是「函数返回前 copy 一下」，于是用 `copy.copy` 包了一层，问题仍在——因为内层容器是共享的。
+配置中心返回一个嵌套字典，业务代码把它存进实例后又顺手 return 给调用方；调用方改了一个内层列表，另一个请求的默认值跟着变了，线上出现「上一个用户的筛选条件串到下一个用户」。第一反应是「返回前拷贝一下」，于是用 `copy.copy` 包了一层，问题仍在——内层容器还是共享的。
 
-再有人改成 deepcopy，功能对了但每次请求多花几毫秒，压测 QPS 掉了一截；还有人在有循环引用的对象图上 deepcopy，发现结果里同一个节点被复制成了两份，破坏了 aliasing。更隐蔽的是把内部 list 直接暴露给外部，或返回 MappingProxyType 后仍试图改它。
+换成 `copy.deepcopy(x)`，功能对了，却让每次请求多花几毫秒，压测 QPS 掉了一截；
+
+还有人自己实现 `__deepcopy__` 时忘了先登记 `memo`，带循环引用的对象图上同一个节点被复制成两份，aliasing 反而被破坏。
+
+更隐蔽的是把内部 list 直接暴露给外部，或返回 `types.MappingProxyType` 后仍试图改它。
 
 这些都不是「要不要拷贝」一句话能定的：赋值、浅拷贝、深拷贝在共享范围、循环处理、性能与所有权语义上完全不同，接口边界上必须先说清楚谁拥有这个对象。
 
@@ -25,13 +29,15 @@ description: 在接口边界上控制对象所有权
 
 ## 赋值、浅拷贝、深拷贝各共享到哪一层
 
-赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a)` == `id(b)`。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list/dict/set 分别走 _copy_list / _copy_dict 等快捷路径，等价于 x[:] 或 `dict(x)`；
+赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。
 
-因此改外层互不影响，改 x[0] 指向的可变对象会双向可见。
+`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等价于 `x[:]` 或 `dict(x)`；因此改外层互不影响，改 `x[0]` 指向的可变对象则双向可见。
 
-`copy.deepcopy(x, memo=None)` 递归复制所有可变子对象，并用一个 memo 字典记录 `id(原对象)` 到 新对象 的映射：既让循环引用不会无限递归，也保证原图中被多处引用的同一个对象在结果里仍是同一个新对象（保留 aliasing）。
+`copy.deepcopy(x)` 递归复制所有可变子对象，并用一个 `memo` 字典记录每个原对象的 `id` 到新对象的映射：既让循环引用不会无限递归，也保证原图中被多处引用的同一个对象在结果里仍是同一个新对象，也就是保留 aliasing。
 
-对 int、str、bytes、float、bool、None、函数、类型等不可变原子对象，deepcopy 走 _deepcopy_atomic 直接返回原对象，不分配内存；对只含不可变元素的 tuple，`copy.copy` 也直接返回自身。故 deepcopy 的开销集中在可变容器的数量与深度，而非对象的值大小。
+对 `int`、`str`、`bytes`、`float`、`bool`、`None`、函数、类型等不可变原子对象，deepcopy 走 `_deepcopy_atomic` 直接返回原对象，不分配内存；
+
+对只含不可变元素的 tuple，`copy.copy` 也直接返回自身。所以深拷贝的开销集中在可变容器的数量与深度，而不是对象的值大小。
 
 **赋值 / 浅拷贝 / 深拷贝的共享范围**
 
@@ -94,17 +100,17 @@ tracemalloc.stop()
 
 ## deepcopy 的 memo 与回退路径
 
-自定义类可定义 `__copy__(self)` 与 `__deepcopy__(self, memo)` 完全接管行为；
+自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；
 
 未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。
 
-因此一个持有 `threading.Lock`、打开的文件句柄、数据库连接、生成器或 lambda 的对象通常无法 deepcopy，会抛 TypeError: cannot pickle '_thread.lock' object 之类错误——因为 reduce 路径要 pickle 状态。
+因此一个持有 `threading.Lock`、打开的文件句柄、数据库连接、生成器或 `lambda` 的对象通常无法深拷贝，会抛 `TypeError`（cannot pickle '_thread.lock' object 一类提示）——因为 reduce 路径要 pickle 状态。
 
-memo 参数是关键：实现 `__deepcopy__` 时必须先建空壳、立刻 memo[`id(self)`] = 新对象、再复制字段，否则自引用字段会再次递归到同一个对象。
+`memo` 参数是关键：实现 `__deepcopy__` 时必须先建空壳、立刻登记 `memo[id(self)]`、再复制字段，否则自引用字段会再次递归到同一个对象。
 
-collections 里 tuple 的深拷贝由 _deepcopy_tuple 处理，会先复制元素再判断是否所有元素都未变，若都没变则复用原 tuple。
+copy 模块里 tuple 的深拷贝由 `_deepcopy_tuple` 处理，会先复制元素、再判断是否所有元素都未变，若都没变就复用原 tuple。
 
-`types.MappingProxyType` 提供只读视图，视图本身不可赋值但底层 dict 仍可被原引用修改，做「只读返回」时要连同底层一起收好或真正复制。
+`types.MappingProxyType` 提供只读视图，视图本身不可赋值，但底层 dict 仍可被原引用修改，做「只读返回」时要连同底层一起收好，或者真正复制一份。
 
 **copy 模块回退路径与失败信号**
 
@@ -116,7 +122,7 @@ collections 里 tuple 的深拷贝由 _deepcopy_tuple 处理，会先复制元�
 | 持有 _thread.lock / 文件句柄 | reduce 需 pickle 状态 | TypeError: cannot pickle '_thread.lock' object |
 | lambda / 局部函数 / 生成器 | reduce 找不到可引用名 | AttributeError 或 PicklingError |
 
-<Callout type="tip" title='核心心智模型' text='赋值 a = b 不复制任何东西，只让两个名字引用同一个对象，id(a) == id(b)。copy.copy(x) 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list/dict/set 分别走 _copy_list / _copy_dict 等快捷路径，等价于 x[:] 或 dic' />
+<Callout type="tip" title='核心心智模型' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等' />
 
 
 ### 循环图里同一节点为何仍是同一个对象
@@ -141,32 +147,38 @@ print('tuple copy reused', copy.copy(t) is t)
 
 ## _copy_dispatch 与先登记再递归
 
-copy 模块的核心是两张分发表 _copy_dispatch 与 _deepcopy_dispatch，键是类型对象，值是对应复制函数。deepcopy 先查 _deepcopy_dispatch，命中就直接调用；
+copy 模块的核心是两张分发表 `_copy_dispatch` 与 `_deepcopy_dispatch`，键是类型对象，值是对应的复制函数。
 
-否则按序尝试：类型在 dispatch_table 中登记、对象有 `__deepcopy__`、对象支持 `__reduce_ex__`。memo 是一个普通 dict，键为 `id(x)`，值为已生成的副本；每处理一个对象先查 memo，命中直接返回，未命中就建空壳、立刻登记、再递归字段。
+deepcopy 先查 `_deepcopy_dispatch`，命中就直接调用；
 
-这套「先登记再递归」正是循环图不死循环、且同一对象在结果中仍唯一的原因。
+否则按序尝试：类型在 `copyreg.dispatch_table` 中登记、对象有 `__deepcopy__`、对象支持 `__reduce_ex__`。
+
+`memo` 是一个普通 dict，键为 `id(x)`，值为已生成的副本；每处理一个对象先查 memo，命中直接返回，未命中就建空壳、立刻登记、再递归字段——这套「先登记再递归」正是循环图不死循环、且同一对象在结果中仍唯一的原因。
 
 reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstate__` 返回的状态做深拷贝，最后用 `__setstate__` 或更新 `__dict__` 恢复；
 
-这也解释了为何不可 pickle 的底层资源（锁、文件、连接）会让 deepcopy 失败。小整数 -5..256 与驻留字符串本就被解释器复用，_deepcopy_atomic 再叠一层「不可变即复用」，所以深拷贝这类值时对象身份不变。
+这也解释了为何不可 pickle 的底层资源（锁、文件、连接）会让深拷贝失败。
 
-tracemalloc 能测出浅拷贝只分配一个外层列表，深拷贝还会为每个内层容器额外分配，差额与容器数量成正比。
+小整数 -5..256 与驻留字符串本就被解释器复用，`_deepcopy_atomic` 再叠一层「不可变即复用」，所以深拷贝这类值时对象身份不变。
 
-<Term word='赋值 / 浅拷贝 / 深拷贝' text='赋值 a = b 不复制任何东西，只让两个名字引用同一个对象，id(a) == id(b)。copy.copy(x) 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list/dict/set 分别走 _copy_list / _copy_dict 等快捷路径，等价于 x[:] 或 dict(x)；因此改外层' />
+`tracemalloc` 能测出浅拷贝只分配一个外层列表，深拷贝还会为每个内层容器额外分配，差额与容器数量成正比。
 
-<Term word='copy 与 deepcopy 协议' text='自定义类可定义 __copy__(self) 与 __deepcopy__(self, memo) 完全接管行为；未定义时 copy 模块回退到 copyreg.dispatch_table 与 __reduce_ex__(4)：先用 __new__ 建空实例，再递归复制 __dict__ 或 __slots__。因此' />
+<Term word='赋值 / 浅拷贝 / 深拷贝' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等价于 `x[:]` ' />
+
+<Term word='copy 与 deepcopy 协议' text='自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。因此一个持有' />
 
 
 ## 接口边界的所有权：防御性拷贝与不可变替代
 
-值语义 vs 引用语义的 bug 大多发生在边界：构造参数直接存了外部传来的 list、getter 返回内部可变结构、缓存里放了可被调用方改动的对象。三种对策按成本递增：一是文档写明所有权（调用方不得修改），最省但最不可靠；
+值语义与引用语义的 bug 大多发生在边界：构造参数直接存了外部传来的 list、getter 返回内部可变结构、缓存里放了可被调用方改动的对象。三种对策按成本递增：一是文档写明所有权（调用方不得修改），最省但最不可靠；
 
-二是返回副本或只读视图（`list(self._items)`、`tuple(...)`、MappingProxyType），读取频繁时每次复制有开销；
+二是返回副本或只读视图，例如 `list(self._items)`、`tuple(...)` 或 `types.MappingProxyType`，读取频繁时每次复制有开销；
 
-三是把内部状态整体换成不可变结构（tuple、frozenset、具名元组、不可变 `dataclass(frozen=True)`），从根上消除共享写。
+三是把内部状态整体换成不可变结构（tuple、frozenset、具名元组、`dataclass(frozen=True)`），从根上消除共享写。
 
-性能敏感路径可让 deepcopy 只作用于真正需要隔离的层级，或用「写时复制」：平时共享，修改时才复制。还要注意 list 乘法陷阱：[[0] * 3] * 3 得到三个指向同一内层 list 的引用，改一行会连改三行，正确写法是 [[0] * 3 for _ in `range(3)`]。
+性能敏感路径可以让深拷贝只作用于真正需要隔离的层级，或用「写时复制」：平时共享，修改时才复制。还有一个 list 乘法陷阱：`[[0] * 3] * 3` 得到三个指向同一内层列表的引用，改一行会连改三行；
+
+正确做法是逐行新建，写成 `[[0] * 3 for _ in range(3)]`。
 
 判断有没有共享，直接比较子对象身份比读代码更可靠。
 
@@ -183,9 +195,11 @@ tracemalloc 能测出浅拷贝只分配一个外层列表，深拷贝还会为�
 
 ## 请求配置对象：构造、读取、返回三层的所有权控制
 
-一个 Web 服务的过滤配置从配置中心拿到嵌套 dict，构造时被存进 RequestConfig，getter 既要供内部读取又要暴露给多个中间件。若构造时直接存外部引用，配置中心后续刷新会穿透进来；若 getter 返回内部 dict，某个中间件一改就污染全链路；
+一个 Web 服务的过滤配置从配置中心拿到嵌套 dict，构造时被存进 `RequestConfig`，getter 既要供内部读取又要暴露给多个中间件。若构造时直接存外部引用，配置中心后续刷新会穿透进来；若 getter 返回内部 dict，某个中间件一改就污染全链路；
 
-若每次 getter 都 deepcopy，热点路径的分配量又扛不住。下面的实现分三层：构造时做一次深拷贝取得所有权，内部读用 MappingProxyType 只读视图，对外导出才做一次可预测的深拷贝，并提供把整份配置冻结成 tuple 的入口用于缓存键。
+若每次 getter 都做深拷贝，热点路径的分配量又扛不住。
+
+下面的实现分三层：构造时做一次深拷贝取得所有权，内部读用 `types.MappingProxyType` 只读视图，对外导出才做一次可预测的深拷贝，并提供把整份配置冻结成 tuple 的入口用于缓存键。
 
 这样每个边界的共享范围都是显式的，排查串数据时只要看是哪一个边界返回了可变引用。
 
@@ -230,7 +244,7 @@ if __name__ == '__main__':
 python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **赋值 / 浅拷贝 / 深拷贝** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 赋值 / 浅拷贝 / 深拷贝 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 错因速查与排查顺序
@@ -260,11 +274,11 @@ python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 
 <Quiz no='057-3' q='关于不可变对象与 copy，正确的是？' :options='["deepcopy 大整数、字符串、只含不可变元素的 tuple 往往直接返回原对象", "deepcopy 一定为任何对象分配新内存", "copy.copy(tuple) 总是新建 tuple", "MappingProxyType 会连同底层 dict 一起复制"]' answer="0" explain='_deepcopy_atomic 把不可变原子类型映射为恒等；copy.copy 对 tuple 也走 _copy_immutable 返回自身。MappingProxyType 只是视图，底层 dict 仍在原引用手里。' />
 
-<Predict no='057-P' q='t = (1, 2, 3); copy.copy(t) is t 与 copy.deepcopy(10 ** 40) is 原整数，结果分别是？' :options='["True 与 True，两者都复用原对象", "False 与 False，都新建", "True 与 False", "False 与 True"]' answer='0' output='True True' explain='tuple 不可变，_copy_immutable 让 copy.copy 直接返回自身；大整数是原子不可变类型，_deepcopy_atomic 同理。是否「复用」取决于类型是否可变，而非对象大小。' />
+<Predict no='057-4' q='t = (1, 2, 3); copy.copy(t) is t 与 copy.deepcopy(10 ** 40) is 原整数，结果分别是？' :options='["True 与 True，两者都复用原对象", "False 与 False，都新建", "True 与 False", "False 与 True"]' answer='0' output='True True' explain='tuple 不可变，_copy_immutable 让 copy.copy 直接返回自身；大整数是原子不可变类型，_deepcopy_atomic 同理。是否「复用」取决于类型是否可变，而非对象大小。' />
 
-<FillBlank no='057-F' tpl='___ copy' :answers='["import"]' hint='回想本讲关于 赋值 / 浅拷贝 / 深拷贝 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三种复制层次的共享边界 的落点。' />
+<FillBlank no='057-5' tpl='___ copy' :answers='["import"]' hint='回想本讲关于 赋值 / 浅拷贝 / 深拷贝 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三种复制层次的共享边界 的落点。' />
 
-<KnowledgeCard :points='["赋值只加引用；copy.copy 新建最外层、内层仍共享；copy.deepcopy 递归复制并靠 memo 保留 aliasing", "memo 按 id 映射，实现 __deepcopy__ 必须「建空壳 → 登记 memo → 再递归字段」，否则循环引用会炸", "deepcopy 回退路径是 __reduce_ex__(4) + copyreg，遇到锁/文件/连接会抛 cannot pickle 的 TypeError", "不可变原子对象（int/str/bytes/None/函数）与只含不可变元素的 tuple 通常被直接复用，不分配内存", "接口边界要明确所有权：返回副本、MappingProxyType 只读视图、或整体换成 tuple / frozen dataclass", "[[0]*3]*3 共享同一个内层列表；用列表推导生成独立行；tracemalloc 可量化浅/深拷贝的分配差额"]' :pitfalls='["[[0] * 3] * 3 改了一行，三行全变", "用 copy.copy 包一层就以为隔离了嵌套配置", "deepcopy 一个持有锁或数据库连接的对象报 TypeError", "把内部可变结构直接返回给调用方，对方一改就等于改了你的私有状态"]' summary='浅拷贝只复制最外层容器，内部对象仍共享；深拷贝递归复制并维护记忆表以处理循环引用' />
+<KnowledgeCard :points='["赋值只加引用；copy.copy 新建最外层、内层仍共享；copy.deepcopy 递归复制并靠 memo 保留 aliasing", "memo 按 id 映射，实现 __deepcopy__ 必须「建空壳 → 登记 memo → 再递归字段」，否则循环引用会炸", "deepcopy 回退路径是 __reduce_ex__(4) + copyreg，遇到锁/文件/连接会抛 cannot pickle 的 TypeError", "不可变原子对象（int/str/bytes/None/函数）与只含不可变元素的 tuple 通常直接复用，不分配内存", "接口边界要明确所有权：返回副本、MappingProxyType 只读视图，或整体换成 tuple / 冻结 dataclass", "[[0]*3]*3 共享同一个内层列表；用列表推导逐行生成独立行；tracemalloc 可量化浅/深拷贝的分配差额"]' :pitfalls='["[[0] * 3] * 3 改了一行，三行全变", "用 copy.copy 包一层就以为隔离了嵌套配置", "deepcopy 一个持有锁或数据库连接的对象报 TypeError", "把内部可变结构直接返回给调用方，对方一改就等于改了你的私有状态"]' summary='浅拷贝只复制最外层容器，内部对象仍共享；深拷贝递归复制并维护记忆表以处理循环引用' />
 
 **速记索引**
 
@@ -273,9 +287,9 @@ python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 | 赋值只加引用；copy.copy 新建最外层、内层仍共享；copy.deepcopy 递归复制并靠 memo 保留 aliasing | 建立直觉 |
 | memo 按 id 映射，实现 __deepcopy__ 必须「建空壳 → 登记 memo → 再递归字段」，否则循环引用会炸 | 跑通示例 |
 | deepcopy 回退路径是 __reduce_ex__(4) + copyreg，遇到锁/文件/连接会抛 cannot pickle 的 TypeError | 深入边界 |
-| 不可变原子对象（int/str/bytes/None/函数）与只含不可变元素的 tuple 通常被直接复用，不分配内存 | 工程落地 |
-| 接口边界要明确所有权：返回副本、MappingProxyType 只读视图、或整体换成 tuple / frozen dataclass | 随堂检测 |
-| [[0]*3]*3 共享同一个内层列表；用列表推导生成独立行；tracemalloc 可量化浅/深拷贝的分配差额 | 复盘 |
+| 不可变原子对象（int/str/bytes/None/函数）与只含不可变元素的 tuple 通常直接复用，不分配内存 | 工程落地 |
+| 接口边界要明确所有权：返回副本、MappingProxyType 只读视图，或整体换成 tuple / 冻结 dataclass | 随堂检测 |
+| [[0]*3]*3 共享同一个内层列表；用列表推导逐行生成独立行；tracemalloc 可量化浅/深拷贝的分配差额 | 复盘 |
 
 1. 赋值只加引用；copy.copy 新建最外层、内层仍共享；copy.deepcopy 递归复制并靠 memo 保留 aliasing
 

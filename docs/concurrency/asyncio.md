@@ -9,18 +9,18 @@ description: 掌握任务生命周期与取消语义
 
 单个协程能跑对之后，真实服务里往往是一批任务一起上，要理清的是谁被调度、结果怎么收、取消时谁来收尾。一个对账脚本起了几十个子任务，计数总比预期少几条，日志却干净，换台机器又正常，这种时灵时不灵最磨人。
 
-从 asyncio 的事件循环、Task、Future 分工起步，走到 create_task 与 gather 怎样组织并发，再看 Future 状态与取消语义，末了用 TaskGroup 收成结构化并发。前置是 async/await、协程对象与 gather；学完能掌握任务生命周期，把超时、失败策略与清理逻辑写进 finally，让并发关得干净。
+从 asyncio 的事件循环、`Task`、`Future` 三者的分工起步，走到 `asyncio.create_task` 与 `asyncio.gather` 怎样组织并发，再看 `Future` 的状态与取消语义，末了用 `TaskGroup` 收成结构化并发。前置是 async/await、协程对象与 gather；学完能掌握任务生命周期，把超时、失败策略与清理逻辑写进 `finally`，让并发关得干净。
 
 
 ## 压测里莫名少了几条计数，日志却没有任何异常
 
 一个对账服务用 `asyncio.create_task` 起了几十个子任务拉数据，压测时发现计数总比预期少几条，日志里却没有任何异常；
 
-换一台机器又正常。排查两周才定位到两件事：事件循环对 Task 只持弱引用，没被变量持有的任务会在执行途中被 GC 回收；
+换一台机器又正常。排查两周才定位到两件事：事件循环对 `Task` 只持弱引用，没被变量持有的任务会在执行途中被 GC 回收；
 
-另一个协程里写 try: ... except Exception: 想把收尾逻辑兜住，结果取消时清理代码根本没跑——因为 3.8 起 `asyncio.CancelledError` 已改成 BaseException 子类，except Exception 捕获不到它。
+另一个协程里用 `except Exception` 想把收尾逻辑兜住，结果取消时清理代码根本没跑——因为 3.8 起 `asyncio.CancelledError` 已改成 `BaseException` 子类，except Exception 捕获不到它。
 
-有人以为调用 `task.cancel()` 是「强杀线程」，实际它只是请求在下一个 await 点抛 CancelledError。这些都不是语法细节，而是 Task、Future、事件循环三者分工与取消语义没对齐。本讲把任务生命周期、Future 状态机与结构化并发讲到能推导线上行为。
+有人以为调用 `task.cancel()` 是「强杀线程」，实际它只是请求在下一个 `await` 点抛 CancelledError。这些都不是语法细节，而是 `Task`、`Future`、事件循环三者分工与取消语义没对齐。本讲把任务生命周期、`Future` 状态机与结构化并发讲到能推导线上行为。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='裸 asyncio.create_task(...) 不保存引用：事件循环只弱引用 Task，任务可能执行途中被 GC 回收，异常也无人读取' />
 
@@ -38,37 +38,35 @@ description: 掌握任务生命周期与取消语义
 
 ## 事件循环是单线程反应器：就绪队列、定时堆与 selector
 
-`asyncio.Future` 表示一个「还没填值的结果」，状态由 PENDING 走到 FINISHED 或 CANCELLED：`done()` 判断是否结束、`cancelled()` 判断是否被取消、`result()` 在已取消时抛 CancelledError、设置了异常则抛该异常、`exception()` 返回异常对象。
+`asyncio.Future` 表示一个「还没填值的结果」，状态由 `PENDING` 走到 `FINISHED` 或 `CANCELLED`：`done()` 判断是否结束、`cancelled()` 判断是否被取消、`result()` 在已取消时抛 CancelledError、设置了异常则抛该异常、`exception()` 返回异常对象。
 
-标准写法是 `loop.create_future()`，不要直接 `asyncio.Future()`（后者需要显式绑定 loop）。
+标准写法是 `loop.create_future()`，不要直接构造 `asyncio.Future()`（后者需要显式绑定 loop）。
 
 `add_done_callback(cb)` 在状态落定时回调，回调经 `loop.call_soon` 调度。
 
-`asyncio.Task` 是 Future 的子类（`issubclass(asyncio.Task, asyncio.Future)` 为 True），它额外持有要驱动的协程：`asyncio.create_task(coro, name=None)`（3.7+）把协程包装成 Task 并用 call_soon 排进就绪队列，要求当前线程有运行中的 loop；
+`asyncio.Task` 是 `Future` 的子类，它额外持有要驱动的协程：`asyncio.create_task(coro)`（3.7 起）把协程包装成 `Task` 并用 `call_soon` 排进就绪队列，要求当前线程有运行中的 loop，可传 `name` 给任务命名，`Task.get_name` 与 `set_name` 是 3.8 起才有。
 
-`Task.get_name`/set_name 是 3.8+。
+`loop.call_soon(cb, *args)` 按 `FIFO` 排入就绪队列，`loop.call_later(delay, cb)` 返回 `TimerHandle`，它的 `cancel()` 只返回 None、并不报告是否取消成功，要判断状态得读 `cancelled()`（3.7 起）——这与 `Future.cancel()` 返回布尔值不同。
 
-`loop.call_soon(cb, *args)` 按 FIFO 排入就绪队列，`loop.call_later(delay, cb)` 返回 TimerHandle，其 `cancel()` 在 3.13 返回 None、要用 `cancelled()` 读状态。
+事件循环对 `Task` 只保留弱引用，官方文档明确要求调用方自己保存强引用（例如一个 set），否则任务可能被中途回收。
 
-事件循环对 Task 只保留弱引用，官方文档明确要求调用方自己保存强引用（例如一个 set），否则任务可能被中途回收。
-
-<Callout type="tip" title='核心心智模型' text='asyncio.Future 表示一个「还没填值的结果」，状态由 PENDING 走到 FINISHED 或 CANCELLED：done() 判断是否结束、cancelled() 判断是否被取消、result() 在已取消时抛 CancelledError、设置了异常则抛该异常、exception' />
+<Callout type="tip" title='核心心智模型' text='`asyncio.Future` 表示一个「还没填值的结果」，状态由 `PENDING` 走到 `FINISHED` 或 `CANCELLED`：`done()` 判断是否结束、`cancelled()` 判断是否被取消、`result()` 在已取消时抛 CancelledError、设置了异常则' />
 
 <ConceptDiagram type='compare2' title='第 069 讲 · Task 是调度单位，Future 是结果占位符' labels='Task 是调度单位，Future 是结果占|取消是协作式的：在下一个 await 点抛 |结构化并发：TaskGroup 与异常组' caption='掌握任务生命周期与取消语义' />
 
 这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-事件循环本质是单线程反应器：一个就绪队列（deque 的 Handle）、一个按到期时间组织的小根堆（TimerHandle）、以及 select/epoll/kqueue 的 IO 多路复用。
+事件循环本质是单线程反应器：一个就绪队列（deque 的 `Handle`）、一个按到期时间组织的小根堆（`TimerHandle`）、以及 select/epoll/kqueue 的 IO 多路复用。
 
-`loop._run_once` 先用最近定时器算出 select 的超时，取就绪 fd 把对应回调 call_soon 入队，再把到期定时器移入就绪队列，最后逐个执行 Handle 的 _run。
+`loop._run_once` 先用最近定时器算出 select 的超时，取就绪 fd 把对应回调 `call_soon` 入队，再把到期定时器移入就绪队列，最后逐个执行 `Handle._run`。
 
-`Task.__step` 调用 `coro.send(None)`：协程 yield 出 None 就重新入队、yield 出未完成 Future 就给它挂 done 回调、Future 完成则把结果 send 回去；
+`Task.__step` 调用 `coro.send(None)`：协程 yield 出 None 就重新入队、yield 出未完成 `Future` 就给它挂 done 回调、`Future` 完成则把结果 send 回去；
 
-`asyncio.sleep` 正是 call_later 加一个 Future。
+`asyncio.sleep` 正是 `call_later` 加一个 `Future`。
 
-`cancel()` 设置 _must_cancel，下一次 __step 改为 `throw(CancelledError)` 而非 `send(None)`，所以取消点必然落在 await。
+`cancel()` 设置 `_must_cancel`，下一次 `__step` 改为 `throw(CancelledError)` 而非 `send(None)`，所以取消点必然落在 `await`。
 
-3.11 的 TaskGroup 在 _on_task_done 里一旦见到异常就 abort 其余任务并把异常装进 ExceptionGroup，保证离开作用域时没有游离任务。
+3.11 的 `TaskGroup` 在 `_on_task_done` 里一旦见到异常就中止其余任务并把异常装进 `ExceptionGroup`，保证离开作用域时没有游离任务。
 
 
 ## Task 是调度单位，Future 只是结果占位符
@@ -86,9 +84,9 @@ description: 掌握任务生命周期与取消语义
 | loop.call_later(delay, cb) | TimerHandle | cancel() 在 3.13 返回 None，读状态用 cancelled() |
 | Task.get_name() / set_name() | 3.8+ | 给任务命名便于日志定位 |
 
-<Term word='loop 与策略' text='asyncio.Future 表示一个「还没填值的结果」，状态由 PENDING 走到 FINISHED 或 CANCELLED：done() 判断是否结束、cancelled() 判断是否被取消、result() 在已取消时抛 CancelledError、设置了异常则抛该异常、exception() 返回异常对象。' />
+<Term word='loop 与策略' text='`asyncio.Future` 表示一个「还没填值的结果」，状态由 `PENDING` 走到 `FINISHED` 或 `CANCELLED`：`done()` 判断是否结束、`cancelled()` 判断是否被取消、`result()` 在已取消时抛 CancelledError、设置了异常则抛该异常、`exce' />
 
-<Term word='create_task 与 gather' text='task.cancel() 并不中断线程，只是把 Task 标成「待取消」；当下一次 Task.__step 驱动协程时，不再 send(None) 而是在当前 await 点 throw(asyncio.CancelledError)。自 3.8 起 CancelledError 继承 BaseException（_' />
+<Term word='create_task 与 gather' text='`task.cancel()` 并不中断线程，只是把 `Task` 标成「待取消」；当下一次 `Task.__step` 驱动协程时，不再 `send(None)` 而是在当前 `await` 点 `throw(asyncio.CancelledError)`。自 3.8 起 `asyncio.CancelledErr' />
 
 
 ## create_task、gather 与 call_soon 的原语对照
@@ -130,7 +128,7 @@ asyncio.run(main())
 
 <OutputBox title='主示例运行结果' output='initial False False\nafter set_result True ready\nslow got CancelledError\nslow finally cleanup\nawait t raised CancelledError' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import asyncio\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    fut = loop.create_future()\n    print(&#39;initial&#39;, fut.done(), fut.cancelled())\n\n    def finish():\n        fut.set_result(&#39;ready&#39;)\n\n    loop.call_soon(finish)\n    await fut\n    print(&#39;after set_result&#39;, fut.done(), fut.result())\n\n    async def slow():\n        try:\n            await asyncio.sleep(10)\n        except asyncio.CancelledError:\n            print(&#39;slow got CancelledError&#39;)\n            raise\n        finally:\n            print(&#39;slow finally cleanup&#39;)\n\n    t = asyncio.create_task(slow())\n    await asyncio.sleep(0)\n    t.cancel()\n    try:\n        await t\n    except asyncio.CancelledError:\n        print(&#39;await t raised CancelledError&#39;)\n\nasyncio.run(main())' :notes='["导入 asyncio 以使用事件循环、Future 与 Task", "定义入口协程，asyncio.run 会驱动它", "get_running_loop 取当前运行中的 loop", "loop.create_future 创建 PENDING 状态的 Future", "初始 done 与 cancelled 均为 False", "定义回调，用于给 Future 填结果", "set_result 把 Future 推进到 FINISHED", "call_soon 把回调排进就绪队列，下一轮执行", "await fut 挂起 main，直到回调填值后恢复", "恢复后 done 为 True，result 取回 ready", "定义会被取消的慢任务", "await 点是取消注入的位置", "显式捕获 CancelledError，因它是 BaseException 子类", "打印证据后重新抛出，保持取消语义", "finally 放清理逻辑，取消时也会执行", "create_task 把 slow 包装成 Task 并调度", "sleep(0) 让 slow 运行到它的 await 点", "cancel 只请求取消，在下一 await 点抛异常", "await 已取消的 Task 同样抛 CancelledError", "在调用方接住，避免异常冒出 asyncio.run", "统一入口：建 loop、跑 main、收尾关闭", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用"]' title='第 069 讲 · asyncio 深入：Task、Future 与事件循环' />
+<LineByLine code='import asyncio\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    fut = loop.create_future()\n    print(&#39;initial&#39;, fut.done(), fut.cancelled())\n\n    def finish():\n        fut.set_result(&#39;ready&#39;)\n\n    loop.call_soon(finish)\n    await fut\n    print(&#39;after set_result&#39;, fut.done(), fut.result())\n\n    async def slow():\n        try:\n            await asyncio.sleep(10)\n        except asyncio.CancelledError:\n            print(&#39;slow got CancelledError&#39;)\n            raise\n        finally:\n            print(&#39;slow finally cleanup&#39;)\n\n    t = asyncio.create_task(slow())\n    await asyncio.sleep(0)\n    t.cancel()\n    try:\n        await t\n    except asyncio.CancelledError:\n        print(&#39;await t raised CancelledError&#39;)\n\nasyncio.run(main())' :notes='["导入 asyncio 以使用事件循环、Future 与 Task", "定义入口协程，asyncio.run 会驱动它", "get_running_loop 取当前运行中的 loop", "loop.create_future 创建 PENDING 状态的 Future", "初始 done 与 cancelled 均为 False", "定义回调，用于给 Future 填结果", "set_result 把 Future 推进到 FINISHED", "call_soon 把回调排进就绪队列，下一轮执行", "await fut 挂起 main，直到回调填值后恢复", "恢复后 done 为 True，result 取回 ready", "定义会被取消的慢任务", "await 点是取消注入的位置", "显式捕获 CancelledError，因它是 BaseException 子类", "打印证据后重新抛出，保持取消语义", "finally 放清理逻辑，取消时也会执行", "create_task 把 slow 包装成 Task 并调度", "sleep(0) 让 slow 运行到它的 await 点", "cancel 只请求取消，在下一 await 点抛异常", "await 已取消的 Task 同样抛 CancelledError", "在调用方接住，避免异常冒出 asyncio.run", "统一入口：建 loop、跑 main、收尾关闭", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用"]' title='第 069 讲 · asyncio 深入：Task、Future 与事件循环' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -185,22 +183,22 @@ loop.close()
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **loop 与策略** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 loop 与策略 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 取消是协作式的：CancelledError 与 finally 清理
 
-`task.cancel()` 并不中断线程，只是把 Task 标成「待取消」；
+`task.cancel()` 并不中断线程，只是把 `Task` 标成「待取消」；
 
-当下一次 `Task.__step` 驱动协程时，不再 `send(None)` 而是在当前 await 点 `throw(asyncio.CancelledError)`。
+当下一次 `Task.__step` 驱动协程时，不再 `send(None)` 而是在当前 `await` 点 `throw(asyncio.CancelledError)`。
 
-自 3.8 起 CancelledError 继承 BaseException（`__mro__` 为 CancelledError → BaseException → object），因此 except Exception 完全捕获不到它，清理逻辑必须放在 finally 或用 except `asyncio.CancelledError` 显式接住后再 raise。
+自 3.8 起 `asyncio.CancelledError` 继承 `BaseException`（其 `__mro__` 是 CancelledError → BaseException → object），因此 except Exception 完全捕获不到它，清理逻辑必须放在 `finally`，或用 except `asyncio.CancelledError` 显式接住后再 raise。
 
-清理段里若又 await，可能被二次取消，敏感收尾可用 `asyncio.shield(aw)` 屏蔽外层取消。
+清理段里若又 `await`，可能被二次取消，敏感收尾可用 `asyncio.shield(aw)` 屏蔽外层取消。
 
-`asyncio.wait_for(aw, timeout)` 超时会取消内层并抛 TimeoutError（3.11 起 `asyncio.TimeoutError` 就是内置 TimeoutError），3.11+ 还有 `asyncio.timeout` 上下文管理器与 `Task.uncancel()`。
+`asyncio.wait_for` 超时会取消内层并抛 TimeoutError（3.11 起 `asyncio.TimeoutError` 就是内置 `TimeoutError`），3.11 起还有 `asyncio.timeout` 上下文管理器与 `Task.uncancel()`。
 
-要警惕「吞掉取消」：若在协程里接住 CancelledError 却不重新抛出，Task 会以为正常完成，finally 之后的收尾与上层取消协议全部失效。
+要警惕「吞掉取消」：若在协程里接住 CancelledError 却不重新抛出，`Task` 会以为正常完成，`finally` 之后的收尾与上层取消协议全部失效。
 
 
 ## 取消语义从 3.7 到 3.11 的版本差异
@@ -216,7 +214,7 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 | 3.11 Task.uncancel() | 撤销取消计数 | 结构化并发里恢复被屏蔽的任务 |
 | 裸 create_task 无强引用 | 事件循环只弱引用 Task | 用 set 或 TaskGroup 持有引用 |
 
-<FlowTimeline :steps='[{"title": "Task 是调度单位，Future 是结果占位符", "desc": "asyncio.Future 表示一个「还没填值的结果」，状态由 PENDING 走…", "tone": "blue"}, {"title": "取消是协作式的：在下一个 await 点抛 CancelledError", "desc": "task.cancel() 并不中断线程，只是把 Task 标成「待取消」；当下一次…", "tone": "purple"}, {"title": "结构化并发：TaskGroup 与异常组", "desc": "asyncio.gather(*aws) 并发收集结果，默认 return_exce…", "tone": "orange"}, {"title": "工程落地", "desc": "可观测的任务生命周期：命名、取消与清理确认", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "Task 是调度单位，Future 是结果占位符", "desc": "`asyncio.Future` 表示一个「还没填值的结果」，状态由 `PENDIN…", "tone": "blue"}, {"title": "取消是协作式的：在下一个 await 点抛 CancelledError", "desc": "`task.cancel()` 并不中断线程，只是把 `Task` 标成「待取消」；…", "tone": "purple"}, {"title": "结构化并发：TaskGroup 与异常组", "desc": "`asyncio.gather(*aws)` 并发收集结果，默认 `return_e…", "tone": "orange"}, {"title": "工程落地", "desc": "可观测的任务生命周期：命名、取消与清理确认", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 结构化并发：TaskGroup 与异常组
@@ -225,11 +223,11 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 
 `return_exceptions=True` 则把异常当普通结果返回。
 
-3.11 的 `asyncio.TaskGroup`（PEP 654）提供结构化并发：async with `asyncio.TaskGroup()` as tg: 里用 `tg.create_task(coro)` 建任务，任意子任务失败时组内其余任务被取消，退出时统一抛 ExceptionGroup（含 BaseException 时为 BaseExceptionGroup），必须用 except* ValueError 这类语法按类型拆组处理。
+3.11 的 `asyncio.TaskGroup`（配合 PEP 654 的异常组）提供结构化并发：把它作为异步上下文管理器，块内用 `tg.create_task(coro)` 建任务，任意子任务失败时组内其余任务被取消，退出时统一抛 `ExceptionGroup`（含 BaseException 时为 `BaseExceptionGroup`），必须用 except* 按类型拆组处理。
 
-实测单个 ValueError 会包装成含 1 个异常的 ExceptionGroup，已完成的任务 `done()` 为 True、失败任务 `cancelled()` 为 False（它是异常结束而非被取消）。这保证离开 async with 时所有子任务都已收尾，不会出现「异常已上报、后台任务还在写库」的竞态。
+实测单个 ValueError 会包装成含 1 个异常的 `ExceptionGroup`，已完成的任务 `done()` 为 True、失败任务 `cancelled()` 为 False（它是异常结束而非被取消）。这保证离开这个上下文时所有子任务都已收尾，不会出现「异常已上报、后台任务还在写库」的竞态。
 
-`asyncio.timeout` 与 TaskGroup 组合还能同时约束时间与生命周期。
+`asyncio.timeout` 与 `TaskGroup` 组合还能同时约束时间与生命周期。
 
 **gather 与 TaskGroup 对照**
 
@@ -246,9 +244,9 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 
 批量任务最怕两种静默失败：任务被 GC 中途蒸发，或取消时锁没释放、临时文件没删。
 
-可靠的封装要把三件事做实：给每个 Task 命名以便日志定位、把清理逻辑放进 finally 保证取消也执行、用 `return_exceptions=True` 的 gather 一次性收集所有结果类型，确认没有任务悬空。
+可靠的封装要把三件事做实：用 `create_task(name=...)` 给每个 `Task` 命名以便日志定位、把清理逻辑放进 `finally` 保证取消也执行、用 `return_exceptions=True` 的 `asyncio.gather` 一次性收集所有结果类型，确认没有任务悬空。
 
-下面片段起三个带名字的任务，启动后立刻全部取消，打印结果类型、清理日志条数与任务名，用来验证「取消发生在 await 点、finally 一定执行、任务全部收尾」这三条契约。真实系统还会加超时与指标上报。
+下面片段起三个带名字的任务，启动后立刻全部取消，打印结果类型、清理日志条数与任务名，用来验证「取消发生在 `await` 点、`finally` 一定执行、任务全部收尾」这三条契约。真实系统还会加超时与指标上报。
 
 ```python
 import asyncio
@@ -298,21 +296,21 @@ if __name__ == '__main__':
 
 ## Task.__step 的恢复点与 _fut_waiter 挂起链
 
-Task 的恢复点在 CPython 里有两套实现：纯 Python 回退在 Lib/asyncio/`tasks.py` 的 `Task.__step`，默认启用的是扩展模块 Modules/`_asynciomodule.c` 里的 task_step_impl（import asyncio 时若 _asyncio 可用，Python 版 Task 会被 C 版替换）。
+Task 的恢复点在 CPython 里有两套实现：纯 Python 回退在 `Lib/asyncio/tasks.py` 的 `Task.__step`，默认启用的是扩展模块 `Modules/_asynciomodule.c` 里的 `task_step_impl`（`import asyncio` 时若 `_asyncio` 可用，Python 版 `Task` 会被 C 版替换）。
 
-两者字段一致：_coro 是被驱动的协程，_fut_waiter 指向当前 await 挂起所等的 Future，_must_cancel 是取消请求标志，_context 是 `contextvars.Context` 的快照。
+两者字段一致：`_coro` 是被驱动的协程，`_fut_waiter` 指向当前 await 挂起所等的 Future，`_must_cancel` 是取消请求标志，`_context` 是 `contextvars.Context` 的快照。
 
-__step 里执行 `coro.send(None)`；
+`__step` 里执行 `coro.send(None)`；
 
-若协程 yield 出一个未完成的 Future，Task 把它写进 _fut_waiter 并给它 `add_done_callback(self.__wakeup)`，随后自己退出、不再进入就绪队列，这就是挂起的全部含义。
+若协程 yield 出一个未完成的 Future，`Task` 把它写进 `_fut_waiter` 并给它挂 `add_done_callback(self.__wakeup)`，随后自己退出、不再进入就绪队列，这就是挂起的全部含义。
 
-__wakeup 被回调时先读一次 `fut.result()`（连异常一并取走，避免日志刷出 Future exception was never retrieved），清空 _fut_waiter，再用 `loop.call_soon(self.__step)` 把任务重新排入 _ready。
+`__wakeup` 被回调时先读一次 `fut.result()`（连异常一并取走，避免日志刷出 Future exception was never retrieved），清空 `_fut_waiter`，再用 `loop.call_soon(self.__step)` 把任务重新排入 `_ready`。
 
-于是一次 await 至少跨越两次事件循环迭代：__step 发 send、协程 yield Future、__wakeup 取结果、call_soon 再排 __step。
+于是一次 await 至少跨越两次事件循环迭代：`__step` 发 send、协程 yield Future、`__wakeup` 取结果、`call_soon` 再排 `__step`。
 
-`asyncio.sleep(0)` 内部的 __sleep0 是 yield None 的特例，Task 直接重新入队、不经过 _fut_waiter，少一次 Future 分配。
+`asyncio.sleep(0)` 内部的 `__sleep0` 是 `yield None` 的特例，`Task` 直接重新入队、不经过 `_fut_waiter`，少一次 Future 分配。
 
-create_task 本身也只是 call_soon 排入首跳 __step，所以「创建即运行」从来不成立。这条源码链把正文的 Task 状态机落到具体函数与字段上。
+`create_task` 本身也只是 `call_soon` 排入首跳 `__step`，所以「创建即运行」从来不成立。这条源码链把正文的 Task 状态机落到具体函数与字段上。
 
 ```python
 import collections
@@ -414,24 +412,24 @@ for line in loop.log:
 
 <OutputBox title='扩展示例运行结果' output='task result 84\nworker step 1\nyield Future -&gt; wait __wakeup\n__wakeup: result 42\nworker step 2 got 42' />
 
-<LineByLine code='import collections\n\nclass MiniFuture:\n    def __init__(self, loop):\n        self.loop = loop\n        self._done = False\n        self._result = None\n        self._callbacks = []\n    def done(self):\n        return self._done\n    def set_result(self, v):\n        self._done = True\n        self._result = v\n        for cb in self._callbacks:\n            self.loop.ready.append((cb, self))\n        self._callbacks.clear()\n    def add_done_callback(self, cb):\n        if self._done:\n            self.loop.ready.append((cb, self))\n        else:\n            self._callbacks.append(cb)\n    def result(self):\n        return self._result\n    def __await__(self):\n        if not self._done:\n            yield self\n        return self._result\n        yield\n\nclass MiniLoop:\n    def __init__(self):\n        self.ready = collections.deque()\n        self.log = []\n    def call_soon(self, cb, arg=None):\n        self.ready.append((cb, arg))\n    def create_future(self):\n        return MiniFuture(self)\n    def run(self):\n        while self.ready:\n            cb, arg = self.ready.popleft()\n            cb(arg)\n\nclass CancelledError(BaseException):\n    pass\n\ndef step(task):\n    loop = task.loop\n    try:\n        if task.must_cancel:\n            task.must_cancel = False\n            yielded = task.coro.throw(CancelledError)\n        else:\n            yielded = task.coro.send(None)\n    except StopIteration as e:\n        task.done = True\n        task.result = e.value\n        return\n    if yielded is None:\n        loop.call_soon(step, task)\n        loop.log.append(&#39;yield None -&gt; call_soon&#39;)\n    else:\n        task.fut_waiter = yielded\n        yielded.add_done_callback(lambda f: wakeup(task, f))\n        loop.log.append(&#39;yield Future -&gt; wait __wakeup&#39;)\n\ndef wakeup(task, fut):\n    task.fut_waiter = None\n    task.loop.log.append(&#39;__wakeup: result &#39; + str(fut.result()))\n    task.loop.call_soon(step, task)\n\nclass MiniTask:\n    def __init__(self, coro, loop):\n        self.coro = coro\n        self.loop = loop\n        self.fut_waiter = None\n        self.must_cancel = False\n        self.done = False\n        self.result = None\n        loop.call_soon(step, self)\n\nasync def worker(loop):\n    loop.log.append(&#39;worker step 1&#39;)\n    f = loop.create_future()\n    loop.call_soon(lambda _: f.set_result(42))\n    v = await f\n    loop.log.append(&#39;worker step 2 got &#39; + str(v))\n    return v * 2\n\nloop = MiniLoop()\nt = MiniTask(worker(loop), loop)\nloop.run()\nprint(&#39;task result&#39;, t.result)\nfor line in loop.log:\n    print(line)\n' :notes='["导入 collections，用 deque 充当事件循环的就绪队列", "MiniFuture 模拟 lib/asyncio 的 Future，只保留 done 与回调表", "回调挂进 loop.ready，等价于 add_done_callback 经 call_soon 调度", "__await__ 在未完成时 yield 出自身，把暂停点交给调度器", "MiniLoop.ready 是 FIFO deque，call_soon 只是 append", "run 逐个 popleft 并执行回调，对应 _run_once 的 Handle 消费", "自定义 CancelledError 继承 BaseException，复刻 3.8 起的层级", "step 对应 Task.__step：send 驱动协程，must_cancel 时改 throw", "协程正常结束以 StopIteration.value 落地为 Task 的结果", "yield None 是 sleep(0) 捷径，直接重新入队", "yield 出未完成 Future 时把它记进 _fut_waiter 并挂 __wakeup", "wakeup 先 result() 取回值，再 call_soon 排下一次 step", "MiniTask 构造只 call_soon 排首跳，创建时不执行函数体", "worker 用 await f 制造一次真实的 Future 挂起", "打印执行日志，验证一次 await 跨两次事件循环迭代", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用"]' title='扩展示例逐行讲解' />
+<LineByLine code='import collections\n\nclass MiniFuture:\n    def __init__(self, loop):\n        self.loop = loop\n        self._done = False\n        self._result = None\n        self._callbacks = []\n    def done(self):\n        return self._done\n    def set_result(self, v):\n        self._done = True\n        self._result = v\n        for cb in self._callbacks:\n            self.loop.ready.append((cb, self))\n        self._callbacks.clear()\n    def add_done_callback(self, cb):\n        if self._done:\n            self.loop.ready.append((cb, self))\n        else:\n            self._callbacks.append(cb)\n    def result(self):\n        return self._result\n    def __await__(self):\n        if not self._done:\n            yield self\n        return self._result\n        yield\n\nclass MiniLoop:\n    def __init__(self):\n        self.ready = collections.deque()\n        self.log = []\n    def call_soon(self, cb, arg=None):\n        self.ready.append((cb, arg))\n    def create_future(self):\n        return MiniFuture(self)\n    def run(self):\n        while self.ready:\n            cb, arg = self.ready.popleft()\n            cb(arg)\n\nclass CancelledError(BaseException):\n    pass\n\ndef step(task):\n    loop = task.loop\n    try:\n        if task.must_cancel:\n            task.must_cancel = False\n            yielded = task.coro.throw(CancelledError)\n        else:\n            yielded = task.coro.send(None)\n    except StopIteration as e:\n        task.done = True\n        task.result = e.value\n        return\n    if yielded is None:\n        loop.call_soon(step, task)\n        loop.log.append(&#39;yield None -&gt; call_soon&#39;)\n    else:\n        task.fut_waiter = yielded\n        yielded.add_done_callback(lambda f: wakeup(task, f))\n        loop.log.append(&#39;yield Future -&gt; wait __wakeup&#39;)\n\ndef wakeup(task, fut):\n    task.fut_waiter = None\n    task.loop.log.append(&#39;__wakeup: result &#39; + str(fut.result()))\n    task.loop.call_soon(step, task)\n\nclass MiniTask:\n    def __init__(self, coro, loop):\n        self.coro = coro\n        self.loop = loop\n        self.fut_waiter = None\n        self.must_cancel = False\n        self.done = False\n        self.result = None\n        loop.call_soon(step, self)\n\nasync def worker(loop):\n    loop.log.append(&#39;worker step 1&#39;)\n    f = loop.create_future()\n    loop.call_soon(lambda _: f.set_result(42))\n    v = await f\n    loop.log.append(&#39;worker step 2 got &#39; + str(v))\n    return v * 2\n\nloop = MiniLoop()\nt = MiniTask(worker(loop), loop)\nloop.run()\nprint(&#39;task result&#39;, t.result)\nfor line in loop.log:\n    print(line)\n' :notes='["导入 collections，用 deque 充当事件循环的就绪队列", "MiniFuture 模拟 lib/asyncio 的 Future，只保留 done 与回调表", "回调挂进 loop.ready，等价于 add_done_callback 经 call_soon 调度", "__await__ 在未完成时 yield 出自身，把暂停点交给调度器", "MiniLoop.ready 是 FIFO deque，call_soon 只是 append", "run 逐个 popleft 并执行回调，对应 _run_once 的 Handle 消费", "自定义 CancelledError 继承 BaseException，复刻 3.8 起的层级", "step 对应 Task.__step：send 驱动协程，must_cancel 时改 throw", "协程正常结束以 StopIteration.value 落地为 Task 的结果", "yield None 是 sleep(0) 捷径，直接重新入队", "yield 出未完成 Future 时把它记进 _fut_waiter 并挂 __wakeup", "wakeup 先 result() 取回值，再 call_soon 排下一次 step", "MiniTask 构造只 call_soon 排首跳，创建时不执行函数体", "worker 用 await f 制造一次真实的 Future 挂起", "打印执行日志，验证一次 await 跨两次事件循环迭代", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发", "Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用"]' title='扩展示例逐行讲解' />
 
 
 ### cancelling 与 uncancel 的取消计数协议
 
 3.11 起取消不再是单个布尔位。
 
-`Task.cancel(msg=None)` 除把 _must_cancel 置真外，还把 _num_cancels_requested 加一；
+`Task.cancel(msg=None)` 除把 `_must_cancel` 置真外，还把 `_num_cancels_requested` 加一；
 
-`cancelling()` 返回这个计数，`uncancel()` 减一。它解决的是正文没展开的问题：timeout 与 TaskGroup 需要区分「被取消了几次」与「是否已经补偿」。
+`cancelling()` 返回这个计数，`uncancel()` 减一。它解决的是正文没展开的问题：timeout 与 `TaskGroup` 需要区分「被取消了几次」与「是否已经补偿」。
 
-`asyncio.timeout` 的 `__aexit__` 在超时分支里调用 `self._task.uncancel()`，只有计数归零且捕获到 CancelledError 时才把异常换成 TimeoutError；
+`asyncio.timeout` 的 `__aexit__` 在超时分支里调用 `self._task.uncancel()`，只有计数归零且捕获到 `CancelledError` 时才把异常换成 `TimeoutError`；
 
-若协程里接住 CancelledError、调了 `uncancel()` 却不重抛，await 会正常返回，`__aexit__` 看到的 exc_type 为 None，超时被静默吞掉，这是升级到 3.11 之后新出现的一类故障。
+若协程里接住 `CancelledError`、调了 `uncancel()` 却不重抛，await 会正常返回，`__aexit__` 看到的 exc_type 为 None，超时被静默吞掉，这是升级到 3.11 之后新出现的一类故障。
 
-shield 的实现（Lib/asyncio/`tasks.py`）同样靠这套协议：它给外层 Future 挂 _outer_done_callback，外层被取消时只把外层标成 CANCELLED、内层继续跑，内层异常由 _inner_done_callback 消费，既屏蔽取消又不丢错误。
+shield 的实现（同样在 `Lib/asyncio/tasks.py`）也靠这套协议：它给外层 Future 挂 `_outer_done_callback`，外层被取消时只把外层标成 `CANCELLED`、内层继续跑，内层异常由 `_inner_done_callback` 消费，既屏蔽取消又不丢错误。
 
-架构上计数协议把取消从一次性命令变成可协商的状态机，代价是每个 Task 多一个整数字段与三条 API，且任何自定义取消逻辑都要显式处理 uncancel 的配对，否则超时判定就会失真。
+架构上计数协议把取消从一次性命令变成可协商的状态机，代价是每个 `Task` 多一个整数字段与三条 API，且任何自定义取消逻辑都要显式处理 `uncancel` 的配对，否则超时判定就会失真。
 
 **Task 内部字段与 CPython 源码位置**
 
@@ -446,11 +444,11 @@ shield 的实现（Lib/asyncio/`tasks.py`）同样靠这套协议：它给外层
 
 一次超时治理事故里，网关把下游调用包在 `asyncio.timeout(0.2)` 内，发版后监控发现超时计数归零、P99 却涨到秒级。
 
-复盘定位到公共重试装饰器接住了 CancelledError，调 `task.uncancel()` 后直接 return 一个降级值、没有重抛：timeout 的 `__aexit__` 既没收到 CancelledError、计数又被减回零，于是判定为正常完成，超时彻底失效。
+复盘定位到公共重试装饰器接住了 `CancelledError`，调 `task.uncancel()` 后直接 return 一个降级值、没有重抛：timeout 的 `__aexit__` 既没收到 `CancelledError`、计数又被减回零，于是判定为正常完成，超时彻底失效。
 
-下面的实验把两次 cancel 叠加与一次 uncancel 的计数变化打印出来，能看到「接住时计数为 2、uncancel 后为 1、await 依旧抛 CancelledError」，说明只要不重抛、计数不为零，取消协议就还在；真正吞掉超时的是「减到零且不抛」这个组合。
+下面的实验把两次 cancel 叠加与一次 uncancel 的计数变化打印出来，能看到「接住时计数为 2、uncancel 后为 1、await 依旧抛 `CancelledError`」，说明只要不重抛、计数不为零，取消协议就还在；真正吞掉超时的是「减到零且不抛」这个组合。
 
-修复是把降级逻辑移出 CancelledError 分支，只在 TimeoutError 里做兜底，并禁止库代码私自调用 uncancel。
+修复是把降级逻辑移出 `CancelledError` 分支，只在 `TimeoutError` 里做兜底，并禁止库代码私自调用 `uncancel`。
 
 ```python
 import asyncio
@@ -483,7 +481,7 @@ asyncio.run(main())
 
 ## 就绪队列与定时器堆的调度成本
 
-<Quiz no='069-X' q='关于 3.11 的 Task.cancelling() 与 uncancel()，下面哪项准确？' :options='["cancelling() 返回累计取消请求数，uncancel() 减一，timeout 靠计数是否归零判断是否转换 TimeoutError", "cancelling() 返回任务已运行秒数，uncancel() 会重启协程", "uncancel() 会撤销所有已排队的 call_soon 回调", "CancelledError 在 3.11 被改回 Exception 子类，故 except Exception 能接住"]' answer="0" explain='3.11 的取消计数让 timeout 与 TaskGroup 能协商：__aexit__ 调 uncancel() 后只有计数归零且捕获到 CancelledError 才把它转成 TimeoutError；接住取消却减到零且不重抛会静默吞掉超时。CancelledError 自 3.8 起仍是 BaseException 子类，与 3.11 新增的计数无关，不能混为一谈。' />
+<Quiz no='069-1' q='关于 3.11 的 Task.cancelling() 与 uncancel()，下面哪项准确？' :options='["cancelling() 返回累计取消请求数，uncancel() 减一，timeout 靠计数是否归零判断是否转换 TimeoutError", "cancelling() 返回任务已运行秒数，uncancel() 会重启协程", "uncancel() 会撤销所有已排队的 call_soon 回调", "CancelledError 在 3.11 被改回 Exception 子类，故 except Exception 能接住"]' answer="0" explain='3.11 的取消计数让 timeout 与 TaskGroup 能协商：__aexit__ 调 uncancel() 后只有计数归零且捕获到 CancelledError 才把它转成 TimeoutError；接住取消却减到零且不重抛会静默吞掉超时。CancelledError 自 3.8 起仍是 BaseException 子类，与 3.11 新增的计数无关，不能混为一谈。' />
 
 <Exercise title='观测就绪队列与两次迭代的 await 往返' task='用 loop._ready 的长度在 call_soon 前后打点，说明一次 await Future 为何至少两次 _run_once，再对比 asyncio.sleep(0) 的 yield None 捷径。' solution='import asyncio\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    fut = loop.create_future()\n    loop.call_soon(lambda: fut.set_result(&#39;ok&#39;))\n    print(&#39;ready before await&#39;, len(loop._ready))\n    await fut\n    print(&#39;after await result&#39;, fut.result())\n\nasyncio.run(main())\n' explain='await 一个未完成 Future 时 Task 把 __step 挂到 __wakeup，__wakeup 再 call_soon 重新排入 _ready，所以至少两次 _run_once 才恢复；sleep(0) 走 yield None 的捷径，Task 直接重新入队，只多一次迭代。_ready 是 collections.deque，call_soon 是 O(1) 的 append、消费是 popleft，而 _scheduled 是按到期时间组织的小根堆，插入 O(log n)。' />
 
@@ -501,17 +499,17 @@ asyncio.run(main())
 
 <Exercise title='进阶：用 TaskGroup 验证失败收敛' task='在 TaskGroup 里建一个正常任务与一个抛 ValueError 的任务，用 except* ValueError 捕获异常组并打印异常数，再确认正常任务 done() 为 True。' solution='import asyncio\nasync def main():\n    async def ok(i):\n        await asyncio.sleep(0)\n        return i\n    async def bad():\n        await asyncio.sleep(0)\n        raise ValueError(&#39;x&#39;)\n    try:\n        async with asyncio.TaskGroup() as tg:\n            a = tg.create_task(ok(1))\n            tg.create_task(bad())\n    except* ValueError as eg:\n        print(&#39;caught&#39;, len(eg.exceptions))\n    print(&#39;a done&#39;, a.done())\nasyncio.run(main())' explain='TaskGroup 把单个 ValueError 也包装成 ExceptionGroup，except* 按类型拆组；退出时所有子任务已收尾，正常任务 done() 为 True。' />
 
-<Quiz no='069-1' q='关于 asyncio.CancelledError，下面哪项准确？' :options='["3.8 起继承 BaseException，except Exception 捕获不到，清理应放 finally", "继承 Exception，except Exception 能接住", "是 RuntimeError 的别名", "只在多进程里抛出"]' answer="0" explain='3.8 起 CancelledError → BaseException → object，普通 except Exception 会漏掉它；清理逻辑必须放 finally 或显式 except asyncio.CancelledError 后重抛。' />
+<Quiz no='069-2' q='关于 asyncio.CancelledError，下面哪项准确？' :options='["3.8 起继承 BaseException，except Exception 捕获不到，清理应放 finally", "继承 Exception，except Exception 能接住", "是 RuntimeError 的别名", "只在多进程里抛出"]' answer="0" explain='3.8 起 CancelledError → BaseException → object，普通 except Exception 会漏掉它；清理逻辑必须放 finally 或显式 except asyncio.CancelledError 后重抛。' />
 
-<Quiz no='069-2' q='task.cancel() 之后任务会怎样？' :options='["在下一个 await 点被抛入 CancelledError，属于协作式取消", "操作系统立即强杀该线程", "任务被立即从内存删除且无任何回调", "把 Future 标成 FINISHED 并返回 None"]' answer="0" explain='cancel 只设置取消请求，下一次 Task.__step 在 await 点 throw CancelledError；finally 仍会执行，await 该 Task 的调用方也会收到 CancelledError。' />
+<Quiz no='069-3' q='task.cancel() 之后任务会怎样？' :options='["在下一个 await 点被抛入 CancelledError，属于协作式取消", "操作系统立即强杀该线程", "任务被立即从内存删除且无任何回调", "把 Future 标成 FINISHED 并返回 None"]' answer="0" explain='cancel 只设置取消请求，下一次 Task.__step 在 await 点 throw CancelledError；finally 仍会执行，await 该 Task 的调用方也会收到 CancelledError。' />
 
-<Quiz no='069-3' q='TaskGroup 中某子任务抛 ValueError 时，会？' :options='["取消其余子任务并在退出时抛 ExceptionGroup，用 except* 处理", "立刻把 ValueError 原样抛给调用方，兄弟任务继续跑", "静默忽略该异常", "自动重试该任务三次"]' answer="0" explain='PEP 654 的结构化并发保证组内任务一起收敛：失败触发兄弟取消，退出时统一抛 ExceptionGroup（含 BaseException 时为 BaseExceptionGroup），必须用 except* 拆分处理。' />
+<Quiz no='069-4' q='TaskGroup 中某子任务抛 ValueError 时，会？' :options='["取消其余子任务并在退出时抛 ExceptionGroup，用 except* 处理", "立刻把 ValueError 原样抛给调用方，兄弟任务继续跑", "静默忽略该异常", "自动重试该任务三次"]' answer="0" explain='PEP 654 的结构化并发保证组内任务一起收敛：失败触发兄弟取消，退出时统一抛 ExceptionGroup（含 BaseException 时为 BaseExceptionGroup），必须用 except* 拆分处理。' />
 
-<Predict no='069-P' q='对 PENDING 的 Future 调 done() 与 cancelled()，输出是？' :options='["False False", "True False", "False True"]' answer='0' output='False False' explain='Future 初始为 PENDING：既没结束（done 为 False）也不是被取消（cancelled 为 False）。只有 set_result / set_exception / cancel 落定后这两个布尔值才会变化。' />
+<Predict no='069-5' q='对 PENDING 的 Future 调 done() 与 cancelled()，输出是？' :options='["False False", "True False", "False True"]' answer='0' output='False False' explain='Future 初始为 PENDING：既没结束（done 为 False）也不是被取消（cancelled 为 False）。只有 set_result / set_exception / cancel 落定后这两个布尔值才会变化。' />
 
-<FillBlank no='069-F' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 loop 与策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Task 是调度单位，Future 是结果占位符 的落点。' />
+<FillBlank no='069-6' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 loop 与策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Task 是调度单位，Future 是结果占位符 的落点。' />
 
-<KnowledgeCard :points='["Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发"]' :pitfalls='["裸 asyncio.create_task(...) 不保存引用", "用 except Exception 兜住取消并做清理", "以为 gather 里一个任务抛异常其它会自动停", "用裸 create_task 不保存引用，任务可能被 GC 回收，异常也永远没人读取"]' summary='Task 是协程的调度单位，取消是「在下一个 await 点抛 CancelledError」而非强杀，所以清理逻辑必须写在 finally' />
+<KnowledgeCard :points='["Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程", "loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用", "CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常", "loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled()", "gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理", "3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发"]' :pitfalls='["裸 asyncio.create_task(...) 不保存引用", "用 except Exception 兜住取消并做清理", "以为 gather 里一个任务抛异常其它会自动停", "用裸 create_task 不保存引用，任务可能被 GC 回收，异常也永远没人读取"]' summary='Task 是协程的调度单位，取消是「在下一个 await 点抛 CancelledError」而非强杀，所以清理逻辑必须写在 finally' />
 
 **速记索引**
 
@@ -520,7 +518,7 @@ asyncio.run(main())
 | Task 是 Future 子类：Future 占位结果（done/cancelled/result/exception），Task 额外驱动协程 | 建立直觉 |
 | loop.create_future() 是标准创建方式；create_task 需 running loop，且调用方必须保存强引用 | 跑通示例 |
 | CancelledError 自 3.8 起继承 BaseException，清理放 finally；cancel 只在下一 await 点注入异常 | 深入边界 |
-| loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，3.13 的 cancel() 返回 None | 工程落地 |
+| loop.call_soon 走 FIFO 就绪队列，call_later 返回 TimerHandle，cancel() 返回 None、读状态用 cancelled() | 工程落地 |
 | gather 默认不取消兄弟任务；3.11 TaskGroup 失败即取消全组并抛 ExceptionGroup，用 except* 处理 | 随堂检测 |
 | 3.11 起 asyncio.TimeoutError 等于内置 TimeoutError，asyncio.timeout 与 Task.uncancel() 配套结构化并发 | 复盘 |
 

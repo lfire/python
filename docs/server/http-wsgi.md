@@ -7,35 +7,43 @@ description: 理解框架之下发生了什么
 
 # 第 082 讲 · HTTP 协议与 WSGI / ASGI
 
-上一讲把脚本收成了可安装的包，可它仍要有人手动去跑。从这一讲起，我们要让它安静地等别人来调用；动手前先不碰框架，只把一次 HTTP 请求进来、结果出去之间的约定说清，给服务端阶段垫一层底。
+上一讲把脚本收成了可安装的包，可它仍要有人手动去跑。从这一讲起，我们要让它安静地等别人来调用；动手前先不碰框架，只把一次 `HTTP` 请求进来、结果出去之间的约定说清，给服务端阶段垫一层底。
 
-把处理函数挂到网关上，单请求测得挺顺，换成维持长连接却立不住；并发一上来，几个请求又一起变慢。我们先看请求响应传了什么，用标准库把 WSGI 的一进一出跑通，再对照 ASGI 三个参数为何能撑住双工通信，最后谈同步异步混跑哪里会卡住。需要函数、可调用对象与并发阶段的协程印象；读完能看懂框架之下的调用契约，也能判断接口该走同步栈还是异步栈。
+把处理函数挂到网关上，单请求测得挺顺，换成维持长连接却立不住；并发一上来，几个请求又一起变慢。我们先看请求响应传了什么，用标准库把 `WSGI` 的一进一出跑通，再对照 `ASGI` 的 `scope`、`receive`、`send` 三个参数为何能撑住双工通信，最后谈同步异步混跑哪里会卡住。需要函数、可调用对象与并发阶段的协程印象；读完能看懂框架之下的调用契约，也能判断接口该走同步栈还是异步栈。
 
 
 ## 一个 async 视图里直接调同步库，压测时请求一起卡住
 
-把一个同步的报表接口挂到新装的 ASGI 网关上，压测时 QPS 不升反降，还偶发全部请求一起卡住。排查发现处理函数里用了一个只提供同步接口的旧 SDK，在 async 视图里被直接调用；这一调用占住了事件循环所在线程，loop 上其它协程全被拖停。
+把一个同步的报表接口挂到新装的 `ASGI` 网关上，压测时 QPS 不升反降，还偶发全部请求一起卡住。排查发现处理函数里用了一个只提供同步接口的旧 SDK，在 `async def` 视图里被直接调用；这一调用占住了事件循环所在线程，loop 上其它协程全被拖停。
 
-另一条线索是有人想在这个接口上加 WebSocket 推送，却发现同步栈根本没法维持长连接。两次返工指向同一个被跳过的层次：框架之下是一份明确的调用契约。WSGI 是 PEP 3333 定义的一请求一响应可调用对象，ASGI 是带 scope、receive、send 三参数的异步双工协议；
+另一条线索是有人想在这个接口上加 WebSocket 推送，却发现同步栈根本没法维持长连接。两次返工指向同一个被跳过的层次：框架之下是一份明确的调用契约。`WSGI` 是 PEP 3333 定义的一请求一响应可调用对象，`ASGI` 是带 `scope`、`receive`、`send` 三参数的异步双工协议；
 
-前者跑不了长连接，后者一旦混入阻塞调用就失去意义。本讲用标准库 wsgiref 与一个最小 ASGI 应用把两份契约跑通，让『同步还是异步』不再是口号。
+前者跑不了长连接，后者一旦混入阻塞调用就失去意义。本讲用标准库 `wsgiref` 与一个最小 `ASGI` 应用把两份契约跑通，让「同步还是异步」不再是口号。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='在 async 视图里直接调用同步阻塞库，压测时全部请求一起卡住：同步调用不 await、不让出，占死事件循环所在线程，loop 上其它协程全部停摆' />
 
 
 ## WSGI：两个参数、一个回调、一段字节迭代
 
-WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。
+`WSGI`（PEP 3333）把应用约定成一个可调用对象 `application`。
 
-environ 是 CGI 风格的 dict，含 REQUEST_METHOD、PATH_INFO、QUERY_STRING、SERVER_PROTOCOL、CONTENT_TYPE，以及 `wsgi.input`（请求体文件对象）、`wsgi.errors`、`wsgi.version`（默认 (1, 0)）、`wsgi.url_scheme`、`wsgi.multithread`、`wsgi.run_once` 等 wsgi.* 键；
+```python
+application(environ, start_response)
+```
 
-`wsgiref.util.setup_testing_defaults` 正是按这份清单补齐一个最小 environ。
+`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`、`CONTENT_TYPE`，以及 `wsgi.input`（请求体文件对象）、`wsgi.errors`、`wsgi.version`（默认 `(1, 0)`）、`wsgi.url_scheme`、`wsgi.multithread`、`wsgi.run_once` 等 `wsgi.*` 键；
 
-`start_response(status, response_headers, exc_info=None)` 必须在应用返回可迭代对象之前（或第一次迭代产出前）被调用，status 形如 '200 OK'，headers 是 (name, value) 元组列表；
+`wsgiref.util.setup_testing_defaults` 正是按这份清单补齐一个最小 `environ`。
 
-它返回一个 `write(body)` 供遗留风格追加输出，但现代写法直接返回 bytes 的可迭代对象。返回值每个元素都是 bytes，不能是 str；服务器对每个字节块调用一次写操作。
+`start_response` 必须在应用返回可迭代对象之前（或第一次迭代产出前）被调用，`status` 形如 `'200 OK'`，`headers` 是 `(name, value)` 元组列表；
 
-这个模型天然是一问一答：没有请求还『活着』的概念，因此 WebSocket、SSE 这类需要服务端持续推送的通道在纯 WSGI 上无法实现，只能靠脱离请求周期的独立进程。中间件就是包一层可调用对象，在前后改 environ 或拦截 start_response。
+```python
+start_response(status, response_headers, exc_info=None)
+```
+
+它返回一个 `write(body)` 供遗留风格追加输出，但现代写法直接返回 `bytes` 的可迭代对象。返回值的每个元素都必须是 `bytes`，不能是 `str`，服务器会对每个字节块调用一次写操作。
+
+这个模型天然是一问一答：没有「请求还活着」的概念，因此 WebSocket、SSE 这类需要服务端持续推送的通道在纯 `WSGI` 上无法实现，只能靠脱离请求周期的独立进程。中间件就是包一层可调用对象，在调用前后改 `environ` 或拦截 `start_response`。
 
 ```python
 from wsgiref.util import setup_testing_defaults
@@ -95,19 +103,15 @@ print('wsgi.version', e['wsgi.version'], 'url_scheme', e['wsgi.url_scheme'])
 
 ## ASGI：scope、receive、send 与消息类型
 
-ASGI 把应用约定成 async def `app(scope, receive, send)`，三个参数都是位置参数。
+`ASGI` 把应用约定成 `async def` 定义的 `app(scope, receive, send)`，三个都是位置参数。
 
-scope 是每次连接建一次的 dict，含 type（'http' / 'websocket' / 'lifespan'）、asgi 子字典（version 为 '3.0'、spec_version 为 '2.3'），http 类型还有 method、path、raw_path、query_string（bytes）、headers（bytes 键值对列表）、scheme、server、client。
+`scope` 是每次连接建一次的 `dict`，含 `type`（`'http'` / `'websocket'` / `'lifespan'`）、`asgi` 子字典（`version` 为 `'3.0'`、`spec_version` 为 `'2.3'`），http 类型另有 `method`、`path`、`raw_path`、`query_string`（`bytes`）、`headers`（`bytes` 键值对列表）、`scheme`、`server`、`client`。
 
-receive 是 async 无参可调用，返回一条入站消息：HTTP 请求体是 &#123;'type': 'http.request', 'body': b'...', 'more_body': False&#125;；
+`receive` 是 async 无参可调用，返回一条入站消息：`HTTP` 请求体是一条 `http.request` 消息，带 `body`（`bytes`）与 `more_body`（是否为最后一块），WebSocket 是 `websocket.receive`，生命周期是 `lifespan.startup` / `lifespan.shutdown`。
 
-WebSocket 是 `websocket.receive`；
+`send` 是 async 单参可调用，应用通过它发出站消息：`http.response.start`（`status` 为 int、`headers` 为 `bytes` 列表）必须先发，随后一到多条 `http.response.body`（`body` 为 `bytes`、`more_body` 决定流是否结束）。
 
-生命周期是 `lifespan.startup` / `lifespan.shutdown`。
-
-send 是 async 单参可调用，应用通过它发出站消息：`http.response.start`（status 为 int、headers 为 bytes 列表）必须先发，随后一到多条 `http.response.body`（body 为 bytes、more_body 决定流是否结束）。
-
-因为连接与消息分离，一个进程可以并发维持成千上万条长连接，也能在请求中途持续 send。lifespan 消息让框架在启动时建连接池、关闭时释放资源，替代旧式的启动事件钩子。
+因为连接与消息分离，一个进程可以并发维持成千上万条长连接，也能在请求中途持续 `send`。`lifespan` 消息让框架在启动时建连接池、关闭时释放资源，替代旧式的启动事件钩子。
 
 **ASGI 常见消息类型**
 
@@ -120,7 +124,7 @@ send 是 async 单参可调用，应用通过它发出站消息：`http.response
 | 生命周期 | lifespan.startup / lifespan.shutdown | 无额外字段，用于建/释放连接池 |
 | scope.type | http / websocket / lifespan | asgi.version 为 '3.0' |
 
-<Callout type="tip" title='核心心智模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 application(environ, start_response)。environ 是 CGI 风格的 dict，含 REQUEST_METHOD、PATH_INFO、QUERY_STRING、SERVER_PROTOCOL、CONTEN' />
+<Callout type="tip" title='核心心智模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PR' />
 
 
 ### http.response.start 必须先于 body
@@ -177,15 +181,19 @@ print('asgi version', scope['asgi']['version'])
 
 ## 同步异步混跑：阻塞调用如何拖垮整个 loop
 
-ASGI 的并发收益来自单线程事件循环：协程在 await 处主动让出，loop 才能切换到下一个任务。
+`ASGI` 的并发收益来自单线程事件循环：协程在 `await` 处主动让出，loop 才能切换到下一个任务。
 
-一旦在 async 函数里直接调用同步阻塞库（`time.sleep`、requests、同步数据库驱动），这次调用不 await、不让出，当前线程被占死，loop 上所有其它协程一起停住——这不是慢一点，而是全 loop 级故障。
+一旦在 `async def` 函数里直接调用同步阻塞库（`time.sleep`、`requests`、同步数据库驱动），这次调用不 `await`、不让出，当前线程被占死，loop 上所有其它协程一起停住——这不是慢一点，而是整个 loop 级故障。
 
-规范的做法是把阻塞调用挪出 loop：Starlette/FastAPI 对 def（非 async def）定义的路径函数会自动丢进线程池执行（`anyio.to_thread`），自己写异步应用时则要显式 await `asyncio.to_thread(blocking_fn, ...)` 或 `loop.run_in_executor`。
+规范的做法是把阻塞调用挪出 loop：Starlette / FastAPI 对用 `def`（而非 `async def`）定义的路径函数会自动丢进线程池执行（`anyio.to_thread`），自己写异步应用时则要显式 `await` 一个 `asyncio.to_thread` 或 `loop.run_in_executor`。
 
-反过来，纯 CPU 密集的活即使放进线程也受 GIL 限制，应交给进程池。WSGI 侧没有这个问题：每个请求本来就在独立线程或进程里跑，阻塞是默认语义。选型判据由此清晰：传统 CRUD、依赖成熟同步 SDK 用同步栈省心；
+```python
+asyncio.to_thread(blocking_fn, ...)
+```
 
-需要 WebSocket、SSE、海量长连接与高并发 IO 时上 ASGI，并逐一审查调用链里是否还有同步阻塞点。
+反过来，纯 CPU 密集的活即使放进线程也受 GIL 限制，应交给进程池。`WSGI` 侧没有这个问题：每个请求本来就在独立线程或进程里跑，阻塞是默认语义。选型判据由此清晰：传统 `CRUD`、依赖成熟同步 SDK 用同步栈省心；
+
+需要 WebSocket、SSE、海量长连接与高并发 IO 时上 `ASGI`，并逐一审查调用链里是否还有同步阻塞点。
 
 **同步异步混跑的正确处置**
 
@@ -202,11 +210,13 @@ ASGI 的并发收益来自单线程事件循环：协程在 await 处主动让�
 
 ## 中间件链：在不碰业务函数的前提下加计时与响应头
 
-生产服务常要在不改每个处理函数的情况下统一加耗时统计、请求 ID 与安全头。WSGI 的可调用对象约定让这件事变成一个包装函数：中间件接收 application，返回同样签名的新可调用对象，在调用前后改写 environ 与 start_response。下面用标准库串起两层中间件，内层业务应用只负责返回 body；
+生产服务常要在不改每个处理函数的情况下统一加耗时统计、请求 ID 与安全头。`WSGI` 的可调用对象约定让这件事变成一个包装函数：中间件接收 `application`，返回同样签名的新可调用对象，在调用前后改写 `environ` 与 `start_response`。
 
-外层测耗时并把结果塞进 X-Time-Ms 头，另一层注入 X-Request-Id。重点看 start_response 的包装技巧：中间件拿到原始 start_response，再传一个自己定义的 wrapping 进去，从而能在服务器真正写头之前追加字段。
+下面用标准库串起两层中间件，内层业务应用只负责返回 body；外层测耗时并把结果塞进 `X-Time-Ms` 头，另一层注入 `X-Request-Id`。
 
-这个模式也是 Flask、Django 中间件与 ASGI 纯 ASGI 中间件的雏形，区别只在后者包的是 scope/receive/send。
+重点看 `start_response` 的包装技巧：中间件拿到原始的 `start_response`，再传一个自己定义的 `wrapping` 进去，从而能在服务器真正写头之前追加字段。
+
+这个模式也是 Flask、Django 中间件与纯 `ASGI` 中间件的雏形，区别只在后者包的是 `scope` / `receive` / `send`。
 
 ```python
 import time
@@ -254,24 +264,24 @@ print('headers keys', sorted(k for k in (captured['headers'] or {}) if k.startsw
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **请求响应模型** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 请求响应模型 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 服务器如何驱动应用：environ、三参数与事件循环
 
-WSGI 服务器（如 gunicorn 的 sync worker、`wsgiref.simple_server`）为每个请求分配线程或进程，调用一次应用、收集返回的字节迭代、逐块写给客户端，请求结束即释放，因此 environ 是请求级快照、应用天然无状态。
+`WSGI` 服务器（如 `gunicorn` 的 sync worker、`wsgiref.simple_server`）为每个请求分配线程或进程，调用一次应用、收集返回的字节迭代、逐块写给客户端，请求结束即释放，因此 `environ` 是请求级快照、应用天然无状态。
 
-ASGI 服务器（uvicorn、hypercorn）则维护一个事件循环：接受连接后构造一次 scope，把 await `receive()` / await `send()` 包成协程交给 loop 调度；协程在 await 处让出执行权，loop 据此在单线程里交错处理成千上万条连接。
+`ASGI` 服务器（`uvicorn`、`hypercorn`）则维护一个事件循环：接受连接后构造一次 `scope`，把 `await receive()` / `await send()` 包成协程交给 loop 调度；
 
-这套机制的吞吐前提是任何 await 之间都不发生长时间阻塞，否则整个 loop 停摆——这正是同步库不能直接进 async 视图的原因。
+协程在 `await` 处让出执行权，loop 据此在单线程里交错处理成千上万条连接。这套机制的吞吐前提是任何 `await` 之间都不发生长时间阻塞，否则整个 loop 停摆——这正是同步库不能直接进 `async def` 视图的原因。
 
-消息按序约束 enforced by 协议：`http.response.start` 必须先于 `http.response.body`，more_body 为真表示还有后续块，服务器据此实现流式响应与 SSE。
+消息顺序由协议强制保证：`http.response.start` 必须先于 `http.response.body`，`more_body` 为真表示还有后续块，服务器据此实现流式响应与 SSE。
 
-lifespan 是独立的一条连接级协议，服务器在启动阶段发 `lifespan.startup`、应用回 `lifespan.startup.complete` 后才开始接流量，关闭时对称收尾，保证连接池先建后用的时序。
+`lifespan` 是独立的一条连接级协议，服务器在启动阶段发 `lifespan.startup`、应用回 `lifespan.startup.complete` 后才开始接流量，关闭时对称收尾，保证连接池先建后用的时序。
 
-<Term word='请求响应模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 application(environ, start_response)。environ 是 CGI 风格的 dict，含 REQUEST_METHOD、PATH_INFO、QUERY_STRING、SERVER_PROTOCOL、CONTENT_TYPE，以及 ' />
+<Term word='请求响应模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`、`C' />
 
-<Term word='WSGI 可调用对象' text='ASGI 把应用约定成 async def app(scope, receive, send)，三个参数都是位置参数。scope 是每次连接建一次的 dict，含 type（&#39;http&#39; / &#39;websocket&#39; / &#39;lifespan&#39;）、asgi 子字典（version 为 &#39;3.0&#39;、spec_version ' />
+<Term word='WSGI 可调用对象' text='ASGI 把应用约定成 `async def` 定义的 `app(scope, receive, send)`，三个都是位置参数。`scope` 是每次连接建一次的 `dict`，含 `type`（`&#39;http&#39;` / `&#39;websocket&#39;` / `&#39;lifespan&#39;`）、`asgi` 子字典（`version`' />
 
 
 ## 错因速查与排查顺序
@@ -299,9 +309,9 @@ lifespan 是独立的一条连接级协议，服务器在启动阶段发 `lifesp
 
 <Quiz no='082-3' q='WebSocket 与 SSE 为什么需要 ASGI 而非纯 WSGI？' :options='["需要连接存活期间持续 send 消息，WSGI 一请求一响应模型无法表达", "WSGI 不支持 bytes 响应", "WSGI 的 environ 缺少 headers 字段", "WSGI 只允许 GET 方法"]' answer="0" explain='WSGI 应用返回一次可迭代体即结束请求，没有『连接还活着』的概念；ASGI 的 websocket / lifespan 消息与多次 send 才能维持长连接与服务端推送。' />
 
-<Predict no='082-P' q='对 def wsgi(environ, start_response) 与 async def asgi(scope, receive, send) 分别调 inspect.signature，参数列表是什么？' :options='["[&#39;environ&#39;, &#39;start_response&#39;] 与 [&#39;scope&#39;, &#39;receive&#39;, &#39;send&#39;]", "两者都是 [&#39;scope&#39;, &#39;send&#39;]", "[&#39;request&#39;] 与 [&#39;scope&#39;, &#39;receive&#39;]"]' answer='0' output='wsgi params [&#39;environ&#39;, &#39;start_response&#39;]; asgi params [&#39;scope&#39;, &#39;receive&#39;, &#39;send&#39;]' explain='签名即协议：inspect.signature 读到的参数名与个数直接对应 PEP 3333 与 ASGI 3.0 的约定，iscoroutinefunction 还能区分同步应用与协程应用。' />
+<Predict no='082-4' q='对 def wsgi(environ, start_response) 与 async def asgi(scope, receive, send) 分别调 inspect.signature，参数列表是什么？' :options='["[&#39;environ&#39;, &#39;start_response&#39;] 与 [&#39;scope&#39;, &#39;receive&#39;, &#39;send&#39;]", "两者都是 [&#39;scope&#39;, &#39;send&#39;]", "[&#39;request&#39;] 与 [&#39;scope&#39;, &#39;receive&#39;]"]' answer='0' output='wsgi params [&#39;environ&#39;, &#39;start_response&#39;]; asgi params [&#39;scope&#39;, &#39;receive&#39;, &#39;send&#39;]' explain='签名即协议：inspect.signature 读到的参数名与个数直接对应 PEP 3333 与 ASGI 3.0 的约定，iscoroutinefunction 还能区分同步应用与协程应用。' />
 
-<FillBlank no='082-F' tpl='from wsgiref.util  ___ setup_testing_defaults' :answers='["import"]' hint='回想本讲关于 请求响应模型 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 WSGI：两个参数、一个回调、一段字节迭代 的落点。' />
+<FillBlank no='082-5' tpl='from wsgiref.util  ___ setup_testing_defaults' :answers='["import"]' hint='回想本讲关于 请求响应模型 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 WSGI：两个参数、一个回调、一段字节迭代 的落点。' />
 
 <KnowledgeCard :points='["WSGI = application(environ, start_response)，返回 bytes 可迭代；一请求一响应，不支持长连接", "environ 含 REQUEST_METHOD/PATH_INFO 与 wsgi.input、wsgi.version=(1,0) 等 wsgi.* 键", "ASGI = async app(scope, receive, send)，scope.type 为 http/websocket/lifespan，asgi.version 为 3.0", "出站消息顺序固定：http.response.start（status 为 int）先于 http.response.body（bytes）", "async 视图里的同步阻塞库会占死整个 loop；用 asyncio.to_thread 或普通 def 视图", "lifespan.startup/shutdown 用于建释放连接池；需要 WebSocket/SSE 只能选 ASGI 栈"]' :pitfalls='["在 async 视图里直接调用同步阻塞库，压测时全部请求一起卡住", "WSGI 应用返回 str 列表，服务器报断言错误", "给 ASGI 应用发 http.response.body 却没先发 start", "在 ASGI 应用里直接调用同步阻塞库，会占住事件循环的工作线程"]' summary='WSGI 是同步的一请求一响应函数，ASGI 是带事件消息的双工协议，这决定了 WebSocket 与长连接只能活在 ASGI 世界' />
 

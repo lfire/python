@@ -9,12 +9,12 @@ description: 把单机脚本演进到可限流的分布式抓取
 
 任务的调度与取消都理清了，这一阶段的并发路线到这里适合收个口：把散落的知识拼成一件能跑、还能测出收益的东西。一个价格监控的并发爬虫，从抓二十页涨到二十万个地址，第一反应总是多开线程，可对方站点先开始拒答，内存也被攒下的页面吃满，说不清提速到底来自哪一步。
 
-我们按一次只换一个变量的顺序来：先量串行基线，再换线程池版本，接着上 asyncio 配连接池，最后补去重、限流、失败重试与断点，并把限速和合规写成默认开启的配置。前置是线程、asyncio 与队列；做完你会得到可测量、可控的抓取组件，也正好在下一阶段把这段脚本立成一个像样的项目。
+我们按「一次只换一个变量」的顺序来：先量串行基线，再换线程池版本，接着上 asyncio 配连接池，最后补去重、限流、失败重试与断点，并把限速和合规写成默认开启的配置。前置是线程、asyncio 与队列；做完你会得到可测量、可控的抓取组件，也正好在下一阶段把这段脚本立成一个像样的项目。
 
 
 ## 从抓 20 个页面到抓 20 万个 URL 的需求拐点
 
-一个价格监控脚本从抓 20 个页面开始，半年后要抓 20 万个 URL。工程师第一反应是「开更多线程」，结果对方站点先返回 429，自己的内存又被「把全部 HTML 存列表」吃满；改成 asyncio 后吞吐上去了，却因没有去重把同一商品页反复抓了三遍，断点重启又全量重跑。
+一个价格监控脚本从抓 20 个页面开始，半年后要抓 20 万个 URL。工程师第一反应是「开更多线程」，结果对方站点先返回 429，自己的内存又被「把全部页面 `HTML` 存进列表」吃满；改成 asyncio 后吞吐上去了，却因没有去重把同一商品页反复抓了三遍，断点重启又全量重跑。
 
 每一次「加并发」的收益都混杂着别的变量，根本说不清提升来自哪里。真正的演进要一级只替换一个变量：先看串行基线，再换线程池、再换 asyncio 加连接池、最后补去重、限流、失败重试与断点。更关键的是限速与合规不是可选项：不设 robots 约束与请求间隔，压垮对方站点的同时自己也被封。
 
@@ -38,15 +38,15 @@ description: 把单机脚本演进到可限流的分布式抓取
 
 串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。
 
-线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个等待能重叠，吞吐约提升到 `min(k, 单机上限)` 倍；
+线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个等待能重叠，吞吐约提升到 min(k, 单机上限) 倍；
 
 代价是每线程栈内存与上下文切换，k 过大反而退化。
 
-asyncio 版把 fetch 换成原生异步客户端（aiohttp / `httpx.AsyncClient`）并复用连接池，单线程事件循环用 await 让出控制权，连接数由连接器上限约束，不再为每个请求付线程栈。
+asyncio 版把 fetch 换成原生异步客户端（`aiohttp` / `httpx.AsyncClient`）并复用连接池，单线程事件循环用 `await` 让出控制权，连接数由连接器上限约束，不再为每个请求付线程栈。
 
 三级对照必须固定同一份 URL 集合、同样的解析逻辑、同样的统计口径，只换「并发模型」这一个变量，否则无法把收益归因。
 
-实测用 `sum(range(n)`) 对比 `ThreadPoolExecutor.map` 与串行，可确认两者结果完全一致，排除「并发把数据搞错」的干扰。
+实测用 `sum(range(n))` 对比 `ThreadPoolExecutor.map` 与串行，可确认两者结果完全一致，排除「并发把数据搞错」的干扰。
 
 **并发爬取四级演进：每级只替换一个变量**
 
@@ -57,20 +57,24 @@ asyncio 版把 fetch 换成原生异步客户端（aiohttp / `httpx.AsyncClient`
 | asyncio + 连接池 | IO 模型 + 连接复用 | 单线程事件循环消除线程开销 | 需原生异步库，同步调用会拖垮 loop |
 | 去重/限流/重试/断点 | 治理组件 | 消除重复抓取、防止被封、可恢复 | 组件与状态管理复杂度 |
 
-<Callout type="tip" title='核心心智模型' text='串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。线程池版用 concurrent.futures.ThreadPoolExecutor(max_workers=k)，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放' />
+<Callout type="tip" title='核心心智模型' text='串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前' />
 
-同步 socket 进入阻塞系统调用前由 CPython 释放 GIL，因此 ThreadPoolExecutor 能让多个网络等待重叠，这是二级加速的来源；但线程有独立栈（默认常为 8 MB 级虚拟内存）与调度开销，并发度上千就不划算。
+同步 socket 进入阻塞系统调用前由 CPython 释放 GIL，因此 `ThreadPoolExecutor` 能让多个网络等待重叠，这是二级加速的来源；
 
-asyncio 把等待点显式化：协程在 await 处 yield 回事件循环，底层用 selectors（epoll/kqueue）把就绪 fd 映射回回调，单 OS 线程即可维持数万连接，连接由 AsyncClient 的连接池复用而非每请求新建。
+但线程有独立栈（默认常为 8 MB 级虚拟内存）与调度开销，并发度上千就不划算。
 
-Semaphore 内部维护一个等待 Future 队列，release 时只唤醒一个等待者，因此把 async with sem 放在发请求临界区就能精确约束在途数。tracemalloc 用 hook 追踪每次分配，物化 5 万条结果的列表峰值显著高于只保存生成器帧的流式管线，这正是背压与断点续抓要利用的内存特性。
+asyncio 把等待点显式化：协程在 `await` 处把控制权交回事件循环，底层用 selectors（epoll/kqueue）把就绪 fd 映射回回调，单 OS 线程即可维持数万连接，连接由 `AsyncClient` 的连接池复用而非每请求新建。
+
+`asyncio.Semaphore` 内部维护一个等待 Future 队列，release 时只唤醒一个等待者，因此用它的异步上下文包住发请求临界区就能精确约束在途数。
+
+`tracemalloc` 用 hook 追踪每次分配，物化 5 万条结果的列表峰值显著高于只保存生成器帧的流式管线，这正是背压与断点续抓要利用的内存特性。
 
 
 ### 串行、线程池、asyncio 连接池的收益各来自哪里
 
 <ConceptDiagram type='layers3' title='第 070 讲 · 分层视角' labels='一级到三级：并发模型只替换一个变量|四级：去重、限流、失败重试与断点|组件化与可观测：把策略写成配置|监控与合规' caption='组件化与可观测：把策略写成配置' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **监控与合规** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 监控与合规 落在哪一层。
 
 
 ## 分步实现：一级到三级的并发骨架
@@ -143,9 +147,9 @@ print('sum', sum(serial))
 
 <Compare :panels='[{"label": "主示例", "code": "import asyncio\n\nPAGES = {\n    &#39;u1&#39;: &#39;alpha&#39;,\n    &#39;u2&#39;: &#39;beta&#39;,\n    &#39;u3&#39;: &#39;gamma&#39;,\n}\n\nasync def fetch(url, fail_first=False, attempts=None):\n    for i in range(3):\n        if fail_first and i == 0 and url == &#39;u2&#39;:\n            attempts.append((url, i))\n            await asyncio.sleep(0)\n            continue\n        await asyncio.sleep(0)\n        return len(PAGES[url])\n\nasync def crawl(urls, limit=2):\n    seen = set()\n    sem = asyncio.Semaphore(limit)\n    attempts = []\n\n    async def one(url):\n        if url in seen:\n            return None\n        seen.add(url)\n        async with sem:\n            n = await fetch(url, True, attempts)\n            return (url, n)\n\n    results = await asyncio.gather(*(one(u) for u in urls))\n    return results, attempts\n\nasync def main():\n    urls = [&#39;u1&#39;, &#39;u2&#39;, &#39;u1&#39;, &#39;u3&#39;]\n    results, attempts = await crawl(urls)\n    print(&#39;unique&#39;, len([r for r in results if r]))\n    print(&#39;results&#39;, sorted(r for r in results if r))\n    print(&#39;retries&#39;, attempts)\n\nasyncio.run(main())", "note": "一级到三级：并发模型只替换一个变量"}, {"label": "对照 / 进阶", "code": "from concurrent.futures import ThreadPoolExecutor\n\ndef work(n):\n    return sum(range(n))\n\nnums = [1000, 2000, 3000, 4000]\nwith ThreadPoolExecutor(max_workers=4) as ex:\n    threaded = list(ex.map(work, nums))\nserial = [work(n) for n in nums]\nprint(&#39;serial == threaded&#39;, serial == threaded)\nprint(&#39;sum&#39;, sum(serial))", "note": "四级：去重、限流、失败重试与断点"}]' title='两种写法对照' note='差异集中在 串行基线；先看输出，再找背后的规则。' />
 
-<Term word='串行基线' text='串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。线程池版用 concurrent.futures.ThreadPoolExecutor(max_workers=k)，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个等待' />
+<Term word='串行基线' text='串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个' />
 
-<Term word='线程池版本' text='去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 hash），命中即跳过，避免重复页、分页参数与重定向环把 Top 名额吃光；分布式下换成布隆过滤器或共享 Redis 集合。限流用 asyncio.Semaphore(limit) 包住真正发请求的临界区，把「在途请求数」而非「已创建任务数」' />
+<Term word='线程池版本' text='去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 hash），命中即跳过，避免重复页、分页参数与重定向环把名额吃光；分布式下换成布隆过滤器或共享 Redis 集合。限流用 `asyncio.Semaphore(limit)` 包住真正发请求的临界区，把「在途请求数」而非「已创建任务数」压在上' />
 
 
 ### 把全部 HTML 存进列表为什么吃满内存
@@ -178,13 +182,13 @@ print('materialized peak > generator peak', peak_all > peak_stream)
 
 ## 四级落地：去重、限流、失败重试与断点
 
-去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 hash），命中即跳过，避免重复页、分页参数与重定向环把 Top 名额吃光；分布式下换成布隆过滤器或共享 Redis 集合。
+去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 hash），命中即跳过，避免重复页、分页参数与重定向环把名额吃光；分布式下换成布隆过滤器或共享 Redis 集合。
 
 限流用 `asyncio.Semaphore(limit)` 包住真正发请求的临界区，把「在途请求数」而非「已创建任务数」压在上限内；
 
 再加每域名最小间隔与令牌桶，遵守 `robots.txt` 的 Crawl-delay。失败重试只对幂等的 GET 生效，设最大次数（如 3）与指数退避，区分可重试状态码（429/5xx/超时）与永久失败（404/解析错误）。断点把 seen、待抓队列、已抓结果持久化，重启时从 checkpoint 恢复而不是全量重来；
 
-用 tracemalloc 对比「一次性物化全部结果」与「generator 流式产出」的峰值内存，能证明流式管线更省内存，这正是背压的基础。
+用 `tracemalloc` 对比「一次性物化全部结果」与「生成器流式产出」的峰值内存，能证明流式管线更省内存，这正是背压的基础。
 
 **限流与合规策略（默认开启）**
 
@@ -225,16 +229,16 @@ print('materialized peak > generator peak', peak_all > peak_stream)
 
 ## 组件化与可观测：把策略写成配置
 
-把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负责编排；这样升级限流算法不会动到解析逻辑。合规策略必须默认开启且写成配置：User-Agent、并发上限、每域名间隔、robots 白名单、超时。监控要打点四个量：在途任务数、单位时间请求数、各类状态码分布、队列积压长度；
+把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负责编排；这样升级限流算法不会动到解析逻辑。合规策略必须默认开启且写成配置：`User-Agent`、并发上限、每域名间隔、robots 白名单、超时。监控要打点四个量：在途任务数、单位时间请求数、各类状态码分布、队列积压长度；
 
-任一指标越界就降速或熔断。分布式化后还会出现重复抓取（多 worker 同时取到同一 URL）与顺序不确定，必须靠共享去重与幂等写入兜底。断点续抓要记录「已分配但未确认」的任务，worker 崩溃时重新入队，避免消息永久丢失。把这些约束显式化，才能说清每一次演进的收益来自并发模型、连接池、还是限流策略，而不是靠换框架碰运气。
+任一指标越界就降速或熔断。分布式化后还会出现重复抓取（多 worker 同时取到同一 URL）与顺序不确定，必须靠共享去重与幂等写入兜底。断点续抓要记录「已分配但未确认」的任务，worker 崩溃时重新入队，避免消息永久丢失。把这些约束显式化，才能说清每一次演进的收益来自并发模型、连接池，还是限流策略，而不是靠换框架碰运气。
 
 <FlowTimeline :steps='[{"title": "一级到三级：并发模型只替换一个变量", "desc": "串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚…", "tone": "blue"}, {"title": "四级：去重、限流、失败重试与断点", "desc": "去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 has…", "tone": "purple"}, {"title": "组件化与可观测：把策略写成配置", "desc": "把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负…", "tone": "orange"}, {"title": "工程落地", "desc": "带去重、限流与断点续抓的抓取管线", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 带去重、限流与断点续抓的抓取管线
 
-把去重、限流、重试、断点抽成独立组件后，主循环只负责编排：每批 URL 先过 seen 去重，再经 Semaphore 限制在途请求，失败由 fetch 内部按幂等策略重试，结果累积到 kept，seen 本身即可作为重启时的 checkpoint。
+把去重、限流、重试、断点抽成独立组件后，主循环只负责编排：每批 URL 先过 seen 去重，再经 `asyncio.Semaphore` 限制在途请求，失败由 fetch 内部按幂等策略重试，结果累积到 kept，seen 本身即可作为重启时的 checkpoint。
 
 真实项目还要记录「已分配未确认」的任务、加每域名间隔与 robots 白名单、把状态码打进指标。下面片段分三批喂入含重复项的 URL，打印每批新增数、累计唯一数与序列化后的断点，用来验证跨批次去重不会漏抓也不会重抓。
 
@@ -283,18 +287,18 @@ if __name__ == '__main__':
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **串行基线** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 串行基线 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 令牌桶限速的连续时间推导与 GCRA 等价形式
 
-设桶容量 b、补充速率 r（个每秒），t 时刻的令牌数 `T(t)` = `min(b, T(t0)` + r 乘 (t - t0))；请求到达时若 T 不小于 cost 就扣除并放行，否则拒绝或等待。
+设桶容量 b、补充速率 r（个每秒），t 时刻的令牌数 `T(t)=min(b,T(t0)+r*(t-t0))`，即不超容量 b 的前提下按速率 r 从上一个时刻线性补充；
 
-由此得到两条硬约束：任意瞬间最多放行 b 个（突发上限），任意长度 L 的窗口内最多放行 b + rL 个（长期速率被 r 钳住），既不靠后台定时器也不靠固定窗口计数。
+请求到达时若令牌数不小于本次消耗 cost 就扣除并放行，否则拒绝或等待。由此得到两条硬约束：任意瞬间最多放行 b 个（突发上限），任意长度 L 的窗口内最多放行 b + rL 个（长期速率被 r 钳住），既不靠后台定时器也不靠固定窗口计数。
 
-等价的 GCRA（Generic Cell Rate Algorithm）把「理论到达时间 TAT」当唯一状态：到达时刻 t 若 t 不小于 TAT 减 tau 就接受，并令 `TAT = max`(TAT, t) + T，其中 `T = 1`/r、`tau = b`/r 是突发容差；
+等价的 `GCRA`（Generic Cell Rate Algorithm）把「理论到达时间 TAT」当唯一状态：到达时刻 t 若不小于 TAT 减 tau 就接受，并把 TAT 更新为 `TAT=max(TAT,t)+T`，其中 `T=1/r`、`tau=b/r` 是突发容差；
 
-它只需一个时间戳就能表达同样的允许流量，是网关与 Redis 限流器的常见实现。固定窗口计数器的边界突刺是反例：两个窗口交界处的一秒内可放行 2r，滑动窗口日志要存每个请求时间戳、内存 `O(r 乘窗口)`，而令牌桶状态 `O(1)`。
+它只需一个时间戳就能表达同样的允许流量，是网关与 Redis 限流器的常见实现。固定窗口计数器的边界突刺是反例：两个窗口交界处的一秒内可放行 2r，滑动窗口日志要存每个请求时间戳、内存 O(r 乘窗口)，而令牌桶状态 `O(1)`。
 
 实测里 `capacity=10`、`rate=5` 时连续 12 次取令牌恰好放过 10 次，随后按 0.2 秒每个的节奏恢复，正是「突发有界、长期匀速」的数学表现。
 
@@ -364,13 +368,15 @@ print('burst allowed with capacity 10', allowed)
 
 ## 布隆过滤器的误判率与位数组参数求解
 
-布隆过滤器用 m 位数组、n 个元素、k 个独立哈希。插入后某一位仍是 0 的概率是 (1 - 1/m) 的 kn 次方，约等于 e 的 -kn/m 次方，于是不存在的元素被误判为存在的概率 p = (1 - e 的 -kn/m 次方) 的 k 次方。
+布隆过滤器用 m 位数组、n 个元素、k 个独立哈希。
 
-对 k 求导并令导数为零，得最优 k* = (m/n) 乘 ln2，代回得 `m = -n` 乘 ln p 除以 (ln2) 的平方，约等于 -2.08 乘 n 乘 ln p，即每元素约需 -ln p 除以 (ln2) 平方 位：p 取 1% 时约 9.6 位每元素，p 取 0.1% 时约 14.4 位。
+插入后某一位仍是 0 的概率约是 (1 - 1/m) 的 kn 次方，也就是 e 的 -kn/m 次方，于是不存在的元素被误判为存在的概率是 `p=(1-e^(-kn/m))^k`。
+
+对 k 求导并令导数为零，得最优 `k*=(m/n)ln2`，代回得 `m=-n*ln(p)/(ln2)^2`，约等于 -2.08 乘 n 乘 ln p，即每元素约需 -ln p 除以 (ln2) 平方 位：p 取 1% 时约 9.6 位每元素，p 取 0.1% 时约 14.4 位。
 
 工程含义很具体：100 万 URL 压到 1% 误判只需约 1.2 MB，用 set 存字符串则要几十 MB；代价是「判存在」可能误判，把没抓过的 URL 当成抓过而漏抓，所以布隆只做「一定不存在」的前置拦截，命中之后还得回查权威去重表。另一个边界是标准布隆不支持删除，因为多个元素共享同一位，清零会毁掉别人；
 
-计数布隆用每格 4 位计数器换删除能力但要防溢出。分布式下换成 Redis 的 SETBIT 或布隆模块时，网络往返必须算进收益账。正文只提了布隆这个名字，这里把位数组参数推导与实测误判率补齐。
+计数布隆用每格 4 位计数器换删除能力但要防溢出。分布式下换成 Redis 的 `SETBIT` 或布隆模块时，网络往返必须算进收益账。这些推导把「用布隆去重」这句经验说法落到了可核算的参数上。
 
 **限流与去重的参数、公式与失效边界**
 
@@ -391,7 +397,7 @@ print('burst allowed with capacity 10', allowed)
 
 根因是把 checkpoint 当成结果快照而不是操作日志：只在 ack 时写一条记录，崩溃前的 claim 没有落盘。
 
-修复借鉴数据库的 WAL：每次 claim 与 ack 都追加一条 append-only 事件，重放时 `done = 所有` ack、`inflight = claim` 减 ack，把 inflight 重新入队即可，代价是日志量翻倍、需要定期 compact。
+修复借鉴数据库的 WAL：每次 claim 与 ack 都追加一条 append-only 事件，重放时把所有 ack 汇成 done、把 claim 减去 ack 得到 inflight，再把 inflight 重新入队即可，代价是日志量翻倍、需要定期 compact。
 
 幂等写入兜底重复抓取：结果表以 url 为唯一键，ack 重放时 upsert 覆盖而非追加。下面用纯标准库复现 claim/ack 重放与崩溃后的 requeue 判定，能直接数出「崩溃前 1 个在途、重启后 2 个待抓」。
 
@@ -430,7 +436,7 @@ print('wal events', len(log.events))
 
 ### AIMD 自适应并发与 429 退避的成本
 
-<Quiz no='070-X' q='关于令牌桶与布隆过滤器，下面哪项准确？' :options='["令牌桶用 O(1) 状态约束长期速率 r 与突发上限 b；布隆误判率随位数组 m 增大按公式下降", "令牌桶必须后台定时器每秒补充令牌，否则无法工作", "布隆过滤器判定存在时一定存在，判定不存在时可能误判", "布隆过滤器支持直接删除单个元素，把对应位清零即可"]' answer="0" explain='令牌桶在取令牌时按时间差惰性补充，无需定时器，突发上限恰为 b、长期速率被 r 钳住。布隆的方向相反：判「不存在」一定不存在，判「存在」可能误判，且共享位数组不支持直接删除。误判率 p = (1 - e 的 -kn/m 次方) 的 k 次方，在 k* = (m/n)ln2 时取得最小，这与正文只提「用布隆去重」相比才是可核算的参数依据。' />
+<Quiz no='070-1' q='关于令牌桶与布隆过滤器，下面哪项准确？' :options='["令牌桶用 O(1) 状态约束长期速率 r 与突发上限 b；布隆误判率随位数组 m 增大按公式下降", "令牌桶必须后台定时器每秒补充令牌，否则无法工作", "布隆过滤器判定存在时一定存在，判定不存在时可能误判", "布隆过滤器支持直接删除单个元素，把对应位清零即可"]' answer="0" explain='令牌桶在取令牌时按时间差惰性补充，无需定时器，突发上限恰为 b、长期速率被 r 钳住。布隆的方向相反：判「不存在」一定不存在，判「存在」可能误判，且共享位数组不支持直接删除。误判率 p = (1 - e 的 -kn/m 次方) 的 k 次方，在 k* = (m/n)ln2 时取得最小，这与正文只提「用布隆去重」相比才是可核算的参数依据。' />
 
 
 ## 练习、自测与一页纸速记
@@ -439,15 +445,15 @@ print('wal events', len(log.events))
 
 <Exercise title='进阶：用 Semaphore 量在途并发峰值' task='起 6 个任务、Semaphore(2) 限制在途数，在临界区内维护 active 计数与 peak，await sleep(0) 让出，gather 后打印 peak。' solution='import asyncio\nasync def main():\n    active = 0\n    peak = 0\n    sem = asyncio.Semaphore(2)\n    async def job():\n        nonlocal active, peak\n        async with sem:\n            active += 1\n            peak = max(peak, active)\n            await asyncio.sleep(0)\n            active -= 1\n    await asyncio.gather(*(job() for _ in range(6)))\n    print(&#39;peak&#39;, peak)\nasyncio.run(main())' explain='Semaphore 保证同一时刻最多 2 个任务进入临界区，故 peak 恒为 2；约束的是在途请求数而非已创建的 Task 数。' />
 
-<Quiz no='070-1' q='把 20 个串行抓取改成 4 线程池后吞吐上升，主要机制是？' :options='["同步 socket 等待前释放 GIL，多个 IO 等待得以重叠", "GIL 被彻底去掉了", "线程池让纯 Python 解析代码并行执行", "操作系统把 URL 自动分片"]' answer="0" explain='阻塞式 IO 在进入系统调用前由 Py_BEGIN_ALLOW_THREADS 释放 GIL，多个等待可重叠；纯 Python 计算仍受 GIL 串行限制，线程池收益只在等待型任务上。' />
+<Quiz no='070-2' q='把 20 个串行抓取改成 4 线程池后吞吐上升，主要机制是？' :options='["同步 socket 等待前释放 GIL，多个 IO 等待得以重叠", "GIL 被彻底去掉了", "线程池让纯 Python 解析代码并行执行", "操作系统把 URL 自动分片"]' answer="0" explain='阻塞式 IO 在进入系统调用前由 Py_BEGIN_ALLOW_THREADS 释放 GIL，多个等待可重叠；纯 Python 计算仍受 GIL 串行限制，线程池收益只在等待型任务上。' />
 
-<Quiz no='070-2' q='爬虫里 Semaphore 应该包住哪一段？' :options='["真正发起网络请求的临界区，约束在途请求数", "整个 main 函数，约束创建了多少 Task", "结果写库的纯 CPU 段", "日志打印语句"]' answer="0" explain='Semaphore 要限制的是并发在途请求，而不是已创建的协程数量；把 async with sem 放在 fetch 调用外，才能精确控制对端压力与本机连接数。' />
+<Quiz no='070-3' q='爬虫里 Semaphore 应该包住哪一段？' :options='["真正发起网络请求的临界区，约束在途请求数", "整个 main 函数，约束创建了多少 Task", "结果写库的纯 CPU 段", "日志打印语句"]' answer="0" explain='Semaphore 要限制的是并发在途请求，而不是已创建的协程数量；把 async with sem 放在 fetch 调用外，才能精确控制对端压力与本机连接数。' />
 
-<Quiz no='070-3' q='关于失败重试，稳妥的策略是？' :options='["只对幂等 GET 的 429/5xx/超时重试，设上限与指数退避", "所有异常都立即重试三次", "由模型自决重试次数", "不设超时，交给网关兜底"]' answer="0" explain='404/解析错误是永久失败，重试无意义；非幂等写操作重试会重复执行。只重试可恢复错误、带上界与退避，并把永久失败送进失败队列。' />
+<Quiz no='070-4' q='关于失败重试，稳妥的策略是？' :options='["只对幂等 GET 的 429/5xx/超时重试，设上限与指数退避", "所有异常都立即重试三次", "由模型自决重试次数", "不设超时，交给网关兜底"]' answer="0" explain='404/解析错误是永久失败，重试无意义；非幂等写操作重试会重复执行。只重试可恢复错误、带上界与退避，并把永久失败送进失败队列。' />
 
-<Predict no='070-P' q='用 gather 并发跑 6 个任务、Semaphore(2) 限流，peak 计数器的值是？' :options='["2", "6", "1"]' answer='0' output='2' explain='Semaphore(2) 只放行 2 个任务进入临界区，其余在 acquire 处等待；active 在进入时加一、退出时减一，其峰值被上限钉死为 2，与总任务数 6 无关。' />
+<Predict no='070-5' q='用 gather 并发跑 6 个任务、Semaphore(2) 限流，peak 计数器的值是？' :options='["2", "6", "1"]' answer='0' output='2' explain='Semaphore(2) 只放行 2 个任务进入临界区，其余在 acquire 处等待；active 在进入时加一、退出时减一，其峰值被上限钉死为 2，与总任务数 6 无关。' />
 
-<FillBlank no='070-F' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 串行基线 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 一级到三级：并发模型只替换一个变量 的落点。' />
+<FillBlank no='070-6' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 串行基线 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 一级到三级：并发模型只替换一个变量 的落点。' />
 
 <KnowledgeCard :points='["四级演进每次只替换一个变量：并发模型 → 连接池/IO 模型 → 去重限流 → 断点与可观测", "同步 IO 释放 GIL 使线程池能重叠等待；asyncio 单线程事件循环消除线程栈开销并复用连接池", "去重靠规范化 URL 指纹 + seen；限流用 Semaphore 约束在途数，另设每域名最小间隔与 robots Crawl-delay", "重试只对幂等 GET 的 429/5xx/超时生效，最大次数 + 指数退避；永久失败进失败队列", "断点持久化 seen + 待抓队列 + 结果，记录已分配未确认任务以便崩溃后重入队", "流式产出比物化全部结果更省内存（tracemalloc 可证）；监控在途数、QPS、状态码分布、队列积压"]' :pitfalls='["把 Top 结果一次性塞进列表再统一处理", "不做去重与限速直接开满并发", "对所有失败都无限重试", "不做限速与 robots 约束，压垮对方站点同时也让自己被封；分布式化后还会有重复抓取问题"]' summary='每一级演进只替换一个变量：并发模型、连接池、限流策略、持久化，才能清楚看到收益来自哪里' />
 

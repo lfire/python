@@ -9,16 +9,16 @@ description: 把运行时机制做成一个可用工具
 
 前面几讲分别给了查找、访问、拷贝和测量这几件工具，都只在一条执行流里打转。进入并发之前，适合做一次阶段综合，把它们收拢成一件能跑的工具，检验自己是不是真懂了。设想一个线上脚本内存一路往上爬，没人说得清是哪段在涨、涨到多少该有人知道。
 
-由简到繁：从 sys.setprofile 采集事件起步，拼出调用树与自耗时，用 tracemalloc 快照记下增量，接着加阈值告警和报告生成，末了量化自身开销与采样间隔。前置是前几讲的剖析手段、函数与异常处理；做完后你得到能按函数过滤、可在灰度环境开启的性能分析器，也为下一阶段的并发观察留好底子。
+由简到繁：从 `sys.setprofile` 采集事件起步，拼出调用树与自耗时，用 `tracemalloc` 快照记下增量，接着加阈值告警和报告生成，末了量化自身开销与采样间隔。前置是前几讲的剖析手段、函数与异常处理；做完后你得到能按函数过滤、可在灰度环境开启的性能分析器，也为下一阶段的并发观察留好底子。
 
 
 ## 想加哨兵，却把吞吐和内存都拖垮
 
-生产服务偶发内存涨到 OOM，团队想加一个「慢调用 + 内存增长」的哨兵，但直接用 cProfile 全量采集会拖垮吞吐，用 tracemalloc 常驻又多出两倍内存。有人写了个 `sys.setprofile` 的采集器，灰度时报告里却混进了别的线程事件，调用树对不上；
+生产服务偶发内存涨到 OOM，团队想加一个「慢调用 + 内存增长」的哨兵，可 cProfile 全量采集会拖垮吞吐，`tracemalloc` 常驻又多出近两倍内存。有人写了个基于 `sys.setprofile` 的采集器，灰度报告里混进了别的线程事件，调用树对不上；
 
-还有人把每个函数进出都记一条日志，结果分析器自身的开销比业务还高，测出来的耗时全是噪声。更麻烦的是阈值告警：按总内存设阈值会被正常缓存误报，按单次增量设阈值又漏掉缓慢泄漏。这些矛盾不是调参能绕过去的：采样精度与侵入性是一对必须显式量化的取舍。
+还有人把每个函数进出都记一条日志，分析器自身的开销比业务还高，测出来的耗时全是噪声。阈值也不好定：按总内存设会被正常缓存误报，按单次增量设又漏掉缓慢泄漏。这几处矛盾不是调参能绕过去的——采集越细、侵入越大，得先把这份开销量出来，再决定开到什么程度。
 
-本讲把运行时机制真正做成一个可用工具——用 setprofile 建调用树、用 tracemalloc 快照差值做阈值、用开关与采样间隔把开销关进笼子，并解释 3.12+ 为什么该换成 `sys.monitoring`。
+本讲把运行时机制真正做成一个可用工具：用 `sys.setprofile` 建调用树、用 `tracemalloc` 快照差值做阈值、用开关与采样间隔把开销关进笼子，并解释 3.12+ 为什么该换成 `sys.monitoring`。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='多线程里用全局 setprofile，调用树对不上：setprofile 只作用于当前线程，但 profile 状态可被 threading.setprofile 传播到新线程，事件混在一起' />
 
@@ -36,17 +36,17 @@ description: 把运行时机制做成一个可用工具
 
 ## sys.setprofile 的 call 与 return 事件
 
-`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 'call' / 'return'，C 函数发 'c_call' / 'c_return' / 'c_exception'，arg 在 return 时是返回值、在异常时是三元组。
+`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 'call' 与 'return'，C 函数发 'c_call' / 'c_return' / 'c_exception'，arg 在 return 时是返回值、在异常时是三元组。
 
 `sys.getprofile()` 读回，`sys.setprofile(None)` 关闭。
 
-它只对设置它的那个线程生效，其他线程要 `threading.setprofile`；
+它只对设置它的那个线程生效，其他线程要用 `threading.setprofile`；
 
 因此在多线程程序里用全局回调会把无关线程的事件也算进当前调用树，必须按 `threading.get_ident()` 分桶。
 
-重建调用树的标准做法是维护一个栈：'call' 时压入 (函数名, perf_counter 起点, 子耗时累加器)，'return' 时弹出并算 `dt = now` - t0，本帧 `self = dt` - child_time，`cumulative = dt`，并把 dt 累加到父帧的 child_time。
+重建调用树的标准做法是维护一个栈：'call' 时压入 (函数名, perf_counter 起点, 子耗时累加器)，'return' 时弹出并算 `dt = now - t0`，本帧 `self = dt - child_time`，`cumulative = dt`，再把 dt 累加到父帧的 child_time。
 
-这样一次遍历就能同时得到每个函数的调用次数、自耗时与累计耗时。注意 setprofile 看不到行级事件（那是 `sys.settrace` 的 'line' / 'opcode'），且回调里任何 Python 调用本身都可能产生新事件，回调必须短、只做入栈出栈与累加。
+这样一次遍历就能同时得到每个函数的调用次数、自耗时与累计耗时。注意 setprofile 看不到行级事件（那是 `sys.settrace` 的 'line' 与 'opcode'），且回调里任何 Python 调用都可能产生新事件，回调必须短，只做入栈出栈与累加。
 
 **sys.setprofile 事件类型与 arg 含义**
 
@@ -110,7 +110,7 @@ print('top cum > self', prof.stats['top'][2] > prof.stats['top'][1])
 
 <ConceptDiagram type='layers3' title='第 059 讲 · 分层视角' labels='sys.setprofile 事件与调用|tracemalloc 快照差值与阈值告|开销量化与 sys.monitoring|开销量化' caption='开销量化与 sys.monitoring 迁移' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **开销量化** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 开销量化 落在哪一层。
 
 
 ### 多线程事件为何会张冠李戴
@@ -148,17 +148,17 @@ print('overhead ratio > 1', profiled / plain > 1.0)
 
 ## tracemalloc 快照差值与阈值告警
 
-`tracemalloc.start(nframe)` 的 nframe 决定保留几层回溯，越深信息越全、开销越大；
+哨兵的关键不是采到数据，而是定一个不误报的阈值。
 
-典型取 1 到 3。
+`tracemalloc.start(nframe)` 的 nframe 决定保留几层回溯，越深信息越全、开销越大，典型取 1 到 3。
 
-哨兵在基线点 `take_snapshot()`，在检查点再 `take_snapshot()`，用 `snap_now.compare_to`(snap_base, 'lineno') 得到 StatisticDiff 列表，按 size_diff 降序取前几行，累加正增量作为「本次净增长」。
+做法是先在基线点 `take_snapshot()`，在检查点再 `take_snapshot()`，用 `compare_to` 对两次快照按 'lineno' 做差，得到 `StatisticDiff` 列表，按 `size_diff` 降序取前几行，把正增量累加成「本次净增长」。
 
-阈值应按增量而非 `get_traced_memory()` 的绝对值来设：缓存预热、常量池都会让绝对值上升，但稳定后快照差值应趋近于零。
+阈值要按增量而不是 `get_traced_memory()` 的绝对值来设：缓存预热、常量池都会让绝对值上升，但稳定后快照差值应趋近于零。
 
-可设两级阈值：单窗口增量超过 N 字节发告警，连续 K 个窗口持续增长判为可疑泄漏。`reset_peak()`（3.9+）只重置峰值计数器，不影响快照；`stop()` 释放追踪数据。报告要带 trace_id、窗口时长、Top-N 分配行与当前/峰值字节，格式固定便于 CI 解析。
+可设两级：单窗口增量超过 N 字节发告警，连续 K 个窗口持续增长才判为可疑泄漏。`reset_peak()`（3.9+）只重置峰值计数器，不影响快照；`stop()` 释放追踪数据。报告要带 trace_id、窗口时长、Top-N 分配行与当前/峰值字节，格式固定便于 CI 解析。
 
-千万记住 tracemalloc 只统计 Python 层分配，C 扩展里 malloc 的缓冲区不在账上，怀疑第三方库泄漏要配 jemalloc / valgrind 等外部工具。
+还要记住 tracemalloc 只统计 Python 层分配，C 扩展里 malloc 的缓冲区不在账上，怀疑第三方库泄漏得配 `jemalloc` / `valgrind` 这类外部工具。
 
 **哨兵阈值与误报对照**
 
@@ -169,7 +169,7 @@ print('overhead ratio > 1', profiled / plain > 1.0)
 | 峰值 peak | get_traced_memory()[1] | 一次性大对象 | 配合 reset_peak (3.9+) 分窗 |
 | Top-N 分配行 | statistics('lineno') 或 compare_to | nframe 过浅定位不准 | nframe 取 1-3，报告带完整 traceback 摘要 |
 
-<Callout type="tip" title='核心心智模型' text='sys.setprofile(func) 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; / &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回值、' />
+<Callout type="tip" title='核心心智模型' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回' />
 
 
 ## 按绝对内存设阈值为什么天天误报
@@ -181,15 +181,15 @@ print('overhead ratio > 1', profiled / plain > 1.0)
 
 ## 采样精度与侵入性：开销量化
 
-任何 profiler 都在改变被测对象。量化方法是同一段纯 Python 热点分别在「无钩子」与「装回调」下各跑若干轮，取 min 计时并算比值；函数越小、调用越密，setprofile 的相对开销越大，因为每个 call/return 都要穿过 Python 回调。
+任何 profiler 都在改变被测对象。量化方法是同一段纯 Python 热点分别在「无钩子」与「装回调」下各跑若干轮，取 min 计时再算比值；函数越小、调用越密，setprofile 的相对开销越大，因为每个 call/return 都要穿过 Python 回调。
 
-工程上必须提供三个开关：按函数名过滤（只追踪关心的前缀）、采样间隔（每 N 次事件记一次）、上下文开关（灰度时临时开启）。
+工程上必须留三个开关：按函数名过滤（只追踪关心的前缀）、采样间隔（每 N 次事件记一次）、上下文开关（灰度时临时开启）。
 
-3.12 起 `sys.monitoring`（PEP 669）给出更轻的路径：`use_tool_id(tool_id, name)` 占一个工具槽，`set_events(tool_id, 事件位)` 订阅 PY_START / PY_RETURN / PY_UNWIND 等，register_callback 注册回调，事件在解释器指令流里就地检查、不构造 frame 对象，开销比 setprofile 低一个量级；
+3.12 起 `sys.monitoring`（PEP 669）给出更轻的路径：`use_tool_id` 占一个工具槽，`set_events` 订阅 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等事件位，`register_callback` 注册回调，事件在解释器指令流里就地检查、不构造 frame 对象，开销比 setprofile 低一个量级；
 
-用 free_tool_id 释放。工具 ID 有上限（常用 0-5，其中 0/1 留给调试器与优化器），同一事件位只能被一个工具占用，冲突时 set_events 会抛 ValueError。
+用完 `free_tool_id` 释放。工具槽一共 6 个（0-5），其中 0 留给调试器、1 留给覆盖率、2 留给分析器、5 留给优化器，用户能用的是剩下几个编号；同一事件位只能被一个工具订阅，冲突时 `set_events` 会抛 `ValueError`。
 
-3.13 沿用这套接口并加入实验性 JIT 骨架，跨版本采集脚本要在启动时探测 hasattr(sys, 'monitoring') 再决定走哪条路径。
+3.13 沿用这套接口并加入实验性 JIT 骨架，跨版本采集脚本要在启动时探测 `hasattr(sys, 'monitoring')`，再决定走哪条路径。
 
 **setprofile 与 sys.monitoring 对照**
 
@@ -240,28 +240,28 @@ else:
 
 ## ceval 主循环里的 profile 回调代价
 
-setprofile 的回调由 ceval 主循环在 _PyEval_SetProfile 之后于函数调用/返回处触发，解释器把当前 PyFrameObject、事件类型与参数打包成一个 Python 层调用；这意味着每个事件都要构造参数元组、跨越 C/Python 边界，函数越小、调用越密，相对开销越大。
+setprofile 的回调挂在线程状态上，由 ceval 主循环在函数调用与返回处触发：解释器把当前 `PyFrameObject`、事件类型与参数打包成一次 Python 层调用，每个事件都要构造参数元组、跨一趟 C/Python 边界，所以函数越小、调用越密，这份固定成本占的比重越高。
 
-调用树重建依赖一个不变量：call 与 return 严格嵌套，因此用栈即可还原父子关系，父帧的 `self = 自身墙钟` - 各子帧墙钟之和，`cumulative = 自身墙钟`。
+调用树重建依赖一个不变量：call 与 return 严格嵌套，用栈即可还原父子关系，父帧的 `self` 等于自身墙钟减去各子帧墙钟之和，`cumulative` 等于自身墙钟。
 
-多线程下各线程有独立的 profile 状态，全局回调看到的事件来自所有线程，若不按 `threading.get_ident()` 分桶就会出现「张冠李戴」的调用树。
+多线程下各线程有独立的 profile 状态，全局回调看到的事件来自所有线程，若不按 `threading.get_ident()` 分桶，调用树就会张冠李戴。
 
-tracemalloc 在 _PyObject_Malloc 层把分配大小与回溯压进哈希表，compare_to 对两次聚合表做差，故 size_diff 是净增长而非瞬时占用。
+tracemalloc 在 `_PyObject_Malloc` 层把分配大小与回溯压进哈希表，`compare_to` 对两次聚合表做差，故 `size_diff` 是净增长而不是瞬时占用。
 
-`sys.monitoring` 把事件检查内联进指令分派：解释器查「当前工具是否订阅了这一位」，命中才调用轻量回调，省去 frame 构造与通用事件分发，因此能低一个量级的开销；事件位被独占的设计则避免多个工具互相踩踏。
+`sys.monitoring` 把事件检查内联进指令分派：解释器查「当前工具是否订阅了这一位」，命中才调用轻量回调，省去 frame 构造与通用事件分发，因此能低一个量级；事件位被独占的设计则避免多个工具互相踩踏。
 
-<Term word='sys.setprofile 采集' text='sys.setprofile(func) 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; / &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回值、在异常时是三元组。s' />
+<Term word='sys.setprofile 采集' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回值、在异常时是三元组' />
 
-<Term word='调用树与自耗时' text='tracemalloc.start(nframe) 的 nframe 决定保留几层回溯，越深信息越全、开销越大；典型取 1 到 3。哨兵在基线点 take_snapshot()，在检查点再 take_snapshot()，用 snap_now.compare_to(snap_base, &#39;lineno&#39;) 得到 Sta' />
+<Term word='调用树与自耗时' text='哨兵的关键不是采到数据，而是定一个不误报的阈值。`tracemalloc.start(nframe)` 的 nframe 决定保留几层回溯，越深信息越全、开销越大，典型取 1 到 3。做法是先在基线点 `take_snapshot()`，在检查点再 `take_snapshot()`，用 `compare_to` 对两' />
 
 
 ## 可灰度开启的简易性能分析器与内存哨兵
 
-给一个内部服务加观测能力，要求默认零成本、灰度时临时开启、报告能直接进日志管道。实现思路是把「调用树采集」和「内存快照」合成一个类：构造时接收关心函数名前缀、采样间隔与内存阈值；start 里按探测结果选择 `sys.monitoring` 或回退到 `sys.setprofile`，并 start tracemalloc；
+给一个内部服务加观测能力，要求默认零成本、灰度时临时开启、报告能直接进日志管道。实现思路是把「调用树采集」和「内存快照」合成一个类：构造时接收关心的函数名前缀、采样间隔与内存阈值；`start` 里按探测结果选择 `sys.monitoring` 或回退到 `sys.setprofile`，同时启动 tracemalloc；
 
-每次检查点做 compare_to 求净增长，超阈值就生成一条带 Top-N 分配行的告警；stop 输出按 cumtime 排序的调用树并释放所有钩子。
+每次检查点用 `compare_to` 求净增长，超阈值就生成一条带 Top-N 分配行的告警；`stop` 输出按 `cumtime` 排序的调用树并释放所有钩子。
 
-开关采用上下文管理器，保证异常路径也会 `setprofile(None)` 与 `tracemalloc.stop()`，避免把钩子永久留在进程里。
+开关采用上下文管理器，保证异常路径也会执行 `sys.setprofile(None)` 与 `tracemalloc.stop()`，不把钩子永久留在进程里。
 
 真实部署再把报告改成结构化日志并接告警系统，这里的片段重点是可运行、可关、开销量化三件事。
 
@@ -317,7 +317,7 @@ if __name__ == '__main__':
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **sys.setprofile 采集** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `sys.setprofile` 采集 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 错因速查与排查顺序
@@ -335,7 +335,7 @@ python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 
 `sys.setprofile(f)` 落到 Python/`sysmodule.c` 的 sys_setprofile，再调 _PyEval_SetProfile 把回调挂在 PyThreadState 的 c_profilefunc / cprofileobj 上；
 
-之后 `ceval.c` 在每次 CALL 分派前后经 Python/`legacy_tracing.c` 触发 call / return / c_call / c_return 事件。
+之后 `ceval.c` 在每次 `CALL` 分派前后经 Python/`legacy_tracing.c` 触发 call / return / c_call / c_return 事件。
 
 真正的开销不在回调里的几行 Python，而在回调签名要求一个 frame 对象。
 
@@ -371,18 +371,22 @@ print('tool ids', [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.m
 
 <OutputBox title='扩展示例运行结果' output='has monitoring True\nhas setprofile True\ncaptured leaf True\ncaptured cb False\ntool ids [0, 2, 5]' />
 
-<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["3.12 起 sys.monitoring 可用，旧 setprofile 仍保留", "setprofile 是历代都有的接口", "用列表收集 call 事件里的函数名", "回调签名固定为 frame、event、arg", "只记 call 事件，return 与 C 事件不进列表", "frame.f_code.co_name 就是被调函数的名字", "返回自身以维持回调，某些实现里可不写", "安装回调到当前线程", "定义一个极小函数，放大回调的相对开销", "调用一次 leaf，触发一次 call 与一次 return", "关闭回调，避免后续打印继续产生事件", "leaf 被采集到，证明回调确实看到了用户函数", "cb 自身没被采集，解释器在回调期间屏蔽了事件分发", "3.13 的保留槽位是 0 调试器、2 分析器、5 优化器", "tracemalloc 用 compare_to 的 size_diff 净增量告警，比 current 绝对值少误报；nframe 取 1-3 控开销", "分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["3.12 起 sys.monitoring 可用，旧 setprofile 仍保留", "setprofile 是历代都有的接口", "用列表收集 call 事件里的函数名", "回调签名固定为 frame、event、arg", "只记 call 事件，return 与 C 事件不进列表", "frame.f_code.co_name 就是被调函数的名字", "返回自身以维持回调，某些实现里可不写", "安装回调到当前线程", "定义一个极小函数，放大回调的相对开销", "调用一次 leaf，触发一次 call 与一次 return", "关闭回调，避免后续打印继续产生事件", "leaf 被采集到，证明回调确实看到了用户函数", "cb 自身没被采集，解释器在回调期间屏蔽了事件分发", "3.13 的保留槽位是 0 调试器、2 分析器、5 优化器", "tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销", "分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 059 讲 · 扩展图解' labels='_PyInterpreterFrame 在数据栈|setprofile 回调|强制物化 PyFrameObject|f_back 链与 f_locals 填充' caption='旧式 profile 的开销不在回调逻辑，而在每次调用边界把轻量解释器帧物化成完整 frame 对象。' />
 
 
 ### instrumentation.c 与 specializing interpreter 的反优化代价
 
-PEP 669 把事件检查搬到指令层：Python/`instrumentation.c` 在 `sys.monitoring.set_events(tool_id, event_set)` 之后，直接改写 code object 的 co_code_adaptive，在 PY_START / PY_RETURN / PY_UNWIND 等位置插入 INSTRUMENTED_* 变体指令；
+PEP 669 把事件检查搬到指令层：Python/`instrumentation.c` 在 `sys.monitoring.set_events` 之后，直接改写 code object 的 co_code_adaptive，在 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等位置插入 `INSTRUMENTED_`* 变体指令；
+
+```python
+sys.monitoring.set_events(tool_id, event_set)
+```
 
 回调收到的是 code 对象、指令偏移与若干参数，不构造 frame，因此少了一整层物化。
 
-代价与 specializing interpreter 直接冲突：3.11 起热点指令会被 quicken 成 ADAPTIVE 家族并特化成具体类型，开启 instrumentation 时这些已特化的指令要 deopt 回通用形式，因为插入的监控点会破坏指令替换的前提；
+代价与 specializing interpreter 直接冲突：3.11 起热点指令会被 quicken 成 `ADAPTIVE` 家族并特化成具体类型，开启 instrumentation 时这些已特化的指令要 deopt 回通用形式，因为插入的监控点会破坏指令替换的前提；
 
 也就是说，即便工具一次回调都不干活，热路径也会因为失去特化而固定回退几个百分点。工具槽位有限且按用途保留，本机 3.13 实测 `DEBUGGER_ID=0`、`PROFILER_ID=2`、`OPTIMIZER_ID=5`，用户可用的是剩余编号；
 
@@ -440,7 +444,7 @@ print('more calls than definition', len(calls) > 1)
 
 ```
 
-<Quiz no='059-X' q='在 3.13 上用 sys.setprofile 采集一个含 3 个 yield 的生成器，list() 消费完毕后，关于该生成器函数的 call 事件数量，哪项正确？' :options='["1 次，整个生成器只在首次 next 时触发一次 call", "3 次，与 yield 出的元素个数相同", "4 次，每次 resume 都按一次 call 分派，含最后触发 StopIteration 的那次", "0 次，生成器恢复走的是专用字节码，不触发 profile 事件"]' answer="2" explain='3.11 起生成器每次被 next / send 恢复都走一次 call 分派，yield 与最终 return 各走一次 return 分派；3 个 yield 加最后一次耗尽共 4 组 call/return。这正是按事件对建调用树会把生成器 self time 重复累加的原因。选项 A 把帧的生命周期与事件次数混淆，B 漏了耗尽那一次，D 也不成立：生成器恢复仍经过 profile 钩子，只是 3.12 起有 SEND 等专用指令，事件照常触发。' />
+<Quiz no='059-1' q='在 3.13 上用 sys.setprofile 采集一个含 3 个 yield 的生成器，list() 消费完毕后，关于该生成器函数的 call 事件数量，哪项正确？' :options='["1 次，整个生成器只在首次 next 时触发一次 call", "3 次，与 yield 出的元素个数相同", "4 次，每次 resume 都按一次 call 分派，含最后触发 StopIteration 的那次", "0 次，生成器恢复走的是专用字节码，不触发 profile 事件"]' answer="2" explain='3.11 起生成器每次被 next / send 恢复都走一次 call 分派，yield 与最终 return 各走一次 return 分派；3 个 yield 加最后一次耗尽共 4 组 call/return。这正是按事件对建调用树会把生成器 self time 重复累加的原因。选项 A 把帧的生命周期与事件次数混淆，B 漏了耗尽那一次，D 也不成立：生成器恢复仍经过 profile 钩子，只是 3.12 起有 SEND 等专用指令，事件照常触发。' />
 
 
 ## 练习、自测与速记
@@ -449,17 +453,17 @@ print('more calls than definition', len(calls) > 1)
 
 <Exercise title='进阶：量化 profile 回调带来的开销' task='对含 3 万次小函数调用的热点，分别在无钩子与 nop 回调下各跑三轮取 min，打印比值大于 1；解释为什么函数越小开销比越大。' solution='import sys, time\ndef add(a, b): return a + b\ndef busy():\n    t = 0\n    for i in range(30000): t = add(t, i)\n    return t\ndef run():\n    s = time.perf_counter(); busy(); return time.perf_counter() - s\na = min(run() for _ in range(3))\nsys.setprofile(lambda f, e, arg: None)\nb = min(run() for _ in range(3))\nsys.setprofile(None)\nprint(&#39;ratio &gt; 1&#39;, b / a &gt; 1.0)' explain='每次 call/return 都要穿过 Python 回调并构造参数元组；当函数体极短时，事件开销在总耗时里占比最高，比值明显大于 1。这正是生产要采样与过滤的原因。' />
 
-<Quiz no='059-1' q='在多线程程序里直接用 sys.setprofile 收集调用树，最可能出什么问题？' :options='["事件来自多个线程的 profile 状态，混进同一棵树，父子关系错乱", "自动抛 RuntimeError", "只能采到主线程，其它线程完全没数据", "结果比 cProfile 更精确"]' answer="0" explain='setprofile 是每线程状态，threading.setprofile 会把钩子传播给新建线程；全局回调会收到多线性事件，必须按 threading.get_ident() 分桶重建各线程独立的栈。' />
+<Quiz no='059-2' q='在多线程程序里直接用 sys.setprofile 收集调用树，最可能出什么问题？' :options='["事件来自多个线程的 profile 状态，混进同一棵树，父子关系错乱", "自动抛 RuntimeError", "只能采到主线程，其它线程完全没数据", "结果比 cProfile 更精确"]' answer="0" explain='setprofile 是每线程状态，threading.setprofile 会把钩子传播给新建线程；全局回调会收到多线性事件，必须按 threading.get_ident() 分桶重建各线程独立的栈。' />
 
-<Quiz no='059-2' q='用 tracemalloc 做泄漏告警，按什么量设阈值最不容易误报？' :options='["快照 compare_to 的 size_diff 净增量，并要求连续多个窗口持续增长", "get_traced_memory() 的 current 绝对值", "进程 RSS", "peak 一次性峰值"]' answer="0" explain='绝对值会被缓存预热与一次性大对象抬高；增量趋近于零才是稳态。连续 K 窗确认能过滤偶发分配，nframe 取 1-3 控制开销。' />
+<Quiz no='059-3' q='用 tracemalloc 做泄漏告警，按什么量设阈值最不容易误报？' :options='["快照 compare_to 的 size_diff 净增量，并要求连续多个窗口持续增长", "get_traced_memory() 的 current 绝对值", "进程 RSS", "peak 一次性峰值"]' answer="0" explain='绝对值会被缓存预热与一次性大对象抬高；增量趋近于零才是稳态。连续 K 窗确认能过滤偶发分配，nframe 取 1-3 控制开销。' />
 
-<Quiz no='059-3' q='关于 3.12+ sys.monitoring，正确的是？' :options='["按工具 ID 订阅事件位、不构造 frame 对象，开销低于 setprofile", "它是 setprofile 的别名", "同一事件位可被多个工具同时订阅", "只能用于单线程程序"]' answer="0" explain='PEP 669 把事件检查内联进指令分派，回调参数精简；工具 ID 与事件位是独占资源，冲突时 set_events 抛 ValueError，常用 ID 0-5。' />
+<Quiz no='059-4' q='关于 3.12+ sys.monitoring，正确的是？' :options='["按工具 ID 订阅事件位、不构造 frame 对象，开销低于 setprofile", "它是 setprofile 的别名", "同一事件位可被多个工具同时订阅", "只能用于单线程程序"]' answer="0" explain='PEP 669 把事件检查内联进指令分派，回调参数精简；工具 ID 与事件位是独占资源，冲突时 set_events 抛 ValueError，常用 ID 0-5。' />
 
-<Predict no='059-P' q='用 setprofile 建调用树，top 调用 middle 一次、middle 调用 leaf 两次，统计里 leaf 的调用次数是多少？' :options='["2", "1", "4"]' answer='0' output='2' explain='每次进入 leaf 都触发一个 call 事件并压栈，middle 里显式调用了 leaf 两次，因此 stats[&#39;leaf&#39;][0] 为 2；cumtime 与 self 的差额则来自子调用时间。' />
+<Predict no='059-5' q='用 setprofile 建调用树，top 调用 middle 一次、middle 调用 leaf 两次，统计里 leaf 的调用次数是多少？' :options='["2", "1", "4"]' answer='0' output='2' explain='每次进入 leaf 都触发一个 call 事件并压栈，middle 里显式调用了 leaf 两次，因此 stats[&#39;leaf&#39;][0] 为 2；cumtime 与 self 的差额则来自子调用时间。' />
 
-<FillBlank no='059-F' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 sys.setprofile 采集 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 sys.setprofile 事件与调用树重建 的落点。' />
+<FillBlank no='059-6' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 sys.setprofile 采集 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 sys.setprofile 事件与调用树重建 的落点。' />
 
-<KnowledgeCard :points='["sys.setprofile 回调是 (frame, event, arg)，call/return 建栈；self = dt - 子耗时，cumtime = dt", "setprofile 是每线程状态，多线程必须按 threading.get_ident() 分桶，否则调用树串线", "tracemalloc 用 compare_to 的 size_diff 净增量告警，比 current 绝对值少误报；nframe 取 1-3 控开销", "分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销", "3.12+ sys.monitoring (PEP 669) 用 use_tool_id / set_events / register_callback，事件位独占、不构造 frame", "工具要提供函数名过滤、采样间隔与上下文开关，保证灰度可开、异常路径也能卸载钩子"]' :pitfalls='["多线程里用全局 setprofile，调用树对不上", "按 get_traced_memory() 的绝对值设内存告警，天天误报", "在 profile 回调里做日志、格式化或加锁", "在多线程程序里用全局 profile 回调，会把别的线程事件也算进当前调用树"]' summary='分析器本身也在消耗 CPU，采样精度与侵入性是一对必须显式 trade-off 的参数' />
+<KnowledgeCard :points='["sys.setprofile 回调是 (frame, event, arg)，call/return 建栈；self = dt - 子耗时，cumtime = dt", "setprofile 是每线程状态，多线程必须按 threading.get_ident() 分桶，否则调用树串线", "tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销", "分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销", "3.12+ sys.monitoring 用 use_tool_id / set_events / register_callback；工具槽 0-5，0 调试器、1 覆盖率、2 分析器、5 优化器保留", "工具要提供函数名过滤、采样间隔与上下文开关，保证灰度可开、异常路径也能卸载钩子"]' :pitfalls='["多线程里用全局 setprofile，调用树对不上", "按 get_traced_memory() 的绝对值设内存告警，天天误报", "在 profile 回调里做日志、格式化或加锁", "在多线程程序里用全局 profile 回调，会把别的线程事件也算进当前调用树"]' summary='分析器本身也在消耗 CPU，采样精度与侵入性是一对必须显式 trade-off 的参数' />
 
 **速记索引**
 
@@ -467,15 +471,15 @@ print('more calls than definition', len(calls) > 1)
 | --- | --- |
 | sys.setprofile 回调是 (frame, event, arg)，call/return 建栈；self = dt - 子耗时，cumtime = dt | 建立直觉 |
 | setprofile 是每线程状态，多线程必须按 threading.get_ident() 分桶，否则调用树串线 | 跑通示例 |
-| tracemalloc 用 compare_to 的 size_diff 净增量告警，比 current 绝对值少误报；nframe 取 1-3 控开销 | 深入边界 |
+| tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销 | 深入边界 |
 | 分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销 | 工程落地 |
-| 3.12+ sys.monitoring (PEP 669) 用 use_tool_id / set_events / register_callback，事件位独占、不构造 frame | 随堂检测 |
+| 3.12+ sys.monitoring 用 use_tool_id / set_events / register_callback；工具槽 0-5，0 调试器、1 覆盖率、2 分析器、5 优化器保留 | 随堂检测 |
 | 工具要提供函数名过滤、采样间隔与上下文开关，保证灰度可开、异常路径也能卸载钩子 | 复盘 |
 
 1. sys.setprofile 回调是 (frame, event, arg)，call/return 建栈；self = dt - 子耗时，cumtime = dt
 
 2. setprofile 是每线程状态，多线程必须按 threading.get_ident() 分桶，否则调用树串线
 
-3. tracemalloc 用 compare_to 的 size_diff 净增量告警，比 current 绝对值少误报；nframe 取 1-3 控开销
+3. tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销
 
 [下一讲：并发、并行与 IO 模型全景](/concurrency/concurrency-intro)

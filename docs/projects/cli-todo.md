@@ -7,31 +7,41 @@ description: 交付一个可安装、可测试、可持久化的命令行工具
 
 # 第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发
 
-上一讲收束了判断框架，从这里进入工程实战：把前十一阶段的知识放进能跑的小项目里用熟。第一站挑待办清单 CLI，因为它边界最干净——输入、领域、存储、输出四层都能单独替换与测试。
+上一讲收束了判断框架，从这一讲起转入工程实战：把前面十一阶段的知识放进能跑的小项目里用熟。头一个项目选待办清单 CLI，就因为它边界最干净——输入、领域、存储、输出四层彼此隔开，任何一层都能单独替换、单独测试。
 
-一个清单用覆盖写存盘，进程写到一半被打断，次日打开时 JSON 只剩半截；另一条命令没找到条目却仍报成功，外层脚本照着往下跑。我们先用 argparse 子命令把命令解析与业务隔开，再用临时文件加 os.replace 做原子写入，最后补退出码、入口点打包与端到端测试。需要你熟悉函数、字典、json 与文件读写；学完能交付一个可安装、被中断也不丢数据的小工具。
+设想两个真实故障：清单用覆盖写存盘，进程写到一半被打断，次日打开时 `JSON` 只剩半截；还有一条 `done` 命令没找到条目却照样报成功，外层脚本照着往下跑。这一讲先用 `argparse` 子命令把参数解析与业务逻辑隔开，再用临时文件配合 `os.replace` 做原子写入，最后补上退出码、入口点打包与端到端测试。需要你熟悉函数、字典、`json` 与文件读写；读完能交付一个可安装、被中断也不丢数据的小工具。
 
 
 ## 进程被杀后，待办文件只剩半截 JSON
 
-一个待办清单 CLI 用 open(path, 'w').`write(json.dumps(todos)`) 存盘，某次进程写到一半被 kill -9，磁盘上留下类似截断的半截 JSON，第二天所有命令一起抛 JSONDecodeError，用户数据永久丢失。
+一个待办清单 CLI 用 `open(path, 'w').write(json.dumps(todos))` 存盘，某次进程写到一半被 `kill -9`，磁盘上留下截断的半截 `JSON`；
 
-团队还发现没有退出码约定：todo done 99 明明没找到条目却返回 0，外层脚本以为成功继续往下跑，把后续步骤全带偏。朴素解法「直接覆盖写、报错就 print 一句」失败在两点：写操作不是原子的，进程随时可能停在文件写到一半；错误只打印给人看，没有通过进程退出码传给调用方，自动化脚本无法判定成败。
+第二天所有命令一起抛 `json.JSONDecodeError`，用户数据就此丢失。
 
-本讲用 `tempfile.mkstemp` 加 `os.replace` 做原子写、argparse 子命令做命令分发、main 返回整数配 `sys.exit` 定退出码，并把输入、领域、存储、输出四层拆开做端到端测试。
+团队还发现没有退出码约定：`todo done 99` 明明没找到条目却返回 `0`，外层脚本以为成功，继续把后续步骤全带偏。最朴素的写法「直接覆盖写、报错就 `print` 一句」失败在两处：写操作不是原子的，进程随时可能停在文件写到一半；错误只打印给人看，没有通过进程退出码传给调用方，自动化脚本无从判定成败。
+
+这一讲用 `tempfile.mkstemp` 加 `os.replace` 做原子写、用 `argparse` 子命令做分发、让 `main` 返回整数再交给 `sys.exit` 定退出码，并把输入、领域、存储、输出四层拆开做端到端测试。
 
 
 ## argparse 子命令与命令分发：命令层只解析不碰业务
 
-ArgumentParser(prog='todo') 建解析器，add_subparsers(dest='cmd', `required=True`) 建子命令；`required=True` 自 3.7 起支持，缺子命令时不再静默返回 None，而是报错。
+`ArgumentParser(prog='todo')` 建出解析器，`add_subparsers` 再挂子命令，其中 `dest='cmd'` 决定命令名存到哪个字段、`required=True` 让缺子命令时直接报错而不是静默返回 `None`——这个参数从 3.7 起才支持。
 
-每个 add_parser('add') 返回独立的子解析器，可再 add_argument('title')、add_argument('tid', `type=int`) 声明位置参数与类型转换，`type=int` 会在解析阶段把字符串转整数，失败时由 argparse 统一报错。
+每个 `add_parser('add')` 返回一台独立的子解析器，可以继续用 `add_argument('title')` 声明位置参数、用 `add_argument` 声明整数参数；
 
-`parse_args(argv)` 返回 Namespace，把 argv 参数化（默认 None 表示读 `sys.argv`）是让 main 可测试的关键。
+```python
+add_argument('tid', type=int)
+```
 
-用法错误时 argparse 调 `parser.error`，打印 usage 到 stderr 并以退出码 2 结束——这是它和自定义业务错误码的分界线：0 成功、1 业务错误（如条目不存在）、2 用法错误。命令层仅负责把 Namespace 翻译成对领域层的调用，绝不直接 open 文件；这样换存储实现时命令层一行不动。
+`type=int` 会在解析阶段把字符串转成整数，转不动就由 `argparse` 统一报错。
 
-`set_defaults(func=handler)` 可把处理函数挂到 Namespace 上做表驱动分发，但显式 if/elif 分支对初学者更透明。
+`parse_args(argv)` 返回 `Namespace`，把 `argv` 做成参数（默认 `None` 表示读 `sys.argv`）是让 `main` 可测试的关键。
+
+用法错误时 `argparse` 调 `parser.error`，把 usage 打到 stderr 并以退出码 `2` 结束，这就划清了它与业务错误码的界线：`0` 成功、`1` 业务错误（如条目不存在）、`2` 用法错误。
+
+命令层只把 `Namespace` 翻译成对领域层的调用，绝不自己 `open` 文件，换存储实现时它一行都不用改。
+
+`set_defaults(func=handler)` 能把处理函数挂到 `Namespace` 上做表驱动分发，不过对初学者，显式的 `if/elif` 分支更透明。
 
 ```python
 import argparse, json, os, tempfile
@@ -128,17 +138,19 @@ print('atomic restore', json.loads(open(target, encoding='utf-8').read()))
 
 ## JSON 持久化与原子写入：临时文件加 os.replace
 
-`json.dump` 负责序列化，`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写入、`indent=2` 便于人读。
+`json.dump` 负责序列化、`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写进文件，`indent=2` 便于人读。
 
-原子写的标准姿势：`tempfile.mkstemp(dir=目标目录)` 在**同一目录**建临时文件，返回 (fd, 路径)；
+原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；
 
-用 `os.fdopen`(fd, 'w') 包裹后写入，`f.flush()` 把用户态缓冲刷到内核，`os.fsync(f.fileno()`) 把页缓存真正落盘，最后 `os.replace(tmp, target)` 原子替换。
+用 `os.fdopen(fd, 'w')` 包成文件对象后写入，`f.flush()` 把用户态缓冲刷进内核，`os.fsync(f.fileno())` 再把页缓存真正落盘，最后 `os.replace(tmp, target)` 一步原子替换。
 
-POSIX 的 rename 在同一文件系统内是原子操作：任何时刻的读者要么看到完整的旧文件、要么看到完整的新文件，绝不会看到半截；这正是直接 open(target,'w') 做不到的（它先截断再逐字节写）。
+之所以稳妥，是因为 `POSIX` 的 `rename(2)` 在同一文件系统内是原子的：任何时刻的读者要么看到完整的旧文件、要么看到完整的新文件，绝不会撞上半截；
 
-跨文件系统 rename 会抛 OSError [Errno 18] EXDEV，所以 mkstemp 的 dir 必须是目标文件所在目录。用 try/finally 保证异常时删掉残留的 .tmp 文件。
+而直接 `open(target,'w')` 会先截断再逐字节写，做不到这一点。
 
-加载侧要区分：文件不存在返回空列表，但文件存在却 `json.JSONDecodeError` 时应报错退出，绝不能当成空列表后覆盖写，否则会把损坏的数据悄悄抹掉。
+跨文件系统 rename 会抛 `OSError` 的 `EXDEV`（errno 18），所以临时文件必须与目标同目录，这正是上面那条约束的由来；再用 `try/finally` 保证异常时删掉残留的临时文件。
+
+加载侧要分清两件事：文件不存在可以返回空列表，但文件存在却解析失败、`json.load` 抛 `json.JSONDecodeError` 时必须报错退出，绝不能当成空列表再覆盖写，否则会把损坏的数据悄悄抹掉。
 
 **进程退出码约定与产生方式**
 
@@ -152,46 +164,129 @@ POSIX 的 rename 在同一文件系统内是原子操作：任何时刻的读者
 
 ## os.replace 为什么是原子写
 
-`os.replace` 落在 POSIX 的 `rename(2)` 系统调用上：同一挂载点内，内核把目录项从旧 inode 改指向新 inode 是一次原子更新，不存在「改到一半」的中间状态，因此并发读者只会打开到旧 inode 或新 inode 之一。
+`os.replace` 能当原子提交点，根子在 `POSIX` 的 `rename(2)`：同一挂载点内，内核把目录项从旧 `inode` 改指向新 `inode` 是一次原子更新，不存在「改到一半」的中间状态，并发读者只会打开到旧 `inode` 或新 `inode` 之一。
 
-直接 open(path,'w') 则会先以 O_TRUNC 把文件截零再逐字节写，崩溃窗口里目标文件本身就是半成品，这正是数据永久损坏的根因。`f.flush` 只把 Python 的 BufferedWriter 缓冲交给内核，断电时页缓存仍会丢，必须 `os.fsync` 触发文件系统的日志落盘；
+反过来，直接 `open(path,'w')` 会先以 `O_TRUNC` 把文件截零再逐字节写，崩溃窗口里目标文件本身就是半成品，这正是数据永久损坏的根因。
 
-两者职责不同，不能互相替代。mkstemp 建在目标同目录是为了保证同一文件系统，否则 rename 返回 EXDEV。argparse 的退出码 2 来自它调用 `sys.exit(2)` 的 `parser.error`，而业务码由 main 返回值经 `sys.exit` 透传；
+`f.flush` 只把 Python 的 `BufferedWriter` 缓冲交给内核，断电时页缓存照样会丢，必须再调 `os.fsync` 触发文件系统把数据写入稳定存储；两者职责不同，谁也替代不了谁。
 
-把两者分开，自动化脚本才能用 returncode 区分「命令用错了」与「业务没成功」。
+临时文件用 `tempfile.mkstemp` 建在目标同目录，是为了保证与目标同一文件系统，否则 `rename` 会返回 `EXDEV`。
+
+退出码的分工也在这里定型：用法错误那一路，`argparse` 通过 `parser.error` 内部调 `sys.exit(2)`；业务码则由 `main` 的返回值经 `sys.exit` 透传。把两者分开，自动化脚本才能用 `returncode` 区分「命令用错了」和「业务没成功」。
 
 
 ### rename(2) 的同一挂载点前提
 
+`os.replace(tmp, target)` 能当原子提交点，靠的是 `POSIX` 的 `rename(2)`：同一挂载点内，内核把目录项从旧 `inode` 改指向新 `inode` 是一次原子更新，读者只会看到旧文件或新文件之一。
+
+前提正卡在挂载点上——临时文件建在 `/tmp`、目标却在另一块盘，就跨不了设备，会抛 `OSError` 的 `EXDEV`（errno 18）。
+
+所以 `tempfile.mkstemp` 的 `dir` 必须指向目标文件所在目录；
+
+提交前还要 `f.flush()` 加 `os.fsync(fd)` 把数据真正落盘。后面的探针会复现 `EXDEV`。
+
+```python
+import os, tempfile
+
+d = tempfile.mkdtemp()
+a = os.path.join(d, 'a.json')
+b = os.path.join(d, 'b.tmp')
+open(a, 'w').write('old')
+open(b, 'w').write('new')
+ino_before = os.stat(a).st_ino
+os.replace(b, a)
+print('content', open(a).read())
+print('inode changed', os.stat(a).st_ino != ino_before)
+print('tmp gone', not os.path.exists(b))
+print('same dir', os.path.dirname(a) == os.path.dirname(b))
+```
+
+<OutputBox title='原理验证' output='content new\ninode changed True\ntmp gone True\nsame dir True' />
+
+<Term word='命令解析 argparse / click' text='`ArgumentParser(prog=&#39;todo&#39;)` 建出解析器，`add_subparsers` 再挂子命令，其中 `dest=&#39;cmd&#39;` 决定命令名存到哪个字段、`required=True` 让缺子命令时直接报错而不是静默返回 `None`——这个参数从 3.7 起才支持。每个 `add_parser(&#39;' />
+
+<Term word='数据模型与 JSON 持久化' text='`json.dump` 负责序列化、`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写进文件，`indent=2` 便于人读。原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；用' />
+
 
 ## 四层分离与替换点
 
-把 CLI 拆成输入层（argparse）、领域层（纯逻辑 add/done）、存储层（load/save 原子写）、输出层（print 格式化）四层，每层都能单独替换与测试：领域层注入内存 Fake 存储就能测，不需要碰磁盘。`main(argv)` 返回整数而不是直接 `sys.exit`，测试里可直接断言返回值；
+把 CLI 拆成四层：输入层用 `argparse`，领域层是纯逻辑（比如 `add` 与 `done`），存储层管 `load` 与 `save` 的原子写，输出层只做 `print` 格式化。每层都能单独替换与测试：领域层注入一份内存里的假存储就能测，完全不用碰磁盘。
 
-脚本入口写成 if `__name__` == '__main__': `sys.exit(main()`)，把整数变成进程退出码。
+`main(argv)` 返回整数而不是自己调 `sys.exit`，测试里可以直接断言返回值；
 
-端到端测试有两种做法：click 生态用 `click.testing.CliRunner` 捕获 stdout 与 exit_code；
+真正把整数变成进程退出码的是入口那行守卫——`if __name__ == '__main__'` 里调用 `sys.exit(main())`。
 
-纯标准库用 `subprocess.run`([`sys.executable`, '-m', 'todo', ...], `capture_output=True`) 断言 stdout 与 returncode，或把 main 设计成可注入 argv 与输出流直接调用。
+端到端测试有两条路：`click` 生态用 `click.testing.CliRunner` 捕获 `stdout` 与 `exit_code`；
 
-打包入口点在 `pyproject.toml` 的 `[project.scripts]`：todo = 'todo.cli:main'，pip install -e . 后由 setuptools/hatchling 生成可执行脚本，脚本调用 `main()` 并用其返回值作退出码。
+只用标准库就用 `subprocess.run` 断言 `stdout` 与 `returncode`，或者把 `main` 设计成可注入 `argv` 与输出流后直接调用。
 
-三个失效信号：命令函数里直接 `open()`、测试要清理真实家目录、以及所有路径都返回 0。
+打包入口写在 `pyproject.toml` 的 `[project.scripts]` 下，一行 `todo = 'todo.cli:main'`；
+
+`pip install` 后由 setuptools 或 hatchling 生成可执行脚本，脚本调用 `main()` 并拿它的返回值当退出码。
+
+```bash
+pip install -e .
+```
+
+三个失效信号很直观：命令函数里直接 `open()`、测试要清理真实家目录、以及所有路径都返回 `0`。
 
 
 ## 退出码约定：别让所有路径都返回 0
 
+外层脚本靠退出码判断成败，别让每条路径都回 `0`。
+
+约定三层：`0` 成功、`1` 业务错误（如 `done 99` 没找到条目）、`2` 用法错误——`argparse` 的 `parser.error` 自带 `2`，`add_subparsers` 的 `required=True` 自 3.7 起支持，缺子命令不再静默返回 `None`。
+
+实现上让 `main(argv)` 返回整数，末尾用 `sys.exit(main())` 透传；
+
+领域层把「没找到」映射成 `1`，断言 `main(['done','99']) == 1` 就能锁住。
+
+下表列出码值与产生方式。
+
+**四层分离与替换点**
+
+| 层 | 职责 | 可替换/可测手段 |
+| --- | --- | --- |
+| 输入层 | argparse 解析 argv 为 Namespace | 注入 argv 列表直接断言 |
+| 领域层 | add/done 纯逻辑 | 注入内存 Fake 存储，不碰磁盘 |
+| 存储层 | load/save 原子读写 JSON | 换成 sqlite 适配器而领域层不变 |
+| 输出层 | print 格式化与 stdout | CliRunner / subprocess 捕获断言 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='直接 open(path,&#39;w&#39;) 覆盖写，进程被杀留下半截 JSON：先截断再逐字节写，崩溃窗口里目标文件本身就是损坏状态' />
+
 
 ## 错因速查与排查顺序
+
+待办文件损坏时按「能不能读、会不会覆盖、看退出码」三步查。
+
+`json.load` 抛 `json.JSONDecodeError`，说明磁盘上是半截 `JSON`；
+
+此时若在 `except` 里当成空列表继续 `save`，会抹掉仅存的数据——只有文件不存在才返回空列表，存在却解析失败必须报错退出、留着原文件供恢复。
+
+写侧依次核对：`tempfile.mkstemp` 的 `dir` 是否与目标同目录、有没有 `f.flush()` 与 `os.fsync(fd)`、是否走了 `os.replace`；
+
+缺一步就可能在崩溃窗口留下半成品，跨设备则会报 `EXDEV`。最后确认 `main` 把业务失败映射成了非 `0`。
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 直接 open(path,'w') 覆盖写，进程被杀留下半截 JSON | 先截断再逐字节写，崩溃窗口里目标文件本身就是损坏状态 | tempfile.mkstemp 在目标同目录写临时文件，flush + fsync 后 os.replace 原子替换 |
+| 把 json.JSONDecodeError 当成空列表继续 save | 文件损坏时静默当成空库并覆盖写，把用户仅存的数据抹掉 | 文件不存在才返回空列表；存在但解析失败要报错退出，保留原文件供人工恢复 |
+| 所有路径都返回 0，外层脚本误判成功 | 业务失败只 print 没设退出码，returncode 恒为 0 | main 返回整数、入口 sys.exit(main())；业务错误返 1，用法错误由 argparse 返 2 |
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接 open(path,&#39;w&#39;) 覆盖写，", "body": "先截断再逐字节写，崩溃窗口里目标文件本身就是损坏状态", "tip": "tempfile.mkstemp 在目标同目录写临时文件，flush + fsync 后 os.replace 原子替换"}, {"title": "第 2 步：把 json.JSONDecodeError", "body": "文件损坏时静默当成空库并覆盖写，把用户仅存的数据抹掉", "tip": "文件不存在才返回空列表；存在但解析失败要报错退出，保留原文件供人工恢复"}, {"title": "第 3 步：所有路径都返回 0，外层脚本误判成功", "body": "业务失败只 print 没设退出码，returncode 恒为 0", "tip": "main 返回整数、入口 sys.exit(main())；业务错误返 1，用法错误由 argparse 返 2"}]' />
 
 
 ## 可安装 CLI：pyproject 入口点与端到端断言
 
-要把待办工具交付成可安装命令，项目结构应是 todo/`cli.py`、todo/`store.py` 与 `pyproject.toml` 的 `[project.scripts]` todo = 'todo.cli:main'。
+要把待办工具交付成可安装命令，项目结构大体是 `todo/cli.py`、`todo/store.py`，外加 `pyproject.toml` 里 `[project.scripts]` 的一行 `todo = 'todo.cli:main'`。
 
-下面片段把四层收在一个可运行脚本里：JsonTodoRepo 承担原子存储，build_parser 承担输入，dispatch 把 Namespace 翻译成领域调用并返回 (退出码, 消息)，e2e_test 用 TemporaryDirectory 建隔离库、注入仓储、断言返回码与落盘内容。
+下面的片段把四层收进一个可运行脚本：`JsonTodoRepo` 承担原子存储，`build_parser` 承担输入，`dispatch` 把 `Namespace` 翻译成领域调用并返回「退出码 + 消息」，`e2e_test` 用 `TemporaryDirectory` 建一座隔离库、注入仓储，再断言返回码与落盘内容。
 
-因为 dispatch 只依赖 repo 的方法而不依赖具体路径，换成 sqlite 实现时领域与测试都不用改。真实项目里 e2e_test 会交给 pytest，另用 `subprocess.run` 断言安装后的脚本 returncode 与 stdout。重点看各层之间只传数据与整数，不共享文件句柄。
+因为 `dispatch` 只认 `repo` 的方法、不认具体路径，换成 `sqlite` 实现时领域层与测试都不用改。真实项目里 `e2e_test` 会交给 `pytest`，另用 `subprocess.run` 断言安装后脚本的 `returncode` 与 `stdout`。
+
+读这段时重点看各层之间只传数据与整数，不共享文件句柄。
 
 ```python
 import argparse, json, os, tempfile
@@ -252,15 +347,15 @@ print(e2e_test())
 
 <Quiz no='122-3' q='文件已存在但 json.load 抛 JSONDecodeError，正确做法是？' :options='["报错退出并保留原文件，供人工恢复", "当成空列表继续 save", "删掉文件重新建库", "捕获后返回 0"]' answer="0" explain='只有文件不存在才返回空列表；存在却解析失败说明数据已损坏，静默当空库再覆盖会抹掉仅存数据，必须报错退出并保留现场。' />
 
-<Predict no='122-P' q='进程在 os.replace 之前被杀，目标文件会是什么状态？' :options='["仍是完整的旧文件，临时文件是半成品但目标未被触碰", "是半截 JSON，下次 load 抛异常", "变成空文件"]' answer='0' output='目标仍是完整的旧文件，损坏的只是同目录的临时文件' explain='崩溃发生在 replace 之前时，目标文件从未被截断，写入只发生在临时文件上；replace 是唯一的提交点，要么整体生效要么完全不生效，这正是原子写隔离崩溃窗口的原理。' />
+<Predict no='122-4' q='进程在 os.replace 之前被杀，目标文件会是什么状态？' :options='["仍是完整的旧文件，临时文件是半成品但目标未被触碰", "是半截 JSON，下次 load 抛异常", "变成空文件"]' answer='0' output='目标仍是完整的旧文件，损坏的只是同目录的临时文件' explain='崩溃发生在 replace 之前时，目标文件从未被截断，写入只发生在临时文件上；replace 是唯一的提交点，要么整体生效要么完全不生效，这正是原子写隔离崩溃窗口的原理。' />
 
-<FillBlank no='122-F' tpl='___ argparse, json, os, tempfile' :answers='["import"]' hint='回想本讲关于 命令解析 argparse / click 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 argparse 子命令与命令分发：命令层只解析不碰业务 的落点。' />
+<FillBlank no='122-5' tpl='___ argparse, json, os, tempfile' :answers='["import"]' hint='回想本讲关于 命令解析 argparse / click 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 argparse 子命令与命令分发：命令层只解析不碰业务 的落点。' />
 
-<KnowledgeCard :points='["原子写 = 同目录 mkstemp 临时文件 + f.flush + os.fsync + os.replace，replace 是唯一提交点", "os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError Errno 18 EXDEV", "退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传", "add_subparsers(required=True) 自 3.7 起支持；type=int 在解析阶段完成转换", "四层分离：输入 argparse / 领域纯逻辑 / 存储原子写 / 输出格式化，各层可独立替换与测试", "文件损坏时保留现场报错退出，绝不静默当空库覆盖；入口点写在 pyproject.toml [project.scripts]"]' :pitfalls='["直接 open(path,&#39;w&#39;) 覆盖写，进程被杀留下半截 JSON", "把 json.JSONDecodeError 当成空列表继续 save", "所有路径都返回 0，外层脚本误判成功", "直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏"]' summary='CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试' />
+<KnowledgeCard :points='["原子写 = 同目录 mkstemp 临时文件 + f.flush + os.fsync + os.replace，replace 是唯一提交点", "os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError（errno 18，EXDEV）", "退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传", "add_subparsers 的 required=True 自 3.7 起支持；type=int 在解析阶段完成转换", "四层分离：输入 argparse / 领域纯逻辑 / 存储原子写 / 输出格式化，各层可独立替换与测试", "文件损坏时保留现场报错退出，绝不静默当空库覆盖；入口点写在 pyproject.toml 的 [project.scripts]"]' :pitfalls='["直接 open(path,&#39;w&#39;) 覆盖写，进程被杀留下半截 JSON", "把 json.JSONDecodeError 当成空列表继续 save", "所有路径都返回 0，外层脚本误判成功", "直接覆盖写文件，进程中途被杀就会留下半截 JSON，数据永久损坏"]' summary='CLI 是最适合练「边界清晰」的项目：输入、领域逻辑、存储、输出四层都能单独替换与测试' />
 
 1. 原子写 = 同目录 mkstemp 临时文件 + f.flush + os.fsync + os.replace，replace 是唯一提交点
 
-2. os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError Errno 18 EXDEV
+2. os.replace 依赖同文件系统 rename(2)，跨挂载点抛 OSError（errno 18，EXDEV）
 
 3. 退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传
 

@@ -7,40 +7,65 @@ description: 建立 EAFP 风格的错误处理直觉
 
 # 第 015 讲 · 异常：捕获、异常链与自定义异常
 
-上一讲让程序能和文件、终端交换数据，可数据一进来就不总按写好的样子出现。这一讲安顿没照预期走的分支，让失败留下痕迹，而不是悄悄改道或停在半途。
+上一讲让程序能和文件、终端交换数据，可数据一进来就不总按写好的样子出现。这一讲安顿那些没照预期走的分支，让失败留下痕迹，而不是悄悄改道或停在半途。
 
-设想读配置的小工具把端口转成整数，末尾多个空格时默默用了默认值，格式不对时又卡在启动一半。我们先看清异常层级与捕获边界，再顺着 try 组合、else、finally 与异常链，把补救和资源释放各归其位，也会定义自己的异常基类；末了算一笔开销账，明白异常只配表达意外分支。需要你熟悉变量、条件循环、函数和 with；读完能给小程序划出可观测的失败出口，把底层错误翻成看得懂的提示。
+设想读配置的小工具把端口转成整数，末尾多个空格时默默用了默认值，格式不对时又卡在启动一半。我们先看清异常层级与捕获边界，再顺着 `try` 的几种组合、`else`、`finally` 与异常链，把补救和资源释放各归其位，也会定义自己的异常基类；末了算一笔开销账，明白异常只配表达意外分支。需要你熟悉变量、条件循环、函数和 `with`；读完能给小程序划出可观测的失败出口，把底层错误翻成看得懂的提示。
 
 
 ## 配置加载器里两次悄悄失效的默认值
 
-一个配置加载器要把 JSON 里的 port、timeout、retries 转成 int。最初的写法是 LBYL：先用 if 'port' in cfg and str(cfg['port']).`isdigit()` 预检查再转换。
+一个配置加载器要把 `JSON` 里的 `port`、`timeout`、`retries` 转成 `int`。
 
-它连着出两次事故：上游把 port 写成 '8080 '，`isdigit()` 返回 False 走了默认值，用户并不知道配置被悄悄改了；另一次写成 '0x50'，预检查通过却在 `int()` 处抛 ValueError 没人接，服务崩在启动一半，已经打开的日志文件与连接都没释放。
+最初的写法是 `LBYL`：先用 `if 'port' in cfg` 之类的条件确认键在，再用 `str.isdigit()` 判断像不像数字，然后才动手转换。
 
-更微妙的是预检查和取值之间如果有别的线程改字典，检查结论当场失效。改写成 try: `int(...)` 接 except ValueError 后逻辑短了一半，却又有人为了'别让报错吓到用户'写成 except Exception: pass，把编程错误一起吞掉，排障时只剩一个沉默的服务。
+它连着出两次事故：上游把 `port` 写成 `'8080 '`，`isdigit()` 判成 False，配置悄悄退回默认值，用户并不知道被改过——其实 `int()` 连尾随空格都能一并转掉，是预检查误拒了合法输入；
 
-本讲把异常层级、else 与 finally、raise from 异常链、自定义异常基类与 3.11 的异常表拆开，目标是让每个失败分支都有明确、可观测的出口。
+另一次值没被这套检查兜住、直接进了 `int()`，写成 `'0x50'` 这种十六进制串时按十进制解析抛了 `ValueError` 没人接，服务崩在启动一半，已经打开的日志文件与连接都没释放。更微妙的是，预检查和取值之间若有别的线程改了字典，检查结论当场失效。
+
+改写成 `try` 里直接转换、用 `except ValueError` 接住之后逻辑短了一半，却又有人为了「别让报错吓到用户」写成 `except Exception: pass`，把编程错误一起吞掉，排障时只剩一个沉默的服务。
+
+本讲把异常层级、`else` 与 `finally`、`raise from` 异常链、自定义异常基类与 3.11 的异常表拆开，目标是让每个失败分支都有明确、可观测的出口。
 
 
 ## 本讲要建立的失败分支直觉
 
+判断解析代码能不能上生产，看它把失败交给谁。`LBYL` 用 if 预检查再取值，把「输入不合法」藏进默认值里、出错无人知晓，检查与取值之间字典被别的线程改动还会让结论失效。
+
+`EAFP` 先做、失败再补救：3.11 起 try 靠 co_exceptiontable 在正常路径零成本，代价只在异常时，好处是每条失败分支都得写明降级、重试还是抛带 `__cause__` 的业务异常。每写一处 `int()` 或字典取值，都问一句坏了谁收。后面的目标表逐条列出要能说清的失败，配自检清单。
+
+**本讲定位**
+
+| 项目 | 内容 |
+| --- | --- |
+| 所属阶段 | 阶段一 · 编程地基 |
+| 前置 | 第 014 讲 · 输入输出与文件初识：print、input、open、with |
+| 难度 / 建议时长 | ★★☆☆☆ · 30 分钟 |
+| 本讲新增 | 异常层级与 BaseException、try / except / else / finally、raise from 与异常链 |
+| 一句话目标 | 建立 EAFP 风格的错误处理直觉 |
+| 为下一讲铺垫 | 阶段综合：交互式命令行计算器 |
+
+<CheckList id='P015a' title='学完你应当能' :items='["能讲清 异常层级与 except 的匹配边界", "能讲清 else / finally 与 raise from 的异常链", "能讲清 EAFP / LBYL 与异常的性能账", "能在工程里处理 异常的性能开销"]' />
+
 
 ## 异常层级与 except 的匹配边界
 
-所有异常的根是 BaseException，它的直接子类里只有 Exception 是日常错误的祖先：ValueError、TypeError、KeyError、OSError、ImportError 都挂在 Exception 之下；
+所有异常的根是 `BaseException`，它的直接子类里只有 `Exception` 是日常错误的祖先：`ValueError`、`TypeError`、`KeyError`、`OSError`、`ImportError` 都挂在 `Exception` 之下；
 
-而 SystemExit、KeyboardInterrupt、GeneratorExit 与 Exception 平级，同样直接继承 BaseException。
+而 `SystemExit`、`KeyboardInterrupt`、`GeneratorExit` 与 `Exception` 平级，同样直接继承 `BaseException`。
 
-这条分层是有意的：except Exception 故意拦不住 KeyboardInterrupt 与 SystemExit，Ctrl+C 才能中断死循环，`sys.exit()` 才能退出进程。裸 except: 等价于 except BaseException:，会把这三者一并吞下，是最危险的写法。
+这条分层是有意的：`except Exception` 故意拦不住 `KeyboardInterrupt` 与 `SystemExit`，`Ctrl+C` 才能中断死循环，`sys.exit()` 才能退出进程。
 
-匹配规则是按 except 子句自上而下逐个检查 `issubclass(实际类型, 指定类型)`，命中第一个就执行、其余不再看，所以子类分支必须写在父类之前，否则永远不可达。
+裸 `except:` 等价于 `except BaseException:`，会把这三者一并吞下，是最危险的写法。
 
-可以用元组 except (TypeError, ValueError) as e: 合并多个类型，as e 绑定的名字在块结束时会被自动删除，避免异常对象经 traceback 延长一批局部变量的生命周期。
+匹配时按 `except` 子句自上而下逐个检查实际类型是不是指定类型的子类（也就是 `issubclass` 那套判断），命中第一个就执行、其余不再看，所以子类分支必须写在父类之前，否则永远不可达。
 
-自定义异常应继承 Exception 或更具体的内置子类，绝不要继承 BaseException，否则调用方的 except Exception 拦不住它。
+多个类型可以并成元组 `(TypeError, ValueError)` 写在 `except` 后面；
 
-3.11 起 PEP 654 还引入 ExceptionGroup / BaseExceptionGroup 与 except*，专门处理并发批量任务里同时抛出的多个异常，普通 except 只能拿到整组、无法按类型拆开处理。
+`as e` 绑定的名字在块结束时会被自动删除，免得异常对象经 traceback 把一批局部变量的生命周期拖长。
+
+自定义异常应继承 `Exception` 或更具体的内置子类，绝不要继承 `BaseException`，否则调用方的 `except Exception` 拦不住它。
+
+3.11 起 PEP 654 还引入 `ExceptionGroup` / `BaseExceptionGroup` 与 `except*`，专门处理并发批量任务里同时抛出的多个异常，普通 `except` 只能拿到整组、无法按类型拆开处理。
 
 ```python
 class ConfigError(Exception):
@@ -91,19 +116,19 @@ print(issubclass(KeyboardInterrupt, Exception), issubclass(SystemExit, Exception
 
 ## else / finally 与 raise from 的异常链
 
-try 之后可以跟 except、else、finally 三类子句。else 只在 try 块没有抛异常时执行，用途是把'正常路径的后续'与'可能出错的语句'分开，避免把本不该被 except 捕获的代码塞进 try 里被误吞。
+`try` 之后可以跟 `except`、`else`、`finally` 三类子句。`else` 只在 `try` 块没抛异常时执行，用途是把正常路径的后续与可能出错的语句分开，避免把本不该被 `except` 捕获的代码塞进 `try` 被误吞。
 
-finally 在正常、异常、return、break、continue 各条退出路径上都会执行，唯一例外是 `os._exit`、进程被 SIGKILL 或掉电，因此它是释放文件句柄、锁、连接的唯一可靠位置；
+`finally` 在正常、异常、`return`、`break`、`continue` 各条退出路径上都会执行，唯一例外是 `os._exit`、进程被 `SIGKILL` 或掉电，因此它是释放文件句柄、锁、连接的唯一可靠位置；
 
-但 finally 里一旦出现 return 或 break，就会替换掉 try 的返回值并静默丢弃正在传播的异常对象，这类 bug 极隐蔽。raise 单独使用是重新抛出当前正在处理的异常。
+但 `finally` 里一旦出现 `return` 或 `break`，就会替换掉 `try` 的返回值并静默丢弃正在传播的异常对象，这类 bug 极隐蔽。`raise` 单独使用是重新抛出当前正在处理的异常。
 
-raise X from Y 把新异常的 `__cause__` 设为 Y，打印 traceback 时显示 The above exception was the direct cause of...；
+`raise X from Y` 把新异常的 `__cause__` 设为 Y，打印回溯时会出现「The above exception was the direct cause of...」这样一句直接原因的提示；
 
-在 except 块内直接 raise X 而不写 from 时，解释器自动把当前处理的异常记入 `__context__`，显示 During handling of the above exception...。
+在 `except` 块内直接 `raise X` 而不写 `from` 时，解释器自动把当前处理的异常记入 `__context__`，提示换成「During handling of the above exception...」。
 
-raise X from None 则把 `__cause__` 设为 None 并把 `__suppress_context__` 置为 True，用来屏蔽底层细节、只暴露业务异常。
+`raise X from None` 则把 `__cause__` 设为 `None` 并把 `__suppress_context__` 置为 `True`，用来屏蔽底层细节、只暴露业务异常。
 
-`sys.exc_info()` 返回 (type, value, traceback) 三元组，traceback 节点上有 tb_frame、tb_lineno 与 tb_next 可逐帧回溯。
+`sys.exc_info()` 返回 `(type, value, traceback)` 三元组，traceback 节点上有 `tb_frame`、`tb_lineno` 与 `tb_next` 可逐帧回溯。
 
 ```python
 def swallow(flag):
@@ -136,46 +161,70 @@ print(clean('3'), clean('x'), log)
 
 ### __cause__ 与 __context__ 怎么串起失败原因
 
+回溯里两种文案对应异常对象上两个槽。except 里直接 raise 且不写 from，CPython 把当前异常记进 `__context__`，回溯打印 During handling，`__cause__` 为 None；
+
+写成 raise X from Y，则把 Y 挂到 `__cause__`、置 `__suppress_context__` 为 True，文案换成 direct cause of。
+
+读 `e.__cause__`、`e.__context__` 可核对，后面的对照表按写法列出三个字段。
+
+**try 组合的执行规则**
+
+| 结构 | 执行条件 | 边界与失效信号 |
+| --- | --- | --- |
+| else 子句 | try 块未抛异常时执行 | 不能单独存在，必须排在所有 except 之后 |
+| finally 子句 | 正常 / 异常 / return / break 都执行 | os._exit 或进程被 SIGKILL 时不执行 |
+| finally 中的 return | 覆盖 try 与 except 的返回值 | 会静默吞掉正在传播的异常对象 |
+| raise 无参 | 重新抛出当前正在处理的异常 | 只能在 except 或其调用链内使用 |
+| raise X from Y | 设 __cause__ 为 Y 并 suppress context | traceback 打印 direct cause of 文案 |
+
+<Term word='异常层级与 BaseException' text='所有异常的根是 `BaseException`，它的直接子类里只有 `Exception` 是日常错误的祖先：`ValueError`、`TypeError`、`KeyError`、`OSError`、`ImportError` 都挂在 `Exception` 之下；而 `SystemExit`、`KeyboardIn' />
+
+<Term word='try / except / else / finally' text='`try` 之后可以跟 `except`、`else`、`finally` 三类子句。`else` 只在 `try` 块没抛异常时执行，用途是把正常路径的后续与可能出错的语句分开，避免把本不该被 `except` 捕获的代码塞进 `try` 被误吞。`finally` 在正常、异常、`return`、`break`、`' />
+
 
 ## EAFP / LBYL 与异常的性能账
 
-EAFP（Easier to Ask for Forgiveness than Permission）是'先做、失败再补救'，LBYL（Look Before You Leap）是'先检查再做'。Python 偏向 EAFP 有三条硬理由。
+`EAFP`（Easier to Ask for Forgiveness than Permission）是先做、失败再补救，`LBYL`（Look Before You Leap）是先检查再做，Python 偏向前者有三条硬理由。
 
-其一，try 块在正常路径上几乎不付成本：3.11 之前只多出 SETUP_FINALLY / SETUP_EXCEPT 之类少量字节码，3.11 起 CPython 改用编译器生成的异常表 co_exceptiontable，把每条指令属于哪个 try 范围、抛异常时跳到哪个 handler 全部静态编码，正常执行完全不进运行时栈，这就是'零成本异常'。
+其一，`try` 块在正常路径上几乎不付成本：3.11 之前只多出 `SETUP_FINALLY` / `SETUP_EXCEPT` 之类少量字节码，3.11 起 CPython 改用编译器生成的异常表 `co_exceptiontable`，把每条指令属于哪个 `try` 范围、抛异常时跳到哪个 handler 全部静态编码，正常执行完全不进运行时栈，这就是「零成本异常」。
 
-其二，LBYL 的检查与操作之间存在 TOCTOU 竞态，文件是否存在、字典键是否还在、值类型是否变化，都可能在两步之间被别的线程改掉。其三，很多'能不能做'根本无法静态判断，检查逻辑本身会重复甚至写错，例如 `str.isdigit()` 对全角数字、正负号、小数点给出的结论与 `int()` 并不一致。
+其二，`LBYL` 的检查与操作之间存在 `TOCTOU` 竞态，文件是否存在、字典键是否还在、值类型是否变化，都可能在两步之间被别的线程改掉。其三，很多「能不能做」根本无法静态判断，检查逻辑本身会重复甚至写错：`str.isdigit()` 会把 `'²'` 这类上标字符判成数字，`int()` 却转不了；
 
-代价是异常真正抛出的路径很贵：要构造 traceback 并逐帧展开，所以异常只该表达 exceptional 分支，不能拿它做常规循环控制。
+反过来带正负号的 `'-1'` 被 `isdigit()` 判成非数字，`int()` 却能转，两边口径并不一致。代价是异常真正抛出的路径很贵：要构造 traceback 并逐帧展开，所以异常只该表达意外分支，不能拿它做常规循环控制。
 
-工程分层上，底层库定义自己的异常基类（如 class `StoreError(Exception)`），边界层统一把异常翻译成错误码、日志与用户提示；
+工程分层上，底层库定义自己的异常基类（如 `class StoreError(Exception)`），边界层统一把异常翻译成错误码、日志与用户提示；
 
-finally 里只放资源释放，不放业务判断。
+`finally` 里只放资源释放，不放业务判断。
 
 
 ## 异常表 co_exceptiontable：正常路径的零成本从哪来
 
-CPython 里异常本身是一个对象，根为 BaseException；
+CPython 里异常本身是一个对象，根为 `BaseException`；
 
-每个实例持有 args 元组、`__traceback__`（链表式 traceback 对象）、`__cause__` / `__context__` / `__suppress_context__`。
+每个实例持有 `args` 元组、`__traceback__`（链表式 traceback 对象）、`__cause__` / `__context__` / `__suppress_context__`。
 
-抛出时 ceval 不是简单跳转，而是把异常对象存进线程状态的 curexc 字段，再沿帧栈逐层查找能处理它的 handler：3.11 之前靠运行时压入的 block stack（SETUP_FINALLY / SETUP_EXCEPT），3.11 起改用编译器生成的异常表——code object 的 co_exceptiontable 是一段紧凑编码，记录每条指令属于哪个 try 范围以及抛异常时该跳到哪个 handler。
+抛出时 `ceval` 不是简单跳转，而是把异常对象存进线程状态的 `curexc` 字段，再沿帧栈逐层找能处理它的 handler：3.11 之前靠运行时压入的 block stack（`SETUP_FINALLY` / `SETUP_EXCEPT`），3.11 起改用编译器生成的异常表——code object 的 `co_exceptiontable` 是一段紧凑编码，记录每条指令属于哪个 `try` 范围以及抛异常时该跳到哪个 handler。
 
-这样正常路径完全不需要额外指令，是'零成本异常'的由来；代价是异常真的发生时才查表并逐帧展开，为每帧构造一个含 tb_frame / tb_lineno / tb_next 的 traceback 节点。
+这样正常路径完全不需要额外指令，是「零成本异常」的由来；代价是异常真的发生时才查表并逐帧展开，为每帧构造一个含 `tb_frame` / `tb_lineno` / `tb_next` 的 traceback 节点。
 
-finally 的'总执行'由编译器把清理代码块复制到每条退出路径（正常、return、异常）来保证，所以 finally 里再写 return 就会生成新的 RETURN_VALUE、替换原返回值并把异常对象丢掉。
+`finally` 的「总执行」由编译器把清理代码块复制到每条退出路径（正常、`return`、异常）来保证，所以 `finally` 里再写 `return` 就会生成新的 `RETURN_VALUE`、替换原返回值并把异常对象丢掉。
 
-raise ... from 则在异常对象上写 cause 字段并置 `__suppress_context__`，打印器据此选择 direct cause 还是 during handling 文案。
+`raise ... from` 则在异常对象上写 cause 字段并置 `__suppress_context__`，打印器据此选择直接原因还是处理期间的文案。
+
+把这条链路看清，就知道正常路径为什么便宜、抛异常为什么贵，以及 `finally` 里藏一个 `return` 有多危险。
 
 
 ## 配置加载：EAFP 解析、异常链与边界层统一降级
 
-把这个配置读取拆成三层：底层 parse_config 直接做类型转换（EAFP），把 KeyError 与 ValueError 用 raise ... from e 包装成 ConfigError 并保留原始原因；中间层不加 try，让异常自然上抛；
+把这个配置读取拆成三层：底层 `parse_config` 直接做类型转换（`EAFP`），把 `KeyError` 与 `ValueError` 用 `raise ... from e` 包装成 `ConfigError` 并保留原始原因；
 
-边界层 load_or_default 捕获 ConfigError 与 OSError，用 logging 把 `e.key` 与 `__cause__` 写进日志，再返回一份安全默认配置，保证服务即使配置写错也能带降级参数启动。
+中间层不加 `try`，让异常自然上抛；
 
-with `open(...)` 负责在异常路径上照样关闭文件描述符，finally 那样的资源释放交给上下文管理器而不写业务逻辑。这样单元测试可以直接对 parse_config 断言异常类型与 `e.key`，不必造临时文件、也不必解析日志文本；库代码定义自己的异常基类，边界层是唯一把异常翻译成日志与错误码的地方。
+边界层 `load_or_default` 捕获 `ConfigError` 与 `OSError`，用 `logging` 把 `e.key` 与 `__cause__` 写进日志，再返回一份安全默认配置，保证服务即使配置写错也能带降级参数启动。
 
-真实项目再把每一步耗时与 trace_id 打进日志即可，核心边界在这三层里已经定死。
+`with open(...)` 负责在异常路径上照样关闭文件描述符，`finally` 那样的资源释放交给上下文管理器而不写业务逻辑。这样单元测试可以直接对 `parse_config` 断言异常类型与 `e.key`，不必造临时文件、也不必解析日志文本；库代码定义自己的异常基类，边界层是唯一把异常翻译成日志与错误码的地方。
+
+真实项目再把每一步耗时与 `trace_id` 打进日志即可，三层的职责在这里已经划清。
 
 ```python
 import json, logging, os, tempfile
@@ -222,6 +271,20 @@ os.remove(p)
 
 ## 错因速查与排查顺序
 
+排异常链的怪事从外向内收。Ctrl+C 杀不掉、`sys.exit()` 不退出，多半是裸 except 或 except BaseException 把 KeyboardInterrupt、SystemExit 吞了——它们继承 BaseException，兜底写 except Exception。
+
+异常凭空消失查 finally 里的 return，它会覆盖返回值。用 `sys.exc_info()` 定位帧；3.11 起 co_exceptiontable 让正常路径零成本。下表按现象、根因、动作排开。
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| Ctrl+C 杀不掉脚本，sys.exit() 也不退出 | 裸 except: 或 except BaseException 把 KeyboardInterrupt 与 SystemExit 一起吞了，它们直接继承 BaseException 而非 Exception | 只捕获具体异常类型；确实要兜底时写 except Exception as e: 并至少 log.exception 记录，绝不用裸 except |
+| finally 里写了 return，异常凭空消失 | finally 的 return 会覆盖 try 与 except 的返回值，并丢弃正在传播的异常对象 | finally 只放 close / release / unlock 等清理语句，返回值与业务逻辑都留在 try 与 else 里 |
+| 自定义异常用 except Exception 拦不住 | 误把异常基类写成继承 BaseException，或层次设计得让调用方只能按 Exception 基类兜底 | class AppError(Exception): pass，业务异常再从 AppError 细分；边界层统一捕获 AppError 转成错误码与日志 |
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：Ctrl+C 杀不掉脚本，sys.exit(", "body": "裸 except: 或 except BaseException 把 KeyboardInterrupt 与 SystemExit 一起吞了，它们直接继承 BaseException 而非 Exception", "tip": "只捕获具体异常类型；确实要兜底时写 except Exception as e: 并至少 log.exception 记录，绝不用裸 except"}, {"title": "第 2 步：finally 里写了 return，异常凭", "body": "finally 的 return 会覆盖 try 与 except 的返回值，并丢弃正在传播的异常对象", "tip": "finally 只放 close / release / unlock 等清理语句，返回值与业务逻辑都留在 try 与 else 里"}, {"title": "第 3 步：自定义异常用 except Exceptio", "body": "误把异常基类写成继承 BaseException，或层次设计得让调用方只能按 Exception 基类兜底", "tip": "class AppError(Exception): pass，业务异常再从 AppError 细分；边界层统一捕获 AppError 转成错误码与日志"}]' />
+
 
 ## 把失败分支练成肌肉记忆
 
@@ -235,9 +298,9 @@ os.remove(p)
 
 <Quiz no='015-3' q='raise ConfigError(&#39;x&#39;) from e 之后，异常对象上哪个字段被设置？' :options='["__context__ 为 None 且 __cause__ 为 e", "__cause__ 为 e、__suppress_context__ 为 True", "只有 __traceback__ 变化", "__suppress_context__ 为 False"]' answer="1" explain='from 显式指定 cause，CPython 同时把 __suppress_context__ 置 True，traceback 打印 direct cause 而非 during handling；__context__ 仍会被设为当前正在处理的异常。' />
 
-<Predict no='015-P' q='执行 try: int(&#39;x&#39;) 接 except ValueError: raise KeyError(&#39;k&#39;) 后，捕获到的 KeyError 上 type(e.__context__).__name__、e.__cause__、e.__suppress_context__ 依次是？' :options='["ValueError None False", "ValueError ValueError True", "KeyError None False"]' answer='0' output='ValueError None False' explain='except 块内直接 raise 新异常且不写 from 时，CPython 自动把当前处理的异常记入 __context__，__cause__ 保持 None、__suppress_context__ 保持 False，因此 traceback 会打印 During handling of the above exception。' />
+<Predict no='015-4' q='执行 try: int(&#39;x&#39;) 接 except ValueError: raise KeyError(&#39;k&#39;) 后，捕获到的 KeyError 上 type(e.__context__).__name__、e.__cause__、e.__suppress_context__ 依次是？' :options='["ValueError None False", "ValueError ValueError True", "KeyError None False"]' answer='0' output='ValueError None False' explain='except 块内直接 raise 新异常且不写 from 时，CPython 自动把当前处理的异常记入 __context__，__cause__ 保持 None、__suppress_context__ 保持 False，因此 traceback 会打印 During handling of the above exception。' />
 
-<FillBlank no='015-F' tpl='___ __init__(self, key, reason):' :answers='["def"]' hint='回想本讲关于 异常层级与 BaseException 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 异常层级与 except 的匹配边界 的落点。' />
+<FillBlank no='015-5' tpl='___ __init__(self, key, reason):' :answers='["def"]' hint='回想本讲关于 异常层级与 BaseException 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 异常层级与 except 的匹配边界 的落点。' />
 
 <KnowledgeCard :points='["BaseException 的直接子类 SystemExit / KeyboardInterrupt / GeneratorExit 不在 Exception 之下，except Exception 拦不住", "异常匹配按 except 子句自上而下，子类必须写在父类前面；as e 绑定的名字在块结束时被删除", "else 只在 try 无异常时执行；finally 总执行，但其中的 return 会覆盖返回值并吞掉异常", "raise X from Y 设 __cause__ 并置 __suppress_context__ 为 True；raise X from None 隐藏底层原因", "3.11 起用 co_exceptiontable 实现零成本异常，正常路径无 SETUP_FINALLY，开销集中在抛出的帧展开", "库定义自己的 Exception 子类，边界层统一转错误码与日志；finally 只放资源释放"]' :pitfalls='["Ctrl+C 杀不掉脚本，sys.exit() 也不退出", "finally 里写了 return，异常凭空消失", "自定义异常用 except Exception 拦不住", "用裸 except 或 except Exception 吞掉一切，会把键盘中断与编程错误一起藏起来，排障时只剩一个沉默的系统"]' summary='Python 鼓励先做再补救（EAFP）：异常在正常路径上几乎零成本，而层层预检查既慢又容易有竞态' />
 

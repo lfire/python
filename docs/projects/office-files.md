@@ -7,37 +7,43 @@ description: 把重复的文件劳动变成一条可调度命令
 
 # 第 123 讲 · 实战 02 · 文件检索、日志与自动化办公
 
-上一讲把小工具拆成四层、存盘也稳了；这一讲把「处理一个对象」放大成「处理一整批文件」。本讲落在自动化办公易被低估的一面：批量操作一写错，几秒就作用到上千个文件，默认没有撤销。
+上一讲把小工具拆成四层、存盘也稳了；这一讲把「处理一个对象」放大成「处理一整批文件」。自动化办公最容易被低估的正是这一点：批量操作一写错，几秒就作用到上千个文件，而且默认没有撤销。
 
-一条清理脚本本想只删下载目录的过期文件，路径里多了一处 ..，解析后指到项目根目录，转眼改掉上百个源文件。我们先用 pathlib 遍历与路径运算校验边界，再借 os.stat 按类型容量统计、用 logging 落审计日志，最后把 dry-run、回收站与调度串成先出计划、可回退的流程。需要你熟悉路径运算与 os.walk；学完能把重复的文件劳动变成可调度、出事能撤回的命令。
+一条清理脚本本想只删下载目录里的过期文件，路径里多了一处 `..`，解析后却指到项目根目录，转眼改掉上百个源文件。我们先用 `pathlib` 的遍历与路径运算把边界校验做实，再借 `os.stat` 按类型与容量统计、用 `logging` 落审计日志，最后把 `dry-run`、回收站与调度串成「先出计划、可回退」的流程。动手前先要会路径运算与 `os.walk`；走完这一讲，你能把重复的文件劳动变成一条可调度、出事能撤回的命令。
 
 
 ## 一个匹配规则写错，几秒改动上千个文件
 
-一条清理脚本用 `os.remove` 配合手工拼的字符串路径，本意只删下载目录里的过期临时文件，结果路径里多了一个 ..，解析后指到了项目根目录，几秒内删掉上百个源文件且没有回收站可找。另一个脚本按固定规则批量重命名，正则写宽了一点，把同事刚提交的报告也改了名，因为没有任何预演与审计记录，谁也说不清改过哪些。
+一条清理脚本用 `os.remove` 配合手工拼的字符串路径，本意只删下载目录里的过期临时文件，结果路径里多了一个 `..`，解析后指到项目根目录，几秒内删掉上百个源文件，连回收站都找不回来。另一个脚本按固定规则批量重命名，正则写宽了一点，把同事刚提交的报告也改了名；因为没有任何预演与审计记录，谁也说不清改过哪些。
 
-自动化办公的风险全在「批量」：一条错误的匹配规则会在几秒内作用到上千个文件，而且默认不可逆。朴素解法「拼路径 + 直接删或直接改 + print 一句」失败在三处：字符串拼接不校验边界、破坏性操作没有 dry-run 与撤销、过程没有可回溯的审计日志。
+自动化办公的风险全在「批量」：一条错误的匹配规则会在几秒内作用到上千个文件，而且默认不可逆。朴素解法「拼路径 + 直接删或直接改 + `print` 一句」失败在三处：字符串拼接不校验边界、破坏性操作没有 `dry-run` 与撤销、过程没有可回溯的审计日志。
 
-本讲用 pathlib 做路径校验、rglob 与 `os.stat` 做容量统计、logging 落审计日志，把批量操作变成先出计划、可核对、可回退的流程。
+这一讲用 `pathlib` 做路径校验、用 `rglob` 与 `os.stat` 做容量统计、用 `logging` 落审计日志，把批量操作变成先出计划、可核对、可回退的流程。
 
 
 ## pathlib 遍历：PurePath、具体路径与 glob 的大小写边界
 
-pathlib 把路径分成两层：PurePath 只做词法与字符串操作（拼 /、取 .suffix、.stem、.name、.parent、.with_name），完全不碰磁盘；Path 继承它并加上 stat、iterdir、rglob、rename 这些 IO 方法。
+`pathlib` 把路径分成两层：`PurePath` 只做词法与字符串操作（用 `/` 拼接、取 `.suffix`、`.stem`、`.name`、`.parent`、`.with_name`），完全不碰磁盘；
 
-`Path.rglob`('*') 递归遍历所有后代，等价于 glob('**/*')，而 glob('*.txt') 只匹配当前一层；`Path.iterdir()` 只列直接子项。
+`Path` 继承它，再补上 `stat`、`iterdir`、`rglob`、`rename` 这些 IO 方法。
 
-一个高频坑是 suffix 保留原始大小写：Path('A.TXT').suffix 得到 '.TXT'，按扩展名聚合前必须 .`lower()` 归一，否则 .TXT 与 .txt 会被算成两类。
+`Path.rglob('*')` 递归遍历所有后代，等价于 `glob('**/*')`，而 `glob('*.txt')` 只匹配当前一层；
 
-`os.walk(root)` 走另一套：它基于 `os.scandir` 自顶向下返回 (dirpath, dirnames, filenames) 三元组，topdown 默认 True，followlinks 默认 False（不跟随目录符号链接，正是为了避免符号链接环造成无限递归），还可传 onerror 回调吞掉权限错误。
+`Path.iterdir()` 只列直接子项。
 
-`Path.resolve()` 默认 `strict=False`（3.6 起），把 .. 与符号链接解析成绝对路径；
+一个高频坑是 `suffix` 保留原始大小写：`Path('A.TXT').suffix` 得到 `'.TXT'`，按扩展名聚合前必须 `.lower()` 归一，否则 `.TXT` 与 `.txt` 会被算成两类。
 
-`Path.is_relative_to(other)`（3.9 起）用来断言结果仍在允许目录内，是阻止 .. 越界的关键一道校验。
+`os.walk(root)` 走的是另一套：它基于 `os.scandir` 自顶向下返回 `(dirpath, dirnam…` 三元组，`topdown` 默认 `True`，`followlinks` 默认 `False`（不跟随目录符号链接，正是为了避免符号链接环造成无限递归），还能传 `onerror` 回调吞掉权限错误。
 
-`Path.mkdir(parents=True, exist_ok=True)` 显式声明父目录与已存在时的行为，省去手写 try。
+```python
+(dirpath, dirnames, filenames)
+```
 
-三个失效信号：glob 莫名漏文件（大小写）、遍历卡死不返回（符号链接环）、日志里出现根目录之外的路径。
+`Path.resolve()` 默认 `strict=False`（3.6 起），把 `..` 与符号链接解析成绝对路径；
+
+`Path.is_relative_to(other)`（3.9 起）用来断言结果仍在允许目录内，是挡住 `..` 越界的关键一道校验。
+
+`Path.mkdir` 配 `parents=True` 与 `exist_ok=True` 显式声明父目录与已存在时的行为，省去手写 `try`。三个失效信号：glob 莫名漏文件（大小写）、遍历卡死不返回（符号链接环）、日志里出现根目录之外的路径。
 
 **遍历与路径 API 对照**
 
@@ -92,21 +98,21 @@ print('audit', log_path.read_text(encoding='utf-8').splitlines())
 
 ## 元数据、容量统计与 logging 落盘
 
-`Path.stat()` 返回 `os.stat_result`，字段含义必须分清：st_size 是文件逻辑字节数，st_mtime 是最后修改时间的浮点秒，st_ino 是 inode 号，st_mode 含类型与权限位；
+`Path.stat()` 返回 `os.stat_result`，几个字段必须分清：`st_size` 是文件逻辑字节数，`st_mtime` 是最后修改时间的浮点秒，`st_ino` 是 `inode` 号，`st_mode` 含类型与权限位；
 
-st_ctime 在 Unix 上是 inode 元数据最后变更时间（chmod、chown 都会更新），并不是创建时间——只有 Windows 上它才近似创建时间，把它当「文件什么时候建的」会得出错误报表。
+`st_ctime` 在 Unix 上是 `inode` 元数据最后变更时间（`chmod`、`chown` 都会更新），并不是创建时间——只有 Windows 上它才近似创建时间，把它当「文件什么时候建的」会得出错误报表。
 
-磁盘实际占用要看 st_blocks 乘 512 字节，稀疏文件的 st_size 很大而 st_blocks 很小，二者不相等。
+磁盘实际占用要看 `st_blocks` 乘 512 字节，稀疏文件的 `st_size` 很大而 `st_blocks` 很小，二者不相等。
 
-`datetime.fromtimestamp(st_mtime)` 把浮点秒转成本地 datetime，单位换算用 1024 进制（1 `MiB = 1048576` 字节）。
+`datetime.fromtimestamp(st_mtime)` 把浮点秒转成本地 `datetime`，容量换算按 1024 进制，`1 MiB = 1048576` 字节；
 
-聚合按扩展名用 `collections.defaultdict(lambda: [0, 0])` 存 [文件数, 总字节数] 最省事。
+聚合按扩展名用 `collections.defaultdict` 存「文件数、总字节数」最省事。
 
-审计日志走 logging 的 Logger / Handler / Formatter 三层：`logging.basicConfig`(filename=, level=, filemode='w', format=, `force=True`) 一次配好，force 自 3.8 起会先移除 root 上已有 handler，避免同一进程重复执行时日志翻倍；
+审计日志走 `logging` 的 `Logger` / `Handler` / `Formatter` 三层：`logging.basicConfig` 一次配好，`force=True`（3.8 起）会先移除 root 上已有 handler，避免同一进程重复执行时日志翻倍；
 
-format 常用 %(asctime)s、%(levelname)s、%(message)s 占位。
+`format` 常用 `%(asctime)s`、`%(levelname)s`、`%(message)s` 占位。
 
-按大小轮转用 `RotatingFileHandler(maxBytes, backupCount)`（maxBytes 默认 0 表示不轮转，必须显式给值），按时间轮转用 TimedRotatingFileHandler(when='midnight', `interval=1`, backupCount)。
+按大小轮转用 `RotatingFileHandler` 并显式给 `maxBytes`（默认 0 表示不轮转）、按时间轮转用 `TimedRotatingFileHandler`。
 
 审计记录至少要有时间戳、源路径、目标路径、动作与结果，否则出事无法回放。
 
@@ -133,15 +139,21 @@ print('still exists', (target / 'keep.txt').exists())
 
 ## build_plan 与 apply_plan：把批量操作拆成计划与执行
 
-批量错误的破坏力等于「一条规则乘以上千个文件」，所以正确流程把计划与执行分开。第一步 dry-run：只把 (src, dst) 收集进列表并打印，applied 计数固定为 0，人工核对计划条数与样例后才真正执行；
+批量错误的破坏力等于「一条规则乘以上千个文件」，所以正确流程把计划与执行分开。第一步 `dry-run`：只把 `(src, dst)` 收集进列表并打印，`applied` 计数固定为 0，人工核对计划条数与样例后才真正执行。
 
-第二步边界校验：所有路径用 / 运算符拼（Path 会处理分隔符），目标先 `dst.resolve()`.`is_relative_to(root.resolve()`) 确认没跑出允许目录，`dst.exists()` 时跳过并记入失败清单，避免覆盖已有文件；
+第二步边界校验：所有路径用 `/` 运算符拼（`Path` 会处理分隔符），目标先做 `dst.resolve().is_relative_to(root.resolve())` 确认没跑出允许目录，`dst.exists()` 时跳过并记入失败清单，避免覆盖已有文件。
 
-第三步撤销路径：不要用 `os.remove` 直接删，改成 `shutil.move` 把文件移到同分区的 .trash 回收站目录，重命名用 `Path.rename` 或 `os.replace`（同文件系统内原子）。幂等也要设计：把「suffix 不等于其小写」作为唯一改名条件，重复跑不会二次改名。
+第三步撤销路径：不要用 `os.remove` 直接删，改成 `shutil.move` 把文件移到同分区的 `.trash` 回收站目录；重命名用 `Path.rename` 或 `os.replace`（同文件系统内原子）。幂等也要设计：把「`suffix` 不等于其小写」作为唯一改名条件，重复跑不会二次改名。
 
-审计用 logging 落盘并带 datetime 时间戳，形成可回溯的操作序列。调度侧用 datetime 触发，或 APScheduler 的 CronTrigger / IntervalTrigger；标准库 sched 能做最简定时。
+审计用 `logging` 落盘并带 `datetime` 时间戳，形成可回溯的操作序列。
 
-定时任务要处理两类失效：上一轮未结束又触发（max_instances 限制重叠）、以及错过触发后堆积补跑（coalesce 合并、misfire_grace_time 设定容忍窗口）。三个报警信号：一次跑改动文件数远超预期、审计日志里出现 root 之外路径、以及没有任何 dry-run 就直接执行破坏性操作。
+调度侧用 `datetime` 触发，或 APScheduler 的 `CronTrigger` / `IntervalTrigger`；
+
+标准库 `sched` 能做最简定时。
+
+定时任务要处理两类失效：上一轮未结束又触发（`max_instances` 限制重叠）、以及错过触发后堆积补跑（`coalesce` 合并、`misfire_grace_time` 设定容忍窗口）。
+
+三个报警信号：一次跑改动文件数远超预期、审计日志里出现 root 之外路径、以及没有任何 `dry-run` 就直接执行破坏性操作。
 
 <ConceptDiagram type='hub4' title='第 123 讲 · pathlib 遍历：PurePath、具体路径与 glob 的大小写边界' labels='pathlib 遍历：PurePath、具体|元数据、容量统计与 logging 落盘|批量操作安全：dry-run、回收站、路径校' caption='把重复的文件劳动变成一条可调度命令' />
 
@@ -150,26 +162,28 @@ print('still exists', (target / 'keep.txt').exists())
 
 ## PurePath 的 flavour 决定大小写敏感
 
-PurePath 内部持有一个 flavour 对象（PosixFlavour 或 _WindowsFlavour），决定分隔符、大小写敏感性与盘符规则，所以同一段 glob 在 Windows 上不区分大小写、在 POSIX 上区分；rglob 把模式编译成选择器后递归调用 scandir。
+`PurePath` 内部持有一个 flavour 对象（`PosixFlavour` 或 `_WindowsFlavour`），决定分隔符、大小写敏感性与盘符规则，所以同一段 glob 在 Windows 上不区分大小写、在 `POSIX` 上区分；
 
-`Path.stat()` 落到 `stat(2)` 系统调用：st_size 是目录项记录的逻辑长度，稀疏文件靠孔洞不占块，因此实际占用必须看 st_blocks；st_ctime 在 Unix 语义是 inode 变更时间，这是文件系统而非 Python 的定义。
+`rglob` 把模式编译成选择器后递归调用 `scandir`。`Path.stat()` 落到 `stat(2)` 系统调用：`st_size` 是目录项记录的逻辑长度，稀疏文件靠孔洞不占块，因此实际占用必须看 `st_blocks`；
 
-logging 的 Logger 以点号构成层级、propagate 默认 True 向上传播到 root，Handler 决定落点，Formatter 决定文本；basicConfig 的 `force=True` 会先清空 root 已有 handler，因此同一进程里重复配置不会写出两遍。
+`st_ctime` 在 Unix 语义是 `inode` 变更时间，这是文件系统而非 Python 的定义。`logging` 的 `Logger` 以点号构成层级、`propagate` 默认 `True` 向上传播到 root，`Handler` 决定落点，`Formatter` 决定文本；
 
-`shutil.move` 在同文件系统内走 `os.rename`（原子）、跨文件系统才退化为复制加删除，所以回收站目录要与目标同分区。dry-run 的正确性来自把副作用推迟到显式确认之后：计划是纯数据，执行才触碰磁盘。
+`basicConfig` 的 `force=True` 会先清空 root 已有 handler，因此同一进程里重复配置不会写出两遍。`shutil.move` 在同文件系统内走 `os.rename`（原子）、跨文件系统才退化为复制加删除，所以回收站目录要与目标同分区。
+
+`dry-run` 的正确性来自把副作用推迟到显式确认之后：计划是纯数据，执行才触碰磁盘。
 
 
 ## 带 dry-run、路径校验与审计的批量重命名
 
 报表目录里混着 `A.TXT`、`B.PNG` 这类大写扩展名，需要统一成小写，但脚本一旦跑错会改动成百上千个文件。
 
-工程做法是把操作拆成 build_plan 与 apply_plan 两段：build_plan 用 rglob 递归收集需要改名的 (源, 目标)，对每个目标先 resolve 再断言 `dst.parent` 仍是根目录，防止 .. 与符号链接把文件挪出去；
+工程做法是把操作拆成 `build_plan` 与 `apply_plan` 两段：`build_plan` 用 `rglob` 递归收集需要改名的「源、目标」，对每个目标先 `resolve` 再断言 `dst.parent` 仍是根目录，防止 `..` 与符号链接把文件挪出去；
 
-apply_plan 在 `dry_run=True` 时只写审计日志、返回 0，只有显式关掉 dry_run 才调用 `Path.rename`。
+`apply_plan` 在 `dry_run=True` 时只写审计日志、返回 `0`，只有显式关掉 `dry_run` 才调用 `Path.rename`。
 
-日志用 `logging.basicConfig` 的 `force=True` 与 filemode='w' 保证每次运行都是干净的一份，消息里带 datetime 时间戳、动作与两个文件名。
+日志用 `logging.basicConfig` 的 `force=True` 与 `filemode='w'` 保证每次运行都是干净的一份，消息里带 `datetime` 时间戳、动作与两个文件名。
 
-真实项目还会把计划写成 JSON 供人工评审、把失败清单落盘重试、用 APScheduler 定时触发并设 max_instances 防止重叠。下面片段可直接运行，重点看 dry_run 分支如何做到零副作用。
+真实项目还会把计划写成 `JSON` 供人工评审、把失败清单落盘重试、用 APScheduler 定时触发并设 `max_instances` 防止重叠。下面片段可直接运行，重点看 `dry_run` 分支如何做到零副作用。
 
 ```python
 import logging, tempfile
@@ -235,6 +249,6 @@ print('unchanged', sorted(p.name for p in root.iterdir()))
 
 [下一讲：实战 03 · 邮件、PDF、Excel、Word 与图像视频](/projects/office-docs)
 
-<Predict no='123-P' q='对含 report.TXT 与 pic2.PNG 的目录跑 dry-run 重命名，最可能的输出组合是？' :options='["列出两条计划、applied 为 0、文件保持原样", "applied 为 2 且文件已改成小写", "抛 FileNotFoundError 因为目标不存在"]' answer='0' output='rename plan [(&#39;report.TXT&#39;, &#39;report.txt&#39;), (&#39;pic2.PNG&#39;, &#39;pic2.png&#39;)] 且 applied 0' explain='dry-run 只把 (源, 目标) 收集进计划并写审计日志，不调用 Path.rename；applied 恒为 0，磁盘状态不变，因此可以先人工核对计划再真正执行。' />
+<Predict no='123-4' q='对含 report.TXT 与 pic2.PNG 的目录跑 dry-run 重命名，最可能的输出组合是？' :options='["列出两条计划、applied 为 0、文件保持原样", "applied 为 2 且文件已改成小写", "抛 FileNotFoundError 因为目标不存在"]' answer='0' output='rename plan [(&#39;report.TXT&#39;, &#39;report.txt&#39;), (&#39;pic2.PNG&#39;, &#39;pic2.png&#39;)] 且 applied 0' explain='dry-run 只把 (源, 目标) 收集进计划并写审计日志，不调用 Path.rename；applied 恒为 0，磁盘状态不变，因此可以先人工核对计划再真正执行。' />
 
-<FillBlank no='123-F' tpl='___ logging, tempfile' :answers='["import"]' hint='回想本讲关于 pathlib 遍历与 glob 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pathlib 遍历：PurePath、具体路径与 glob 的大小写边界 的落点。' />
+<FillBlank no='123-5' tpl='___ logging, tempfile' :answers='["import"]' hint='回想本讲关于 pathlib 遍历与 glob 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pathlib 遍历：PurePath、具体路径与 glob 的大小写边界 的落点。' />

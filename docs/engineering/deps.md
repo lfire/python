@@ -9,33 +9,39 @@ description: 让任意机器构建出相同的环境
 
 目录立稳之后，下一个常被跳过的问题是：换台机器、隔半年，还能装出同一组东西吗。一个服务预发跑得好好的，某天上游发了个小版本，生产装到新依赖后行为悄悄变了，回滚都找不出改了什么——所谓可复现，只是那天碰巧装到同一批包。
 
-由声明走到锁定：先用 pyproject.toml 写清直接与传递依赖，再谈约束文件、锁文件与哈希校验，接着比 uv、poetry、pip-tools 的做法，最后补上供应链审计。前置是虚拟环境、pip 与模块概念；学完能把开发与运行依赖分开、提交锁文件，让任意机器构建出字节一致的环境。
+由声明走到锁定：先用 `pyproject.toml` 写清直接与传递依赖，再谈约束文件、锁文件与哈希校验，接着比 uv、poetry、pip-tools 的做法，最后补上供应链审计。前置是虚拟环境、pip 与模块概念；学完能把开发与运行依赖分开、提交锁文件，让任意机器构建出字节一致的环境。
 
 
 ## 上游发了个小版本，生产行为悄悄变了，回滚找不到改了什么
 
-一个服务在预发跑得好好的，某天上游发布了一个小版本，生产环境 pip install -r `requirements.txt` 装到了新依赖，行为悄悄变了，回滚都找不到改了什么。
+一个服务在预发跑得好好的，某天上游发布了一个小版本，生产环境按 `requirements.txt` 装到了新依赖，行为悄悄变了，回滚都找不到改了什么。
 
-团队只写了 requests>=2.28 这样的宽泛范围，既没有锁文件也没有哈希，所谓「可复现」只是同一天碰巧装到同一组包。另一个更隐蔽的问题：开发依赖（pytest、mypy）和运行依赖混在一张清单里，生产镜像白胖一圈还带来额外攻击面。依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；
+团队只写了 `requests>=2.28` 这样的宽泛范围，既没有锁文件也没有哈希，所谓「可复现」只是同一天碰巧装到同一组包。另一个更隐蔽的问题：开发依赖（pytest、mypy）和运行依赖混在一张清单里，生产镜像白胖一圈还带来额外攻击面。依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；
 
-这要求把直接与传递依赖全部钉死到精确版本并校验哈希，区分开发与运行依赖，CI 用 --require-hashes 构建，定期审计已知漏洞。本讲把 PEP 440/508、锁文件与供应链校验讲到能落地。
+这要求把直接与传递依赖全部钉死到精确版本并校验哈希，区分开发与运行依赖，CI 用 `--require-hashes` 构建，定期审计已知漏洞。
+
+本讲把 PEP 440/508、锁文件与供应链校验讲到能落地。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='只写 requests&gt;=2.28 不提交锁文件：传递依赖解析随时间变化，某天上游发版就让线上行为悄悄改变' />
 
 
 ## pyproject.toml 里声明了什么：直接与传递依赖
 
-PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies、`[project.optional-dependencies]` 放 dev/test 组；
+PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；
 
 PEP 518 的 `[build-system]` 声明 requires 与 build-backend（如 `setuptools.build_meta`）。
 
-直接依赖是你显式声明的，传递依赖是它们的依赖，pip freeze 会把两者连同精确版本全部列出，这正是宽泛范围无法复现的原因：某天传递依赖发新版，解析结果就变。
+直接依赖是你显式声明的，传递依赖是它们的依赖，`pip freeze` 会把两者连同精确版本全部列出，这正是宽泛范围无法复现的原因：某天传递依赖发新版，解析结果就变。
 
-版本规约遵循 PEP 440：==2.32.3 精确钉死，~=1.4.5 等价 >=1.4.5, ==1.4.*（兼容发布），!= 排除，=== 任意相等，1.2rc1 / 1.2.post1 / 1.2.dev1 / +local 分别表预发布、修订、开发、本地版本。
+版本规约遵循 PEP 440：`==2.32.3` 精确钉死，`~=1.4.5` 等价 `>=1.4.5, ==1.4.*`（兼容发布），`!=` 排除，`===` 任意相等，`1.2rc1` / `1.2.post1` / `1.2.dev1` / `+local` 分别表预发布、修订、开发、本地版本。
 
-PEP 508 环境标记让同一份依赖按环境生效：requests; python_version >= '3.9'、uvicorn`[standard]`、pytest; extra == 'test'，标记里可用 python_version、sys_platform、platform_machine 等变量。
+PEP 508 还统一了 extras 与环境标记：`uvicorn[standard]` 是带 extras 的写法，环境标记则是 `python_version >= '3.9'` 这类条件，或 `pytest; extra` 这种按 extra 生效的条目，可用 python_version、sys_platform、platform_machine 等变量。
 
-<Callout type="tip" title='核心心智模型' text='PEP 621 把项目元数据集中到 pyproject.toml 的 [project]：name、version、requires-python、dependencies、[project.optional-dependencies] 放 dev/test 组；PEP 518 的 [build-s' />
+```bash
+pytest; extra == 'test'
+```
+
+<Callout type="tip" title='核心心智模型' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的 `[' />
 
 
 ## PEP 440 版本规约与 PEP 508 标记怎么读
@@ -53,9 +59,9 @@ PEP 508 环境标记让同一份依赖按环境生效：requests; python_version
 | pkg; python_version >= '3.9' | PEP 508 环境标记 | 按解释器版本条件生效 |
 | uvicorn[standard] | extra 可选依赖 | 按需安装附加组 |
 
-<Term word='pyproject.toml 规范' text='PEP 621 把项目元数据集中到 pyproject.toml 的 [project]：name、version、requires-python、dependencies、[project.optional-dependencies] 放 dev/test 组；PEP 518 的 [build-system] 声明 ' />
+<Term word='pyproject.toml 规范' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的 `[build-syst' />
 
-<Term word='直接与传递依赖' text='锁文件把一次成功解析的完整结果固化：uv.lock、poetry.lock、pip-tools 的 requirements.txt（由 pip-compile 从 requirements.in 生成），每行是 name==version 加 --hash=sha256:...。pip install --requi' />
+<Term word='直接与传递依赖' text='锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 `pip-compile` 从 `requirements.in` 生成），每行是 name==version 加一条 `--hash=sha256` 摘要。用 `--r' />
 
 
 ### 兼容发布 ~= 与 >= 的边界差在哪
@@ -113,7 +119,7 @@ print('unpinned upgrade rejected', not verify(lock[0], 'requests-2.33.0'))
 
 <OutputBox title='主示例运行结果' output='pinned [&#39;2.32.3&#39;, &#39;2024.8.30&#39;]\nhash bits 256\nexact match ok True\ntampered rejected True\nunpinned upgrade rejected True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\n\ndef digest(body):\n    return hashlib.sha256(body.encode()).hexdigest()\n\nlock = [\n    (&#39;requests&#39;, &#39;2.32.3&#39;, digest(&#39;requests-2.32.3&#39;)),\n    (&#39;certifi&#39;, &#39;2024.8.30&#39;, digest(&#39;certifi-2024.8.30&#39;)),\n]\n\ndef verify(pkg, payload):\n    return digest(payload) == pkg[2]\n\nprint(&#39;pinned&#39;, [v for _, v, _ in lock])\nprint(&#39;hash bits&#39;, len(lock[0][2]) * 4)\nprint(&#39;exact match ok&#39;, verify(lock[0], &#39;requests-2.32.3&#39;))\nprint(&#39;tampered rejected&#39;, not verify(lock[0], &#39;requests-2.32.3-tampered&#39;))\nprint(&#39;unpinned upgrade rejected&#39;, not verify(lock[0], &#39;requests-2.33.0&#39;))' :notes='["导入 hashlib 做 SHA-256 摘要，模拟锁文件的哈希校验", "定义 digest：对精确版本字节串算 256 位十六进制摘要", "返回十六进制摘要字符串，长度 64 字符", "lock 模拟锁文件：每项为 (包名, 精确版本, sha256)", "requests 钉在 2.32.3 并记录其摘要", "certifi 钉在 2024.8.30 并记录其摘要", "verify 比对下载件摘要与锁定摘要是否一致", "一致才允许安装，否则拒绝", "打印被钉死的精确版本，不含任何范围", "十六进制每位 4 bit，64 字符即 256 位", "字节完全相同的产物校验通过", "被篡改的产物摘要不同，校验失败被拒", "上游发新版也会因摘要不符被拒，复现性得以保证", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管环境标记与 extra"]' title='第 072 讲 · 依赖管理：venv、uv、锁文件与可复现构建' />
+<LineByLine code='import hashlib\n\ndef digest(body):\n    return hashlib.sha256(body.encode()).hexdigest()\n\nlock = [\n    (&#39;requests&#39;, &#39;2.32.3&#39;, digest(&#39;requests-2.32.3&#39;)),\n    (&#39;certifi&#39;, &#39;2024.8.30&#39;, digest(&#39;certifi-2024.8.30&#39;)),\n]\n\ndef verify(pkg, payload):\n    return digest(payload) == pkg[2]\n\nprint(&#39;pinned&#39;, [v for _, v, _ in lock])\nprint(&#39;hash bits&#39;, len(lock[0][2]) * 4)\nprint(&#39;exact match ok&#39;, verify(lock[0], &#39;requests-2.32.3&#39;))\nprint(&#39;tampered rejected&#39;, not verify(lock[0], &#39;requests-2.32.3-tampered&#39;))\nprint(&#39;unpinned upgrade rejected&#39;, not verify(lock[0], &#39;requests-2.33.0&#39;))' :notes='["导入 hashlib 做 SHA-256 摘要，模拟锁文件的哈希校验", "定义 digest：对精确版本字节串算 256 位十六进制摘要", "返回十六进制摘要字符串，长度 64 字符", "lock 模拟锁文件：每项为 (包名, 精确版本, sha256)", "requests 钉在 2.32.3 并记录其摘要", "certifi 钉在 2024.8.30 并记录其摘要", "verify 比对下载件摘要与锁定摘要是否一致", "一致才允许安装，否则拒绝", "打印被钉死的精确版本，不含任何范围", "十六进制每位 4 bit，64 字符即 256 位", "字节完全相同的产物校验通过", "被篡改的产物摘要不同，校验失败被拒", "上游发新版也会因摘要不符被拒，复现性得以保证", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记"]' title='第 072 讲 · 依赖管理：venv、uv、锁文件与可复现构建' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -156,19 +162,21 @@ with tempfile.TemporaryDirectory() as d:
 
 ## 锁文件、约束文件与 --require-hashes
 
-锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 pip-compile 从 `requirements.in` 生成），每行是 name==version 加 --`hash=sha256`:...。
+锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 `pip-compile` 从 `requirements.in` 生成），每行是 name==version 加一条 `--hash=sha256` 摘要。
 
-`pip install --require-hashes -r` `requirements.txt` 会对每个下载件校验哈希，任何篡改、上游重传、未锁定的新版本都会被拒绝；
+用 `--require-hashes` 安装时，pip 会对每个下载件校验哈希，任何篡改、上游重传、未锁定的新版本都会被拒绝；
 
 缺哈希或版本不匹配直接报错，而不是装上一个「差不多」的包。
+
+要注意普通 `pip install` 不会主动校验哈希，这份保证来自锁文件里的哈希加上 `--require-hashes` 模式。
 
 区分两层：约束文件（`constraints.txt`）只限制版本不选包，锁文件同时选定包与版本。
 
 开发依赖与运行依赖要拆成不同组或不同文件，生产镜像只装运行组。
 
-用 `importlib.metadata` 读取已安装分发的 METADATA，可核对 Name、Version、Requires-Python、Requires-Dist；
+用 `importlib.metadata` 读取已安装分发的 `METADATA`，可核对 Name、Version、Requires-Python、Requires-Dist；
 
-用两个假分发模拟 app 要求 lib>=2.0 却装了 1.5，就能复现 pip check 要报的依赖冲突。
+用两个假分发模拟 app 要求 `lib>=2.0` 却装了 1.5，就能复现 `pip check` 要报的依赖冲突。
 
 **依赖管理工具与产物**
 
@@ -186,16 +194,16 @@ with tempfile.TemporaryDirectory() as d:
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **pyproject.toml 规范** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `pyproject.toml` 规范 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## pip 解析依赖：Requirement 对象与 Version 偏序
 
-pip 解析依赖时把每个发行版的 METADATA 读成 Requirement 对象（PEP 508），用 PEP 440 的 Version 类做偏序比较，在候选版本集合里做回溯搜索满足所有约束的组合；宽泛范围下这个搜索结果会随时间（索引新增版本）变化，这就是不可复现的根源。
+pip 解析依赖时把每个发行版的 `METADATA` 读成 Requirement 对象（PEP 508），用 PEP 440 的 `Version` 类做偏序比较，在候选版本集合里做回溯搜索满足所有约束的组合；宽泛范围下这个搜索结果会随时间（索引新增版本）变化，这就是不可复现的根源。
 
-锁文件把搜索结果连同每个 wheel/sdist 的 sha256 一起固化，--require-hashes 模式要求每个待装件都带哈希且必须匹配，否则在下载完成后安装前拒绝，从机制上同时挡住「解析漂移」与「字节篡改」。
+锁文件把搜索结果连同每个 wheel/sdist 的 sha256 一起固化，`--require-hashes` 模式要求每个待装件都带哈希且必须匹配，否则在下载完成后、安装前拒绝，从机制上同时挡住「解析漂移」与「字节篡改」。
 
-`importlib.metadata` 通过 `sys.path` 上的 *.dist-info/METADATA（RFC 822 风格头）读取 Name、Version、Requires-Python、Requires-Dist，pip check 正是比对 Requires-Dist 与已装版本是否满足约束。
+`importlib.metadata` 通过 `sys.path` 上的 `*.dist-info/METADATA`（RFC 822 风格头）读取 Name、Version、Requires-Python、Requires-Dist，`pip check` 正是比对 Requires-Dist 与已装版本是否满足约束。
 
 SHA-256 把任意长度输入映射为 256 位摘要，输入改变一位输出约半数比特翻转，因此精确版本加摘要可作为「同一组字节」的可验证判据。
 
@@ -206,20 +214,22 @@ SHA-256 把任意长度输入映射为 256 位摘要，输入改变一位输出�
 
 ## 可复现构建与供应链安全
 
-CI 的最低要求：提交锁文件、python -m venv 或 uv venv 建干净环境、用锁文件加 --require-hashes 安装、跑 pip check 验证已装依赖自洽、把解释器版本写进镜像标签。
+CI 的最低要求：提交锁文件、用标准库或 uv 各建一个干净虚拟环境、按锁文件加 `--require-hashes` 安装、跑 `pip check` 验证已装依赖自洽、把解释器版本写进镜像标签。
 
-哈希校验防的是「字节被换」：`hashlib.sha256` 对精确版本产物算 256 位摘要，任何一位变化都会让摘要不同，因此钉死版本加哈希能同时挡住「上游悄悄发版」与「下载件被篡改」。
+哈希校验防的是「字节被换」：`hashlib.sha256` 对精确版本产物算 256 位摘要，任何一位变化都会让摘要不同；钉死版本挡住「上游悄悄发版」，哈希挡住「下载件被篡改」，两者分工不同却常被混为一谈。
 
-供应链还要加 --only-binary=:all: 避免安装时执行任意构建脚本、定期用 pip-audit / uv 审计已知 CVE、把依赖升级做成有评审的 PR 而不是随手 bump。生产密钥与配置不进依赖清单；依赖镜像用可信源并固定 index-url。
+供应链还要加 `--only-binary=:all:` 避免安装时执行任意构建脚本、定期用 pip-audit / uv 审计已知 CVE、把依赖升级做成有评审的 PR 而不是随手 bump。
 
-判断环境是否可复现有个可测标准：删掉虚拟环境按锁文件从零装，跑出的 `importlib.metadata.version()` 集合与锁定值逐项一致，且 pip check 无输出。
+生产密钥与配置不进依赖清单；依赖镜像用可信源并固定 index-url。
 
-<FlowTimeline :steps='[{"title": "pyproject.toml、直接与传递依赖、版本规约", "desc": "PEP 621 把项目元数据集中到 pyproject.toml 的 [projec…", "tone": "blue"}, {"title": "锁文件、约束与哈希校验", "desc": "锁文件把一次成功解析的完整结果固化：uv.lock、poetry.lock、pip-…", "tone": "purple"}, {"title": "可复现构建与供应链安全", "desc": "CI 的最低要求：提交锁文件、python -m venv 或 uv venv 建干…", "tone": "orange"}, {"title": "工程落地", "desc": "可复现构建清单：哈希校验与冲突自检", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+判断环境是否可复现有个可测标准：删掉虚拟环境按锁文件从零装，跑出的 `importlib.metadata.version()` 集合与锁定值逐项一致，且 `pip check` 无输出。
+
+<FlowTimeline :steps='[{"title": "pyproject.toml、直接与传递依赖、版本规约", "desc": "PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[pro…", "tone": "blue"}, {"title": "锁文件、约束与哈希校验", "desc": "锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、…", "tone": "purple"}, {"title": "可复现构建与供应链安全", "desc": "CI 的最低要求：提交锁文件、用标准库或 uv 各建一个干净虚拟环境、按锁文件加 `…", "tone": "orange"}, {"title": "工程落地", "desc": "可复现构建清单：哈希校验与冲突自检", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 可复现构建清单：哈希校验与冲突自检
 
-发布流水线里，依赖环节应当是一条会自己失败的闸门：从锁文件读出每个包的精确版本与 sha256，下载件先过哈希才允许安装，装完再跑 pip check 式的冲突自检，最后打印可审计的 manifest。把这一步写成脚本随代码提交，就能在任何机器上重建同一组字节。
+发布流水线里，依赖环节应当是一条会自己失败的闸门：从锁文件读出每个包的精确版本与 sha256，下载件先过哈希才允许安装，装完再跑 `pip check` 式的冲突自检，最后打印可审计的 manifest。把这一步写成脚本随代码提交，就能在任何机器上重建同一组字节。
 
 下面片段用标准库模拟三件带哈希的锁定包，构造安装 manifest，并故意替换其中一个产物验证拒绝路径；真实项目把 install 换成 pip/uv 调用、把 digest 换成读取锁文件即可。
 
@@ -282,26 +292,26 @@ except ValueError as e:
 
 <Quiz no='072-3' q='~=1.4.5 这个 PEP 440 兼容发布规约等价于？' :options='["&gt;=1.4.5, ==1.4.*", "==1.4.5", "&gt;=1.4.5,&lt;2.0", "任意 1.x 版本"]' answer="0" explain='~=1.4.5 允许最后一段之后的补丁级升级，等价 &gt;=1.4.5 且 ==1.4.*；它与 ~=1.4（等价 &gt;=1.4, ==1.*）只因保留位数不同而范围不同。' />
 
-<Predict no='072-P' q='对锁定为 requests==2.32.3 的包，用下载件 requests-2.33.0 校验哈希，会被拒绝吗？' :options='["会，摘要不符被拒绝", "不会，版本相近就放行", "会，但只警告不阻断"]' answer='0' output='会，摘要不符被拒绝' explain='锁文件把版本与 sha256 绑定，2.33.0 的字节串与锁定值不同，摘要必然不同；--require-hashes 模式下这一步直接报错拒绝安装，从而挡住未锁定的升级。' />
+<Predict no='072-4' q='对锁定为 requests==2.32.3 的包，用下载件 requests-2.33.0 校验哈希，会被拒绝吗？' :options='["会，摘要不符被拒绝", "不会，版本相近就放行", "会，但只警告不阻断"]' answer='0' output='会，摘要不符被拒绝' explain='锁文件把版本与 sha256 绑定，2.33.0 的字节串与锁定值不同，摘要必然不同；--require-hashes 模式下这一步直接报错拒绝安装，从而挡住未锁定的升级。' />
 
-<FillBlank no='072-F' tpl='___ hashlib' :answers='["import"]' hint='回想本讲关于 pyproject.toml 规范 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pyproject.toml、直接与传递依赖、版本规约 的落点。' />
+<FillBlank no='072-5' tpl='___ hashlib' :answers='["import"]' hint='回想本讲关于 pyproject.toml 规范 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pyproject.toml、直接与传递依赖、版本规约 的落点。' />
 
-<KnowledgeCard :points='["依赖管理目标是在任意时间、任意机器装出同一组字节，而非「能装上」", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管环境标记与 extra", "~=1.4.5 等价 &gt;=1.4.5, ==1.4.*；== 精确钉死，锁文件全部用精确版本", "uv.lock / poetry.lock / pip-compile 产物要提交；CI 用 --require-hashes 安装并跑 pip check", "sha256 为 256 位摘要，精确版本 + 哈希同时挡住解析漂移与下载件篡改", "开发/运行依赖分组（optional-dependencies / dependency-groups），生产只装运行组并定期审计 CVE"]' :pitfalls='["只写 requests&gt;=2.28 不提交锁文件", "开发与运行依赖混在一张清单", "锁了版本却不校验哈希", "开发与生产共用一份无锁依赖，某天上游发版就会让线上行为悄悄变化"]' summary='依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；只写 requirements.txt 的宽泛范围做不到这点' />
+<KnowledgeCard :points='["依赖管理目标是在任意时间、任意机器装出同一组字节，而非「能装上」", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记", "~=1.4.5 等价 &gt;=1.4.5, ==1.4.*；== 精确钉死，锁文件全部用精确版本", "uv.lock / poetry.lock / pip-compile 产物要提交；CI 用 --require-hashes 安装并跑 pip check", "uvicorn[standard] 是 extras 不是环境标记；哈希由锁文件提供、靠 --require-hashes 才会校验", "sha256 为 256 位摘要；开发/运行依赖分组，生产只装运行组并定期审计 CVE"]' :pitfalls='["只写 requests&gt;=2.28 不提交锁文件", "开发与运行依赖混在一张清单", "锁了版本却不校验哈希", "开发与生产共用一份无锁依赖，某天上游发版就会让线上行为悄悄变化"]' summary='依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；只写 requirements.txt 的宽泛范围做不到这点' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
 | 依赖管理目标是在任意时间、任意机器装出同一组字节，而非「能装上」 | 建立直觉 |
-| PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管环境标记与 extra | 跑通示例 |
+| PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记 | 跑通示例 |
 | ~=1.4.5 等价 >=1.4.5, ==1.4.*；== 精确钉死，锁文件全部用精确版本 | 深入边界 |
 | uv.lock / poetry.lock / pip-compile 产物要提交；CI 用 --require-hashes 安装并跑 pip check | 工程落地 |
-| sha256 为 256 位摘要，精确版本 + 哈希同时挡住解析漂移与下载件篡改 | 随堂检测 |
-| 开发/运行依赖分组（optional-dependencies / dependency-groups），生产只装运行组并定期审计 CVE | 复盘 |
+| uvicorn[standard] 是 extras 不是环境标记；哈希由锁文件提供、靠 --require-hashes 才会校验 | 随堂检测 |
+| sha256 为 256 位摘要；开发/运行依赖分组，生产只装运行组并定期审计 CVE | 复盘 |
 
 1. 依赖管理目标是在任意时间、任意机器装出同一组字节，而非「能装上」
 
-2. PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管环境标记与 extra
+2. PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记
 
 3. ~=1.4.5 等价 >=1.4.5, ==1.4.*；== 精确钉死，锁文件全部用精确版本
 

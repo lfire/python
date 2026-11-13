@@ -7,7 +7,7 @@ description: 按业务代价选择事务方案
 
 # 第 107 讲 · 分布式事务：2PC / TCC / Saga / 消息最终一致
 
-上一讲把重试、幂等键和分布式锁理顺了，可那些办法都默认数据还在一个库里、一次提交能收口。等扣库存、扣余额、建订单分到三个服务，这个默认就不成立了。本讲先把单机的本地事务边界划清楚，再谈多台机器怎么协调一次业务写入。
+上一讲把重试、幂等键和分布式锁理顺了，可那些办法都默认数据还在一个库里、一次提交就能收口。等扣库存、扣余额、建订单分到三个服务，这个默认就不成立了。本讲先把单机的本地事务边界划清楚，再谈多台机器怎么协调一次业务写入。
 
 想象一次下单：库存扣了，消息没发出进程就停了，下游始终不知道有这单。我们从两阶段提交为何被长锁拖住讲起，再看 TCC 把锁换成预留字段、Saga 用逆序补偿收尾，最后落到 outbox 把提交与消息绑成一次原子写、用对账兜底。需要函数、异常处理和上一讲的幂等与唯一索引；读完后你能为一条跨服务链路选对方案，也说得出代价落在哪。
 
@@ -16,7 +16,7 @@ description: 按业务代价选择事务方案
 
 一个订单服务把扣库存、扣余额、创建订单拆成三个微服务，工程师先各自提交本地事务，再尽量发一条 MQ 消息通知下一步。上线后对账发现两类脏数据：库存扣成功但进程在发消息前崩溃，下游永远没收到；以及消息已投递、本地事务却回滚，下游按一条不存在的订单发了货。
 
-团队想用把发消息包进数据库事务来补救，立刻失败——消息队列不是同一个资源管理器，没有共享的事务协调者，commit 与 send 之间存在无法消除的窗口。再换 2PC/XA 强一致，prepare 阶段要长时间锁住三库的行，协调者一挂所有参与者卡在 in-doubt，吞吐被拖垮。
+团队想把发消息包进数据库事务来补救，立刻失败——消息队列不是同一个资源管理器，没有共享的事务协调者，commit 与 send 之间存在无法消除的窗口。再换 2PC/XA 强一致，prepare 阶段要长时间锁住三个库的行，协调者一挂所有参与者卡在 in-doubt，吞吐被拖垮。
 
 本讲把跨服务一致性拆成可选择的方案族：2PC 的阻塞代价、TCC 的预留字段、Saga 的逆序补偿，以及 outbox 把本地提交与消息落地绑成一次原子写，最后用对账兜底。
 
@@ -36,13 +36,13 @@ description: 按业务代价选择事务方案
 
 ## 本地事务的 ACID 边界与 2PC 为何阻塞
 
-ACID 的原子性由单个资源管理器用 undo/redo 日志与锁保证，一旦事务跨越 MQ、Redis、多个数据库，就没有共享的提交点。XA 规范用两阶段提交补这个缺口：第一阶段协调者向所有参与者发 prepare，各参与者写 redo 并锁定行后返回 ready；第二阶段协调者再发 commit 或 rollback。
+`ACID` 的原子性由单个资源管理器用 undo/redo 日志与锁保证，一旦事务跨越 MQ、Redis、多个数据库，就没有共享的提交点。XA 规范用两阶段提交补这个缺口：第一阶段协调者向所有参与者发 prepare，各参与者写 redo 并锁定行后返回 ready；第二阶段协调者再发 commit 或 rollback。
 
-问题出在同步阻塞：从 prepare 到 commit 之间参与者持有的行锁与连接不能释放，任一参与者或网络变慢，整条链路一起等；协调者若在写完全局提交日志后宕机，参与者停在 in-doubt 状态，只能靠事务日志由恢复进程裁决。
+问题出在同步阻塞：从 prepare 到 commit 之间，参与者持有的行锁与连接不能释放，任一参与者或网络变慢，整条链路一起等；协调者若在写完全局提交日志后宕机，参与者停在 in-doubt 状态，只能靠事务日志由恢复进程裁决。
 
-MySQL 的 XA 与 PostgreSQL 的 PREPARE TRANSACTION 提供这套接口，后者由 max_prepared_transactions 控制，默认常为 0 即关闭。CAP 定理下 2PC 选的是 CP：网络分区时宁可阻塞也不放行，因此跨机房的长事务几乎不会用它；
+MySQL 的 XA 与 PostgreSQL 的 `PREPARE TRANSACTION` 提供这套接口，后者由 `max_prepared_transactions` 控制，默认常为 0，也就是关闭。
 
-微服务的强一致通常只落在同一个库内部，用唯一索引与本地事务解决。
+CAP 定理下 2PC 选的是 CP：网络分区时宁可阻塞也不放行，因此跨机房的长事务几乎不会用它；微服务的强一致通常只落在同一个库内部，用唯一索引与本地事务解决。
 
 <ConceptDiagram type='layers3' title='第 107 讲 · 本地事务的 ACID 边界与 2PC 为何阻塞' labels='本地事务的 ACID 边界与 2PC 为何阻|TCC 预留与 Saga 逆序补偿：用业务逻|outbox、事务消息与至少一次投递下的幂等' caption='按业务代价选择事务方案' />
 
@@ -53,7 +53,7 @@ MySQL 的 XA 与 PostgreSQL 的 PREPARE TRANSACTION 提供这套接口，后者�
 
 跨服务原子提交做不到，是因为两阶段提交要求所有参与者共享一个能持久化的全局决策日志，而这个日志本身又成了新的单点。CAP 在发生分区时只允许在一致性与可用性之间二选一：2PC 的 prepare 让参与者把同意提交持久化并锁住资源，等于分区期间放弃可用性。
 
-Outbox 绕开全局协调，它把写业务状态和记一条待发事件放进同一个数据库的同一次事务，利用单资源本来就有的 ACID 原子性，把跨系统问题降维成单库问题；之后投递是异步可重试的，消息可能重复但绝不会丢。
+Outbox 绕开全局协调，它把写业务状态和记一条待发事件放进同一个数据库的同一次事务，利用单资源本来就有的 `ACID` 原子性，把跨系统问题降维成单库问题；之后投递是异步可重试的，消息可能重复但绝不会丢。
 
 这一步的代价是把一致性从即时变成最终，并要求消费端用唯一索引把重复投递收敛成一次生效，数据库唯一约束同样依赖单库原子性，正好与 outbox 的前提一致。因此整套最终一致的成立条件可以精确表述为：至少一次投递、幂等消费、可观测对账，三者缺一就会在线上留下需要人工修补的差额。
 
@@ -89,11 +89,11 @@ print('applied', sorted(applied))
 
 ## TCC 预留与 Saga 逆序补偿：用业务逻辑换可用性
 
-TCC 把一个操作拆成 Try / Confirm / Cancel 三段：Try 不做最终扣减而是预留资源，例如把余额从 available 挪到 frozen 字段，Confirm 真正提交，Cancel 释放预留。
+TCC 把一个操作拆成 Try / Confirm / Cancel 三段：Try 不做最终扣减而是预留资源，例如把余额从 `available` 挪到 `frozen` 字段，Confirm 真正提交，Cancel 释放预留。
 
-它把 2PC 的锁从数据库行搬到业务字段，避免长事务，代价是每个接口写三份逻辑，还要处理空回滚（Cancel 先于 Try 到达）、悬挂（Try 迟到）与幂等。Saga 则把长事务切成一串本地事务 T1 到 Tn，为每个 Ti 配一个补偿 Ci，正常顺序执行，失败时按 Cn-1 到 C1 逆序补偿。
+它把 2PC 的锁从数据库行搬到业务字段，避免长事务，代价是每个接口要写三份逻辑，还得处理空回滚（Cancel 先于 Try 到达）、悬挂（Try 迟到）与幂等。Saga 则把长事务切成一串本地事务 T1 到 Tn，为每个 Ti 配一个补偿 Ci，正常顺序执行，失败时按 Cn-1 到 C1 逆序补偿。
 
-补偿不是回滚，而是一次新的业务写，因此必须满足幂等（重复调用结果相同，靠幂等键或去重表）、可重试（失败进队列重试），补偿本身也可能失败，所以要留对账与人工兜底入口。Saga 没有隔离性，即 ACID 里缺 I，中间状态会被其它请求看到，需用语义锁或状态机约束。
+补偿不是回滚，而是一次新的业务写，因此必须满足幂等（重复调用结果相同，靠幂等键或去重表）、可重试（失败进队列重试）；补偿本身也可能失败，所以要留对账与人工兜底入口。Saga 没有隔离性，即 `ACID` 里缺的那个 I，中间状态会被其它请求看到，需用语义锁或状态机约束。
 
 编排式由一个协调器集中驱动，协同式靠事件各自订阅，后者链路更松散、观测与排障更难。
 
@@ -179,13 +179,13 @@ print('sent', o.dispatch())
 
 ## outbox、事务消息与至少一次投递下的幂等
 
-消息最终一致的关键不是 MQ 可靠，而是让本地提交与消息存在成为一次原子写。Transactional Outbox 的做法是业务表与 outbox 表在同一个本地事务里 INSERT，事务提交即两者同时可见；独立投递进程或 Debezium 之类 CDC 读 binlog 扫描未发送行，投递成功后标记或删除。
+消息最终一致的关键不是 MQ 可靠，而是让本地提交与消息存在成为一次原子写。Transactional Outbox 的做法是业务表与 `outbox` 表在同一个本地事务里 `INSERT`，事务提交即两者同时可见；独立投递进程或 Debezium 之类 CDC 读 `binlog` 扫描未发送行，投递成功后标记或删除。
 
 这样不会出现库提交了但消息没发，或消息发了但库回滚。RocketMQ 的事务消息用 half message 加事务回查实现类似语义：先发对消费者不可见的半消息，执行本地事务后 commit 或 rollback，超时未决则回查生产者。
 
-投递链路通常是 at-least-once，因此消费端必须幂等：用幂等键列加唯一索引配合 INSERT ON CONFLICT DO NOTHING，或用去重表加状态机。Kafka 与 RocketMQ 都不保证跨系统 exactly-once，业务侧靠幂等把重复收敛。
+投递链路通常是 at-least-once，因此消费端必须幂等：用幂等键列加唯一索引，配合插入冲突则忽略的写法（`ON CONFLICT DO NOTHING`），或用去重表加状态机。
 
-最后要有对账任务比对 outbox、投递日志与消费结果，按业务单号找出不一致并告警或自动补偿，人工兜底入口必须保留。
+Kafka 与 RocketMQ 都不保证跨系统 exactly-once，业务侧靠幂等把重复收敛。最后要有对账任务比对 outbox、投递日志与消费结果，按业务单号找出不一致并告警或自动补偿，人工兜底入口必须保留。
 
 **幂等与对账的实现要点**
 
@@ -211,9 +211,11 @@ print('sent', o.dispatch())
 
 ## 带 outbox、幂等消费与对账的下单编排
 
-把一次下单落成可复现的最小骨架：业务状态与待发事件在同一次 transact 里写入日志，投递进程可以反复 dispatch 模拟至少一次送达，消费端用幂等键集合把重复事件收敛成一次生效，最后用对账数字确认投递数、消费数与生效数是否自洽。
+把一次下单落成可复现的最小骨架：业务状态与待发事件在同一次 `transact` 里写入日志，投递进程可以反复 `dispatch` 模拟至少一次送达，消费端用幂等键集合把重复事件收敛成一次生效，最后用对账数字确认投递数、消费数与生效数是否自洽。
 
-真实系统里 transact 对应一次数据库提交，dispatch 对应轮询 outbox 或 CDC 读 binlog，consume 对应带唯一索引的去重表；把任意一环拆成两次无保护的写，就会重新引入本讲开头那两类脏数据。重点是每个失败分支都有可观测出口：重复投递能被计数、重复消费能被识别、不一致能被对账发现。
+真实系统里 `transact` 对应一次数据库提交，`dispatch` 对应轮询 `outbox` 或 CDC 读 `binlog`，`consume` 对应带唯一索引的去重表；把任意一环拆成两次无保护的写，就会重新引入本讲开头那两类脏数据。
+
+重点是每个失败分支都有可观测出口：重复投递能被计数、重复消费能被识别、不一致能被对账发现。
 
 ```python
 import hashlib
@@ -254,7 +256,7 @@ print('reconcile', len(b.delivered), len(b.consumed))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **本地事务边界** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 本地事务边界 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -275,9 +277,9 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 
 2PC 直接撞在这条边界上：协调者在 prepare 之后、写全局提交日志之前崩溃，已返回 ready 的参与者既不能自行 commit（万一别人 rollback）、也不能自行 rollback（万一别人 commit），只能停在 in-doubt 等裁决，行锁与连接一路持有。
 
-XA 把这段状态显式化：MySQL 的 XA START、XA END、XA PREPARE 把分支置为 PREPARED，连接断开后事务仍以 in-doubt 分支存活，由 XA RECOVER 列出再裁决；
+XA 把这段状态显式化：MySQL 的 XA `START`、XA END、XA `PREPARE` 把分支置为 `PREPARED`，连接断开后事务仍以 in-doubt 分支存活，由 XA `RECOVER` 列出再裁决；
 
-PostgreSQL 的 PREPARE TRANSACTION 把事务落盘为 prepared xact，由 max_prepared_transactions 限制数量（默认常为 0），恢复靠 pg_prepared_xacts 与 COMMIT PREPARED。
+PostgreSQL 的 `PREPARE` `TRANSACTION` 把事务落盘为 prepared xact，由 max_prepared_transactions 限制数量（默认常为 0），恢复靠 pg_prepared_xacts 与 `COMMIT` `PREPARED`。
 
 3PC 想用 pre-commit 消除阻塞，但分区下会出现「一部分已 pre-commit、另一部分未收到」，安全性不成立，生产几乎不用。工程结论是：强一致只留给同一个资源管理器内部，跨服务改用 outbox / Saga 把「必须同时决定」的时刻压成一次本地写。
 
@@ -302,7 +304,7 @@ print('crash', two_pc(['stock', 'balance', 'order'], True))
 
 <OutputBox title='扩展示例运行结果' output='normal (&#39;all_committed&#39;, 0, 0)\ncrash (&#39;coordinator_crashed_before_decision&#39;, 3, 18)' />
 
-<LineByLine code='def two_pc(participants, crash, ticks=6):\n    state = {p: &#39;prepared&#39; for p in participants}\n    locks = {p: 1 for p in participants}\n    if not crash:\n        for p in state:\n            state[p] = &#39;committed&#39;\n            locks[p] = 0\n        return &#39;all_committed&#39;, 0, 0\n    in_doubt = sum(1 for s in state.values() if s == &#39;prepared&#39;)\n    for p in state:\n        if state[p] == &#39;prepared&#39;:\n            state[p] = &#39;committed&#39;\n    return &#39;coordinator_crashed_before_decision&#39;, in_doubt, sum(locks.values()) * ticks\n\nprint(&#39;normal&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], False))\nprint(&#39;crash&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], True))' :notes='["prepare 阶段把所有参与者置为 prepared 并上锁", "正常路径写 commit 决定、释放全部锁，无 in-doubt", "故障注入：协调者崩溃，统计 prepared 数与累计锁持有 tick", "正常路径 0 个 in-doubt；崩溃路径 3 个参与者各持锁 6 tick 共 18", "跨系统没有 exactly-once；最终一致 = 至少一次投递 + 幂等消费 + 可观测对账 + 人工兜底", "ACID 只在单个资源管理器内成立；2PC/XA 用 prepare 加 commit 换强一致，代价是同步阻塞与 in-doubt 恢复", "TCC 用 Try/Confirm/Cancel 把锁搬到业务字段，Saga 用正向本地事务加逆序补偿换可用性", "补偿是新的业务写而非 undo，必须幂等、可重试；Saga 缺隔离性，需语义锁与状态机", "outbox 把业务状态与待发事件放进同库同事务，投递至少一次，消费端靠唯一索引幂等", "跨系统没有 exactly-once；最终一致 = 至少一次投递 + 幂等消费 + 可观测对账 + 人工兜底", "ACID 只在单个资源管理器内成立；2PC/XA 用 prepare 加 commit 换强一致，代价是同步阻塞与 in-doubt 恢复", "TCC 用 Try/Confirm/Cancel 把锁搬到业务字段，Saga 用正向本地事务加逆序补偿换可用性", "补偿是新的业务写而非 undo，必须幂等、可重试；Saga 缺隔离性，需语义锁与状态机", "outbox 把业务状态与待发事件放进同库同事务，投递至少一次，消费端靠唯一索引幂等", "跨系统没有 exactly-once；最终一致 = 至少一次投递 + 幂等消费 + 可观测对账 + 人工兜底"]' title='扩展示例逐行讲解' />
+<LineByLine code='def two_pc(participants, crash, ticks=6):\n    state = {p: &#39;prepared&#39; for p in participants}\n    locks = {p: 1 for p in participants}\n    if not crash:\n        for p in state:\n            state[p] = &#39;committed&#39;\n            locks[p] = 0\n        return &#39;all_committed&#39;, 0, 0\n    in_doubt = sum(1 for s in state.values() if s == &#39;prepared&#39;)\n    for p in state:\n        if state[p] == &#39;prepared&#39;:\n            state[p] = &#39;committed&#39;\n    return &#39;coordinator_crashed_before_decision&#39;, in_doubt, sum(locks.values()) * ticks\n\nprint(&#39;normal&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], False))\nprint(&#39;crash&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], True))' :notes='["prepare 阶段把所有参与者置为 prepared 并上锁", "正常路径写 commit 决定、释放全部锁，无 in-doubt", "故障注入：协调者崩溃，统计 prepared 数与累计锁持有 tick", "正常路径 0 个 in-doubt；崩溃路径 3 个参与者各持锁 6 tick 共 18", "outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复", "最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额", "本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点", "2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0", "TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等", "Saga 为每个本地事务配补偿、失败逆序执行，补偿是新的业务写、缺隔离性；编排式与协同式各有权衡", "outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复", "最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额", "本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点", "2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0", "TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 107 讲 · 扩展图解' labels='prepare ready|写全局提交日志|commit 广播|in-doubt 窗口' caption='协调者崩溃落在两条日志之间时，参与者既不能提交也不能回滚，锁一直持有到恢复进程裁决' />
 
@@ -332,7 +334,7 @@ print('crash', two_pc(['stock', 'balance', 'order'], True))
 
 RocketMQ 事务消息的一次线上悬挂：订单服务发 half message 后执行本地事务，本地事务提交成功但进程在二次 commit 前被 OOMKill，broker 一直没收到确认，消息停在「待回查」。
 
-broker 按默认策略回查 checkLocalTransaction，可回查实现只查内存里的事务状态表，进程重启后这张表是空的，于是连续返回 UNKNOWN；RocketMQ 默认最多回查 15 次、间隔按配置递增，超过次数后把消息直接丢弃，下游永远没收到扣库存通知。
+broker 按默认策略回查 checkLocalTransaction，可回查实现只查内存里的事务状态表，进程重启后这张表是空的，于是连续返回 `UNKNOWN`；RocketMQ 默认最多回查 15 次、间隔按配置递增，超过次数后把消息直接丢弃，下游永远没收到扣库存通知。
 
 复盘补了两处：回查必须查数据库里的本地事务记录而不是内存，并为 half message 落带业务单号的状态表；超过回查上限的消息进死信队列并告警，由对账任务每日扫描补齐。下面模拟「内存状态丢失」与「状态持久化」两条路径下消息最终是否投递。
 
@@ -355,7 +357,7 @@ print('memory_only', broker_check(db_empty, 'ORDER-9', memory_state='UNKNOWN'))
 print('persisted', broker_check(db_persisted, 'ORDER-9'))
 ```
 
-<Quiz no='107-X' q='关于 FLP 不可能性与 2PC，下面哪项准确？' :options='["异步网络里无法区分崩溃与极慢，2PC 在协调者崩溃后必然留下 in-doubt 窗口，阻塞由协议结构决定", "3PC 已经彻底解决分区下的终止性与安全性，生产可放心替换 2PC", "in-doubt 参与者可以自行 commit，因为多数派已经返回 ready", "只要把超时设得足够短，2PC 就不会发生阻塞"]' answer="0" explain='FLP 说明异步加可能崩溃下不存在确定性终止的一致性算法；2PC 在 prepare 与 commit 之间协调者崩溃会让参与者既不能提交也不能回滚，只能等恢复裁决。3PC 在分区下安全性不成立，自行提交会破坏原子性。' />
+<Quiz no='107-1' q='关于 FLP 不可能性与 2PC，下面哪项准确？' :options='["异步网络里无法区分崩溃与极慢，2PC 在协调者崩溃后必然留下 in-doubt 窗口，阻塞由协议结构决定", "3PC 已经彻底解决分区下的终止性与安全性，生产可放心替换 2PC", "in-doubt 参与者可以自行 commit，因为多数派已经返回 ready", "只要把超时设得足够短，2PC 就不会发生阻塞"]' answer="0" explain='FLP 说明异步加可能崩溃下不存在确定性终止的一致性算法；2PC 在 prepare 与 commit 之间协调者崩溃会让参与者既不能提交也不能回滚，只能等恢复裁决。3PC 在分区下安全性不成立，自行提交会破坏原子性。' />
 
 
 ### 行锁持有时间随协调者恢复延迟的放大
@@ -369,32 +371,33 @@ print('persisted', broker_check(db_persisted, 'ORDER-9'))
 
 <Exercise title='进阶：实现带 pending 超时告警的 outbox' task='给 outbox 每行加创建时间戳，实现 scan_pending(now, timeout) 返回超时未投递的行数，并解释这个指标为什么能提前发现投递进程僵死。' solution='rows = [(&#39;e1&#39;, 1000), (&#39;e2&#39;, 1005)]\ndef scan_pending(rows, now, timeout, sent):\n    return [e for e, t in rows if e not in sent and now - t &gt; timeout]\nprint(scan_pending(rows, 1100, 50, set()))\nprint(scan_pending(rows, 1100, 50, {&#39;e1&#39;, &#39;e2&#39;}))' explain='outbox 积压时长是投递链路健康度的直接信号；超时仍为 pending 说明投递进程卡住或 MQ 不可用，比等业务侧报数据不一致更早暴露故障。' />
 
-<Quiz no='107-1' q='某系统先写数据库再发 MQ，进程恰好在两者之间崩溃，最准确的后果是？' :options='["本地提交已生效但消息永久丢失，下游状态与上游不一致", "数据库会自动回滚这次提交", "MQ 会补发这条丢失的消息", "2PC 会隐式介入保证两者原子"]' answer="0" explain='两次写没有共享事务协调者，commit 之后崩溃不会回滚，消息也没发出；这正是 outbox 要消除的窗口，MQ 与数据库之间不存在自动的 XA 协调。' />
+<Quiz no='107-2' q='某系统先写数据库再发 MQ，进程恰好在两者之间崩溃，最准确的后果是？' :options='["本地提交已生效但消息永久丢失，下游状态与上游不一致", "数据库会自动回滚这次提交", "MQ 会补发这条丢失的消息", "2PC 会隐式介入保证两者原子"]' answer="0" explain='两次写没有共享事务协调者，commit 之后崩溃不会回滚，消息也没发出；这正是 outbox 要消除的窗口，MQ 与数据库之间不存在自动的 XA 协调。' />
 
-<Quiz no='107-2' q='关于 Saga 补偿操作，下面哪项描述正确？' :options='["补偿是一次新的业务写，必须幂等、可重试并保留对账入口", "补偿就是数据库 undo 日志，天然幂等", "补偿一定不会失败，无需监控", "逆序补偿能保证隔离性，其它请求看不到中间态"]' answer="0" explain='补偿通过退款、加库存等新写操作抵消效果，网络重试会让它重复到达，因此要幂等；它本身可能失败，且 Saga 没有隔离性，中间态对外可见。' />
+<Quiz no='107-3' q='关于 Saga 补偿操作，下面哪项描述正确？' :options='["补偿是一次新的业务写，必须幂等、可重试并保留对账入口", "补偿就是数据库 undo 日志，天然幂等", "补偿一定不会失败，无需监控", "逆序补偿能保证隔离性，其它请求看不到中间态"]' answer="0" explain='补偿通过退款、加库存等新写操作抵消效果，网络重试会让它重复到达，因此要幂等；它本身可能失败，且 Saga 没有隔离性，中间态对外可见。' />
 
-<Quiz no='107-3' q='Transactional Outbox 成立的关键前提是什么？' :options='["业务表与 outbox 表在同一个数据库、同一次本地事务里写入", "MQ 支持 exactly-once 语义", "所有服务共享同一个 2PC 协调者", "消费端不使用任何去重机制"]' answer="0" explain='outbox 把跨系统原子性降维成单库 ACID：一次事务同时写业务状态与待发事件。投递仍是至少一次，因此消费端必须幂等。' />
+<Quiz no='107-4' q='Transactional Outbox 成立的关键前提是什么？' :options='["业务表与 outbox 表在同一个数据库、同一次本地事务里写入", "MQ 支持 exactly-once 语义", "所有服务共享同一个 2PC 协调者", "消费端不使用任何去重机制"]' answer="0" explain='outbox 把跨系统原子性降维成单库 ACID：一次事务同时写业务状态与待发事件。投递仍是至少一次，因此消费端必须幂等。' />
 
-<Predict no='107-P' q='Saga 第三步骤抛 RuntimeError 后，compensated 集合最可能是什么？' :options='["[&#39;balance&#39;, &#39;stock&#39;]，只补偿已成功的两步", "[&#39;order&#39;, &#39;balance&#39;, &#39;stock&#39;]，含失败步骤", "[]，因为整体失败不做任何补偿"]' answer='0' output='[&#39;balance&#39;, &#39;stock&#39;]' explain='rollback 遍历 done，而 done 只登记正向执行成功的步骤；失败的 order 在 append 之前就返回 False，不会进入 done，因此逆序补偿 balance 与 stock。' />
+<Predict no='107-5' q='Saga 第三步骤抛 RuntimeError 后，compensated 集合最可能是什么？' :options='["[&#39;balance&#39;, &#39;stock&#39;]，只补偿已成功的两步", "[&#39;order&#39;, &#39;balance&#39;, &#39;stock&#39;]，含失败步骤", "[]，因为整体失败不做任何补偿"]' answer='0' output='[&#39;balance&#39;, &#39;stock&#39;]' explain='rollback 遍历 done，而 done 只登记正向执行成功的步骤；失败的 order 在 append 之前就返回 False，不会进入 done，因此逆序补偿 balance 与 stock。' />
 
-<FillBlank no='107-F' tpl='___ __init__(self):' :answers='["def"]' hint='回想本讲关于 本地事务边界 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 本地事务的 ACID 边界与 2PC 为何阻塞 的落点。' />
+<FillBlank no='107-6' tpl='___ __init__(self):' :answers='["def"]' hint='回想本讲关于 本地事务边界 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 本地事务的 ACID 边界与 2PC 为何阻塞 的落点。' />
 
-<KnowledgeCard :points='["ACID 只在单个资源管理器内成立；2PC/XA 用 prepare 加 commit 换强一致，代价是同步阻塞与 in-doubt 恢复", "TCC 用 Try/Confirm/Cancel 把锁搬到业务字段，Saga 用正向本地事务加逆序补偿换可用性", "补偿是新的业务写而非 undo，必须幂等、可重试；Saga 缺隔离性，需语义锁与状态机", "outbox 把业务状态与待发事件放进同库同事务，投递至少一次，消费端靠唯一索引幂等", "跨系统没有 exactly-once；最终一致 = 至少一次投递 + 幂等消费 + 可观测对账 + 人工兜底"]' :pitfalls='["先提交本地事务再发 MQ 消息", "Saga 只写正向流程，把补偿当成 undo 日志", "用 2PC 跨公网服务追求强一致", "Saga 的补偿操作本身也可能失败，只写正向流程等于把不一致留到线上"]' summary='跨服务没有免费的 ACID：强一致方案牺牲可用与吞吐，最终一致方案把复杂度转移到补偿与对账' />
+<KnowledgeCard :points='["本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点", "2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0", "TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等", "Saga 为每个本地事务配补偿、失败逆序执行，补偿是新的业务写、缺隔离性；编排式与协同式各有权衡", "outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复", "最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额"]' :pitfalls='["先提交本地事务再发 MQ 消息", "Saga 只写正向流程，把补偿当成 undo 日志", "用 2PC 跨公网服务追求强一致", "Saga 的补偿操作本身也可能失败，只写正向流程等于把不一致留到线上"]' summary='跨服务没有免费的 ACID：强一致方案牺牲可用与吞吐，最终一致方案把复杂度转移到补偿与对账' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| ACID 只在单个资源管理器内成立；2PC/XA 用 prepare 加 commit 换强一致，代价是同步阻塞与 in-doubt 恢复 | 建立直觉 |
-| TCC 用 Try/Confirm/Cancel 把锁搬到业务字段，Saga 用正向本地事务加逆序补偿换可用性 | 跑通示例 |
-| 补偿是新的业务写而非 undo，必须幂等、可重试；Saga 缺隔离性，需语义锁与状态机 | 深入边界 |
-| outbox 把业务状态与待发事件放进同库同事务，投递至少一次，消费端靠唯一索引幂等 | 工程落地 |
-| 跨系统没有 exactly-once；最终一致 = 至少一次投递 + 幂等消费 + 可观测对账 + 人工兜底 | 随堂检测 |
+| 本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点 | 建立直觉 |
+| 2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0 | 跑通示例 |
+| TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等 | 深入边界 |
+| Saga 为每个本地事务配补偿、失败逆序执行，补偿是新的业务写、缺隔离性；编排式与协同式各有权衡 | 工程落地 |
+| outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复 | 随堂检测 |
+| 最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额 | 复盘 |
 
-1. ACID 只在单个资源管理器内成立；2PC/XA 用 prepare 加 commit 换强一致，代价是同步阻塞与 in-doubt 恢复
+1. 本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点
 
-2. TCC 用 Try/Confirm/Cancel 把锁搬到业务字段，Saga 用正向本地事务加逆序补偿换可用性
+2. 2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0
 
-3. 补偿是新的业务写而非 undo，必须幂等、可重试；Saga 缺隔离性，需语义锁与状态机
+3. TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等
 
 [下一讲：分布式 ID、一致性哈希与分片](/distributed/sharding)

@@ -14,11 +14,11 @@ description: 写出比纯 Python 快一个量级的数值代码
 
 ## 一批像素加 20，循环为什么比向量化慢两个量级
 
-图像服务里有个批量调亮度的任务：对 1000 乘 1000 的像素矩阵逐元素加 20，用两层 Python for 循环写了 8 秒还没跑完，换成一行向量化表达式 0.02 秒结束。团队照着改快了，却踩到第二个坑：有人写 `sub = a`[a > 0] 把取出的正像素统一置零，原矩阵 a 一个都没变；
+图像服务里有个批量调亮度的任务：对 1000 乘 1000 的像素矩阵逐元素加 20，用两层 Python for 循环写了 8 秒还没跑完，换成一行向量化表达式 0.02 秒结束。团队照着改快了，却踩到第二个坑：有人用 `sub=a[a>0]` 取出正像素后对 sub 赋零，原矩阵 a 一个都没变；
 
-另有人写 `b = a`[:, 0] 之后 b += 1，结果整列之外的同事也发现数据被悄悄改了。朴素解法有两层想当然：一是「循环最直观、逐个元素处理最稳」，却忽略了每个元素在 CPython 里都是带引用计数的 PyObject、每次加法都走一遍字节码分派；
+另有人写 `b=a[:,0]` 之后 `b+=1`，结果整列之外的数据也被悄悄改了。朴素解法有两层想当然：一是『循环最直观、逐个元素处理最稳』，却忽略了每个元素在 CPython 里都是带引用计数的 PyObject、每次加法都走一遍字节码分派；
 
-二是「切片当然会复制一份数据」，而 ndarray 的基本切片返回的是共享同一块内存的视图。要解释为什么快、什么时候改得动原数组，必须落到 dtype、连续内存、stride 寻址与广播规则这四件事上，而不是记住「NumPy 快」这个标签。
+二是『切片当然会复制一份数据』，而 ndarray 的基本切片返回的是共享同一块内存的视图。要解释为什么快、什么时候改得动原数组，必须落到 dtype、连续内存、stride 寻址与广播规则这四件事上，而不是记住『NumPy 快』这个标签。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='布尔索引取出后赋值，原数组纹丝不动：sub = a[a &gt; 0]; sub[:] = 0 里的 sub 是布尔索引产生的副本，改动落在副本上' />
 
@@ -33,9 +33,9 @@ dtype 决定每个元素的字节数 itemsize：`np.int64`、`np.float64` 都是
 
 对比之下，Python 的 list 存的是指向各对象的指针数组，每个 float 是约 24 字节的独立 PyObject 加一个 8 字节指针，同样一百万个数，内存与寻址成本都高一个量级。`np.empty` 只分配不初始化，`np.zeros` 填零，`np.arange` 按步长生成；
 
-astype 会分配一块新数组做类型转换，绝不原地改写 dtype。混合类型运算会按类型提升规则向上转型，例如 int64 数组与 float64 标量相加得到 float64 数组。
+`astype` 会分配一块新数组做类型转换，绝不原地改写 dtype。混合类型运算会按类型提升规则向上转型，例如 int64 数组与 float64 标量相加得到 float64 数组。
 
-所谓 ufunc（`np.add`、`np.exp`、`np.sqrt`、`np.multiply`）是在 C 里对整个 buffer 跑的循环，一次 Python 层调用就完成整批计算，`np.sum`、`np.mean` 这类归约也是把累加放到 C 层，Python 只付一次调用开销——这正是「写出 Python for 循环就丢掉优势」的根本原因。
+所谓 ufunc（`np.add`、`np.exp`、`np.sqrt`、`np.multiply`）是在 C 里对整个 buffer 跑的循环，一次 Python 层调用就完成整批计算，`np.sum`、`np.mean` 这类归约也是把累加放到 C 层，Python 只付一次调用开销——这正是『写出 Python for 循环就丢掉优势』的根本原因。
 
 ```python
 def broadcast_shape(a, b):
@@ -65,21 +65,17 @@ for a, b in pairs:
 
 ## shape、stride 与视图：切片几乎不搬数据
 
-strides 记录「某维度索引加 1 时，指针要跳过多少字节」。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base + i 乘 32 + j 乘 8。
+strides 记录『某维度索引加 1 时，指针要跳过多少字节』。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base 加 i 乘 32 再加 j 乘 8。
 
-reshape 在多数情况下只改写 shape 与 strides、完全不搬数据，因此是 `O(1)` 的视图；a[1:, ::2] 这类基本切片通过改动起始 offset 与步长返回视图，步长甚至可以为负；`a.T` 只是把 strides 顺序交换，于是原本 C 连续的数组变成 F 序视图。
+`reshape` 在多数情况下只改写 shape 与 strides、完全不搬数据，因此是 `O(1)` 的视图；`a[1:,::2]` 这类基本切片通过改动起始 offset 与步长返回视图，步长甚至可以为负；`a.T` 只是把 strides 顺序交换，于是原本 C 连续的数组变成 F 序视图。
 
-判断一个数组是否拥有数据，看 `a.flags.owndata`；
+判断一个数组是否拥有数据看 `a.flags.owndata`，看它是否指向别的数据块看 `a.base`，想确认两个数组是否共享内存用 `np.shares_memory(a,b)`。
 
-看它是否指向别的数据块，看 `a.base`；
+关键分界在这里：基本切片（整数、切片、newaxis）返回视图，改视图会写回原数组；而布尔索引 `a[a>0]` 与花式索引 `a[[1,3,5]]` 返回的是副本，对新数组赋值不会影响原数组。
 
-想确认两个数组是否共享内存，用 `np.shares_memory(a, b)`。
+`a[a>0]=0` 能生效，是因为这是一条赋值语法，解释器走 `__setitem__` 并用掩码原地写回，而不是『先取出副本再赋值』。需要独立数据就显式用 `.copy()`，需要强制按另一种视图解释就用 `.view()`。
 
-关键分界在这里：基本切片（整数、切片、newaxis）返回视图，改视图会写回原数组；而布尔索引 a[a > 0] 与花式索引 a[[1, 3, 5]] 返回的是副本，对新数组赋值不会影响原数组。
-
-a[a > 0] = 0 能生效，是因为这是一条赋值语法，解释器走 `__setitem__` 并用掩码原地写回，而不是「先取出副本再赋值」。需要独立数据就显式 .`copy()`，需要强制视图解释就 .`view()`。
-
-C 序与 F 序还会影响遍历时的缓存命中率，`np.ravel`(order='C'/'F') 与 `np.ascontiguousarray` 就是用来控制这一点的。
+C 序与 F 序还会影响遍历时的缓存命中率，`np.ravel(order='C'/'F')` 与 `np.ascontiguousarray` 就是用来控制这一点的。
 
 ```python
 import sys, array
@@ -112,13 +108,19 @@ print('list per element', (sys.getsizeof(lst) + 6 * sys.getsizeof(lst[0])) // 6)
 
 广播让形状不同的数组逐元素运算，规则是：先把两个 shape 右对齐，从最右边的维度逐个比较，两个维度相等、或其中一个为 1、或某数组该维度缺失（视为 1）就兼容，结果取两者中较大的值；
 
-任何一维既不相等又都不为 1，就抛 ValueError: operands could not be broadcast together with shapes。
+任何一维既不相等又都不为 1，就抛 `ValueError: oper…`。
+
+```python
+ValueError: operands could not be broadcast together with shapes
+```
 
 因此 (3, 1) 加 (1, 4) 得 (3, 4)，(2, 3) 加 (3,) 得 (2, 3)，而 (2, 3) 加 (2,) 会因 3 与 2 不兼容直接报错。广播几乎零内存成本：实现上把被扩展那一维的 stride 置为 0，读取时反复指向同一个值，并没有真的复制出一份大数组。
 
-想手动控制就用 a[:, `np.newaxis`] 或 `a.reshape` 增维，让 (3,) 变成 (3, 1)。向量化的判据是「用一套形状表达批量运算，把循环留在 C 层」，写完再用 timeit 验证收益，别凭感觉。
+想手动控制就用 `a[:,np.newaxis]` 或 `a.reshape` 增维，让 (3,) 变成 (3, 1)。
 
-还要看清边界：a * b + c 会先产生一个临时数组再相加，超大数组时应写成 `np.multiply(a, b, out=tmp)` 再 `np.add(tmp, c, out=tmp)`，或用 += 之类就地运算省下中间内存；
+向量化的判据是『用一套形状表达批量运算，把循环留在 C 层』，写完再用 timeit 验证收益，别凭感觉。
+
+还要看清边界：`a*b+c` 会先产生一个临时数组再相加，超大数组时应写成 `np.multiply(a,b,out=tmp)` 再 `np.add(tmp,c,out=tmp)`，或用 `+=` 之类就地运算省下中间内存；
 
 聚合要指定 axis 并用 `keepdims=True` 保住维度以便后续广播。向量化省的是解释器开销，不改变算法本身的算术次数，遇到需要顺序依赖的递推仍得换思路。
 
@@ -161,19 +163,17 @@ print('after', [row.get((j,)) for j in range(4)])
 
 ## ufunc 为什么只在 Python 层付一次调用
 
-CPython 的 PyObject 头里有引用计数与类型指针，list 的每个元素都是独立分配的堆对象，指针数组只存地址，运算时虚拟机要逐条执行 BINARY_OP、动态分派类型并增减计数。
+CPython 的 PyObject 头里有引用计数与类型指针，list 的每个元素都是独立分配的堆对象，指针数组只存地址，运算时虚拟机要逐条执行 `BINARY_OP`、动态分派类型并增减计数。
 
-ndarray 反其道而行：PyArrayObject 只持有一个指向连续裸内存的 data 指针、ndim、dimensions、strides 和一个 dtype 描述符，数据区不是 PyObject，因此不受引用计数与 GIL 内层循环的拖累，C 层可以用紧凑循环甚至 SIMD 一次处理一段。
+ndarray 反其道而行：PyArrayObject 只持有一个指向连续裸内存的 data 指针、ndim、dimensions、strides 和一个 dtype 描述符，数据区不是 PyObject，因此不受引用计数与 GIL 内层循环的拖累，C 层可以用紧凑循环甚至 `SIMD` 一次处理一段。
 
-元素 (i0, i1, ...) 的地址由 offset 加 `sum(ik 乘 stridek)` 算出， reshape 与切片只是改写这几个元数据而不搬字节，所以是 `O(1)`。
+元素 (i0, i1, …) 的地址由 offset 加各维索引乘对应 stride 之和算出，`reshape` 与切片只是改写这几个元数据而不搬字节，所以是 `O(1)`。广播的实现更巧：把被扩展维度的 stride 设为 0，读取时指针原地不动，制造『无限复制』的假象却零拷贝。
 
-广播的实现更巧：把被扩展维度的 stride 设为 0，读取时指针原地不动，制造「无限复制」的假象却零拷贝。ufunc 内层循环只认固定 dtype，把类型判断提前到分发阶段一次完成。
+ufunc 内层循环只认固定 dtype，把类型判断提前到分发阶段一次完成。理解这套『元数据加裸内存加 stride』模型，就能推出为什么 dtype 固定、为什么视图廉价、为什么布尔索引必须复制、以及为什么 Python 层 for 循环会毁掉全部收益。
 
-理解这套「元数据 + 裸内存 + stride」模型，就能推出为什么 dtype 固定、为什么视图廉价、为什么布尔索引必须复制、以及为什么 Python 层 for 循环会毁掉全部收益。
+<Term word='ndarray 与 dtype' text='ndarray 是一块固定元素类型、地址连续的内存，外加 shape、strides、dtype 三个元数据；数据区里存的是裸值，不是 PyObject。dtype 决定每个元素的字节数 itemsize：`np.int64`、`np.float64` 都是 8 字节，`np.float32`、`np.int32` 是' />
 
-<Term word='ndarray 与 dtype' text='ndarray 是一块固定元素类型、地址连续的内存，外加 shape、strides、dtype 三个元数据；数据区里存的是裸值，不是 PyObject。dtype 决定每个元素的字节数 itemsize：np.int64、np.float64 都是 8 字节，np.float32、np.int32 是 4 字节，np' />
-
-<Term word='shape / stride 与视图' text='strides 记录「某维度索引加 1 时，指针要跳过多少字节」。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base + i 乘 32 + j 乘 8。reshape 在多数情况下' />
+<Term word='shape / stride 与视图' text='strides 记录『某维度索引加 1 时，指针要跳过多少字节』。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base 加 i 乘 32 再加 j 乘 8。`reshape` 在多数' />
 
 
 ### dtype 提升与 uint8 溢出回绕
@@ -200,11 +200,11 @@ ndarray 反其道而行：PyArrayObject 只持有一个指向连续裸内存的 
 
 ## 批量像素变换：把循环留在 C 层的等价结构
 
-一个批处理服务要把每批 24 万像素做「减均值、乘增益、加偏置、裁剪到 0 到 255」四步。用 Python 逐元素 for 循环，解释器要为每步做类型分派与引用计数，四步叠起来是接近百万次字节码；换成 NumPy 就是四次 ufunc，循环全在 C 层。
+一个批处理服务要把每批 24 万像素做『减均值、乘增益、加偏置、裁剪到 0 到 255』四步。用 Python 逐元素 for 循环，解释器要为每步做类型分派与引用计数，四步叠起来是接近百万次字节码；换成 NumPy 就是四次 ufunc，循环全在 C 层。
 
-下面用标准库写一份等价的骨架：把变换表达成对整批数据的逐元素映射，用列表推导模拟「一次调用处理一批」，并统计每步产出的元素数与裁剪命中数，让管道的正确性与规模都能核对。
+下面用标准库写一份等价的骨架：把变换表达成对整批数据的逐元素映射，用列表推导模拟『一次调用处理一批』，并统计每步产出的元素数与裁剪命中数，让管道的正确性与规模都能核对。
 
-真实工程把 transform 换成 `np.clip(gain * (pixels - mean)` + bias, 0, 255) 即可，注意用 `out= 复用缓冲区避免大中间数组`，并用 astype 先把 uint8 提升防止回绕。
+真实工程把 `transform` 换成 `np.clip(gain*(pixels-mean)+bias,0,255)` 即可，注意用 `out=` 复用缓冲区避免大中间数组，并用 `astype` 先把 uint8 提升防止回绕。
 
 ```python
 def transform(batch, mean, gain, bias):
@@ -233,15 +233,25 @@ print('same length', len(transform(pixels, 100, 1.2, 10)) == len(pixels))
 
 ## PyArrayObject 的字段布局与 ufunc 内层循环分发
 
-ndarray 在 C 层是 PyArrayObject（numpy/_core/include/numpy/`ndarraytypes.h`）：字段有 char 指针 data、int nd、npy_intp 数组 dimensions 与 strides、PyObject 指针 base、PyArray_Descr 指针 descr、int flags。
+ndarray 在 C 层是 PyArrayObject（定义在 `numpy/_core/include/numpy/ndarraytypes.h`）：字段有 char 指针 data、int nd、npy_intp 数组 dimensions 与 strides、PyObject 指针 base、PyArray_Descr 指针 descr、int flags。
 
 注意 descr 不是 Python 层看到的 `np.dtype` 对象本身，而是它的 C 描述子，持有 elsize、kind、byteorder 与一组函数指针（getitem、setitem、cast）。
 
-ufunc（numpy/_core/src/umath/`ufunc_object.c`）调用时先做 type resolution：PyUFunc_DefaultTypeResolver 按输入 dtype 查一张类型提升表（即 `np.result_type` 的 C 实现），确定唯一的内层循环函数指针（numpy/_core/src/umath/`loops.c` 里为每种 dtype 组合预编译好的 DOUBLE_add 一类），再构造 NpyIter 把任意 stride 与广播的输入规整成连续块喂给内层循环，这一步正是广播 `stride=0` 与 F 序数组仍能复用同一份 C 循环的原因。
+ufunc（实现在 `numpy/_core/src/umath/ufunc_object.c`）调用时先做 type resolution：PyUFunc_DefaultTypeResolver 按输入 dtype 查一张类型提升表（即 `np.result_type` 的 C 实现），确定唯一的内层循环函数指针（在 `numpy/_core/src/umath/loops.c` 里为每种 dtype 组合预编译好的 DOUBLE_add 一类），再构造 NpyIter 把任意 stride 与广播的输入规整成连续块喂给内层循环，这一步正是广播 stride 置 0 与 F 序数组仍能复用同一份 C 循环的原因。
 
-内层循环里没有 Python 对象操作，可对连续块发 SIMD，flags 里的 NPY_ARRAY_ALIGNED 决定是否走对齐加载指令。`np.add` 的 types 属性列出全部已注册签名（如 dd->d、ff->f），而 `np.add.reduce` 走另一条 reduce 内层循环。
+内层循环里没有 Python 对象操作，可对连续块发 `SIMD`，flags 里的 `NPY_ARRAY_ALIGNED` 决定是否走对齐加载指令。
 
-这层「一次分发加连续块循环」才是正文「写出 Python for 循环就丢掉优势」的源码根据，比笼统说 C 层循环更具体：丢掉的不是算术次数，而是把类型判断提前到分发阶段一次完成的机会。
+`np.add` 的 `types` 属性列出全部已注册签名（如 dd->d、ff->f），而 `np.add.reduce` 走另一条 reduce 内层循环。这层『一次分发加连续块循环』才是正文『写出 Python for 循环就丢掉优势』的源码根据：丢掉的不是算术次数，而是把类型判断提前到分发阶段一次完成的机会。
+
+朴素顺序累加的误差界：每步 (s + x) 的相对误差不超过 u，float64 下 u 取 2 的 -53 次方、约 1.1e-16，n 步后最坏误差约 n 乘 u 乘绝对值之和，即 `O(n*u)`，且同号数累加时误差单向漂移。
+
+`np.sum` 对连续一维浮点数组用 pairwise summation（见 `numpy/_core/src/umath/loops_utils.h.src` 的 pairwise_sum）：递归二分求和，树深 `log2(n)`，每层误差只乘一次 u，误差界降到 `O(u*log(n)*sum|x|)`。
+
+实测很直观：十万个 0.1 朴素累加误差约 1.885e-08，两两求和为 0；更极端的 1e16 加十个 1.0 再减 1e16，朴素累加得 0.0（十个 1.0 全被大数吞掉）、两两求和得 4.0、`math.fsum` 用 Shewchuk 补偿算法给出精确的 10.0。
+
+触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；
+
+金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
 
 ```python
 import math
@@ -285,20 +295,20 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 <OutputBox title='扩展示例运行结果' output='exact 10000.0\nnaive 10000.000000018848\npairwise 10000.0\nmath.fsum 10000.0\nnaive abs err 1.885e-08\npairwise abs err 0.000e+00\ncancellation naive 0.0\ncancellation pairwise 4.0\ncancellation fsum 10.0\nC (2,1) 72\nF (2,1) 40' />
 
-<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，用 fsum 作精确基准", "naive_sum 复刻顺序累加，对应误差界 O(n u)", "pairwise_sum 递归二分，树深 log2(n) 对应 O(u log n)", "block=8 时退化为朴素小段，整棵树仍是对数深度", "构造十万个 0.1，真值恰为 10000.0", "打印三种累加结果，观察朴素值的尾数漂移", "用科学计数法对比朴素与两两求和的绝对误差", "构造 1e16 加十个 1.0 再减的相消场景", "朴素累加把十个 1.0 全部吞掉得到 0.0", "两两求和保住部分精度得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "byte_offset 实现 offset 等于索引与 strides 的点积", "C 序 (3,4) float64 的 strides 是 (32, 8)，元素 (2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图", "基本切片是视图（改动写回原数组），布尔/花式索引是副本；用 np.shares_memory 判定", "广播右对齐逐维比较，相等/为 1/缺失才兼容；实现靠把该维 stride 置 0，零拷贝", "向量化把循环下沉到 C 层；大数组用 out= 与就地运算避免 a*b+c 的临时数组", "ndarray = 固定 dtype 的连续裸内存 + shape/strides/dtype 元数据，数据区不是 PyObject", "float64/int64 的 itemsize 是 8 字节，uint8/bool 是 1 字节；astype 分配新数组", "元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图", "基本切片是视图（改动写回原数组），布尔/花式索引是副本；用 np.shares_memory 判定", "广播右对齐逐维比较，相等/为 1/缺失才兼容；实现靠把该维 stride 置 0，零拷贝", "向量化把循环下沉到 C 层；大数组用 out= 与就地运算避免 a*b+c 的临时数组", "ndarray = 固定 dtype 的连续裸内存 + shape/strides/dtype 元数据，数据区不是 PyObject", "float64/int64 的 itemsize 是 8 字节，uint8/bool 是 1 字节；astype 分配新数组", "元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图", "基本切片是视图（改动写回原数组），布尔/花式索引是副本；用 np.shares_memory 判定", "广播右对齐逐维比较，相等/为 1/缺失才兼容；实现靠把该维 stride 置 0，零拷贝", "向量化把循环下沉到 C 层；大数组用 out= 与就地运算避免 a*b+c 的临时数组"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，用 fsum 作精确基准", "naive_sum 复刻顺序累加，对应误差界 O(n u)", "pairwise_sum 递归二分，树深 log2(n) 对应 O(u log n)", "block=8 时退化为朴素小段，整棵树仍是对数深度", "构造十万个 0.1，真值恰为 10000.0", "打印三种累加结果，观察朴素值的尾数漂移", "用科学计数法对比朴素与两两求和的绝对误差", "构造 1e16 加十个 1.0 再减的相消场景", "朴素累加把十个 1.0 全部吞掉得到 0.0", "两两求和保住部分精度得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "byte_offset 实现 offset 等于索引与 strides 的点积", "C 序 (3,4) float64 的 strides 是 (32, 8)，元素 (2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度", "ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节", "ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度", "ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节", "ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度"]' title='扩展示例逐行讲解' />
 
 
 ### np.sum 两两求和的误差界推导
 
-朴素顺序累加的误差界：每步 (s + x) 的相对误差不超过 u（float64 的 `u = 2` 的 -53 次方，约 1.1e-16），n 步后最坏误差约 n 乘 u 乘绝对值之和，即 `O(n u)`，且同号数累加时误差单向漂移。
+朴素顺序累加的误差界：每步 (s + x) 的相对误差不超过 u，float64 下 u 取 2 的 -53 次方、约 1.1e-16，n 步后最坏误差约 n 乘 u 乘绝对值之和，即 `O(n*u)`，且同号数累加时误差单向漂移。
 
-`np.sum` 对连续一维浮点数组用 pairwise summation（numpy/_core/src/umath/`loops_utils.h.src` 的 pairwise_sum）：递归二分求和，树深 `log2(n)`，每层误差只乘一次 u，误差界降到 `O(u log n 乘绝对值之和)`。
+`np.sum` 对连续一维浮点数组用 pairwise summation（见 `numpy/_core/src/umath/loops_utils.h.src` 的 pairwise_sum）：递归二分求和，树深 `log2(n)`，每层误差只乘一次 u，误差界降到 `O(u*log(n)*sum|x|)`。
 
 实测很直观：十万个 0.1 朴素累加误差约 1.885e-08，两两求和为 0；更极端的 1e16 加十个 1.0 再减 1e16，朴素累加得 0.0（十个 1.0 全被大数吞掉）、两两求和得 4.0、`math.fsum` 用 Shewchuk 补偿算法给出精确的 10.0。
 
-触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n u)`。架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；
+触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；
 
-金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 Decimal 或 Kahan 补偿。正文只说「聚合放到 C 层」，这里把 C 层里选了哪种求和算法讲清楚。
+金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
 
 **NumPy 源码组件与数值行为**
 
@@ -313,7 +323,7 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 ### SIMD 向量宽度与 C/F 序的缓存行命中
 
-<Quiz no='093-X' q='关于 np.sum 的累加精度，下面哪项准确？' :options='["连续浮点数组走两两求和，误差界约 O(u log n)；朴素顺序累加是 O(n u)，都会被大数相消放大", "np.sum 与 math.fsum 一样用补偿算法，任何 dtype 都精确", "非连续切片仍走两两求和，精度与连续数组完全一致", "float64 的机器精度 u 是 2 的 -16 次方，故一万次累加误差约 0.15"]' answer="0" explain='np.sum 的两两求和只对连续浮点数组启用，把误差从 O(n u) 降到 O(u log n)；非连续切片或 object dtype 退回朴素循环。float64 的 u 是 2 的 -53 次方约 1.1e-16，不是 2 的 -16 次方。math.fsum 用 Shewchuk 补偿算法才保证精确，代价是额外存部分和与更慢的速度，三者不是同一档。' />
+<Quiz no='093-1' q='关于 np.sum 的累加精度，下面哪项准确？' :options='["连续浮点数组走两两求和，误差界约 O(u log n)；朴素顺序累加是 O(n u)，都会被大数相消放大", "np.sum 与 math.fsum 一样用补偿算法，任何 dtype 都精确", "非连续切片仍走两两求和，精度与连续数组完全一致", "float64 的机器精度 u 是 2 的 -16 次方，故一万次累加误差约 0.15"]' answer="0" explain='np.sum 的两两求和只对连续浮点数组启用，把误差从 O(n u) 降到 O(u log n)；非连续切片或 object dtype 退回朴素循环。float64 的 u 是 2 的 -53 次方约 1.1e-16，不是 2 的 -16 次方。math.fsum 用 Shewchuk 补偿算法才保证精确，代价是额外存部分和与更慢的速度，三者不是同一档。' />
 
 <Term word='缓存行' text='CPU 与主存之间一次交换的最小单位，x86 常见 64 字节，正好装 8 个 float64。C 序数组按行遍历时相邻元素落在同一缓存行、一次 miss 能供 8 个数；F 序数组按行跳着读会每行都 miss，同样的算术次数却多出数倍内存停顿。这解释了为什么 reshape 与转置不改数据、只改 strides，却可能显著改变实测耗时。' />
 
@@ -324,33 +334,33 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 <Exercise title='进阶：用 stride 公式判断 reshape 是否零拷贝' task='给定 float64 的 (3, 4) C 连续数组 strides=(32, 8)，写出元素 (2, 1) 的字节偏移；说明 reshape(4, 3) 与 a[:, ::2] 各自是否搬数据，并给出判定依据。' solution='def offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;offset(2,1)&#39;, offset((2, 1), (32, 8)))\n# reshape 只需连续且元素总数不变 -&gt; 改写元数据，零拷贝\n# a[:, ::2] 把列步长从 8 改成 16、起始不变 -&gt; 仍是视图，零拷贝' explain='offset = 2*32 + 1*8 = 72 字节。reshape 只要数组内存连续、元素总数不变就能只改 shape/strides；带步长的切片改的是 strides 而非数据，两者都不搬字节，而转置后不再 C 连续，reshape 才会触发复制。' />
 
-<Quiz no='093-1' q='a = np.arange(12).reshape(3, 4); b = a[:, 0]; b += 100 之后 a 会怎样？' :options='["a 的第 0 列被加了 100，因为基本切片返回共享内存的视图", "a 完全不变，切片总是复制一份", "抛出 ValueError，视图不允许原地修改", "只有第一行变化"]' answer="0" explain='基本切片返回视图，b 与 a 共享同一块数据；b += 100 是原地运算，直接写回底层 buffer，所以 a[:, 0] 全部加 100。想要独立数据必须用 .copy()。' />
+<Quiz no='093-2' q='a = np.arange(12).reshape(3, 4); b = a[:, 0]; b += 100 之后 a 会怎样？' :options='["a 的第 0 列被加了 100，因为基本切片返回共享内存的视图", "a 完全不变，切片总是复制一份", "抛出 ValueError，视图不允许原地修改", "只有第一行变化"]' answer="0" explain='基本切片返回视图，b 与 a 共享同一块数据；b += 100 是原地运算，直接写回底层 buffer，所以 a[:, 0] 全部加 100。想要独立数据必须用 .copy()。' />
 
-<Quiz no='093-2' q='关于广播，(2, 3) 与 (2,) 相加的结果是？' :options='["报错，尾部维度 3 与 2 既不相等也都不为 1", "得到 (2, 3)", "得到 (2, 2)", "自动把 (2,) 补成 (1, 2) 后得 (2, 3)"]' answer="0" explain='右对齐后比较尾维：3 对 2，二者不相等且都不为 1，违反广播规则，NumPy 抛 ValueError。(3,) 才能与 (2, 3) 广播，(2,) 不行。' />
+<Quiz no='093-3' q='关于广播，(2, 3) 与 (2,) 相加的结果是？' :options='["报错，尾部维度 3 与 2 既不相等也都不为 1", "得到 (2, 3)", "得到 (2, 2)", "自动把 (2,) 补成 (1, 2) 后得 (2, 3)"]' answer="0" explain='右对齐后比较尾维：3 对 2，二者不相等且都不为 1，违反广播规则，NumPy 抛 ValueError。(3,) 才能与 (2, 3) 广播，(2,) 不行。' />
 
-<Quiz no='093-3' q='为什么 ndarray 的逐元素运算比 Python list 循环快一个量级？' :options='["数据是固定 dtype 的连续裸内存，循环在 C 层执行，不逐元素做类型分派与引用计数", "NumPy 用多线程并行了每个元素", "list 不能存数字", "ndarray 把数据缓存进了 CPU 寄存器"]' answer="0" explain='list 存的是指向独立 PyObject 的指针，每个元素运算都要过字节码、动态类型判断与引用计数；ndarray 把值连续存放、dtype 固定，C 层紧凑循环一次扫完。' />
+<Quiz no='093-4' q='为什么 ndarray 的逐元素运算比 Python list 循环快一个量级？' :options='["数据是固定 dtype 的连续裸内存，循环在 C 层执行，不逐元素做类型分派与引用计数", "NumPy 用多线程并行了每个元素", "list 不能存数字", "ndarray 把数据缓存进了 CPU 寄存器"]' answer="0" explain='list 存的是指向独立 PyObject 的指针，每个元素运算都要过字节码、动态类型判断与引用计数；ndarray 把值连续存放、dtype 固定，C 层紧凑循环一次扫完。' />
 
-<Predict no='093-P' q='调用前面 code 的 broadcast_shape((2, 3), (2,)) 会返回什么？' :options='["None", "(2, 3)", "(2, 2)"]' answer='0' output='None' explain='尾维 3 与 2 冲突，函数走 else 分支返回 None，对应真实 NumPy 抛出的 ValueError: operands could not be broadcast together。' />
+<Predict no='093-5' q='调用前面 code 的 broadcast_shape((2, 3), (2,)) 会返回什么？' :options='["None", "(2, 3)", "(2, 2)"]' answer='0' output='None' explain='尾维 3 与 2 冲突，函数走 else 分支返回 None，对应真实 NumPy 抛出的 ValueError: operands could not be broadcast together。' />
 
-<FillBlank no='093-F' tpl='___ broadcast_shape(a, b):' :answers='["def"]' hint='回想本讲关于 ndarray 与 dtype 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 ndarray、dtype 与连续内存：快在哪里 的落点。' />
+<FillBlank no='093-6' tpl='___ broadcast_shape(a, b):' :answers='["def"]' hint='回想本讲关于 ndarray 与 dtype 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 ndarray、dtype 与连续内存：快在哪里 的落点。' />
 
-<KnowledgeCard :points='["ndarray = 固定 dtype 的连续裸内存 + shape/strides/dtype 元数据，数据区不是 PyObject", "float64/int64 的 itemsize 是 8 字节，uint8/bool 是 1 字节；astype 分配新数组", "元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图", "基本切片是视图（改动写回原数组），布尔/花式索引是副本；用 np.shares_memory 判定", "广播右对齐逐维比较，相等/为 1/缺失才兼容；实现靠把该维 stride 置 0，零拷贝", "向量化把循环下沉到 C 层；大数组用 out= 与就地运算避免 a*b+c 的临时数组"]' :pitfalls='["布尔索引取出后赋值，原数组纹丝不动", "uint8 像素加 20 后数值反而变小", "本想拿一份独立数据，改 b 却把 a 也改了", "用 arr[arr &gt; 0] 返回的副本做赋值，改动不会落回原数组，这类静默失败很难查"]' summary='NumPy 的快来自连续内存加 C 级循环，而视图机制让切片几乎零成本；一旦写出 Python for 循环，优势立刻消失' />
+<KnowledgeCard :points='["ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节", "ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度"]' :pitfalls='["布尔索引取出后赋值，原数组纹丝不动", "uint8 像素加 20 后数值反而变小", "本想拿一份独立数据，改 b 却把 a 也改了", "用 arr[arr &gt; 0] 返回的副本做赋值，改动不会落回原数组，这类静默失败很难查"]' summary='NumPy 的快来自连续内存加 C 级循环，而视图机制让切片几乎零成本；一旦写出 Python for 循环，优势立刻消失' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| ndarray = 固定 dtype 的连续裸内存 + shape/strides/dtype 元数据，数据区不是 PyObject | 建立直觉 |
-| float64/int64 的 itemsize 是 8 字节，uint8/bool 是 1 字节；astype 分配新数组 | 跑通示例 |
-| 元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图 | 深入边界 |
-| 基本切片是视图（改动写回原数组），布尔/花式索引是副本；用 np.shares_memory 判定 | 工程落地 |
-| 广播右对齐逐维比较，相等/为 1/缺失才兼容；实现靠把该维 stride 置 0，零拷贝 | 随堂检测 |
-| 向量化把循环下沉到 C 层；大数组用 out= 与就地运算避免 a*b+c 的临时数组 | 复盘 |
+| ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节 | 建立直觉 |
+| ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势 | 跑通示例 |
+| strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图 | 深入边界 |
+| 基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a>0]=0 是 __setitem__ 赋值语法才生效 | 工程落地 |
+| 广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError | 随堂检测 |
+| 用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度 | 复盘 |
 
-1. ndarray = 固定 dtype 的连续裸内存 + shape/strides/dtype 元数据，数据区不是 PyObject
+1. ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节
 
-2. float64/int64 的 itemsize 是 8 字节，uint8/bool 是 1 字节；astype 分配新数组
+2. ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势
 
-3. 元素地址 = offset + sum(索引 乘 stride)；reshape、切片、转置通常 O(1) 返回视图
+3. strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图
 
 [下一讲：Pandas 清洗、分组、透视与时间序列](/data-ai/pandas)

@@ -7,29 +7,33 @@ description: 让浏览器完成可重复的网页操作
 
 # 第 125 讲 · 实战 04 · Selenium 表单自动化与定时任务
 
-上一讲面对不会动的文件；这一讲要操作会异步加载、时常改版的网页，难在「什么时候才算可以点」。本讲让浏览器替人做可重复的网页操作，把力气花在等待上。
+上一讲面对不会动的文件；这一讲要操作会异步加载、时常改版的网页，难就难在判断「什么时候才算可以点」。让浏览器替人做可重复的网页操作，力气大多花在等待上。
 
-一个定时填表脚本用固定 sleep 等页面，测试环境三秒就好、线上偶发超时，每天不是白等就是扑空；把等待加长后，一天的任务窗口又不够用。我们先把隐式等待、显式等待与固定 sleep 比清轮询上界，再用元素定位与 Page Object 收拢选择器，最后借 APScheduler 给定时任务加频率闸门、退避和凭证注入。需要你熟悉异常处理与一点 CSS 选择器；学完能让网页任务无人值守也跑得稳。
+一个定时填表脚本用 `time.sleep` 死等页面加载，测试环境三秒就好、线上偶发超时，每天不是白等就是扑空；把等待加长后，一天的任务窗口又不够用。我们先把隐式等待、显式等待与固定 `sleep` 摆在一起比清轮询上界，再用元素定位与 Page Object 收拢选择器，最后借 APScheduler 给定时任务加频率闸门、退避和凭证注入。需要你熟悉异常处理与一点 CSS 选择器；学完能让网页任务无人值守也跑得稳。
 
 
 ## 页面异步加载时，固定 sleep 只是把偶发失败变成变慢
 
-一个定时填表脚本用 `time.sleep(5)` 等页面加载，测试环境三秒就好、线上偶发超过五秒，于是每天有几十次 NoSuchElementException；把 sleep 加到 15 秒后失败少了，但每次都白等十几秒，一天的任务窗口被拖到超时。运维排查还发现账号密码写在脚本里，失败截图把登录页也存进了共享目录。
+一个定时填表脚本用 `time.sleep(5)` 等页面加载，测试环境三秒就好、线上偶发超过五秒，于是每天有几十次 `NoSuchElementException`；
 
-朴素解法「固定 sleep + 硬编码凭证 + 无限重试」失败在三点：等待不感知真实状态，早出现浪费、晚出现失败；凭证随脚本泄漏；没有重试上限与频率约束，任务重叠会把目标站点打疼甚至触发合规问题。本讲把 WebDriver 的显式等待、隐式等待与轮询上界拆成可验证的模型，再用标准库实现带超时、退避、限速与审计的调度封装。
+把 sleep 加到 15 秒后失败少了，但每次都白等十几秒，一天的任务窗口被拖到超时。运维排查还发现账号密码写在脚本里，失败截图把登录页也存进了共享目录。朴素解法「固定 `sleep` + 硬编码凭证 + 无限重试」失败在三点：等待不感知真实状态，早出现浪费、晚出现失败；凭证随脚本泄漏；
+
+没有重试上限与频率约束，任务重叠会把目标站点打疼甚至触发合规问题。这一讲把 `WebDriver` 的显式等待、隐式等待与轮询上界拆成可验证的模型，再用标准库实现带超时、退避、限速与审计的调度封装。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 time.sleep 硬等页面加载：不感知真实状态，只能按最坏情况设值，早出现白等、晚出现直接失败' />
 
 
 ## WebDriver 协议与等待策略：隐式、显式与固定 sleep
 
-W3C WebDriver 是客户端—服务器协议，浏览器驱动暴露一组 HTTP 端点，find_element、click、get_attribute 每次都是一次 POST 往返，元素由服务端生成的 element id 引用。
+W3C `WebDriver` 是客户端—服务器协议，浏览器驱动暴露一组 `HTTP` 端点，`find_element`、`click`、`get_attribute` 每次都是一次 `POST` 往返，元素由服务端生成的 element id 引用。
 
-隐式等待用 `driver.implicitly_wait(秒)` 设置，是会话级全局值，只在 find_element 找不到时让服务端内部重试，且只针对「元素存在」这一个条件。
+隐式等待用 `driver.implicitly_wait` 设置，是会话级全局值，只在 `find_element` 找不到时让服务端内部重试，且只针对「元素存在」这一个条件。
 
-显式等待用 `WebDriverWait(driver, timeout, poll_frequency=0.5, ignored_exceptions=None)`，在客户端按间隔反复调用 expected_conditions 谓词（presence_of_element_located、element_to_be_clickable、text_to_be_present_in_element），条件满足立刻返回，超时抛 TimeoutException。
+显式等待用 `WebDriverWait`，在客户端按间隔反复调用 `expected_conditions` 谓词（`presence_of_element_located`、`element_to_be_clickable`、`text_to_be_present_in_element`），条件满足立刻返回，超时抛 `TimeoutException`。
 
-默认 poll_frequency 是 0.5 秒，因此最多约 timeout/poll 次往返。两者混用会让服务端的内部重试与客户端轮询叠加，等待时间不可预测，Selenium 官方文档明确警告不要混用；要显式等待就把 implicitly_wait 设为 0。
+默认 `poll_frequency` 是 0.5 秒，因此最多约 `timeout/poll` 次往返。两者混用会让服务端的内部重试与客户端轮询叠加，等待时间不可预测，Selenium 官方文档明确警告不要混用；
+
+要用显式等待就把 `implicitly_wait` 设为 0。
 
 固定 `time.sleep` 完全不感知状态，只能按最坏情况设值：元素早出现就白等，晚出现就直接失败，把偶发失败变成偶发变慢。
 
@@ -87,11 +91,15 @@ print('fixed on late', fixed_wait(Page(ready_at=9), 2))
 
 ## 定位器、Page Object 与异常截图
 
-定位器优先选稳定的 data-testid 或 id：`By.CSS_SELECTOR` 用浏览器原生选择器、简洁且快，`By.XPATH` 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，/html/body/div[3] 这类绝对路径改一个区块就失效。
+定位器优先选稳定的 `data-testid` 或 `id`：`By.CSS_SELECTOR` 用浏览器原生选择器、简洁且快，`By.XPATH` 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，`/html/body/div[3]` 这类绝对路径改一个区块就失效。
 
-Page Object 模式把定位器与操作封进类，测试用例只调用 login_as、submit_form 这类语义方法，页面改版时只改一处。异步页面的典型异常各有根因：NoSuchElementException 是等待策略没覆盖加载窗口；
+Page Object 模式把定位器与操作封进类，测试用例只调用 `login_as`、`submit_form` 这类语义方法，页面改版时只改一处。
 
-StaleElementReferenceException 是 DOM 节点被重建后，服务端持有的旧 element id 已失效，必须重新定位；ElementClickInterceptedException 是被遮罩或浮动层挡住，要等遮罩消失。
+异步页面的典型异常各有根因：`NoSuchElementException` 是等待策略没覆盖加载窗口；
+
+`StaleElementReferenceException` 是 DOM 节点被重建后、服务端持有的旧 element id 已失效，必须重新定位；
+
+`ElementClickInterceptedException` 是被遮罩或浮动层挡住，要等遮罩消失。
 
 失败现场至少留三样：`driver.save_screenshot(path)` 截图、`driver.page_source` 页面源码、`driver.current_url` 当前地址；
 
@@ -120,13 +128,15 @@ os.environ.pop('LOGIN_PASSWORD', None)
 
 ## 定时任务、凭证、频率与合规默认值
 
-APScheduler 常用 BackgroundScheduler 配 CronTrigger（cron 表达式）或 IntervalTrigger（固定间隔）；三个参数决定稳定性：max_instances 限制同一任务并发实例数，防止上一轮未结束又触发；`coalesce=True` 把错过的多次触发合并成一次；
+APScheduler 常用 `BackgroundScheduler` 配 `CronTrigger`（cron 表达式）或 `IntervalTrigger`（固定间隔）；
 
-misfire_grace_time 给出触发错过后仍允许补跑的时间窗口，超时就丢弃。jobstores 可把任务持久化到数据库，进程重启不丢。凭证走 `os.environ` 或密钥服务注入，绝不写进脚本、命令行参数或失败截图。
+三个参数决定稳定性：`max_instances` 限制同一任务并发实例数，防止上一轮未结束又触发；`coalesce=True` 把错过的多次触发合并成一次；
 
-执行频率要有硬约束：min_interval 控制两次运行的最小间隔、按域名限速、并发连接数上限、User-Agent 标识清楚，并尊重 `robots.txt` 与服务条款。重试只对幂等步骤生效，带指数退避（1、2、4、8 个间隔）与最大次数；每次运行记录日志、耗时、失败清单与截图路径。
+`misfire_grace_time` 给出触发错过后仍允许补跑的时间窗口，超时就丢弃。
 
-没有频率约束、账号写死、无限重试是最常见的三类事故来源。
+`jobstores` 可把任务持久化到数据库，进程重启不丢。凭证走 `os.environ` 或密钥服务注入，绝不写进脚本、命令行参数或失败截图。执行频率要有硬约束：`min_interval` 控制两次运行的最小间隔、按域名限速、并发连接数上限、User-Agent 标识清楚，并尊重 `robots.txt` 与服务条款。
+
+重试只对幂等步骤生效，带指数退避（1、2、4、8 个间隔）与最大次数；每次运行记录日志、耗时、失败清单与截图路径。没有频率约束、账号写死、无限重试是最常见的三类事故来源。
 
 **常见异常与修复**
 
@@ -142,13 +152,17 @@ misfire_grace_time 给出触发错过后仍允许补跑的时间窗口，超时�
 
 ## WebDriver 的 element id 引用表与显式等待底层
 
-W3C WebDriver 把浏览器能力暴露成 HTTP 端点，服务端为每个 DOM 节点分配 element id 并维护一张引用表；
+W3C `WebDriver` 把浏览器能力暴露成 `HTTP` 端点，服务端为每个 DOM 节点分配 element id 并维护一张引用表；
 
-find_element 找不到时若设了隐式等待，服务端会在内部轮询 DOM 直到超时，而显式等待把轮询放到客户端，每 poll_frequency 秒发一次命令去求值 expected_conditions。二者叠加会让服务端每次内部重试又被客户端再轮询一遍，总时长接近两者乘积，这就是官方要求不要混用的原因。
+`find_element` 找不到时若设了隐式等待，服务端会在内部轮询 DOM 直到超时，而显式等待把轮询放到客户端，每 `poll_frequency` 秒发一次命令去求值 `expected_conditions`。
 
-StaleElementReferenceException 来自引用表：节点被重新渲染后旧 id 指向已废弃对象，客户端必须重新发一次定位命令。固定 sleep 不读取任何状态，其期望等待时间只能取加载耗时的上界，因此平均值必然远大于实际需要。
+二者叠加会让服务端每次内部重试又被客户端再轮询一遍，总时长接近两者乘积，这就是官方要求不要混用的原因。
 
-轮询循环在字节码层是一条后向跳转（3.11 起叫 JUMP_BACKWARD），循环回边也是解释器检查切换请求的点；没有 timeout 的轮询会永久占住这条回边，所以超时不是可选项而是结构约束。定时任务的 max_instances、coalesce 与 misfire_grace_time 共同决定错过触发与重叠时的行为。
+`StaleElementReferenceException` 来自引用表：节点被重新渲染后旧 id 指向已废弃对象，客户端必须重新发一次定位命令。
+
+固定 `sleep` 不读取任何状态，其期望等待时间只能取加载耗时的上界，因此平均值必然远大于实际需要。轮询循环在字节码层是一条后向跳转（3.11 起叫 `JUMP_BACKWARD`），循环回边也是解释器检查切换请求的点；没有 `timeout` 的轮询会永久占住这条回边，所以超时不是可选项而是结构约束。
+
+定时任务的 `max_instances`、`coalesce` 与 `misfire_grace_time` 共同决定错过触发与重叠时的行为。
 
 ```python
 import dis
@@ -170,18 +184,20 @@ print('has jump backward', any(o.startswith('JUMP_BACKWARD') for o in ops))
 
 <OutputBox title='原理验证' output='found at 3 3\nfound at 9 9\ntimeout at 99 -1\nhas jump backward True' />
 
-<Term word='WebDriver 与等待策略' text='W3C WebDriver 是客户端—服务器协议，浏览器驱动暴露一组 HTTP 端点，find_element、click、get_attribute 每次都是一次 POST 往返，元素由服务端生成的 element id 引用。隐式等待用 driver.implicitly_wait(秒) 设置，是会话级全局值，只在' />
+<Term word='WebDriver 与等待策略' text='W3C `WebDriver` 是客户端—服务器协议，浏览器驱动暴露一组 `HTTP` 端点，`find_element`、`click`、`get_attribute` 每次都是一次 `POST` 往返，元素由服务端生成的 element id 引用。隐式等待用 `driver.implicitly_wait` 设置' />
 
-<Term word='元素定位 XPath / CSS' text='定位器优先选稳定的 data-testid 或 id：By.CSS_SELECTOR 用浏览器原生选择器、简洁且快，By.XPATH 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，/html/body/div[3] 这类绝对路径改一个区块就失效。Page Object 模' />
+<Term word='元素定位 XPath / CSS' text='定位器优先选稳定的 `data-testid` 或 `id`：`By.CSS_SELECTOR` 用浏览器原生选择器、简洁且快，`By.XPATH` 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，`/html/body/div[3]` 这类绝对路径改一个区块就失效。Pag' />
 
 
 ## 带限速、重试上限与审计的定时填表任务
 
 一个每天跑的填表任务要同时满足三件事：两次运行之间至少隔十个逻辑 tick（频率约束）、单次最多重试三次且逐次退避（重试上限）、每次动作都留审计记录（可追溯）。
 
-下面把三者编进一个最小调度封装：allowed 用 last_run 与 min_interval 守住频率，job 在频率不达标时直接跳过并记 skip，通过后才按 MAX_RETRIES 调 fill_form；fill_form 用 timeout 限制轮询次数，元素迟迟不出现就返回 False，让重试兜底而不是无限等。
+下面把三者编进一个最小调度封装：`allowed` 用 `last_run` 与 `min_interval` 守住频率，`job` 在频率不达标时直接跳过并记 `skip`，通过后才按 `MAX_RETRIES` 调 `fill_form`；
 
-events 列表充当审计日志，记录每次尝试与跳过，便于复盘是「被限速」还是「真的没等到」。真实项目把 now 换成 `time.monotonic`、把 events 换成 logging、把 fill_form 换成 WebDriverWait 加 Page Object，并补 save_screenshot 与失败清单。
+`fill_form` 用 `timeout` 限制轮询次数，元素迟迟不出现就返回 `False`，让重试兜底而不是无限等。`events` 列表充当审计日志，记录每次尝试与跳过，便于复盘是「被限速」还是「真的没等到」。
+
+真实项目把 `now` 换成 `time.monotonic`、把 `events` 换成 `logging`、把 `fill_form` 换成 `WebDriverWait` 加 Page Object，并补 `save_screenshot` 与失败清单。
 
 片段可直接运行，重点看每个失败分支都有明确出口。
 
@@ -259,7 +275,7 @@ print('audit events', events)
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **WebDriver 与等待策略** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 WebDriver 与等待策略 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 <KnowledgeCard :points='["W3C WebDriver 每个命令一次 HTTP 往返，元素由服务端 element id 引用", "隐式等待是会话级全局、只等元素存在；显式等待 WebDriverWait 默认 poll_frequency=0.5，超时抛 TimeoutException", "隐式与显式混用会让等待时长叠加，要用显式就把 implicitly_wait 设为 0", "固定 time.sleep 不感知状态：早出现白等、晚出现失败，只能按最坏情况设值", "StaleElementReferenceException 源于 DOM 重建后旧 element id 失效，需重新定位；失败留截图、page_source、current_url", "调度用 max_instances 防重叠、coalesce 合并错过触发、misfire_grace_time 设补跑窗口；凭证走环境变量，重试带退避与频率约束"]' :pitfalls='["用 time.sleep 硬等页面加载", "同时设隐式等待与显式等待", "账号密码写进脚本、失败无限重试、任务无频率约束", "用 sleep 硬等、或把账号密码写进脚本，既不稳定也不安全"]' summary='浏览器自动化最容易挂在选择器上：页面异步加载时元素尚未出现，固定 sleep 只是把偶发失败变成偶发变慢' />
 
@@ -271,6 +287,6 @@ python -m compileall -q . && python -m pytest -q
 
 [下一讲：实战 05 · 短链与图片服务](/projects/net-shortlink)
 
-<Predict no='125-P' q='元素在第 3 个轮询 tick 出现、timeout=10、poll=1 时，显式等待 wait_for 返回什么？' :options='["(&#39;found&#39;, 3)", "(&#39;timeout&#39;, 10)", "(&#39;found&#39;, 10)"]' answer='0' output='(&#39;found&#39;, 3)' explain='显式等待每轮先判条件再推进，条件一满足就立刻返回并把实际等待量带出；固定 sleep 只能按最坏情况设成 10，元素早出现时白白多等 7 个 tick。' />
+<Predict no='125-4' q='元素在第 3 个轮询 tick 出现、timeout=10、poll=1 时，显式等待 wait_for 返回什么？' :options='["(&#39;found&#39;, 3)", "(&#39;timeout&#39;, 10)", "(&#39;found&#39;, 10)"]' answer='0' output='(&#39;found&#39;, 3)' explain='显式等待每轮先判条件再推进，条件一满足就立刻返回并把实际等待量带出；固定 sleep 只能按最坏情况设成 10，元素早出现时白白多等 7 个 tick。' />
 
-<FillBlank no='125-F' tpl='___ __init__(self, ready_at):' :answers='["def"]' hint='回想本讲关于 WebDriver 与等待策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 WebDriver 协议与等待策略：隐式、显式与固定 sleep 的落点。' />
+<FillBlank no='125-5' tpl='___ __init__(self, ready_at):' :answers='["def"]' hint='回想本讲关于 WebDriver 与等待策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 WebDriver 协议与等待策略：隐式、显式与固定 sleep 的落点。' />

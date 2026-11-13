@@ -9,16 +9,16 @@ description: 为不同负载选对并发模型
 
 单线程里，状态从哪来、归谁、怎么测都已走过一遍。这一讲是个转弯口：在真正让多个线程同时改一份数据之前，先把整张地图摊开，免得凭习惯挑错路线。手上有个批量抓取再加点计算的活，凭直觉想开多线程，却说不清到底在等 CPU 还是等网络，这种犹豫很常见。
 
-从并发与并行的区别说起，分清 CPU 密集和 IO 密集，理顺同步异步、阻塞非阻塞这几组易混的词，再把 GIL 之下线程、进程、异步三条路线摆在一起比，最后落到吞吐量、延迟与 C10K 这类判据。需要你带着第 54 讲对 GIL 的结论、函数与基本 IO 概念；读完面对具体负载，能先量化等待时间再选模型。
+从并发与并行的区别说起，分清 CPU 密集和 IO 密集，理顺同步异步、阻塞非阻塞这几组易混的词，再把 GIL 之下线程、进程、异步三条路线摆在一起比，最后落到吞吐量、延迟与 `C10K` 这类判据。需要你带着第 54 讲对 GIL 的结论、函数与基本 IO 概念；读完面对具体负载，能先量化等待时间再选模型。
 
 
 ## 一个把 IO 密集写成 200 个进程的服务
 
-一个报表接口要并发拉 200 个上游，团队照着「Python 慢就多开」的直觉起了 200 个进程，内存先被每个进程的解释器与依赖副本吃满，吞吐却没涨；换成 200 个线程后内存降了，但有人又把一段纯 Python 的 JSON 聚合塞进线程里，p99 被 GIL 卡住。
+一个报表接口要并发拉 200 个上游，团队照着「Python 慢就多开」的直觉起了 200 个进程，内存先被每个进程的解释器与依赖副本吃满，吞吐却没涨；换成 200 个线程后内存降了，可有人又把一段纯 Python 的 `JSON` 聚合塞进线程里，p99 被 GIL 卡住。
 
-另一处推送服务用同步 socket 一连接一线程，连接数上千后上下文切换把 CPU 吃光，这正是 C10K 问题。三次踩坑方向不同，根因却是一个：没先回答「任务在等什么」。等 CPU 与等网卡/磁盘是两种完全不同的负载，对应多进程、线程池、事件循环三条路线；
+另一处推送服务用同步 socket 一连接一线程，连接数上千后上下文切换把 CPU 吃光，这正是 `C10K` 问题。三次踩坑方向不同，根因却是一个：没先回答「任务在等什么」。等 CPU 与等网卡、磁盘是两种完全不同的负载，分别对应多进程、线程池、事件循环；
 
-而同步/异步说的是「谁拿结果」，阻塞/非阻塞说的是「调用会不会立刻返回」，两组词常被混为一谈。选型前必须先量化 wall 与 cpu 的差、算清并发数与延迟的乘积，再把 GIL 的边界摆到台面上。
+同步/异步说的是「谁拿结果」，阻塞/非阻塞说的是「调用会不会立刻返回」，两组词常被混为一谈。选型前先量化 wall 与 cpu 的差、算清并发数与延迟的乘积，再把 GIL 的边界摆到台面上。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨：多进程为隔离 CPU 而生，等待型任务并不需要独立地址空间，反而为每个解释器与依赖副本付内存' />
 
@@ -27,17 +27,19 @@ description: 为不同负载选对并发模型
 
 并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；并行（parallelism）是「同时做多件事」，必须有多个执行单元（多核、多台机器）。CPython 在默认构建里受 GIL 约束，同一时刻只有一个线程执行 Python 字节码，因此多线程是并发而非并行。
 
-同步/异步描述结果如何交回：同步调用在返回时就带着结果，异步调用先返回 Future/句柄或登记回调，结果稍后到达。阻塞/非阻塞描述调用是否立即返回：阻塞 IO 会一直等到数据就绪，非阻塞 IO 立刻返回，无数据时抛 BlockingIOError（errno 为 EAGAIN / EWOULDBLOCK）。
+同步/异步描述结果如何交回：同步调用在返回时就带着结果，异步调用先返回 `Future` 或句柄、结果稍后到达。
 
-这组词两两正交：同步非阻塞就是忙轮询，异步阻塞也确实存在。asyncio 在 API 层是异步，但在系统层用的是「非阻塞 fd + IO 多路复用 + 事件循环」，属于反应器模式，不是 POSIX aio 那种内核完成的真异步 IO。
+阻塞/非阻塞描述调用是否立即返回：阻塞 IO 会一直等到数据就绪，非阻塞 IO 立刻返回，无数据时会抛 `BlockingIOError`（errno 为 `EAGAIN` / `EWOULDBLOCK`）。
 
-Little's Law 给出容量关系：并发数 ≈ 吞吐 × 平均延迟，200 req/s 与 0.05s 延迟约需 10 个在途请求。
+这组词两两正交：同步非阻塞就是忙轮询，异步阻塞也确实存在。asyncio 在 API 层是异步，系统层用的却是「非阻塞 fd + IO 多路复用 + 事件循环」，属于反应器模式，不是 `POSIX` aio 那种由内核完成操作的真异步 IO。
 
-按 Stevens 在 UNIX Network Programming 的划分，IO 有五型：阻塞 IO（进程全程挂起）、非阻塞 IO（反复轮询，CPU 空转）、IO 多路复用（select/poll/epoll 一次等一批 fd，就绪再读）、信号驱动 IO（SIGIO 通知）、异步 IO（内核完成操作后回调，Windows IOCP 属此类）。
+Little's Law 给出容量关系：并发数约等于吞吐乘以平均延迟，200 req/s 配 0.05s 延迟，大约需要 10 个在途请求。
 
-多路复用本身仍可能阻塞在 select 调用上，但它把「等 N 个连接」变成一次系统调用。C10K 是 1999 年 Dan Kegel 提出的问题：一连接一线程在 1 万并发下被线程栈（Linux pthread 默认约 8MB 虚拟栈，虽按需提交）与上下文切换压垮；
+按 Stevens 在《`UNIX` Network Programming》里的划分，IO 有五型：阻塞 IO（进程全程挂起）、非阻塞 IO（反复轮询，CPU 空转）、IO 多路复用（`select` / `poll` / `epoll` 一次等一批 fd，就绪再读）、信号驱动 IO（`SIGIO` 通知）、异步 IO（内核完成操作后回调，Windows 的 `IOCP` 属此类）。
 
-解法是非阻塞 fd + epoll/kqueue + 单线程事件循环，nginx 与后来的 asyncio 都走这条路。Python 侧要注意：asyncio 不绕过 GIL，它的收益来自消除线程切换与栈内存、把大量连接收敛到一个线程；任何一个同步阻塞调用（`time.sleep`、requests）都会卡住整个事件循环。
+多路复用本身仍可能阻塞在 select 调用上，但它把「等 N 个连接」变成一次系统调用。`C10K` 是 1999 年 Dan Kegel 提出的问题：一连接一线程在 1 万并发下被线程栈（Linux pthread 默认约 8MB 虚拟栈，虽按需提交）与上下文切换压垮；
+
+解法是非阻塞 fd 加 epoll/kqueue 与单线程事件循环，nginx 和后来的 asyncio 都走这条路。Python 侧要留意：asyncio 并不绕过 GIL，它的收益来自消除线程切换与栈内存、把大量连接收敛到一个线程；任何一个同步阻塞调用（`time.sleep`、requests）都会卡住整个事件循环。
 
 **两组术语与五种 IO 模型**
 
@@ -58,11 +60,13 @@ Little's Law 给出容量关系：并发数 ≈ 吞吐 × 平均延迟，200 req
 
 ## 三条路线的判据：按等待类型决定
 
-先测：用 perf_counter 与 process_time 求 wall - cpu 的占比，CPU 时间占主导选 multiprocessing / ProcessPoolExecutor 或把热点下沉到 NumPy、C 扩展（这些计算会释放 GIL）；
+动手前先测：用 `perf_counter` 与 `process_time` 求 wall 减 cpu 的占比，CPU 时间占主导就选 `multiprocessing` / `ProcessPoolExecutor`，或把热点下沉到 NumPy、C 扩展（这些计算会释放 GIL）；
 
-等待占主导选 ThreadPoolExecutor 或 asyncio；混合型分两层，接入层异步、重计算丢进进程池。多进程的隐性成本是 pickle 序列化与内存副本，数据量大时并行收益会被它吃掉；线程池的隐性成本是无界队列，流量峰值先把自己的待办堆爆；asyncio 的隐性成本是全 loop 级阻塞。
+等待占主导选 `ThreadPoolExecutor` 或 asyncio；
 
-评估要同时看吞吐（req/s）与延迟分位（p50/p95/p99），只看平均值会掩盖长尾：一个同步慢调用会把 p99 拉高一个量级。还要分清「任务在等什么」之外的约束：连接数规模、是否需要共享大对象、生态库是否异步、以及运维上能否接受多进程的内存与部署复杂度。
+混合型分两层，接入层异步、重计算丢进进程池。三条路线各有隐性成本：多进程是 pickle 序列化与内存副本，数据量大时并行收益会被它吃掉；线程池是无界队列，流量峰值先把自己的待办堆爆；asyncio 是全 loop 级阻塞。
+
+评估要同时看吞吐（req/s）与延迟分位（p50/p95/p99），只看平均值会掩盖长尾：一个同步慢调用能把 p99 拉高一个量级。除了「任务在等什么」，还要盘清几项约束：连接数规模、是否需要共享大对象、生态库是否异步、以及运维上能否接受多进程的内存与部署复杂度。
 
 **并发模型选型：按等待类型决定**
 
@@ -84,19 +88,19 @@ Little's Law 给出容量关系：并发数 ≈ 吞吐 × 平均延迟，200 req
 | NumPy / hashlib 大块计算 | C 扩展内部释放 GIL | 需确认该扩展确实释放 |
 | 纯 Python 字节码循环 | 不释放 GIL，多线程串行 | 4 线程常比单线程更慢 |
 
-CPython 的 GIL 让默认构建里同一时刻只有一个线程执行字节码，但阻塞式系统调用通过 Py_BEGIN_ALLOW_THREADS / Py_END_ALLOW_THREADS 成对释放并重新获取，因此等待型线程能真正重叠。
+CPython 的 GIL 让默认构建里同一时刻只有一个线程执行字节码，但阻塞式系统调用通过 `Py_BEGIN_ALLOW_THREADS` / `Py_END_ALLOW_THREADS` 成对释放再重新获取，因此等待型线程能真正重叠。
 
 切换由 `sys.getswitchinterval()`（默认 0.005 秒）驱动，3.10+ 在 eval breaker（循环回边与调用处）检查让出请求；
 
-3.13 的自由线程构建用 `sys._is_gil_enabled()` 可探测，默认仍启用。
+3.13 的自由线程构建可用 `sys._is_gil_enabled()` 探测，默认仍启用 GIL。
 
-IO 多路复用的系统层是：把一批非阻塞 fd 注册进内核的兴趣集合，epoll 用红黑树维护注册、用就绪链表返回，wait 的复杂度与就绪数相关而非总 fd 数；select 每次要把 fd_set 在用户/内核间拷贝并线性扫描，且有 FD_SETSIZE 限制。
+IO 多路复用的系统层是：把一批非阻塞 fd 注册进内核的兴趣集合，epoll 用红黑树维护注册、用就绪链表返回，wait 的复杂度与就绪数相关而非总 fd 数；select 每次要把 fd_set 在用户态与内核态之间拷贝并线性扫描，还受 `FD_SETSIZE` 限制。
 
-asyncio 的 BaseSelectorEventLoop 正是把协程的 await 点映射到 selector 的 register / select，Task 在 fd 就绪时被唤醒。
+asyncio 的 `BaseSelectorEventLoop` 正是把协程的 await 点映射到 selector 的 register / select，Task 在 fd 就绪时被唤醒。
 
-Little's Law（`L = λW`）在稳定系统里给出在途请求数与吞吐、延迟的约束，是容量规划而非性能调优的结论：不降延迟又要提吞吐，就必须抬高在途并发数，而每个并发单位都要付出栈内存或事件循环调度的成本。
+Little's Law（L = λW）在稳定系统里给出在途请求数与吞吐、延迟的约束，是容量规划而非性能调优的结论：不降延迟又要提吞吐，就必须抬高在途并发数，而每个并发单位都要付出栈内存或事件循环调度的成本。
 
-<FlowTimeline :steps='[{"title": "并发、并行与两组易混术语", "desc": "并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；…", "tone": "blue"}, {"title": "五种 IO 模型与 C10K 的由来", "desc": "按 Stevens 在 UNIX Network Programming 的划分，I…", "tone": "purple"}, {"title": "三条路线的判据与吞吐/延迟口径", "desc": "先测：用 perf_counter 与 process_time 求 wall - …", "tone": "orange"}, {"title": "工程落地", "desc": "按负载类型自动选路的小型任务分发器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "并发、并行与两组易混术语", "desc": "并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；…", "tone": "blue"}, {"title": "五种 IO 模型与 C10K 的由来", "desc": "按 Stevens 在《UNIX Network Programming》里的划分，…", "tone": "purple"}, {"title": "三条路线的判据与吞吐/延迟口径", "desc": "动手前先测：用 `perf_counter` 与 `process_time` 求 …", "tone": "orange"}, {"title": "工程落地", "desc": "按负载类型自动选路的小型任务分发器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 对照：同一负载下线程、进程与协程的实测
@@ -177,9 +181,11 @@ print('interval_default', sys.getswitchinterval() == 0.005)
 
 一个内部任务系统同时接收「拉上游接口」与「做聚合计算」两类作业，运维希望同一套提交入口自动选模型，而不是让调用方自己决定用线程还是进程。分发器先对每种作业取一小批样本，测 wall 与 cpu 判断等待占比，把作业路由到线程池或进程池；
 
-同时用信号量限制在途任务数，避免峰值把队列堆爆，并对 Future 逐一 `result()` 暴露异常。这段用标准库模拟：ThreadPoolExecutor 处理等待型、ProcessPoolExecutor 处理计算型，入口统一返回字典报告。
+同时用信号量限制在途任务数，避免峰值把队列堆爆，并对每个 Future 逐一调用 `result()` 把异常暴露出来。
 
-真实系统还要加超时、熔断与指标埋点，但「先量化再选路、在途有上限、异常必回传」三条契约在这里已经完整。
+这段用标准库模拟：`ThreadPoolExecutor` 处理等待型作业，`ProcessPoolExecutor` 处理计算型作业，入口统一返回一份字典报告。
+
+真实系统还要加超时、熔断与指标埋点，但「先量化再选路、在途有上限、异常必回传」这三条契约在这里已经完整。
 
 ```python
 import concurrent.futures as cf
@@ -247,11 +253,11 @@ if __name__ == '__main__':
 
 <Quiz no='060-3' q='某纯 Python 计算改成 4 线程后变慢，最准确的解释是？' :options='["GIL 串行化字节码，多线程还多付切换成本", "线程创建开销大于计算量", "list 不是线程安全的", "操作系统禁止同进程多线程"]' answer="0" explain='纯 Python 循环不触发释放 GIL 的调用，四个线程轮流持锁，总耗时约为单线程四倍再加切换；CPU 密集应走多进程或释放 GIL 的 C 扩展。' />
 
-<Predict no='060-P' q='对 time.sleep(0.05) 的函数测 perf_counter 与 process_time，wall - cpu 与 cpu 的关系是？' :options='["wall - cpu 远大于 cpu，判等待主导", "两者都约等于 0.05", "cpu 远大于 wall - cpu", "两者都为零"]' answer='0' output='wall - cpu 约为 0.05s，cpu 接近 0' explain='sleep 让出 CPU 且不累计 process_time，墙钟却照走；差值近似全部等待时间。这正是「等 CPU 还是等 IO」判据的量化依据。' />
+<Predict no='060-4' q='对 time.sleep(0.05) 的函数测 perf_counter 与 process_time，wall - cpu 与 cpu 的关系是？' :options='["wall - cpu 远大于 cpu，判等待主导", "两者都约等于 0.05", "cpu 远大于 wall - cpu", "两者都为零"]' answer='0' output='wall - cpu 约为 0.05s，cpu 接近 0' explain='sleep 让出 CPU 且不累计 process_time，墙钟却照走；差值近似全部等待时间。这正是「等 CPU 还是等 IO」判据的量化依据。' />
 
-<FillBlank no='060-F' tpl='___ time' :answers='["import"]' hint='回想本讲关于 并发与并行的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 并发、并行与两组易混术语 的落点。' />
+<FillBlank no='060-5' tpl='___ time' :answers='["import"]' hint='回想本讲关于 并发与并行的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 并发、并行与两组易混术语 的落点。' />
 
-<KnowledgeCard :points='["并发是结构、并行是执行；GIL 下多线程是并发不是并行", "同步/异步说结果何时交回，阻塞/非阻塞说调用是否立刻返回，两组正交", "五种 IO 模型：阻塞、非阻塞轮询、多路复用、信号驱动、异步 IO；epoll 是反应器，IOCP 是前摄器", "C10K 的解法是非阻塞 fd + epoll/kqueue + 单线程事件循环，asyncio 的收益在此而非绕过 GIL", "先测 wall - cpu 占比：CPU 主导用进程/C 扩展，等待主导用线程池/asyncio，混合分层", "Little&#39;s Law：并发 ≈ 吞吐 × 延迟；同时看吞吐与 p50/p95/p99，别只看平均"]' :pitfalls='["把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨", "在 asyncio 里用 time.sleep / 同步 requests", "用平均延迟评估并发效果", "把 IO 密集服务写成多进程，会用大量内存换来并不需要的隔离；反过来则被 GIL 卡住吞吐"]' summary='选型的依据只有一个：任务在等什么。等 CPU 用多进程或原生扩展，等网络磁盘用异步或线程池，两者混合就分层' />
+<KnowledgeCard :points='["并发是结构、并行是执行；GIL 下多线程是并发不是并行", "同步/异步说结果何时交回，阻塞/非阻塞说调用是否立刻返回，两组正交", "五种 IO 模型：阻塞、非阻塞轮询、多路复用、信号驱动、异步 IO；epoll 是反应器，IOCP 是前摄器", "C10K 的解法是非阻塞 fd + epoll/kqueue + 单线程事件循环，asyncio 的收益在此而非绕过 GIL", "先测 wall 减 cpu 占比：CPU 主导用进程/C 扩展，等待主导用线程池/asyncio，混合分层", "Little&#39;s Law：并发约等于吞吐乘以延迟；同时看吞吐与 p50/p95/p99，别只看平均"]' :pitfalls='["把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨", "在 asyncio 里用 time.sleep / 同步 requests", "用平均延迟评估并发效果", "把 IO 密集服务写成多进程，会用大量内存换来并不需要的隔离；反过来则被 GIL 卡住吞吐"]' summary='选型的依据只有一个：任务在等什么。等 CPU 用多进程或原生扩展，等网络磁盘用异步或线程池，两者混合就分层' />
 
 **速记索引**
 
@@ -261,8 +267,8 @@ if __name__ == '__main__':
 | 同步/异步说结果何时交回，阻塞/非阻塞说调用是否立刻返回，两组正交 | 跑通示例 |
 | 五种 IO 模型：阻塞、非阻塞轮询、多路复用、信号驱动、异步 IO；epoll 是反应器，IOCP 是前摄器 | 深入边界 |
 | C10K 的解法是非阻塞 fd + epoll/kqueue + 单线程事件循环，asyncio 的收益在此而非绕过 GIL | 工程落地 |
-| 先测 wall - cpu 占比：CPU 主导用进程/C 扩展，等待主导用线程池/asyncio，混合分层 | 随堂检测 |
-| Little's Law：并发 ≈ 吞吐 × 延迟；同时看吞吐与 p50/p95/p99，别只看平均 | 复盘 |
+| 先测 wall 减 cpu 占比：CPU 主导用进程/C 扩展，等待主导用线程池/asyncio，混合分层 | 随堂检测 |
+| Little's Law：并发约等于吞吐乘以延迟；同时看吞吐与 p50/p95/p99，别只看平均 | 复盘 |
 
 1. 并发是结构、并行是执行；GIL 下多线程是并发不是并行
 

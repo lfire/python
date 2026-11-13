@@ -7,18 +7,18 @@ description: 用 asyncio 实现可并发的服务端
 
 # 第 130 讲 · 实战 09 · KV 贯穿线 ② 协议帧与网络层
 
-上一讲把命令语义和窄接口钉稳；这一讲给它开一扇远程的门，上层命令一行都不用动。难点很朴素：TCP 是连成一片的字节流，不替你标出消息从哪到哪。
+上一讲把命令语义和窄接口钉稳；这一讲给它开一扇远程的门，上层命令一行都不用动。难点很朴素：`TCP` 是连成一片的字节流，不替你标出消息从哪到哪。
 
-第一版用换行分隔命令，值里带换行就把一条拆成两条；另一个客户端一次发来两条，服务端并成一帧；又没设长度上限，一个超长请求就能把内存吃满。我们先用长度前缀加最大帧限制把一帧框清楚，再比较序列化选型，然后用 asyncio 的 readexactly 收拾拆包粘包、连接管理与超时，最后包一个 SDK。需要你熟悉上一步的命令模型与 asyncio；学完 KV 能被多个客户端并发访问，只是数据还全在内存。
+第一版用换行分隔命令，值里带换行就把一条拆成两条；另一个客户端一次发来两条，服务端并成一帧；又没设长度上限，一个超长请求就能把内存吃满。我们先用长度前缀加最大帧限制把一帧框清楚，再比较序列化选型，然后用 `asyncio` 的 `readexactly` 收拾拆包粘包、连接管理与超时，最后包一个 SDK。需要你熟悉上一步的命令模型与 `asyncio`；学完 KV 能被多个客户端并发访问，只是数据还全在内存。
 
 
 ## 一次 read 既可能拿到半条命令，也可能拿到两条半
 
-给内存 KV 加网络层，团队第一版用换行分隔命令：客户端发 SET k v 后加一个换行，服务端 readline 读一行。上线当天就出错——某个用户的值里带了换行，一条命令被拆成两行，第二条被当成新命令解析，状态彻底错乱；另一个客户端一次发来两条命令，服务端把两帧当成一帧处理，把值拼到了键后面。
+给内存 KV 加网络层，团队第一版用换行分隔命令：客户端发 `SET k v` 后加一个换行，服务端 `readline` 读一行。上线当天就出错——某个用户的值里带了换行，一条命令被拆成两行，第二条被当成新命令解析，状态彻底错乱；另一个客户端一次发来两条命令，服务端把两帧当成一帧处理，把值拼到了键后面。
 
-还没有长度上限，一个恶意请求声明超长 body 直接把内存吃满。根因只有一个：TCP 是字节流，没有消息边界，一次 read 既可能拿到半条命令也可能拿到两条半。
+还没有长度上限，一个恶意请求声明超长 body 直接把内存吃满。根因只有一个：`TCP` 是字节流，没有消息边界，一次 `read` 既可能拿到半条命令也可能拿到两条半。
 
-本讲用长度前缀加 MAGIC、版本、CRC32 与最大帧限制定义协议帧，用 asyncio 的 readexactly 解决拆包粘包，并用契约测试覆盖半包、粘包、超大帧与校验和错误。
+这一讲用长度前缀加 `MAGIC`、版本、`CRC32` 与最大帧限制定义协议帧，用 `asyncio` 的 `readexactly` 解决拆包粘包，并用契约测试覆盖半包、粘包、超大帧与校验和错误。
 
 ```python
 import struct, zlib, inspect, os
@@ -37,13 +37,13 @@ print('fsync signature', str(inspect.signature(os.fsync)))
 
 ## TCP 字节流与长度前缀帧：消息边界要自己造
 
-TCP 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 recv 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；
+`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；
 
-正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pack`('>H', n) 两字节大端（网络字节序），或 '>I' 四字节，最大 2^32-1，但生产必须另设 MAX_FRAME（如 1MB）防止单条超大请求打满内存。
+正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pack('>H', n)` 两字节大端（网络字节序），或 `'>I'` 四字节，最大 `2^32-1`，但生产必须另设 `MAX_FRAME`（如 1MB）防止单条超大请求打满内存。
 
-帧头再加 MAGIC（如 b'KV'）快速识别协议、VERSION 显式版本号便于不兼容升级、CRC32（`zlib.crc32`，检错不防篡改，防篡改要 HMAC）。
+帧头再加 `MAGIC`（如 `b'KV'`）快速识别协议、`VERSION` 显式版本号便于不兼容升级、`CRC32`（`zlib.crc32`，检错不防篡改，防篡改要 `HMAC`）。
 
-服务端用 `asyncio.StreamReader.readexactly(n)` 精确读 n 字节，它内部循环 read 直到凑齐或抛 IncompleteReadError；
+服务端用 `asyncio.StreamReader.readexactly` 精确读 n 字节，它内部循环 `read` 直到凑齐或抛 `IncompleteReadError`；
 
 半包要先把已到字节缓存进缓冲区等下一批，粘包要在一个循环里连续切出多帧。失效信号：偶发解析错位、大请求打满内存、旧客户端连上后返回乱码。
 
@@ -136,7 +136,7 @@ print('value with newline', cut_newline(two))
 
 ## 长度前缀与半包：decode 为什么返回 partial
 
-<Callout type="tip" title='核心心智模型' text='TCP 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 recv 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 struc' />
+<Callout type="tip" title='核心心智模型' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 `' />
 
 <ConceptDiagram type='flow3' title='第 130 讲 · TCP 字节流与长度前缀帧：消息边界要自己造' labels='TCP 字节流与长度前缀帧：消息边界要自己造|序列化选型与 asyncio 服务端|协议兼容、契约测试与失败模式' caption='用 asyncio 实现可并发的服务端' />
 
@@ -150,15 +150,17 @@ print('value with newline', cut_newline(two))
 
 ## 序列化选型对照与显式版本号
 
-文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/loads 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；
+文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；
 
-pickle 绝不能用于网络——反序列化会执行任意代码，是明确的远程代码执行风险；struct 适合定长头与数值。
+`pickle` 绝不能用于网络——反序列化会执行任意代码，是明确的远程代码执行风险；`struct` 适合定长头与数值。
 
-服务端用 `asyncio.start_server(handle, host, port)` 返回 Server，每个连接调一次 `handle(reader, writer)` 协程；
+服务端用 `asyncio.start_server` 返回 `Server`，每个连接调一次 `handle(reader, writer)` 协程；
 
-连接管理要设超时（`asyncio.wait_for` 或 3.11 起的 `asyncio.timeout` 上下文）、限制并发连接数（Semaphore）、处理半关闭（EOF 时 readexactly 抛 IncompleteReadError，finally 里 `writer.close()` 配 await `writer.wait_closed()`），并记录 peer 地址。
+连接管理要设超时（`asyncio.wait_for` 或 3.11 起的 `asyncio.timeout` 上下文）、限制并发连接数（`Semaphore`）、处理半关闭（EOF 时 `readexactly` 抛 `IncompleteReadError`，`finally` 里 `writer.close()` 配 `await writer.wait_closed()`），并记录 peer 地址。
 
-客户端 SDK 封装 open_connection、帧编码、读响应、超时与重连，让调用方看不到字节。绑定端口用 ('127.0.0.1', 0) 让内核分配空闲端口，测试才不冲突。
+客户端 SDK 封装 `open_connection`、帧编码、读响应、超时与重连，让调用方看不到字节。
+
+绑定端口用 `('127.0.0.1', 0)` 让内核分配空闲端口，测试才不冲突。
 
 **拆包粘包失败模式与契约测试**
 
@@ -175,24 +177,24 @@ pickle 绝不能用于网络——反序列化会执行任意代码，是明确�
 
 <ConceptDiagram type='layers3' title='第 130 讲 · 分层视角' labels='TCP 字节流与长度前缀帧：消息边界要自|序列化选型与 asyncio 服务端|协议兼容、契约测试与失败模式|协议兼容与版本' caption='协议兼容、契约测试与失败模式' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **协议兼容与版本** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 协议兼容与版本 落在哪一层。
 
-<Term word='TCP 粘包与长度前缀' text='TCP 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 recv 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 struct.pack(&#39;&gt;H' />
+<Term word='TCP 粘包与长度前缀' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pac' />
 
-<Term word='序列化选型' text='文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；json.dumps/loads 跨语言、可读、sort_keys=True 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；pickle 绝不能用于网络——反序列化会执行任意代码，是明确' />
+<Term word='序列化选型' text='文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；`pickle` 绝不能用于网络——反序列化会执行' />
 
 
 ## TCP 的 send 边界在接收侧不可见
 
-TCP 是面向字节流的传输层协议，send 的边界在接收侧不可见：内核按 MSS 与缓冲区切分，Nagle 还可能合并小包，因此消息边界必须由应用层协议自己定义。
+`TCP` 是面向字节流的传输层协议，send 的边界在接收侧不可见：内核按 MSS 与缓冲区切分，Nagle 还可能合并小包，因此消息边界必须由应用层协议自己定义。
 
-长度前缀把边界编码进固定字节头，接收方用 `readexactly(n)` 循环 read 直到凑齐 n 字节或抛 IncompleteReadError，这正是把「不知道读多少」变成「精确读多少」；
+长度前缀把边界编码进固定字节头，接收方用 `readexactly(n)` 循环 `read` 直到凑齐 n 字节或抛 `IncompleteReadError`，这正是把「不知道读多少」变成「精确读多少」；
 
-struct 的 > 前缀指定大端（网络字节序），'>H' 是 2 字节、'>I' 是 4 字节，258 编码成 0102 而小端是 0201。CRC32 是循环冗余校验，能检出随机位翻转但不防恶意篡改，后者要 HMAC。
+`struct` 的 `>` 前缀指定大端（网络字节序），`'>H'` 是 2 字节、`'>I'` 是 4 字节，258 编码成 0102 而小端是 0201。`CRC32` 是循环冗余校验，能检出随机位翻转但不防恶意篡改，后者要 `HMAC`。
 
-asyncio 的 StreamReader/StreamWriter 把 socket 包成协程友好的流，start_server 为每个连接起一个 handle 协程，Semaphore 与 wait_for 分别约束连接数与超时；端口 0 让内核分配空闲端口，避免测试冲突。
+`asyncio` 的 `StreamReader`/`StreamWriter` 把 socket 包成协程友好的流，`start_server` 为每个连接起一个 `handle` 协程，`Semaphore` 与 `wait_for` 分别约束连接数与超时；端口 0 让内核分配空闲端口，避免测试冲突。
 
-半关闭与 TIME_WAIT 由 `writer.close` 配 wait_closed 收尾。
+半关闭与 `TIME_WAIT` 由 `writer.close` 配 `wait_closed` 收尾。
 
 
 ## 最大帧长度、超时与半关闭处理
@@ -202,9 +204,9 @@ asyncio 的 StreamReader/StreamWriter 把 socket 包成协程友好的流，star
 
 ## 协议兼容、契约测试与失败模式
 
-版本号放在固定偏移，服务端对不支持的版本返回明确错误而非静默按新格式错解；新增可选字段要向后兼容（旧客户端忽略未知字段），不兼容变更升主版本并保留双协议并存窗口，这就是 132 讲网关做多供应商适配的同一思路。
+版本号放在固定偏移，服务端对不支持的版本返回明确错误而非静默按新格式错解；新增可选字段要向后兼容（旧客户端忽略未知字段），不兼容变更升主版本并保留双协议并存窗口；后面网关要同时对接多家供应商时，用的也是这套「统一接口 + 版本协商」的思路。
 
-契约测试必须逐字节覆盖：半包（一帧分两次到达）、粘包（两帧一次到达）、超大帧（length 超过 MAX_FRAME）、错误 MAGIC、校验和错误、版本不匹配、连接中途断开、读超时。断言要检查解码后的字节与预期完全一致，不能只测「能跑通」，否则边界错误会漏到线上。
+契约测试必须逐字节覆盖：半包（一帧分两次到达）、粘包（两帧一次到达）、超大帧（`length` 超过 `MAX_FRAME`）、错误 `MAGIC`、校验和错误、版本不匹配、连接中途断开、读超时。断言要检查解码后的字节与预期完全一致，不能只测「能跑通」，否则边界错误会漏到线上。
 
 三个失效信号：偶发解析错位、大请求打满内存、旧客户端连上后返回乱码。协议字段一旦上线就不能改偏移，新增内容只能追加可选字段或升版本。
 
@@ -236,11 +238,13 @@ asyncio 的 StreamReader/StreamWriter 把 socket 包成协程友好的流，star
 
 把协议帧落到真实连接上：服务端用 `asyncio.start_server` 绑定 127.0.0.1 与端口 0，每个连接先用 `readexactly(4)` 读四字节长度头，再 `readexactly(length)` 读 body，回写同样的长度前缀帧；
 
-客户端 SDK 封装 open_connection、编码、读响应、`writer.close` 与 wait_closed，让调用方只看到字节结果。handler 里必须捕获 IncompleteReadError 处理半关闭，finally 里关闭 writer，避免连接泄漏。
+客户端 SDK 封装 `open_connection`、编码、读响应、`writer.close` 与 `wait_closed`，让调用方只看到字节结果。
 
-真实项目还要加 `asyncio.wait_for` 超时、Semaphore 限制并发连接、MAGIC 与版本校验、CRC32 检错，并把契约测试覆盖到真实 socket 上。
+handler 里必须捕获 `IncompleteReadError` 处理半关闭，`finally` 里关闭 writer，避免连接泄漏。
 
-片段可直接运行，重点看 readexactly 如何把字节流还原成一条条完整帧。
+真实项目还要加 `asyncio.wait_for` 超时、`Semaphore` 限制并发连接、`MAGIC` 与版本校验、`CRC32` 检错，并把契约测试覆盖到真实 socket 上。
+
+片段可直接运行，重点看 `readexactly` 如何把字节流还原成一条条完整帧。
 
 ```python
 import asyncio, struct
@@ -284,18 +288,20 @@ print(asyncio.run(main()))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **TCP 粘包与长度前缀** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 TCP 粘包与长度前缀 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## WAL 记录的字节布局与 CRC32 的校验边界
 
 把 WAL 记录设计成 total_len、crc32、op、klen、vlen、key、value 七个字段，长度放最前是为了重放时自同步：读到长度就能跳过整条记录，尾部半条记录（声明长度大于剩余字节）直接判定为崩溃截断并停止，不必扫描魔数。
 
-CRC32 用 `zlib.crc32`（IEEE 802.3 多项式 0xEDB88320），覆盖 op 到 value 的整个 body，却刻意不覆盖 total_len 本身——长度损坏会先被剩余字节不足拦下，把 CRC 也盖在长度上反而可能让坏长度配出合法校验值。校验和写入与重放各算一次，成本相对 fsync 可不计；
+`CRC32` 用 `zlib.crc32`（`IEEE` 802.3 多项式 0xEDB88320），覆盖 op 到 value 的整个 body，却刻意不覆盖 total_len 本身——长度损坏会先被剩余字节不足拦下，把 CRC 也盖在长度上反而可能让坏长度配出合法校验值。
 
-换 xxHash 或 CRC32C 能再降几个百分点，却引入第三方依赖，标准库 CRC32 对几十到几百字节的记录足够。torn write 更隐蔽：一次 append 被断电截在 512 字节扇区中间时，长度字段可能完整而 body 少一截，只有长度加 CRC 双重判定能识别。
+校验和写入与重放各算一次，成本相对 fsync 可不计；换 xxHash 或 `CRC32C` 能再降几个百分点，却引入第三方依赖，标准库 `CRC32` 对几十到几百字节的记录足够。
 
-记录必须带类型字节区分 PUT 与 tombstone（DEL），重放按序应用、同一 key 最后一条胜出，删掉的键才不会在恢复后复活。字节序统一小端，把字段位宽与判定顺序写死到字节级，恢复在任意截断位置才能给出确定结论：要么完整记录，要么停在上一条完整记录之后。
+torn write 更隐蔽：一次 append 被断电截在 512 字节扇区中间时，长度字段可能完整而 body 少一截，只有长度加 CRC 双重判定能识别。记录必须带类型字节区分 PUT 与 tombstone（DEL），重放按序应用、同一 key 最后一条胜出，删掉的键才不会在恢复后复活。
+
+字节序统一小端，把字段位宽与判定顺序写死到字节级，恢复在任意截断位置才能给出确定结论：要么完整记录，要么停在上一条完整记录之后。
 
 ```python
 import struct, zlib
@@ -340,7 +346,7 @@ print('truncated', p_len > len(partial) - 8)
 | klen / vlen | u16 / u32 | key 与 value 长度 | 越界则按截断处理 |
 | 写入顺序 | WAL 到 fsync 到内存到应答 | 崩溃一致性 | 顺序反了会丢已应答的写 |
 
-<Quiz no='130-X' q='WAL 记录把 total_len 放在最前、CRC32 不覆盖长度字段，主要理由是？' :options='["长度用于自同步与截断判定，长度本身损坏应由剩余字节不足拦截", "CRC32 无法计算长度字段的值", "为了让记录长度总是 4 的倍数", "为了兼容大端机器"]' answer="0" explain='长度字段承担重放时的跳过与截断判定，先读长度再看剩余字节即可定位半条记录；若 CRC 覆盖长度，一个被改坏的长度可能配出合法校验，反而掩盖截断。body 的完整性由 CRC 保证，两者职责分离。' />
+<Quiz no='130-1' q='WAL 记录把 total_len 放在最前、CRC32 不覆盖长度字段，主要理由是？' :options='["长度用于自同步与截断判定，长度本身损坏应由剩余字节不足拦截", "CRC32 无法计算长度字段的值", "为了让记录长度总是 4 的倍数", "为了兼容大端机器"]' answer="0" explain='长度字段承担重放时的跳过与截断判定，先读长度再看剩余字节即可定位半条记录；若 CRC 覆盖长度，一个被改坏的长度可能配出合法校验，反而掩盖截断。body 的完整性由 CRC 保证，两者职责分离。' />
 
 
 ## 组提交、目录 fsync 与断电演练复盘
@@ -351,15 +357,15 @@ WAL 的吞吐瓶颈从来不是 append 而是 fsync。每次写都 fsync 能保�
 
 InnoDB 的 innodb_flush_log_at_trx_commit 与 RocksDB 的 group commit 都是这个结构。代价是延迟尾部长尾化，且要定义刷盘方案：always 每条都刷、everysec 由后台线程每秒刷一批、never 交给 OS。
 
-第二个常被漏掉的点是目录 fsync：`os.replace` 改的是目录项，文件本身 fsync 只保证内容落盘，rename 的持久性还要对父目录以 O_DIRECTORY 打开再 fsync 一次，否则断电后新快照名可能回退。
+第二个常被漏掉的点是目录 fsync：`os.replace` 改的是目录项，文件本身 fsync 只保证内容落盘，rename 的持久性还要对父目录以 `O_DIRECTORY` 打开再 fsync 一次，否则断电后新快照名可能回退。
 
-检查点压缩按固定序：写 `snapshot.tmp`、fsync、原子 rename、更新 CURRENT 清单（记录快照号与起始 LSN）、fsync 目录、才截断旧 WAL。崩溃窗口逐个可判：tmp 阶段崩溃删 tmp 重来；rename 后 CURRENT 未更新按旧清单重放全部 WAL；
+检查点压缩按固定序：写 `snapshot.tmp`、fsync、原子 rename、更新 `CURRENT` 清单（记录快照号与起始 LSN）、fsync 目录、才截断旧 WAL。崩溃窗口逐个可判：tmp 阶段崩溃删 tmp 重来；rename 后 `CURRENT` 未更新按旧清单重放全部 WAL；
 
-CURRENT 已更新但 WAL 未截断，重放跳过已覆盖的 LSN 即可，重复应用幂等。
+`CURRENT` 已更新但 WAL 未截断，重放跳过已覆盖的 LSN 即可，重复应用幂等。
 
 上线前用 kill -9 做断电演练，在 WAL 追加、fsync、改内存、返回 OK 四步各注入一次崩溃。第一次暴露两个问题：开发机把刷盘方案设成 never，断电后 37 条已返回 OK 的写全丢；检查点直接覆盖写快照，压缩中途被杀留下半截文件，恢复时把它当有效快照，数据回退两天。
 
-修复按复盘结论固化：默认方案改 everysec 并写进 ADR，快照改临时文件加 `os.replace`，CURRENT 原子替换且先 fsync 目录再截断 WAL，注入脚本随流水线跑。下面是最小故障注入：模拟一条记录被截断，验证恢复循环停在完整记录边界。
+修复按复盘结论固化：默认方案改 everysec 并写进 ADR，快照改临时文件加 `os.replace`，`CURRENT` 原子替换且先 fsync 目录再截断 WAL，注入脚本随流水线跑。下面是最小故障注入：模拟一条记录被截断，验证恢复循环停在完整记录边界。
 
 ```python
 import struct, zlib
@@ -396,15 +402,15 @@ print('stopped_at_complete_boundary', len(recovered) == 1)
 
 <Exercise title='进阶：给帧加 CRC32 并构造损坏用例' task='在帧尾追加 zlib.crc32(frame) 的四字节校验和，decode 时重算比对；翻转一个字节验证返回 bad checksum。' solution='import struct, zlib\ndef enc(body):\n    f = struct.pack(&#39;&gt;H&#39;, len(body)) + body\n    return f + struct.pack(&#39;&gt;I&#39;, zlib.crc32(f) &amp; 0xffffffff)\ndef dec(s):\n    n = struct.unpack(&#39;&gt;H&#39;, s[:2])[0]\n    f = s[:2+n]\n    got = struct.unpack(&#39;&gt;I&#39;, s[2+n:6+n])[0]\n    return &#39;ok&#39; if (zlib.crc32(f) &amp; 0xffffffff) == got else &#39;bad checksum&#39;\nf = bytearray(enc(b&#39;SET a 1&#39;)); print(dec(bytes(f)))\nf[-1] ^= 1; print(dec(bytes(f)))' explain='依次输出 ok 与 bad checksum。CRC32 只检错不防篡改；要防篡改需换成 HMAC 并把密钥放在服务端。' />
 
-<Quiz no='130-1' q='关于 TCP 与消息边界，哪一项准确？' :options='["TCP 是字节流，一次 read 可能拿到半条或多条，边界要靠长度前缀自己定义", "每次 send 对应一次 recv", "换行分隔天然安全，因为值里不会有换行", "readexactly 会一次返回全部数据"]' answer="0" explain='内核按 MSS 与缓冲区任意切分，Nagle 还会合并小包；长度前缀加 readexactly 把「读多少」变成确定值，半包续读、粘包循环切分。' />
+<Quiz no='130-2' q='关于 TCP 与消息边界，哪一项准确？' :options='["TCP 是字节流，一次 read 可能拿到半条或多条，边界要靠长度前缀自己定义", "每次 send 对应一次 recv", "换行分隔天然安全，因为值里不会有换行", "readexactly 会一次返回全部数据"]' answer="0" explain='内核按 MSS 与缓冲区任意切分，Nagle 还会合并小包；长度前缀加 readexactly 把「读多少」变成确定值，半包续读、粘包循环切分。' />
 
-<Quiz no='130-2' q='协议帧里 MAX_FRAME 的作用与缺失后果是？' :options='["限制单帧长度，防止恶意超大请求打满内存", "提高 CRC32 校验速度", "让大端序生效", "决定版本号"]' answer="0" explain='长度字段可声明极大 body，服务端若照声明分配缓冲就会被单条请求打满内存；解析出 length 后先与 MAX_FRAME 比较再分配。' />
+<Quiz no='130-3' q='协议帧里 MAX_FRAME 的作用与缺失后果是？' :options='["限制单帧长度，防止恶意超大请求打满内存", "提高 CRC32 校验速度", "让大端序生效", "决定版本号"]' answer="0" explain='长度字段可声明极大 body，服务端若照声明分配缓冲就会被单条请求打满内存；解析出 length 后先与 MAX_FRAME 比较再分配。' />
 
-<Quiz no='130-3' q='关于网络序列化，哪一项准确？' :options='["pickle 反序列化会执行任意代码，禁止用于网络；JSON 与 msgpack 更安全", "pickle 跨语言且最紧凑，应优先使用", "JSON 支持裸二进制无需编码", "struct 能替代完整序列化方案"]' answer="0" explain='pickle 的 __reduce__ 可在反序列化时执行任意代码，是远程代码执行风险；JSON 跨语言可读，msgpack/Protobuf 紧凑有 schema，struct 只适合定长头。' />
+<Quiz no='130-4' q='关于网络序列化，哪一项准确？' :options='["pickle 反序列化会执行任意代码，禁止用于网络；JSON 与 msgpack 更安全", "pickle 跨语言且最紧凑，应优先使用", "JSON 支持裸二进制无需编码", "struct 能替代完整序列化方案"]' answer="0" explain='pickle 的 __reduce__ 可在反序列化时执行任意代码，是远程代码执行风险；JSON 跨语言可读，msgpack/Protobuf 紧凑有 schema，struct 只适合定长头。' />
 
-<Predict no='130-P' q='把两条合法帧拼成一次 read 的字节流传给 decode，最可能返回什么？' :options='["([&#39;SET a 1&#39;, &#39;GET a&#39;], &#39;complete&#39;)", "([&#39;SET a 1&#39;], &#39;partial&#39;)", "抛 struct.error"]' answer='0' output='two in one read ([&#39;SET a 1&#39;, &#39;GET a&#39;], &#39;complete&#39;)' explain='decode 用 while 循环按长度前缀连续切帧：第一帧消费后 stream 剩下第二帧，继续切出，流被消费完返回 complete。这正是粘包场景的正确处理。' />
+<Predict no='130-5' q='把两条合法帧拼成一次 read 的字节流传给 decode，最可能返回什么？' :options='["([&#39;SET a 1&#39;, &#39;GET a&#39;], &#39;complete&#39;)", "([&#39;SET a 1&#39;], &#39;partial&#39;)", "抛 struct.error"]' answer='0' output='two in one read ([&#39;SET a 1&#39;, &#39;GET a&#39;], &#39;complete&#39;)' explain='decode 用 while 循环按长度前缀连续切帧：第一帧消费后 stream 剩下第二帧，继续切出，流被消费完返回 complete。这正是粘包场景的正确处理。' />
 
-<FillBlank no='130-F' tpl='___ struct, zlib' :answers='["import"]' hint='回想本讲关于 TCP 粘包与长度前缀 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 TCP 字节流与长度前缀帧：消息边界要自己造 的落点。' />
+<FillBlank no='130-6' tpl='___ struct, zlib' :answers='["import"]' hint='回想本讲关于 TCP 粘包与长度前缀 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 TCP 字节流与长度前缀帧：消息边界要自己造 的落点。' />
 
 <KnowledgeCard :points='["TCP 是字节流无消息边界；长度前缀 + readexactly 解决拆包粘包，半包续读、粘包循环切分", "帧 = MAGIC + VERSION + 长度头 + body + CRC32；struct 的 &gt; 是大端网络字节序，&#39;&gt;H&#39; 2 字节、&#39;&gt;I&#39; 4 字节", "必须设 MAX_FRAME 上限，解析出 length 先比较再分配缓冲，否则超大帧打满内存", "CRC32 只检错不防篡改（防篡改用 HMAC）；pickle 禁止用于网络，会执行任意代码", "asyncio.start_server 每连接一个 handle；readexactly 抛 IncompleteReadError 要捕获，finally 里 close 配 wait_closed", "契约测试逐字节覆盖半包、粘包、超大帧、错误 MAGIC、校验和错误、版本不匹配、连接中断"]' :pitfalls='["用换行分隔命令，值里含换行就失效", "不设最大帧长度，单条超大请求打满内存", "只测能跑通，不测半包与粘包", "用换行分隔却允许值里出现换行，协议立刻失效；不做长度上限还会被单条超大请求打满内存"]' summary='网络层第一道坎是消息边界：TCP 是字节流，一次 read 既可能拿到半条命令也可能拿到两条半' />
 

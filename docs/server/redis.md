@@ -16,7 +16,7 @@ description: 设计正确且可降级的缓存层
 
 商品详情页加了 Redis 缓存后 QPS 涨了五倍，一次大促却把数据库打到 CPU 100%。复盘看到三种失效挤在一起：有人用脚本批量查根本不存在的商品 ID，每次都穿透到 DB；一个热点 key 过期的瞬间，几千个请求同时回源重建；
 
-而运维为图省事给所有缓存统一设了 300 秒 TTL，凌晨批量预热的那批 key 在同一秒集体失效。更糟的是缓存进程重启后服务直接 500，因为读路径没有降级。团队最初的补法是给每个 key 都加过期时间，这恰恰解释不了为什么加了 TTL 还是雪崩。
+而运维为图省事给所有缓存统一设了 300 秒 TTL，凌晨批量预热的那批 key 在同一秒集体失效。更糟的是缓存进程重启后服务直接 `500`，因为读路径没有降级。团队最初的补法是给每个 key 都加过期时间，这恰恰解释不了为什么加了 TTL 还是雪崩。
 
 三种故障的根因不同：查不存在、并发重建、集中过期，对应的防线分别是空值缓存与布隆过滤、互斥重建、TTL 抖动。本讲用标准库把三者与分布式锁的正确删法跑通。
 
@@ -25,13 +25,15 @@ description: 设计正确且可降级的缓存层
 
 ## 五种数据结构与 Cache-Aside 读写流程
 
-Redis 五种基础结构各有明确分工：String（GET/SET/SETEX/INCR）存单值、计数器与分布式锁；Hash（HGET/HSET/HGETALL）存对象的多个字段，可只更新一个字段；List（LPUSH/RPUSH/LPOP/BRPOP）做消息队列与最新 N 条列表；
+Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；
 
-Set（SADD/SISMEMBER/SINTER）做去重、共同关注、抽奖；ZSet（ZADD/ZRANGEBYSCORE）按 score 排序，用于排行榜与延迟队列。SET key value EX seconds NX 是一条命令原子完成『设值 + 过期 + 仅当键不存在时设』，是锁与幂等占位的基石；
+`List`（`LPUSH` / `RPUSH` / `LPOP` / `BRPOP`）做消息队列与最新 N 条列表；`Set`（`SADD` / `SISMEMBER` / `SINTER`）做去重、共同关注、抽奖；`ZSet`（`ZADD` / `ZRANGEBYSCORE`）按 `score` 排序，用于排行榜与延迟队列。
 
-NX 保证互斥，EX 保证崩溃后能自动释放，PX 用毫秒。Cache-Aside（旁路缓存）读路径：先 GET，命中直接返回，未命中读 DB、把结果 SET 回缓存并设 TTL；写路径通常是『先更新 DB 再删缓存』（DEL 而非 UPDATE，避免两个并发写把旧值写回），删除失败要重试或订阅 binlog 补偿。
+`SET key value EX seconds NX` 是一条命令原子完成「设值 + 过期 + 仅当键不存在时设」，是锁与幂等占位的基石：`NX` 保证互斥，`EX` 保证崩溃后能自动释放，`PX` 用毫秒。
 
-缓存与 DB 之间是最终一致：存在短暂脏读窗口，强一致需要分布式锁或双删，代价很高，一般业务接受秒级不一致。key 要带业务前缀与版本（product:v2:42），并把 TTL 设为基础值加随机抖动。
+Cache-Aside（旁路缓存）读路径：先 `GET`，命中直接返回，未命中读 DB、把结果 `SET` 回缓存并设 TTL；写路径通常是「先更新 DB 再删缓存」（`DEL` 而非 `UPDATE`，避免两个并发写把旧值写回），删除失败要重试或订阅 binlog 补偿。
+
+缓存与 DB 之间是最终一致：存在短暂脏读窗口，强一致需要分布式锁或双删，代价很高，一般业务接受秒级不一致。`key` 要带业务前缀与版本（`product:v2:42`），并把 TTL 设为基础值加随机抖动。
 
 **五种数据结构与典型命令**
 
@@ -43,7 +45,7 @@ NX 保证互斥，EX 保证崩溃后能自动释放，PX 用毫秒。Cache-Aside
 | Set | SADD / SISMEMBER / SINTER | 去重、共同关注、抽奖 |
 | ZSet | ZADD / ZRANGEBYSCORE | 排行榜、延迟队列按 score 取 |
 
-<Callout type="tip" title='核心心智模型' text='Redis 五种基础结构各有明确分工：String（GET/SET/SETEX/INCR）存单值、计数器与分布式锁；Hash（HGET/HSET/HGETALL）存对象的多个字段，可只更新一个字段；List（LPUSH/RPUSH/LPOP/BRPOP）做消息队列与最新 N 条列表；Set（SADD' />
+<Callout type="tip" title='核心心智模型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH' />
 
 <ConceptDiagram type='hub4' title='第 088 讲 · 五种数据结构与 Cache-Aside 读写流程' labels='五种数据结构与 Cache-Aside 读写|穿透、击穿、雪崩：三种失效各自的防线|分布式锁的正确实现与缓存一致性' caption='设计正确且可降级的缓存层' />
 
@@ -137,13 +139,17 @@ print('final', store.get('lock:order'))
 
 ## 穿透、击穿、雪崩：三种失效各自的防线
 
-穿透是查询一个 DB 与缓存里都不存在的 key，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。防线是把空值也缓存下来（SET key '__NULL__' EX 60）与布隆过滤器（bitmap 判『一定不存在』，有误判率但绝不漏判），并在入口做参数合法性校验。
+穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。
 
-击穿是某个热点 key 恰好过期的瞬间，大量并发同时未命中、一起回源重建，DB 被瞬时峰值压垮。防线是互斥重建：用 SETNX 抢一把锁，只让一个线程回源写缓存，其它线程等待后重读；或逻辑过期（value 里存 expire_at，物理键不删，后台异步续期），读请求永不阻塞但可能短暂返回旧值。
+防线是把空值也缓存下来（`SET key '__NULL__' EX 60`）与布隆过滤器（bitmap 判「一定不存在」，有误判率但绝不漏判），并在入口做参数合法性校验。
 
-雪崩是大批 key 在同一时刻集中过期，或 Redis 整体不可用，流量瞬间全压到 DB。防线是 TTL 加抖动（如 300 + `random(0,60)` 把过期时刻散开）、多级缓存、Redis 高可用（哨兵/集群）、以及服务降级与限流——缓存挂了要能直接读 DB 并限流，而不是整站 500。
+击穿是某个热点 `key` 恰好过期的瞬间，大量并发同时未命中、一起回源重建，DB 被瞬时峰值压垮。防线是互斥重建：用一条带 `NX` 的命令抢一把重建锁，只让一个线程回源写缓存，其它线程等待后重读；或逻辑过期（`value` 里存 `expire_at`，物理键不删，后台异步续期），读请求永不阻塞但可能短暂返回旧值。
 
-三者根因不同，统一『再加个过期时间』只会让雪崩更整齐。
+雪崩是大批 `key` 在同一时刻集中过期，或 Redis 整体不可用，流量瞬间全压到 DB。
+
+防线是 TTL 加抖动（如 `300 + random(0,60)` 把过期时刻散开）、多级缓存、Redis 高可用（哨兵 / 集群）、以及服务降级与限流——缓存挂了要能直接读 DB 并限流，而不是整站 `500`。
+
+三者根因不同，统一「再加个过期时间」只会让雪崩更整齐。
 
 **穿透 / 击穿 / 雪崩对照**
 
@@ -159,11 +165,13 @@ print('final', store.get('lock:order'))
 
 ## 分布式锁：原子加锁、随机值与比对删除
 
-一把正确的锁要满足互斥、不死锁、不误删。加锁：SET lock:order <随机值> NX PX 30000，随机值用 uuid 生成，NX 保证只有一个客户端拿到，PX 毫秒级 TTL 保证持锁者崩溃后能自动释放。
+一把正确的锁要满足互斥、不死锁、不误删。
 
-释放的坑最深：必须先 GET 锁的 value、确认等于自己的随机值再 DEL，否则 A 的锁超时后 B 已加锁，A 一个 DEL 会删掉 B 的锁。而『比对 + 删除』两步必须用 Lua 脚本在 Redis 内原子执行，因为比对通过后、删除前锁可能刚好过期并被别人抢走。
+加锁用 `SET key uuid NX PX 30000`，随机值用 `uuid` 生成，`NX` 保证只有一个客户端拿到，`PX` 毫秒级 TTL 保证持锁者崩溃后能自动释放。
 
-Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、对 GC 停顿敏感，工程上优先用成熟库或数据库/etcd 的租约。缓存一致性方面：写 DB 后删缓存，删失败进消息队列异步重试；更可靠的是订阅 MySQL binlog（Canal/Debezium）做失效，避免业务代码漏删。
+释放的坑最深：必须先 `GET` 锁的 `value`、确认等于自己的随机值再 `DEL`，否则 A 的锁超时后 B 已加锁，A 一个 `DEL` 会删掉 B 的锁。而「比对 + 删除」两步必须用 Lua 脚本在 Redis 内原子执行，因为比对通过后、删除前锁可能刚好过期并被别人抢走。
+
+Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、对 GC 停顿敏感，工程上优先用成熟库或数据库 / etcd 的租约。缓存一致性方面：写 DB 后删缓存，删失败进消息队列异步重试；更可靠的是订阅 MySQL binlog（`Canal` / `Debezium`）做失效，避免业务代码漏删。
 
 读到脏数据的时间窗靠短 TTL 与监控兜底，并提供手动失效接口。
 
@@ -176,17 +184,17 @@ Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、
 | 释放 | Lua 里比对 value 再 DEL | 先 GET 后 DEL 非原子，会误删别人的锁 |
 | 过期 | PX 毫秒 TTL | 不设 TTL 时持锁者崩溃永久占锁 |
 
-SET key value NX EX 的原子性来自 Redis 单线程执行命令：整个『检查键是否存在 + 写入 + 设过期』在一个事件循环步骤里完成，多个客户端并发时只有一个能拿到 OK，这正是互斥锁与幂等占位的基础；把 SETNX 与 EXPIRE 拆成两条命令就会在中间崩溃留下永不过期的锁。
+`SET key value NX EX` 的原子性来自 Redis 单线程执行命令：整个「检查键是否存在 + 写入 + 设过期」在一个事件循环步骤里完成，多个客户端并发时只有一个能拿到 `OK`，这正是互斥锁与幂等占位的基础；
 
-过期删除靠 Redis 的惰性删除（访问时发现过期才删）加定期抽样主动清理，因此大批同 TTL 的键会在相近时刻集中失效，流量像雪崩一样压向 DB——给 TTL 加抖动就是把这个尖峰摊平。互斥重建用同一把锁把并发回源收敛成一个，其余请求等待或读旧值；
+把 `SETNX` 与 `EXPIRE` 拆成两条命令就会在中间崩溃留下永不过期的锁。过期删除靠 Redis 的惰性删除（访问时发现过期才删）加定期抽样主动清理，因此大批同 TTL 的键会在相近时刻集中失效，流量像雪崩一样压向 DB——给 TTL 加抖动就是把这个尖峰摊平。
 
-逻辑过期则把过期时间放进 value、物理键不删，用后台线程异步续，读路径永不阻塞。空值缓存针对的是『不存在』这个查询结果本身也要有表示：用一个哨兵值与短 TTL 占住 key，让重复查询不再回源。布隆过滤器用一个位数组加多个哈希函数判『一定不存在』，以可控误判率换内存效率。
+互斥重建用同一把锁把并发回源收敛成一个，其余请求等待或读旧值；逻辑过期则把过期时间放进 `value`、物理键不删，用后台线程异步续，读路径永不阻塞。空值缓存针对的是「不存在」这个查询结果本身也要有表示：用一个哨兵值与短 TTL 占住 `key`，让重复查询不再回源。
 
-释放锁的 compare-and-delete 必须用 Lua，是因为 Redis 执行 Lua 脚本期间不会被其它命令插入，从而保证比对与删除之间锁不被换主。
+布隆过滤器用一个位数组加多个哈希函数判「一定不存在」，以可控误判率换内存效率。释放锁的 compare-and-delete 必须用 Lua，是因为 Redis 执行 Lua 脚本期间不会被其它命令插入，从而保证比对与删除之间锁不被换主。
 
-<Term word='五种数据结构与选型' text='Redis 五种基础结构各有明确分工：String（GET/SET/SETEX/INCR）存单值、计数器与分布式锁；Hash（HGET/HSET/HGETALL）存对象的多个字段，可只更新一个字段；List（LPUSH/RPUSH/LPOP/BRPOP）做消息队列与最新 N 条列表；Set（SADD/SISMEMBER' />
+<Term word='五种数据结构与选型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH` / `LPOP`' />
 
-<Term word='缓存模式与失效' text='穿透是查询一个 DB 与缓存里都不存在的 key，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。防线是把空值也缓存下来（SET key &#39;__NULL__&#39; EX 60）与布隆过滤器（bitmap 判『一定不存在』，有误判率但绝不漏判），并在入口做参数合法性校验。击穿是某个热点 key 恰' />
+<Term word='缓存模式与失效' text='穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。防线是把空值也缓存下来（`SET key &#39;__NULL__&#39; EX 60`）与布隆过滤器（bitmap 判「一定不存在」，有误判率但绝不漏判），并在入口做参数合法性校验。击穿是某个热点 `' />
 
 
 ### 为什么 SETNX 与 EXPIRE 必须合成一条命令
@@ -198,9 +206,11 @@ SET key value NX EX 的原子性来自 Redis 单线程执行命令：整个『�
 
 ## 带互斥重建、空值缓存与降级的多级缓存层
 
-下面把缓存层写成一个可运行的骨架，覆盖三道防线与一条降级路径：query 先读缓存，命中空值哨兵直接返回（防穿透）；未命中时用 SETNX 抢重建锁，抢到的线程回源写缓存并加 TTL 抖动，没抢到的短暂等待后重读（防击穿）；空结果写短 TTL 空值；
+下面把缓存层写成一个可运行的骨架，覆盖三道防线与一条降级路径：`query` 先读缓存，命中空值哨兵直接返回（防穿透）；未命中时用一条带 `NX` 的命令抢重建锁，抢到的线程回源写缓存并加 TTL 抖动，没抢到的短暂等待后重读（防击穿）；空结果写短 TTL 空值；
 
-load_from_db 抛异常时降级读一个本地兜底字典并返回 degraded 标记，保证缓存/DB 抖动时服务不 500。真实项目把 store 换成 redis 客户端、把 sleep 换成订阅通知、把兜底换成限流后的静态页，但『空值、互斥、抖动、降级』四件事的结构不变。
+`load_from_db` 抛异常时降级读一个本地兜底字典并返回 `degraded` 标记，保证缓存 / DB 抖动时服务不 `500`。
+
+真实项目把 `store` 换成 `redis` 客户端（读路径就是 `redis.get(key)`）、把 `sleep` 换成订阅通知、把兜底换成限流后的静态页，但「空值、互斥、抖动、降级」四件事的结构不变。
 
 ```python
 import random
@@ -251,9 +261,9 @@ print('keys', sorted(store))
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **五种数据结构与选型** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 五种数据结构与选型 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<FlowTimeline :steps='[{"title": "五种数据结构与 Cache-Aside 读写流程", "desc": "Redis 五种基础结构各有明确分工：String（GET/SET/SETEX/IN…", "tone": "blue"}, {"title": "穿透、击穿、雪崩：三种失效各自的防线", "desc": "穿透是查询一个 DB 与缓存里都不存在的 key，由于空结果不缓存，每次请求都落到 …", "tone": "purple"}, {"title": "分布式锁的正确实现与缓存一致性", "desc": "一把正确的锁要满足互斥、不死锁、不误删。加锁：SET lock:order &lt;随机值…", "tone": "orange"}, {"title": "工程落地", "desc": "带互斥重建、空值缓存与降级的多级缓存层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "五种数据结构与 Cache-Aside 读写流程", "desc": "Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` …", "tone": "blue"}, {"title": "穿透、击穿、雪崩：三种失效各自的防线", "desc": "穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落…", "tone": "purple"}, {"title": "分布式锁的正确实现与缓存一致性", "desc": "一把正确的锁要满足互斥、不死锁、不误删。加锁用 `SET key uuid NX P…", "tone": "orange"}, {"title": "工程落地", "desc": "带互斥重建、空值缓存与降级的多级缓存层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 **错因速查**
 
@@ -270,13 +280,17 @@ Redis 每个 db 有两张字典：dict 存键值，expires 存 key 到 long long
 
 删除分两段：expireIfNeeded（src/`db.c`）在访问键时惰性触发，读 expires、比对 `mstime()`，过期则同时删 dict 与 expires 并传播 DEL 事件；
 
-activeExpireCycle（src/`expire.c`）由 serverCron 定期驱动，分 SLOW（按 `server.hz` 默认 10 次每秒，时间预算约 25 毫秒每次）与 beforeSleep 里的 FAST（预算约 1 毫秒）。
+activeExpireCycle（src/`expire.c`）由 serverCron 定期驱动，分 `SLOW`（按 `server.hz` 默认 10 次每秒，时间预算约 25 毫秒每次）与 beforeSleep 里的 `FAST`（预算约 1 毫秒）。
 
-每轮从 expires 随机抽 `ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP = 20` 个键，删掉已过期的，若过期数除以抽样数大于 25% 就再抽一轮，直到低于阈值或时间预算耗尽。
+每轮从 expires 随机抽 `ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP` 个键，删掉已过期的，若过期数除以抽样数大于 25% 就再抽一轮，直到低于阈值或时间预算耗尽。
+
+```python
+ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP = 20
+```
 
 数学上设真实过期比例为 q，一轮里过期数 X 服从二项分布 `Binomial(20, q)`，续轮条件是 X 大于 5；
 
-q 小时 `P(X 大于 5)` 极小，几乎一轮就停，所以主动删除每轮只清理一小撮，大批同 TTL 的键仍靠惰性删除在访问瞬间集中爆发，这正是正文「集中过期」的源码根据，TTL 抖动是把 q 的时间分布摊平而不是改变删除算法。
+q 小时 P(X 大于 5) 极小，几乎一轮就停，所以主动删除每轮只清理一小撮，大批同 TTL 的键仍靠惰性删除在访问瞬间集中爆发，这正是正文「集中过期」的源码根据，TTL 抖动是把 q 的时间分布摊平而不是改变删除算法。
 
 还有一处易忽略：主从复制下从库不主动删过期键、等主库同步 DEL，因此读写分离可能短暂读到已过期数据，Redis 3.2 起读从库才额外做一次 expireIfNeeded 判断返回空值，这是「从库读到脏值」的故障来源。
 
@@ -314,15 +328,15 @@ print('jitter', expire_pressure(jit, 300))
 
 ## SDS、渐进式 rehash 与 lazyfree 的内存路径
 
-Redis 的字符串不是 C 的 char 指针而是 sds（src/`sds.h`）：sdshdr8 里有 len、alloc、flags、buf[]，取长度 `O(1)`、二进制安全、APPEND 时按翻倍预分配但不超过 1MB，这解释了 INCR 与 APPEND 的代价模型。
+Redis 的字符串不是 C 的 char 指针而是 sds（src/`sds.h`）：sdshdr8 里有 len、alloc、flags、`buf[]`，取长度 `O(1)`、二进制安全、`APPEND` 时按翻倍预分配但不超过 1MB，这解释了 `INCR` 与 `APPEND` 的代价模型。
 
-dict（src/`dict.h`）挂两张 dictht 哈希表 ht[0] 与 ht[1] 以及 rehashidx：扩容时把 ht[1] 设为两倍、rehashidx 置 0，之后每次增删改查顺带把 ht[0] 的一个 bucket 迁到 ht[1]，查询同时查两张表，避免一次性 `O(n)` 停顿，这也是「大字典扩容期间延迟抖动」的来源。
+dict（src/`dict.h`）挂两张 dictht 哈希表 `ht[0]` 与 `ht[1]` 以及 rehashidx：扩容时把 `ht[1]` 设为两倍、rehashidx 置 0，之后每次增删改查顺带把 `ht[0]` 的一个 bucket 迁到 `ht[1]`，查询同时查两张表，避免一次性 `O(n)` 停顿，这也是「大字典扩容期间延迟抖动」的来源。
 
 底层编码按元素个数与大小切换：小 Hash 与小 List 用 listpack（ziplist 的后继，一块连续内存省指针开销），大对象转 hashtable 或 quicklist；
 
-ZSet 小集合用 listpack，大集合用 skiplist 加 dict 双索引，dict 保证 ZSCORE 是 `O(1)`、skiplist 保证 ZRANGE 是 `O(log n)`。删除大 key 的架构权衡最尖锐：DEL 同步释放整块内存，百万字段的 Hash 会让单线程卡几十毫秒；
+ZSet 小集合用 listpack，大集合用 skiplist 加 dict 双索引，dict 保证 `ZSCORE` 是 `O(1)`、skiplist 保证 `ZRANGE` 是 `O(log n)`。删除大 key 的架构权衡最尖锐：DEL 同步释放整块内存，百万字段的 Hash 会让单线程卡几十毫秒；
 
-4.0 起 UNLINK 把 value 从 dict 摘下（`O(1)`）后丢给 bio 后台线程 lazyfree（src/`bio.c`），FLUSHALL ASYNC 与 lazyfree-lazy-eviction、lazyfree-lazy-expire、lazyfree-lazy-server-del 三个配置项控制哪些路径走异步。
+4.0 起 `UNLINK` 把 value 从 dict 摘下（`O(1)`）后丢给 bio 后台线程 lazyfree（src/`bio.c`），`FLUSHALL` `ASYNC` 与 lazyfree-lazy-eviction、lazyfree-lazy-expire、lazyfree-lazy-server-del 三个配置项控制哪些路径走异步。
 
 故障复盘：高峰期 DEL 一个 200 万字段的 Hash，主线程阻塞约 80 毫秒，期间所有请求 RT 尖刺，看起来像「Redis 挂了」，实际是同步内存回收。
 
@@ -340,7 +354,7 @@ ZSet 小集合用 listpack，大集合用 skiplist 加 dict 双索引，dict 保
 
 最后定位到运营脚本同步 DEL 了一个 200 万字段的 Hash：DEL 从 dict 摘键是 `O(1)`，但主线程要逐个释放 200 万个 redisObject 与 SDS，几十毫秒内无法处理任何命令，所有客户端一起排队。
 
-Redis 4.0 之后的 UNLINK 把 value 从 dict 摘下就返回，把整块释放丢给 bio 后台线程 lazyfree，FLUSHALL ASYNC 同理；三个配置项分别控制淘汰、过期与隐式删除是否走异步。
+Redis 4.0 之后的 `UNLINK` 把 value 从 dict 摘下就返回，把整块释放丢给 bio 后台线程 lazyfree，`FLUSHALL` `ASYNC` 同理；三个配置项分别控制淘汰、过期与隐式删除是否走异步。
 
 下面用纯 Python 模拟这条分界：unlink 只做字典 pop 并把引用挂到待释放队列，真正的字段清点在 drain 里发生，主线程路径不与元素个数成正比。
 
@@ -369,7 +383,7 @@ print('background drained fields', cache.drain())
 
 ```
 
-<Quiz no='088-X' q='关于 Redis 的过期删除与主动抽样，下面哪项准确？' :options='["过期时间存在独立的 db-&gt;expires 字典；activeExpireCycle 每轮随机抽 20 个键，过期比例超过 25% 才继续下一轮", "过期时间写在 value 头部，访问时解析 value 才能判断是否过期", "serverCron 每轮扫描全库所有键并删除全部过期键", "从库会主动删除过期键，因此读写分离绝不会读到已过期数据"]' answer="0" explain='expires 是独立字典使判过期 O(1)。惰性删除由 expireIfNeeded 在访问时触发，主动删除的 SLOW 周期有约 25 毫秒时间预算、按抽样命中率决定是否续轮，不做全库扫描；从库不主动删过期键、靠主库同步 DEL，3.2 起读从库才额外做 expireIfNeeded 判断返回空值。统一 TTL 让惰性删除在同一秒集中爆发，抖动是把尖峰摊平而非改变算法本身。' />
+<Quiz no='088-1' q='关于 Redis 的过期删除与主动抽样，下面哪项准确？' :options='["过期时间存在独立的 db-&gt;expires 字典；activeExpireCycle 每轮随机抽 20 个键，过期比例超过 25% 才继续下一轮", "过期时间写在 value 头部，访问时解析 value 才能判断是否过期", "serverCron 每轮扫描全库所有键并删除全部过期键", "从库会主动删除过期键，因此读写分离绝不会读到已过期数据"]' answer="0" explain='expires 是独立字典使判过期 O(1)。惰性删除由 expireIfNeeded 在访问时触发，主动删除的 SLOW 周期有约 25 毫秒时间预算、按抽样命中率决定是否续轮，不做全库扫描；从库不主动删过期键、靠主库同步 DEL，3.2 起读从库才额外做 expireIfNeeded 判断返回空值。统一 TTL 让惰性删除在同一秒集中爆发，抖动是把尖峰摊平而非改变算法本身。' />
 
 <Term word='渐进式 rehash' text='dict 扩容时不一次性搬完 ht[0]，而是置 rehashidx 为 0 后，在每次增删改查顺带把一个 bucket 从 ht[0] 迁到 ht[1]，查询同时查两张表，直到 rehashidx 走完再把 ht[1] 换回 ht[0]。它把 O(n) 的停顿摊成每次操作 O(1) 的开销，代价是扩容窗口内每次查询多一次哈希查找，这也是大字典扩容期延迟抖动的来源。' />
 
@@ -380,15 +394,15 @@ print('background drained fields', cache.drain())
 
 <Exercise title='进阶：实现 compare-and-delete 的安全解锁' task='写一个 release(store, key, token)，仅当 store.get(key) 等于 token 时才删除，构造『B 持锁时 A 用旧 token 释放』的场景验证不会误删。' solution='store = {&#39;lock:order&#39;: &#39;B-token&#39;}\ndef release(store, key, token):\n    if store.get(key) == token:\n        del store[key]\n        return &#39;released&#39;\n    return &#39;not-owner, keep&#39;\nprint(release(store, &#39;lock:order&#39;, &#39;A-token&#39;))\nprint(store)\nprint(release(store, &#39;lock:order&#39;, &#39;B-token&#39;))\nprint(store)' explain='比对 value 是防误删的关键；真实 Redis 里还要把比对与删除放进 Lua 保证原子，避免比对后锁过期被别人抢走再被删。' />
 
-<Quiz no='088-1' q='大量请求查一个 DB 里根本不存在的 ID，每次都打到数据库，这是哪种失效及对策？' :options='["缓存穿透，用空值缓存与布隆过滤器挡住", "缓存击穿，用互斥重建", "缓存雪崩，用 TTL 抖动", "缓存一致性问题，用双删"]' answer="0" explain='查不存在的 key 且空结果不缓存即穿透；把空值用短 TTL 缓存下来，再用布隆过滤器判『一定不存在』，让请求不再回源。' />
+<Quiz no='088-2' q='大量请求查一个 DB 里根本不存在的 ID，每次都打到数据库，这是哪种失效及对策？' :options='["缓存穿透，用空值缓存与布隆过滤器挡住", "缓存击穿，用互斥重建", "缓存雪崩，用 TTL 抖动", "缓存一致性问题，用双删"]' answer="0" explain='查不存在的 key 且空结果不缓存即穿透；把空值用短 TTL 缓存下来，再用布隆过滤器判『一定不存在』，让请求不再回源。' />
 
-<Quiz no='088-2' q='释放 Redis 分布式锁最稳妥的做法是？' :options='["用 Lua 脚本比对 value 等于自己的随机值后再 DEL", "直接 DEL 键即可", "用 EXPIRE 把键设为 0", "只比对 value 不删除，等它自动过期"]' answer="0" explain='value 存 uuid 区分持有者；比对 + 删除必须原子（Lua 脚本），否则 A 的锁超时后 B 已加锁，A 的 DEL 会误删 B 的锁。' />
+<Quiz no='088-3' q='释放 Redis 分布式锁最稳妥的做法是？' :options='["用 Lua 脚本比对 value 等于自己的随机值后再 DEL", "直接 DEL 键即可", "用 EXPIRE 把键设为 0", "只比对 value 不删除，等它自动过期"]' answer="0" explain='value 存 uuid 区分持有者；比对 + 删除必须原子（Lua 脚本），否则 A 的锁超时后 B 已加锁，A 的 DEL 会误删 B 的锁。' />
 
-<Quiz no='088-3' q='关于加分布式锁的加锁命令，下面哪项准确？' :options='["SET key uuid NX PX 30000 一条命令原子完成互斥与过期", "SETNX 加 EXPIRE 两条命令即可", "只用 SET key value 不加过期", "用 GET 判断为空再 SET"]' answer="0" explain='NX 保证互斥、PX 毫秒 TTL 保证崩溃后自动释放，单条命令原子；拆成 SETNX + EXPIRE 会在中间崩溃留下永不过期的锁。' />
+<Quiz no='088-4' q='关于加分布式锁的加锁命令，下面哪项准确？' :options='["SET key uuid NX PX 30000 一条命令原子完成互斥与过期", "SETNX 加 EXPIRE 两条命令即可", "只用 SET key value 不加过期", "用 GET 判断为空再 SET"]' answer="0" explain='NX 保证互斥、PX 毫秒 TTL 保证崩溃后自动释放，单条命令原子；拆成 SETNX + EXPIRE 会在中间崩溃留下永不过期的锁。' />
 
-<Predict no='088-P' q='对 seed(42) 下 300 + random.randint(0,60) 生成 6 个 TTL，这 6 个值最可能呈现什么？' :options='["6 个各不相同的分散值", "全部等于 300", "全部等于 360"]' answer='0' output='ttls with jitter [340, 307, 301, 347, 317, 315]，distinct 6' explain='抖动把过期时刻从同一秒摊到 0..60 秒区间内，避免批量预热后同一秒集体失效造成雪崩；统一 TTL 反而会让失效更整齐。' />
+<Predict no='088-5' q='对 seed(42) 下 300 + random.randint(0,60) 生成 6 个 TTL，这 6 个值最可能呈现什么？' :options='["6 个各不相同的分散值", "全部等于 300", "全部等于 360"]' answer='0' output='ttls with jitter [340, 307, 301, 347, 317, 315]，distinct 6' explain='抖动把过期时刻从同一秒摊到 0..60 秒区间内，避免批量预热后同一秒集体失效造成雪崩；统一 TTL 反而会让失效更整齐。' />
 
-<FillBlank no='088-F' tpl='___ random' :answers='["import"]' hint='回想本讲关于 五种数据结构与选型 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 五种数据结构与 Cache-Aside 读写流程 的落点。' />
+<FillBlank no='088-6' tpl='___ random' :answers='["import"]' hint='回想本讲关于 五种数据结构与选型 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 五种数据结构与 Cache-Aside 读写流程 的落点。' />
 
 <KnowledgeCard :points='["五种结构：String 单值/锁、Hash 对象、List 队列、Set 去重、ZSet 排行榜", "SET key value EX seconds NX 单命令原子完成设值+过期+仅不存在时设；PX 用毫秒", "穿透→空值缓存+布隆过滤；击穿→互斥重建/逻辑过期；雪崩→TTL 抖动+高可用+降级", "Cache-Aside 写路径是先更新 DB 再删缓存，删失败靠重试或订阅 binlog 补偿", "锁 value 用 uuid，释放必须 Lua 里『比对再删』原子执行，防止误删他人锁", "缓存挂了要能降级直读 DB 并限流；key 带业务前缀与版本，TTL 基础值加抖动"]' :pitfalls='["用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间留下永久锁", "释放锁时直接 DEL，偶尔把别的请求的锁删掉", "给所有缓存统一设 300 秒 TTL，批量预热后同一秒集体失效打垮 DB", "用 SETNX 加过期时间做锁却不在 finally 里比对随机值再删，可能误删别人的锁"]' summary='缓存不是加一层就变快，而是要回答「失效时谁负责重建」「并发重建会不会打穿 DB」「缓存挂了服务是否还能活」' />
 

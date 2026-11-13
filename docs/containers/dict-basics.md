@@ -7,33 +7,33 @@ description: 理解字典为什么快、什么时候会退化
 
 # 第 021 讲 · dict：哈希表、视图与插入顺序
 
-按下标找东西很快，可现实里更常按“名字”找：给编号找画像。上一讲讲了定住的元组，这一讲转向按名字存取、处处都在用的 dict，弄清它为什么快、何时会悄悄失灵。
+按下标找东西很快，可现实里更常按“名字”找：给编号找画像。上一讲讲了定住的元组，这一讲转向按名字存取、处处都在用的 `dict`，弄清它为什么快、何时会悄悄失灵。
 
 一个推荐服务在二十万条记录里按编号查画像，起初每次从头扫，请求一多处理器就吃紧；规整成字典后立刻轻快，却又冒出怪事：存下的键列表自己变了、自定义对象一当键就报错。我们先看哈希与开放寻址怎么换来平均常数级查找、新版为何保序；再讲三种视图是动态反映而非快照，以及取值的返回约定；最后落到键的可哈希要求。需要你熟悉哈希、元组与遍历。学完你能把反复扫描改成按键直取，也说得清一次查找为何静默失效。
 
 
 ## 定义了 __eq__ 之后，对象突然做不了字典键
 
-一个推荐服务要在 20 万条用户记录里按 user_id 反复查画像，最初写成 for r in records: if r['id'] == uid: return r，每次查询都线性扫一遍，QPS 刚上来 CPU 就打满。
+一个推荐服务要在 20 万条用户记录里按 `user_id` 反复查画像，最初是拿 `for` 逐条比对 `r['id']` 与 `uid`、命中才 `return`，每次查询都线性扫一遍，QPS 刚上来 CPU 就打满。
 
-改成 &#123;r['id']: r for r in records&#125; 后单次查找降到平均 `O(1)`，问题看似解决，却接连冒出三类新故障：有人把 `d.keys()` 存起来当某一时刻的快照，之后字典增删了键，报表里的用户数自己变了；
+改成用字典推导 `{r['id']: r}` 对每条记录建索引后，单次查找降到平均 `O(1)`，问题看似解决，却接连冒出三类新故障：有人把 `d.keys()` 存起来当某一时刻的快照，之后字典增删了键，报表里的用户数自己变了；
 
-有人在 for k in d: 循环里给字典加键，直接抛 RuntimeError: dictionary changed size during iteration；还有人自定义的类写了 `__eq__` 却没写 `__hash__`，拿它作键时抛 TypeError: unhashable type。
+有人在 `for k in d:` 循环里给字典加键，直接抛 `RuntimeError`，提示迭代期间字典大小变了；还有人自定义的类写了 `__eq__` 却没写 `__hash__`，拿它作键时抛 `TypeError`，提示类型不可哈希。这些都不是语法问题，而是对哈希表、动态视图与可哈希契约的默认行为缺一张清晰的账。
 
-这些都不是语法问题，而是对哈希表、动态视图与可哈希契约的默认行为缺一张清晰的账。本讲把 dict 的紧凑布局、视图语义、版本差异与键的约束逐条钉死。
+本讲把 `dict` 的紧凑布局、视图语义、版本差异与键的约束逐条钉死。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='自定义类定义了 __eq__ 后无法作 dict 键：定义 __eq__ 而不定义 __hash__ 时，解释器把 __hash__ 设为 None，实例不可哈希' />
 
 
 ## 紧凑哈希表：平均 O(1) 从哪来
 
-CPython 3.6 起 dict 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 (hash, key, value) 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。
+CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。
 
-查找时对 key 求 hash，用 `i = hash` & mask 定位 indices 槽，冲突时按扰动序列反复 i = (i * 5 + perturb + 1) & mask 开放寻址探测，所以平均 `O(1)`、最坏 `O(n)`（大量冲突时退化为线性探测），负载因子超过约 2/3 就扩容并 rehash。
+查找时对 key 求 `hash`，用 `i = hash & mask` 定位 indices 槽，冲突时按扰动序列更新探测下标 `i`：`i = (i * 5 + perturb + 1) & mask`，反复找下一个空槽（开放寻址），所以平均 `O(1)`、最坏 `O(n)`（大量冲突时退化为线性探测），负载因子超过约 2/3 就扩容并 `rehash`。
 
-删除不立即搬移条目，只写墓碑标记，扩容时才清理，因此频繁增删后最好重建字典。紧凑布局把内存降到旧版约一半，还顺带让'按 entries 顺序遍历'天然等于插入顺序：3.6 只是 CPython 的实现细节，3.7 起才写进语言规范，同时 `popitem()` 从弹出任意项改为 LIFO 弹出最后插入项。
+删除不立即搬移条目，只写墓碑标记，扩容时才清理，因此频繁增删后最好重建字典。紧凑布局把内存降到旧版约一半，还顺带让「按 entries 顺序遍历」天然等于插入顺序：3.6 只是 CPython 的实现细节，3.7 起才写进语言规范，同时 `popitem()` 从弹出任意项改为 `LIFO` 弹出最后插入项。
 
-3.8 起 dict 与它的视图支持 `reversed()` 按键逆序；3.9 的 PEP 584 加入 | 与 |= 合并运算符。理解这两块数组，才能解释为什么遍历顺序稳定、为什么迭代中改大小会出事。
+3.8 起 `dict` 与它的视图支持 `reversed()` 按键逆序；3.9 的 PEP 584 加入 `|` 与 `|=` 合并运算符。理解这两块数组，才能解释为什么遍历顺序稳定、为什么迭代中改大小会出事。
 
 ```python
 d = {'a': 1, 'b': 2}
@@ -69,7 +69,7 @@ print('reversed keys', list(reversed(d)))
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 3.6 起 dict 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 (hash, key, value) 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。查找时对 key 求 hash，用 i =' />
+<Callout type="tip" title='核心心智模型' text='CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。查找时对 key 求 `hash`' />
 
 
 ## 为什么 3.7 起 dict 保证插入顺序
@@ -78,15 +78,15 @@ print('reversed keys', list(reversed(d)))
 
 这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-CPython 3.6 起 dict 用紧凑哈希表：一块连续的 entries 数组按插入顺序存 (hash, key, value) 三元组，另一块稀疏的 indices 数组只存 entry 下标，下标宽度随表规模取 1 / 2 / 4 字节。
+CPython 3.6 起 `dict` 用紧凑哈希表：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 下标，下标宽度随表规模取 1 / 2 / 4 字节。
 
-查找时对 key 求 hash，用 `i = hash` & mask 定位 indices 槽，冲突时按扰动序列 i = (i * 5 + perturb + 1) & mask 反复探测（开放寻址），因此平均 `O(1)`、最坏 `O(n)`。
+查找时对 key 求 `hash`，用 `i = hash & mask` 定位 indices 槽，冲突时按扰动序列反复探测（开放寻址），因此平均 `O(1)`、最坏 `O(n)`。
 
-紧凑布局把内存降到旧版约一半，同时让按 entries 顺序遍历天然等于插入顺序——3.6 只是 CPython 实现细节，3.7 起才写进语言规范，`popitem()` 也随之从任意项改为 LIFO 弹出最后插入项。
+紧凑布局把内存降到旧版约一半，同时让按 entries 顺序遍历天然等于插入顺序——3.6 只是 CPython 实现细节，3.7 起才写进语言规范，`popitem()` 也随之从任意项改为 `LIFO` 弹出最后插入项。
 
-键必须同时实现 `__hash__` 与 `__eq__`：若类定义了 `__eq__` 却没定义 `__hash__`，解释器把 `__hash__` 置为 None，实例不可哈希；哈希值在对象生命周期内必须不变，否则插入后查找会静默失败。删除不立即搬移条目，只写墓碑标记，扩容时才清理。
+键必须同时实现 `__hash__` 与 `__eq__`：若类定义了 `__eq__` 却没定义 `__hash__`，解释器把 `__hash__` 置为 `None`，实例不可哈希；哈希值在对象生命周期内必须不变，否则插入后查找会静默失败。删除不立即搬移条目，只写墓碑标记，扩容时才清理。
 
-str / bytes 的哈希带随机盐用来抵御哈希碰撞攻击，dict 顺序不受它影响，set 顺序会。
+`str` / `bytes` 的哈希带随机盐用来抵御哈希碰撞攻击，`dict` 顺序不受它影响，`set` 顺序会。
 
 
 ## dict 操作与时间复杂度
@@ -105,17 +105,17 @@ str / bytes 的哈希带随机盐用来抵御哈希碰撞攻击，dict 顺序不
 
 ## 视图、get / setdefault 与合并的返回约定
 
-`d.keys()`、`d.values()`、`d.items()` 返回的不是 list 快照，而是 dict_keys / dict_values / dict_items 动态视图：它们直接指向底层字典，创建之后再增删键，视图的 len、in 与迭代结果立即反映变化；
+`d.keys()`、`d.values()`、`d.items()` 返回的不是 `list` 快照，而是 `dict_keys` / `dict_values` / `dict_items` 动态视图：它们直接指向底层字典，创建之后再增删键，视图的 `len`、`in` 与迭代结果立即反映变化；
 
-视图支持 `len()` 与迭代，keys 与 items 视图还支持 & | - ^ 集合运算（items 的元素是 (key, value) 元组），values 视图因值可能不可哈希而不支持集合运算。
+视图支持 `len()` 与迭代，keys 与 items 视图还支持 `& | - ^` 集合运算（items 的元素是 `(key, value)` 元组），values 视图因值可能不可哈希而不支持集合运算。
 
-代价是在迭代视图或字典的过程中改变字典大小，会抛 RuntimeError: dictionary changed size during iteration，修复是遍历 `list(d)` 或 `list(d.items()`) 的副本。
+代价是在迭代视图或字典的过程中改变字典大小，会抛 `RuntimeError`，提示迭代期间字典大小变了，修复是遍历 `list(d)` 或 `list(d.items())` 的副本。
 
-取值上 d`[k]` 缺失抛 KeyError，`d.get(k, default=None)` 缺失返回 default 且不抛异常，`d.setdefault(k, default=None)` 缺失时插入 default 再返回、存在时返回现有值——注意 default 表达式每次调用都会被求值，即使键已存在，别把昂贵计算放进去。
+取值上 `d[k]` 缺失抛 `KeyError`，`d.get(k, default=None)` 缺失返回 `default` 且不抛异常，`d.setdefault(k, default)` 缺失时插入 `default` 再返回、存在时返回现有值——注意 `default` 表达式每次调用都会被求值，即使键已存在，别把昂贵计算放进去。
 
-合并有三种写法：d | other（3.9+）返回新 dict 且右侧键覆盖左侧，&#123;**d, **other&#125;（3.5+）同样是新字典，而 `d.update(other)` 是原地修改并返回 None；
+合并有三种写法：`d | other`（3.9+）返回新 `dict` 且右侧键覆盖左侧，`{**d, **other}`（3.5+）同样是新字典，而 `d.update(other)` 是原地修改并返回 `None`；
 
-`dict.fromkeys(iterable, value=None)` 是类方法，value 若为可变对象会被所有键共享，这点与列表乘法同源。
+`dict.fromkeys` 是类方法，value 若为可变对象会被所有键共享，这点与列表乘法同源。
 
 ```python
 d = {'a': 1, 'b': 2}
@@ -156,15 +156,15 @@ print('values has set ops', hasattr(d.values(), '__and__'))
 
 ## 可哈希契约：__eq__、__hash__ 与失效信号
 
-dict 的键必须可哈希：对象要同时提供 `__hash__` 与 `__eq__`，且哈希值在对象生命周期内保持不变。最典型的坑是自定义类只写了 `__eq__`：解释器会把 `__hash__` 自动置为 None，实例变成不可哈希，作键时抛 TypeError: unhashable type；
+`dict` 的键必须可哈希：对象要同时提供 `__hash__` 与 `__eq__`，且哈希值在对象生命周期内保持不变。最典型的坑是自定义类只写了 `__eq__`：解释器会把 `__hash__` 自动置为 `None`，实例变成不可哈希，作键时抛 `TypeError`，提示类型不可哈希；
 
-正确做法是同步实现基于不可变字段的 `__hash__`（如 return `hash((self.a, self.b)`)），或干脆用不可变字段组成的 tuple 作键。
+正确做法是同步实现基于不可变字段的 `__hash__`，比如返回 `hash((self.a, self.b))`，或干脆用不可变字段组成的 `tuple` 作键。
 
-哈希值还必须稳定：若把对象插入 dict 后改了参与哈希的字段，再查同一个键会静默查不到，因为新哈希定位到另一个槽，且不报任何错——这是最难排查的一类 bug。
+哈希值还必须稳定：若把对象插入 `dict` 后改了参与哈希的字段，再查同一个键会静默查不到，因为新哈希定位到另一个槽，且不报任何错——这是最难排查的一类 bug。
 
-str 与 bytes 的哈希带 PYTHONHASHSEED 随机盐（3.3 起默认开启，防哈希碰撞攻击），所以 hash('k') 跨进程不同，但 dict 的遍历顺序按插入顺序、不受盐影响；不要把 `hash()` 的结果持久化或当作稳定 ID。
+`str` 与 `bytes` 的哈希带 `PYTHONHASHSEED` 随机盐（3.3 起默认开启，防哈希碰撞攻击），所以 `hash('k')` 跨进程不同，但 `dict` 的遍历顺序按插入顺序、不受盐影响；不要把 `hash()` 的结果持久化或当作稳定 ID。
 
-`collections.abc.Mapping` 只抽象 `__getitem__` / `__iter__` / `__len__`，mixin 免费提供 get / keys / items / values / in，自定义映射实现这三个方法即可接入同一套协议。
+`collections.abc.Mapping` 只抽象 `__getitem__` / `__iter__` / `__len__`，mixin 免费提供 `get` / `keys` / `items` / `values` / `in`，自定义映射实现这三个方法即可接入同一套协议。
 
 ```python
 import sys
@@ -203,14 +203,16 @@ print('hash is int', isinstance(hash('k'), int))
 | dict.fromkeys(keys, []) 改一个值全变 | value 参数是同一个可变对象，被所有键共享 | 用字典推导 &#123;k: [] for k in keys&#125; |
 | 跨进程假设哈希值固定 | str / bytes 哈希带 PYTHONHASHSEED 随机盐 | 不要把 hash() 结果持久化，顺序依赖用 sorted |
 
-<FlowTimeline :steps='[{"title": "紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序", "desc": "CPython 3.6 起 dict 用紧凑哈希表，分两块：一块连续的 entrie…", "tone": "blue"}, {"title": "视图、get / setdefault 与合并的返回约定", "desc": "d.keys()、d.values()、d.items() 返回的不是 list 快…", "tone": "purple"}, {"title": "可哈希契约：__eq__、__hash__ 与失效信号", "desc": "dict 的键必须可哈希：对象要同时提供 __hash__ 与 __eq__，且哈希…", "tone": "orange"}, {"title": "工程落地", "desc": "用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序", "desc": "CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entr…", "tone": "blue"}, {"title": "视图、get / setdefault 与合并的返回约定", "desc": "`d.keys()`、`d.values()`、`d.items()` 返回的不是 …", "tone": "purple"}, {"title": "可哈希契约：__eq__、__hash__ 与失效信号", "desc": "`dict` 的键必须可哈希：对象要同时提供 `__hash__` 与 `__eq_…", "tone": "orange"}, {"title": "工程落地", "desc": "用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新
 
-一个推荐服务要在大量用户记录里按 user_id 反复查画像，最初写成逐条比对列表，每次查询 `O(n)`，QPS 一上来就打满 CPU。正确做法是启动时把列表规整成 &#123;r['id']: r&#125; 的 dict，把单次查找降到平均 `O(1)`；再保留一个 `keys()` 视图做在线监控，统计当前在线用户数不必每次复制一份列表。
+一个推荐服务要在大量用户记录里按 `user_id` 反复查画像，最初写成逐条比对列表，每次查询 `O(n)`，QPS 一上来就打满 CPU。正确做法是启动时把列表规整成 `{r['id']: r}` 的 `dict`，把单次查找降到平均 `O(1)`；
 
-更新阶段用 d | batch 生成新字典做无锁切换，避免在原字典上 update 时与正在迭代的视图冲突（那会抛 RuntimeError）；最后演示 setdefault 把缺省画像补进字典，以及用 sorted 得到稳定顺序输出。重点是一次规整多次查找，与迭代期不改大小这两条工程约束。
+再保留一个 `keys()` 视图做在线监控，统计当前在线用户数不必每次复制一份列表。更新阶段用 `d | batch` 生成新字典做无锁切换，避免在原字典上 `update` 时与正在迭代的视图冲突（那会抛 `RuntimeError`）；
+
+最后演示 `setdefault` 把缺省画像补进字典，以及用 `sorted` 得到稳定顺序输出。重点是一次规整多次查找，与迭代期不改大小这两条工程约束。
 
 ```python
 RECORDS = [
@@ -244,7 +246,7 @@ print('vip ids', [k for k in sorted(new_index) if new_index[k]['tier'] == 'vip']
 python -c "from collections import Counter; print(Counter('a b a'.split()))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **哈希与开放寻址** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 哈希与开放寻址 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 键失效信号与哈希自测
@@ -269,9 +271,9 @@ python -c "from collections import Counter; print(Counter('a b a'.split()))"
 
 <Quiz no='021-3' q='d | other 与 d.update(other) 的区别是？' :options='["两者都原地修改并返回 None", "d | other 返回新 dict（3.9+），update 原地修改且返回 None", "d | other 是 3.7 引入的", "update 返回合并后的新 dict"]' answer="1" explain='PEP 584 在 3.9 加入 | 与 |=：| 构造新字典、右侧键覆盖左侧；update 是原地方法、返回 None，且任意版本可用。' />
 
-<Predict no='021-P' q='d = {&#39;a&#39;: 1}; v = d.keys(); d[&#39;b&#39;] = 2; print(list(v), len(v)) 输出什么？' :options='["[&#39;a&#39;] 1", "[&#39;a&#39;, &#39;b&#39;] 2", "抛 RuntimeError"]' answer='1' output='[&#39;a&#39;, &#39;b&#39;] 2' explain='keys() 返回的是动态视图而不是快照，插入 b 后视图立即包含新键、len 变为 2。只有在迭代视图的过程中改变字典大小才会抛 RuntimeError，创建视图后、迭代开始前插入是安全的。' />
+<Predict no='021-4' q='d = {&#39;a&#39;: 1}; v = d.keys(); d[&#39;b&#39;] = 2; print(list(v), len(v)) 输出什么？' :options='["[&#39;a&#39;] 1", "[&#39;a&#39;, &#39;b&#39;] 2", "抛 RuntimeError"]' answer='1' output='[&#39;a&#39;, &#39;b&#39;] 2' explain='keys() 返回的是动态视图而不是快照，插入 b 后视图立即包含新键、len 变为 2。只有在迭代视图的过程中改变字典大小才会抛 RuntimeError，创建视图后、迭代开始前插入是安全的。' />
 
-<FillBlank no='021-F' tpl='print(&#39;view live&#39;, list(keys), len(values), (&#39;d&#39;, 4) ___ items)' :answers='["in"]' hint='回想本讲关于 哈希与开放寻址 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序 的落点。' />
+<FillBlank no='021-5' tpl='print(&#39;view live&#39;, list(keys), len(values), (&#39;d&#39;, 4) ___ items)' :answers='["in"]' hint='回想本讲关于 哈希与开放寻址 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序 的落点。' />
 
 <KnowledgeCard :points='["dict 平均 O(1) 来自哈希加开放寻址探测；最坏 O(n)；负载因子约 2/3 时扩容", "3.6 紧凑布局（entries 按插入顺序 + 稀疏 indices），3.7 起插入顺序成为语言规范，popitem() 改为 LIFO", "3.8 起 dict 与视图支持 reversed()；3.9 PEP 584 加入 | 与 |= 合并", "keys / values / items 是动态视图不是快照；迭代中改变大小抛 RuntimeError", "键必须可哈希：定义 __eq__ 不写 __hash__ 会把 __hash__ 置 None；哈希值在生命周期内必须不变", "get 缺失返回 default 不抛异常；setdefault 会插入缺失键；update 原地返回 None，| 返回新字典"]' :pitfalls='["自定义类定义了 __eq__ 后无法作 dict 键", "把 d.keys() 当快照存起来，之后结果莫名变多", "遍历 dict 时插入新键抛 RuntimeError", "用可变对象做键、或假设哈希值永不变化，会让查找静默失败；自定义 __eq__ 必须同步 __hash__"]' summary='dict 的平均 O(1) 来自哈希加开放寻址，Python 3.7 起还保证插入顺序；视图对象动态反映字典变化，不是快照' />
 

@@ -7,16 +7,14 @@ description: 亲手验证解释执行的完整链路
 
 # 第 003 讲 · 第一行 Python：从源码到字节码再到执行
 
-环境稳了，可以敲下第一行打印语句。可在添语法之前，先弄明白：按下回车后，一行文本经历了什么才变成结果。它不增加新语法，却让往后许多『为什么』有了落点。
-
-你大概注意过，改了 .py 偶尔没生效，或目录里多出 __pycache__，都是同一条链路的痕迹。我们先把脚本与交互式解释器各跑一遍，再用 compile 把源码编成 code object、借 dis 读一眼字节码，最后说清 __pycache__ 与 pyc 只是缓存，而非可执行文件。能运行 .py、见过 import 就够；学完你能讲出解释执行的完整路径，碰到『改了没变』也知道从哪层查。
+环境稳了，可以敲下第一行打印语句。可在添语法之前，先弄明白：按下回车后，一行文本经历了什么才变成结果。它不增加新语法，却让往后许多『为什么』有了落点。你大概注意过，改了 .py 偶尔没生效，或目录里多出 `__pycache__`，都是同一条链路的痕迹。我们先把脚本与交互式解释器各跑一遍，再用 compile 把源码编成 code object、借 dis 读一眼字节码，最后说清 `__pycache__` 与 pyc 只是缓存，而非可执行文件。能运行 .py、见过 import 就够；学完你能讲出解释执行的完整路径，碰到『改了没变』也知道从哪层查。
 
 
 ## 改了源码却跑出旧值，if False 里的语法错误也能拦住启动
 
 你改了一个工具模块里的常量，保存后重新跑主程序，输出却还是旧值；反复确认文件确实改了、甚至重启了编辑器，结果依旧。更诡异的是，把文件名从 `util.py` 改成 `util2.py` 再导入，新值立刻生效。
 
-另一个常见现场：给脚本加了一行语法错误，明明写在 if False: 分支里，程序却连启动都启动不了，报错直接指向那行永远不会执行的代码。这两个现象用「Python 逐行解释源码」的直觉完全解释不通。朴素解法是反复清缓存、删文件、重启，却说不清到底哪一步起了作用。
+另一个常见现场：给脚本加了一行语法错误，明明写在 `if False:` 分支里，程序却连启动都启动不了，报错直接指向那行永远不会执行的代码。这两个现象用「Python 逐行解释源码」的直觉完全解释不通。朴素解法是反复清缓存、删文件、重启，却说不清到底哪一步起了作用。
 
 真相是 CPython 根本不逐行翻译源码：它先把整个模块编译成字节码 code object，再由栈式虚拟机执行；导入时还会把字节码写进 `__pycache__` 下的 pyc 缓存，靠源文件 mtime 与大小决定是否重编。语法检查发生在编译整个模块阶段，与那行是否会被执行无关。
 
@@ -25,17 +23,17 @@ description: 亲手验证解释执行的完整链路
 
 ## 不是逐行翻译：源码、code object 与栈式虚拟机
 
-`compile(source, filename, mode, flags=0, dont_inherit=False)` 把源码字符串编译成 code object，是「源码到字节码」这一步的公开入口。
+`compile()` 把源码字符串编译成 code object，是「源码到字节码」这一步的公开入口；它接收 source、filename、mode 三个必填参数，另有 flags 与 dont_inherit 两个可选开关。
 
 mode 三选一且行为完全不同：exec 编译语句序列，末尾补一条 return None，因此 `exec(code)` 返回 None、co_consts 里多出一个 None；eval 只接受单个表达式，编译出的 code object 不含那条收尾 None，`eval(code)` 返回表达式的值；
 
-single 面向交互式解释器，表达式语句会额外触发 PRINT_EXPR 把结果打印出来，REPL 里敲 1+1 立刻看到 2 就是它。filename 只用于回溯与报错，不是真实文件路径，通常写成用尖括号包住的占位名。
+single 面向交互式解释器，表达式语句会额外触发 `PRINT_EXPR` 把结果打印出来，`REPL` 里敲 1+1 立刻看到 2 就是它。filename 只用于回溯与报错，不是真实文件路径，通常写成用尖括号包住的占位名。
 
-生成的 code object 有一批只读属性：co_consts 是字面量元组（还会包含常量折叠后的结果，如 6 * 7 变成 42），co_names 是全局名字元组，co_varnames 是局部变量名，co_code 是原始字节码字节串，co_filename 与 co_firstlineno 供 traceback 定位，co_flags 标出是否含生成器或协程。
+生成的 code object 有一批只读属性：`co_consts` 是字面量元组（还会包含常量折叠后的结果，如 `6 * 7` 变成 42），`co_names` 是全局名字元组，`co_varnames` 是局部变量名，`co_code` 是原始字节码字节串，`co_filename` 与 `co_firstlineno` 供 traceback 定位，`co_flags` 标出是否含生成器或协程。
 
-用 `dis.dis(code)` 或 `dis.get_instructions(code)` 能把 co_code 反汇编成人能读的指令。
+用 `dis.dis(code)` 或 `dis.get_instructions(code)` 能把 `co_code` 反汇编成人能读的指令。
 
-关键边界：编译以整个字符串或模块为单位，语法错误在生成任何字节码之前就抛出，哪怕那行位于 if False 分支。
+关键边界：编译以整个字符串或模块为单位，语法错误在生成任何字节码之前就抛出，哪怕那行位于 `if False` 分支。
 
 <ConceptDiagram type='hub4' title='第 003 讲 · compile()：三种 mode 与 code object 的字段' labels='compile()：三种 mode 与 co|常量折叠与名字绑定：co_consts 里藏|__pycache__ 与 pyc：缓存判据' caption='亲手验证解释执行的完整链路' />
 
@@ -46,9 +44,9 @@ single 面向交互式解释器，表达式语句会额外触发 PRINT_EXPR 把�
 
 编译器在 AST 到字节码阶段会做常量折叠：只由字面量构成的表达式会直接算出结果写进 co_consts，运行时不再做运算。
 
-compile('6 * 7', fname, 'eval').co_consts 得到 (42,)，compile('1 + 2 * 3', fname, 'eval').co_consts 得到 (7,)，源码里的乘法根本不出现在字节码里。
+`compile('6 * 7', fname, 'eval').co_consts` 得到 (42,)，`compile('1 + 2 * 3', fname, 'eval').co_consts` 得到 (7,)，源码里的乘法根本不出现在字节码里。
 
-一旦表达式含名字，就无法折叠：compile('a + b', fname, 'eval').co_consts 是空元组 ()，名字进 co_names 变成 ('a', 'b')，运行时靠 BINARY_OP 动态求值。
+一旦表达式含名字，就无法折叠：`compile('a + b', fname, 'eval').co_consts` 是空元组 ()，名字进 co_names 变成 ('a', 'b')，运行时靠 `BINARY_OP` 动态求值。
 
 这个差别是判断「这段代码是编译期确定还是运行期计算」的直接证据，也解释了为什么改了某个常量值却看起来没生效——若那处参与的是折叠后的字面量，改的其实是被缓存的旧 pyc。
 
@@ -85,18 +83,40 @@ exec(code_obj)
 
 ### code object 常用属性速查
 
+`compile()` 交回一棵 code object 树：模块、函数、类体各一份，内层定义折进外层 co_consts，都是 CodeType 实例。函数那份挂在 `func.__code__`，回溯行号靠 co_linetable 换算，3.10 起它取代了 co_lnotab；
+
+判断生成器看 co_flags 与 `inspect.CO_GENERATOR`，闭包变量在 co_freevars，3.11 补了 co_qualname。
+
+下表按标识、常量、名字、变量、行号归类。
+
+**code object 常用属性**
+
+| 属性 | 内容 | 可核对的例子 |
+| --- | --- | --- |
+| co_consts | 字面量与折叠结果元组 | compile('6 * 7', f, 'eval') 得到 (42,) |
+| co_names | 全局名字元组 | 赋值 x 且调用 print 时为 ('x', 'print') |
+| co_varnames | 局部变量名元组 | def f(a): return a 时为 ('a',) |
+| co_code | 原始字节码字节串 | len > 0 且含 BINARY_OP 指令 |
+| co_filename / co_firstlineno | 回溯定位 | compile 传入的占位名与起始行号 |
+
 
 ## 常量折叠：co_consts 里藏着的 42
 
-包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目录，文件名形如 `module.cpython`-313.pyc，其中 313 是解释器版本标签；
+包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目录，文件名形如 `module.cpython-313.pyc`，其中 313 是解释器版本标签；
 
-可以用 `importlib.util.cache_from_source`('pkg/mod.py') 直接算出这个路径，返回值里一定含 `__pycache__` 且以 .pyc 结尾。
+可以用 `importlib.util.cache_from_source('pkg/mod.py')` 直接算出这个路径，返回值里一定含 `__pycache__` 且以 .pyc 结尾。
 
 pyc 文件头部记录源文件 mtime 与大小（时间戳模式）或源文件内容的哈希（校验模式，PEP 552，3.7 起），导入时二者比对：一致就跳过编译直接反序列化 code object，不一致才重新编译并覆写。
 
 由此得到两个反直觉结论：一是「改了 .py 一定重新执行」不成立——import 先看 `sys.modules` 缓存，命中就直接复用进程内的模块对象，连 pyc 都不读；二是同一秒内把文件改回同样大小，时间戳模式可能判为未变而继续用旧 pyc。
 
-pyc 与解释器版本绑定，3.12 的 pyc 不能被 3.13 用，也不是可独立分发的可执行文件，它不含源码、不含依赖。部署只需源码与依赖，pyc 可丢弃；但在只读文件系统或冷启动敏感的容器里，用 python -m compileall -q 预生成 pyc 能省去每次编译的开销。
+pyc 与解释器版本绑定，3.12 的 pyc 不能被 3.13 用，也不是可独立分发的可执行文件，它不含源码、不含依赖。部署只需源码与依赖，pyc 可丢弃；
+
+但在只读文件系统或冷启动敏感的容器里，用 `python -m` 预生成 pyc 能省去每次编译的开销。
+
+```bash
+python -m compileall -q
+```
 
 想彻底绕开缓存做实验，用 `PYTHONDONTWRITEBYTECODE=1` 或把 `sys.dont_write_bytecode` 设为 True。
 
@@ -118,9 +138,9 @@ print('eval_names', eval_code.co_names)
 
 ## 语法检查为什么发生在整个模块编译阶段
 
-CPython 前端把源码变成一棵 AST，编译器遍历 AST 生成符号表与字节码，最终封进 PyCodeObject：它保存 co_code（指令字节串）、co_consts（常量元组，其中嵌套函数会存另一个 code object）、co_names、co_varnames，以及运行所需的栈大小与标志位。
+CPython 前端把源码变成一棵 AST，编译器遍历 AST 生成符号表与字节码，最终封进 PyCodeObject：它保存 `co_code`（指令字节串）、`co_consts`（常量元组，其中嵌套函数会存另一个 code object）、`co_names`、`co_varnames`，以及运行所需的栈大小与标志位。
 
-执行时 ceval 用一个基于栈的循环逐条取出指令，LOAD_CONST 从 co_consts 取常量压栈，LOAD_NAME 或 LOAD_FAST 从名字空间取对象，BINARY_OP 弹栈做运算再压回，RETURN_VALUE 把栈顶作为结果返回。
+执行时 ceval 用一个基于栈的循环逐条取出指令，`LOAD_CONST` 从 co_consts 取常量压栈，`LOAD_NAME` 或 `LOAD_FAST` 从名字空间取对象，`BINARY_OP` 弹栈做运算再压回，`RETURN_VALUE` 把栈顶作为结果返回。
 
 这套结构解释了三件事：语法错误在 AST 生成与编译阶段就报，因为整个模块要先被完整解析；常量折叠之所以可能，是因为编译器在写 co_consts 前就能对纯字面量子树求值；而 import 的加速靠的是把序列化后的 PyCodeObject 存进 pyc，省掉重新走词法、语法、编译三遍。
 
@@ -129,8 +149,50 @@ pyc 头部的 magic number 与 CPython 字节码版本绑定，一旦指令集�
 
 ## __pycache__ 与 pyc：缓存判据与失效信号
 
+判据写在 pyc 头部：开头 4 字节是 `importlib.util.MAGIC_NUMBER`，换版本即作废；
+
+随后按 PEP 552 存源文件 mtime 与大小或内容哈希，import 时据此决定复用或重编。
+
+想验证失效，用 `py_compile.compile` 的 invalidation_mode 选 `CHECKED_HASH` 并改源文件；
+
+`python -X` 可把缓存挪走单独观察。
+
+```bash
+python -X pycache_prefix
+```
+
+注意 -B 只禁写不禁读，旧 pyc 照样加载。下表量化命中与失效，时间线摊开检查顺序。
+
+**pyc 缓存规则与失效信号**
+
+| 项 | 规则 | 失效或排查信号 |
+| --- | --- | --- |
+| 文件名 | module.cpython-313.pyc | 版本标签随解释器变，3.12 的 pyc 无法被 3.13 复用 |
+| 判据 | mtime 加大小，或内容哈希（PEP 552，3.7 起） | 同秒同大小改动可能不触发重编 |
+| 进程内缓存 | sys.modules 优先 | 改了磁盘文件但当前进程仍用旧模块对象 |
+| 关闭写缓存 | PYTHONDONTWRITEBYTECODE=1 | 调试导入时避免误判 |
+| 预编译 | python -m compileall -q | 只读文件系统上缩短冷启动 |
+
+<FlowTimeline :steps='[{"title": "compile()：三种 mode 与 code object 的字段", "desc": "`compile()` 把源码字符串编译成 code object，是「源码到字节码…", "tone": "blue"}, {"title": "常量折叠与名字绑定：co_consts 里藏着什么", "desc": "编译器在 AST 到字节码阶段会做常量折叠：只由字面量构成的表达式会直接算出结果写进…", "tone": "purple"}, {"title": "__pycache__ 与 pyc：缓存判据、失效信号与部署取舍", "desc": "包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目…", "tone": "orange"}, {"title": "工程落地", "desc": "部署前自检：给字节码缓存留下可核对的证据", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+
 
 ### 部署时 pyc 该留还是该删
+
+取决于镜像怎么打包、文件系统可不可写、冷启动值不值钱。清掉 `__pycache__` 能减小体积，代价是每次启动现场编译；
+
+只读文件系统若不预生成就省不掉，用 `python -m` 在构建阶段铺好更稳。
+
+```bash
+python -m compileall -q -f
+```
+
+担心时间戳在分层镜像里误判，配 --invalidation-mode checked-hash 改用内容哈希；
+
+也可用 `PYTHONPYCACHEPREFIX` 把 pyc 与源码分目录，交付只带源码。
+
+下面几条自检把留、删、预编译、分离逐项打勾。
+
+<CheckList id='P003b' title='上线前自检' :items='["能复现并解释「改了 .py 文件，重新导入后新代码没生效」", "能复现并解释「把语法错误写进 if False 分支里，以为不会执行就没事」", "能复现并解释「把 pyc 当成可独立分发的编译产物」", "能用一条命令验证 脚本与交互式解释器", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 部署前自检：给字节码缓存留下可核对的证据
@@ -175,6 +237,26 @@ with tempfile.TemporaryDirectory() as d:
 
 ## 改了 .py 没生效：错因速查
 
+最容易忽略的不是磁盘 pyc，而是进程内模块：import 先查 `sys.modules`，命中就复用，常驻进程不重启改多少次都看不见。
+
+排查从内到外：先确认 'mod' in `sys.modules`，必要时 `importlib.reload(mod)`；
+
+再看 `os.stat(path).st_mtime_ns` 与 st_size 是否同秒同大小；
+
+再用 cache_from_source 定位 pyc 比头部；最后 `python -B` 启动排除干扰。下表按现象、根因、动作列出，配排查顺序。
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 改了 .py 文件，重新导入后新代码没生效 | import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变 | 重启进程，或用 importlib.reload(mod)；调试时用 PYTHONDONTWRITEBYTECODE=1 并手动删 __pycache__ |
+| 把语法错误写进 if False 分支里，以为不会执行就没事 | 编译以整个模块为单位，语法分析在生成字节码之前完成，任何位置的语法错误都会让 compile 直接抛 SyntaxError | 用 compile(src, fname, 'exec') 单独编译实验片段，或把可疑代码拆到独立模块 |
+| 把 pyc 当成可独立分发的编译产物 | pyc 与解释器 magic number、源码 mtime 或哈希绑定，且不含源码与第三方依赖，拷到别的机器或版本可能直接失效 | 交付源码加锁定依赖；需要缩短冷启动时用 python -m compileall 现场生成 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='改了 .py 文件，重新导入后新代码没生效：import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：改了 .py 文件，重新导入后新代码没生效", "body": "import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变", "tip": "重启进程，或用 importlib.reload(mod)；调试时用 PYTHONDONTWRITEBYTECODE=1 并手动删 __pycache__"}, {"title": "第 2 步：把语法错误写进 if False 分支里，以", "body": "编译以整个模块为单位，语法分析在生成字节码之前完成，任何位置的语法错误都会让 compile 直接抛 SyntaxError", "tip": "用 compile(src, fname, &#39;exec&#39;) 单独编译实验片段，或把可疑代码拆到独立模块"}, {"title": "第 3 步：把 pyc 当成可独立分发的编译产物", "body": "pyc 与解释器 magic number、源码 mtime 或哈希绑定，且不含源码与第三方依赖，拷到别的机器或版本可能直接失效", "tip": "交付源码加锁定依赖；需要缩短冷启动时用 python -m compileall 现场生成"}]' />
+
 
 ## 从 compile 到 pyc：练习、自测与速记
 
@@ -188,9 +270,9 @@ with tempfile.TemporaryDirectory() as d:
 
 <Quiz no='003-3' q='导入时 pyc 缓存靠什么判断是否重编？' :options='["源文件 mtime 与大小，或内容哈希（PEP 552，3.7 起）", "仅看文件名是否变化", "每次导入都重新编译", "看 PYTHONPATH 是否变化"]' answer="0" explain='pyc 头部记录 mtime 加大小或源文件内容哈希，与当前源文件比对决定复用还是重编；进程内还要先查 sys.modules，命中则连 pyc 都不读。' />
 
-<Predict no='003-P' q='exec(compile(&#39;x = 6 * 7&#39; + chr(10) + &#39;print(x)&#39;, &#39;&lt;demo&gt;&#39;, &#39;exec&#39;)) 会输出什么？' :options='["42", "6 * 7", "先打印 6 再打印 7"]' answer='0' output='42' explain='6 * 7 被常量折叠成 42 存进 co_consts，运行时 x 被赋值为 42，print(x) 打印 42；源码里的乘法指令根本不出现在字节码里。' />
+<Predict no='003-4' q='exec(compile(&#39;x = 6 * 7&#39; + chr(10) + &#39;print(x)&#39;, &#39;&lt;demo&gt;&#39;, &#39;exec&#39;)) 会输出什么？' :options='["42", "6 * 7", "先打印 6 再打印 7"]' answer='0' output='42' explain='6 * 7 被常量折叠成 42 存进 co_consts，运行时 x 被赋值为 42，print(x) 打印 42；源码里的乘法指令根本不出现在字节码里。' />
 
-<FillBlank no='003-F' tpl='___ = &#39;x = 6 * 7&#39; + chr(10) + &#39;print(x)&#39;' :answers='["src"]' hint='回想本讲关于 脚本与交互式解释器 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 compile()：三种 mode 与 code object 的字段 的落点。' />
+<FillBlank no='003-5' tpl='___ = &#39;x = 6 * 7&#39; + chr(10) + &#39;print(x)&#39;' :answers='["src"]' hint='回想本讲关于 脚本与交互式解释器 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 compile()：三种 mode 与 code object 的字段 的落点。' />
 
 <KnowledgeCard :points='["执行链路是 源码 → AST → 字节码 code object → ceval 栈式虚拟机；语法检查发生在编译整个模块阶段", "compile 三 mode：exec 补 None 且返回 None、eval 返回表达式值、single 打印表达式结果（REPL 用）", "co_consts 含常量折叠结果（6 * 7 变 42）、co_names 放全局名、co_code 是字节码字节串", "pyc 位于 __pycache__/module.cpython-313.pyc，用 mtime 加大小或内容哈希判重编（PEP 552）", "import 先查 sys.modules，进程内模块是单例；改磁盘文件需重启进程或 importlib.reload", "pyc 不是可分发产物：绑定解释器 magic number、不含源码与依赖"]' :pitfalls='["改了 .py 文件，重新导入后新代码没生效", "把语法错误写进 if False 分支里，以为不会执行就没事", "把 pyc 当成可独立分发的编译产物", "以为改了 .py 一定会重新执行，却忽略了导入缓存与 pyc 时间戳，是调试时最常见的错觉"]' summary='Python 不是逐行边读边翻译：源码先编译成字节码，再由虚拟机执行；pyc 只是缓存，不是编译型语言的可执行文件' />
 

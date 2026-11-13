@@ -14,22 +14,28 @@ description: 把配置做成可验证、可覆盖、可审计的输入
 
 ## 密码硬编码在 settings.py，轮换只能全量改代码重新发版
 
-一个服务把数据库密码硬编码在 `settings.py` 里，轮换时只能全量改代码重新发版；另一个服务把 DEBUG 写成字符串 'False'，解析时用 bool('False') 得到 True，结果生产环境开了调试模式，把堆栈打给了用户。
+一个服务把数据库密码硬编码在 `settings.py` 里，轮换时只能全量改代码重新发版；另一个服务把 `DEBUG` 写成字符串 `'False'`，解析时用 `bool('False')` 得到 `True`，结果生产环境开了调试模式，把堆栈打给了用户。
 
-还有更隐蔽的：某配置项写错，平时没人调用那个冷门接口，直到半夜第一次读到空字符串才崩，排查时完全对不上发布记录。配置错误的正确暴露时机是启动瞬间，而不是运行期某个分支。本讲把十二要素的环境变量、类型化校验、分层覆盖优先级、密钥轮换与配置漂移讲到能做成可验证、可审计的输入。
+还有更隐蔽的：某配置项写错，平时没人调用那个冷门接口，直到半夜第一次读到空字符串才崩，排查时完全对不上发布记录。这几种故障指向同一件事——配置错误的正确暴露时机是启动瞬间，而不是运行期某个分支被踩到。本讲把十二要素的环境变量、类型化校验、分层覆盖优先级、密钥轮换与配置漂移讲到能做成可验证、可审计的输入。
 
 
 ## 十二要素、环境变量与 bool('False') 的类型陷阱
 
-十二要素应用要求配置与代码严格分离、通过环境变量注入：`os.environ` 是 `os._Environ`（MutableMapping），`os.getenv(key, default)` 取不到返回默认值，`os.environb` 提供字节版本。
+十二要素应用要求配置与代码严格分离、通过环境变量注入。
 
-关键陷阱是所有环境变量的值都是 str：`os.environ` 底层是 C 的 char** 键值串，没有类型，port 必须 `int(...)`、开关必须自己解析，而 bool('False') 为 True（任何非空字符串都为真），必须用 parse_bool 把 '1'/'true'/'yes'/'on' 归一成布尔。
+`os.environ` 的类型是 `os._Environ`（一个 `MutableMapping`），`os.getenv(key, default)` 在取不到时返回默认值，`os.environb` 提供字节版本。
 
-.env 文件由 python-dotenv 的 `load_dotenv()` 读取，格式 `KEY=VALUE`，.env 必须进 .gitignore，提交的应是去掉值的 .`env.example` 占位文件。
+关键陷阱是：所有环境变量的值都是 `str`——`os.environ` 底层是 C 的 `char**` 键值串，不带任何类型信息，所以端口必须 `int(...)` 转换，开关必须自己解析；
 
-标准库里 configparser 读 INI、tomllib（3.11+）读 TOML 且会解析成 bool/int/float 等原生类型、json 读配置；用 tomllib 解析 'debug = false' 得到 bool 而非字符串，正好和环境变量形成对照。
+`bool('False')` 会得到 `True`，因为任意非空字符串在 Python 里都为真，得写个 `parse_bool` 把 `'1'` / `'true'` / `'yes'` / `'on'` 归一成布尔。
 
-PEP 508 环境标记、argparse CLI 覆盖是另外两类入口。
+`.env` 文件由 `python-dotenv` 的 `load_dotenv()` 读取，格式是 `KEY=VALUE`；`.env` 必须进 `.gitignore`，提交进仓库的应是去掉真值的 `.env.example` 占位文件。
+
+标准库里，`configparser` 读 INI、`tomllib`（Python 3.11 起）读 `TOML`、`json` 读配置；
+
+其中 `tomllib` 会按 `TOML` 规范把 `false` / `8080` 解析成原生 `bool` / `int`，`tomllib.loads('debug=false')` 得到 `{'debug': False}` 而非字符串，正好和环境变量的全字符串形成对照。
+
+PEP 508 的环境标记与 `argparse` 的命令行覆盖，是另外两类配置入口。
 
 **环境变量与类型转换**
 
@@ -107,13 +113,17 @@ print('log-safe', str(token), 'real', token.reveal())
 
 <OutputBox title='对照写法：先自己猜，再点开' output='valid port 8080\nstartup fails fast PORT must be an integer\nlog-safe *** real sk-live-abc123' guess="true" />
 
-`os.environ` 是 `os._Environ`，包装 C 运行时的 environ（char** 的 `KEY=VALUE` 串），因此所有值天然是 str，没有任何类型元数据；
+`os.environ` 是 `os._Environ`，包装 C 运行时的 environ（`char**` 的 `KEY=VALUE` 串），因此所有值天然是 `str`，没有任何类型元数据；
 
-bool('False') 之所以为 True，是因为 Python 的真值规则把任意非空字符串判为真，这正是开关配置要写 parse_bool 的原因。tomllib（3.11+）走另一条路：它按 TOML 规范把 false/8080 解析成 bool/int，与环境变量字符串形成对照。
+`bool('False')` 之所以为 `True`，是因为 Python 的真值规则把任意非空字符串判为真，这正是开关配置要写 `parse_bool` 的原因。
 
-pydantic-settings 的 BaseSettings 用元类收集字段别名（环境变量名，默认大小写不敏感），按 init > env > dotenv > secrets > default 求值，再交给 pydantic 做类型校验；
+`tomllib`（3.11 起）走另一条路：它按 `TOML` 规范把 `false` / `8080` 解析成 `bool` / `int`，与环境变量字符串形成对照。
 
-缺必需字段或类型不符在构造对象那一刻抛 ValidationError，这就是「启动期失败」的实现机制。SecretStr 通过重写 `__str__`/`__repr__` 返回掩码，避免敏感值被日志格式化函数取到；热更新通常用后台监听加原子替换配置对象，而非就地改字段。
+`pydantic-settings` 的 `BaseSettings` 用元类收集字段别名（环境变量名，默认大小写不敏感），按 init > env > dotenv > secrets > default 求值，再交给 pydantic 做类型校验；
+
+缺必需字段或类型不符在构造对象那一刻抛 `ValidationError`，这就是「启动期失败」的实现机制。
+
+`SecretStr` 通过重写 `__str__` / `__repr__` 返回掩码，避免敏感值被日志格式化函数取到；热更新通常用后台监听加原子替换配置对象，而非就地改字段。
 
 <ConceptDiagram type='compare2' title='第 079 讲 · 十二要素、环境变量与类型陷阱' labels='十二要素、环境变量与类型陷阱|分层覆盖与启动期失败|密钥、轮换与配置漂移' caption='把配置做成可验证、可覆盖、可审计的输入' />
 
@@ -122,28 +132,34 @@ pydantic-settings 的 BaseSettings 用元类收集字段别名（环境变量名
 
 ## 分层覆盖、启动期失败与密钥轮换治理
 
-一份配置通常来自多层，优先级必须显式写清：默认值 < .env 文件 < 进程环境变量 < 显式覆盖 / CLI 参数。
+一份配置通常来自多层，优先级必须显式写清：默认值 < `.env` 文件 < 进程环境变量 < 显式覆盖或 CLI 参数。
 
-pydantic-settings 的 BaseSettings 进一步把顺序定为 init 参数 > 环境变量 > dotenv > secrets > 字段默认值，字段默认 `case_sensitive=False`（大写环境变量名），可用 env_prefix、env_nested_delimiter='__' 读嵌套结构、SettingsConfigDict(env_file='.env') 指定文件。
+`pydantic-settings` 的 `BaseSettings` 把这个顺序定得更细：构造函数的 `init` 参数 > 环境变量 > dotenv 文件 > secrets 目录 > 字段默认值；
 
-它的核心价值是校验：字段带类型与约束，缺必需字段或类型不符会在构造对象时抛 ValidationError，从而「启动期失败」而不是等冷门接口首读才炸。工程上把配置收敛成一个类型化、启动后不可变的对象（frozen dataclass 或 BaseSettings 实例），全模块只从它读；
+字段默认 `case_sensitive=False`，因此环境变量名按大写匹配，可用 `env_prefix` 加前缀、用 `env_nested_delimiter='__'` 读嵌套结构、用 `SettingsConfigDict(env_file='.env')` 指定文件。
 
-启动时全量校验并打印非敏感字段摘要，任何缺失或越界都立刻退出。
+它真正的价值是校验：字段带类型与约束，缺必需字段或类型不符会在构造对象时抛 `ValidationError`，于是「启动期失败」而不是等冷门接口首次读取才炸。
 
-密钥绝不硬编码、绝不提交仓库：生产交给托管服务（Vault、AWS Secrets Manager、K8s Secret）并支持轮换与热更新，轮换不该触发全量发版。
+工程上把配置收敛成一个类型化、启动后不可变的对象（`dataclass(frozen=True)` 或 `BaseSettings` 实例），全模块只从它读；
 
-日志与异常里要防泄漏：用 SecretStr 之类包装，让 `__str__`/`__repr__` 只返回掩码（可验证：`str(token)` 是 '***' 而 `reveal()` 才给真值），默认不把完整请求体/响应写进日志。
+启动时全量校验并打印一份非敏感字段摘要，任何缺失或越界都立刻退出进程。
 
-配置漂移指同一份配置在不同环境或不同时间悄悄不一致：对策是类型化配置对象加版本号/校验和、单一事实源、按环境分层覆盖（dev/staging/prod 前缀或独立文件）、每个键标注 owner 与默认值，并对变更留审计记录。启动时快照一份非敏感配置摘要进日志，线上就能回答「这次行为变化是不是配置改了」；
+密钥绝不硬编码、绝不提交仓库：生产环境交给托管服务（Vault、AWS Secrets Manager、K8s Secret）并支持轮换与热更新，轮换不该触发全量发版。
 
-把校验、分层与脱敏写进一个 Config 类，比散落在各处的 `os.getenv` 可靠得多。
+日志与异常里也要防泄漏：本讲对照示例里自定义了一个包装类，重写 `__str__` / `__repr__` 只返回掩码（可验证 `str(token)` 得到 `'***'`，只有 `reveal()` 才给真值）；
+
+Pydantic 的 `SecretStr` 是同一思路的现成类型，取值方法是 `get_secret_value()`。
+
+默认不把完整请求体或响应写进日志。配置漂移指同一份配置在不同环境、或不同时间悄悄不一致：对策是给类型化配置对象加版本号与校验和、坚持单一事实源、按环境分层覆盖（`dev` / `staging` / `prod` 前缀或独立文件）、每个键标注 owner 与默认值，并对每次变更留审计记录。
+
+启动时把一份非敏感的配置摘要快照进日志，线上就能回答「这次行为变化是不是配置改了」。把校验、分层与脱敏收进一个 `Config` 类，比散落在各处的 `os.getenv` 可靠得多。
 
 
 ## 类型化不可变配置与启动期校验
 
-把散落各处的 `os.getenv` 收敛成一个 Config 对象：按默认值、.env、进程环境、显式覆盖四层合并，逐字段做类型转换与范围校验，越界立刻抛 ValueError 让进程起不来，公开视图只暴露非敏感字段。这样配置错误在启动瞬间暴露，密钥也不会出现在 `public()` 里。
+把散落各处的 `os.getenv` 收敛成一个 `Config` 对象：按默认值、`.env`、进程环境、显式覆盖四层合并，逐字段做类型转换与范围校验，越界立刻抛 `ValueError` 让进程起不来，公开视图只暴露非敏感字段。这样配置错误在启动瞬间暴露，密钥也不会出现在 `public()` 里。
 
-下面片段用标准库实现这套装载器，演示合法配置、端口越界被拒、以及密钥不进公开摘要三条契约，真实项目把校验换成 pydantic-settings 即可获得同样的启动期失败语义。
+下面片段用标准库实现这套装载器，演示合法配置、端口越界被拒、以及密钥不进公开摘要三条契约，真实项目把校验换成 `pydantic-settings` 即可获得同样的启动期失败语义。
 
 ```python
 import json
@@ -195,9 +211,9 @@ print('secret never in public', 'SECRET' not in cfg.public())
 
 <Quiz no='079-3' q='pydantic-settings 里环境变量与 .env 的优先级是？' :options='["进程环境变量高于 .env，init 参数最高", ".env 永远最高", "默认值最高", "按字母序决定"]' answer="0" explain='顺序是 init 参数 &gt; 环境变量 &gt; dotenv &gt; secrets &gt; 字段默认值；显式部署注入能盖住文件里的值，便于按环境分层覆盖。' />
 
-<Predict no='079-P' q='执行 bool(&#39;False&#39;) 的输出是？' :options='["True", "False", "TypeError"]' answer='0' output='True' explain='Python 的真值规则把任意非空字符串判为真，&#39;False&#39; 长度为 6 显然非空；开关配置必须写 parse_bool 或交给类型化配置对象校验，不能用 bool() 直接转。' />
+<Predict no='079-4' q='执行 bool(&#39;False&#39;) 的输出是？' :options='["True", "False", "TypeError"]' answer='0' output='True' explain='Python 的真值规则把任意非空字符串判为真，&#39;False&#39; 长度为 6 显然非空；开关配置必须写 parse_bool 或交给类型化配置对象校验，不能用 bool() 直接转。' />
 
-<FillBlank no='079-F' tpl='___ os' :answers='["import"]' hint='回想本讲关于 十二要素与环境变量 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 十二要素、环境变量与类型陷阱 的落点。' />
+<FillBlank no='079-5' tpl='___ os' :answers='["import"]' hint='回想本讲关于 十二要素与环境变量 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 十二要素、环境变量与类型陷阱 的落点。' />
 
 <KnowledgeCard :points='["十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool(&#39;False&#39;) 为 True", "覆盖优先级：默认值 &lt; .env &lt; 进程环境变量 &lt; 显式覆盖/CLI；pydantic-settings 为 init &gt; env &gt; dotenv &gt; secrets &gt; default", "pydantic-settings BaseSettings 默认 case_sensitive=False，支持 env_prefix / env_nested_delimiter=&#39;__&#39;", "启动期全量校验抛 ValidationError，类型化不可变配置对象是单一事实源", "密钥用 SecretStr/掩码、托管服务轮换；.env 进 .gitignore、提交 .env.example 占位", "tomllib（3.11+）把 TOML 解析成原生 bool/int；配置漂移靠版本、校验和与启动摘要审计"]' :pitfalls='["用 bool(os.environ[&#39;DEBUG&#39;]) 解析开关", "硬编码密钥或把 .env 提交进仓库", "配置错误等运行期冷门分支才暴露", "把密钥硬编码或提交进仓库，轮换时只能全量改代码重新发版"]' summary='配置错误应该在启动瞬间失败，而不是等某个冷门接口第一次读到空字符串才炸' />
 

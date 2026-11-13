@@ -14,24 +14,26 @@ description: 掌握非线性模型与其适用边界
 
 ## 不设树深，训练集 100% 而线上很差
 
-一棵决策树在训练集上做到 100% 准确，上线后准确率掉到六成，团队却还在加特征、加深度。复盘发现树从没设 max_depth，也没做交叉验证，它把每个训练样本都长成了一片纯叶子，等于把整张表背了下来；换个更贴切的场景，SVM 同事把带 RBF 核的模型直接喂了未缩放的特征，gamma 又用了默认值，训练出的边界全是碎块。
+一棵决策树在训练集上做到 100% 准确，上线后准确率掉到六成，团队却还在加特征、加深度。复盘发现树从没设 `max_depth`，也没做交叉验证，它把每个训练样本都长成了一片纯叶子，等于把整张表背了下来；换个更贴切的场景，SVM 同事把带 RBF 核的模型直接喂了未缩放的特征，gamma 又用了默认值，训练出的边界全是碎块。
 
-这两类问题的分界线很清楚：树几乎不需要缩放、能吞吐混合类型，代价是外推能力差、决策边界呈阶梯状；SVM 靠间隔最大化在小样本高维上很强，却对尺度与 C / gamma 极敏感。本讲用纯 Python 把基尼划分、核技巧、软间隔与 Bagging 降方差都变成能实跑核对的结论。
+这两类问题的分界线很清楚：树几乎不需要缩放、能吞吐混合类型，代价是外推能力差、决策边界呈阶梯状；SVM 靠间隔最大化在小样本高维上很强，却对尺度与 C、gamma 极敏感。本讲用纯 Python 把基尼划分、核技巧、软间隔与 Bagging 降方差都变成能实跑核对的结论。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='不设 max_depth / min_samples_leaf，训练集 100% 线上很差：树会一直分裂到每片叶子都纯，把噪声与个别样本也背下来，方差极大' />
 
 
 ## 间隔最大化、核技巧与软间隔 C
 
-线性 SVM 的目标不是「把点分开」，而是找一条使两类间隔 2/||w|| 最大的超平面，约束 `y_i(wᵀx_i + b)` ≥ 1，落在间隔边界上的点叫支持向量——最终模型只由这些点决定，删掉远离边界的样本不会改变结果，这是它小样本高维仍稳的原因。
+线性 SVM 的目标不是『把点分开』，而是找一条使两类间隔 2 除以 w 范数最大的超平面，约束是每个样本 y_i 乘 (w 与 x_i 的内积加 b) 不小于 1，落在间隔边界上的点叫支持向量——最终模型只由这些点决定，删掉远离边界的样本不会改变结果，这是它小样本高维仍稳的原因。
 
-现实数据不可分，于是引入软间隔：允许部分点越界，用 hinge loss 加惩罚，目标变为 min (1/2)||w||² + C·Σξ_i。参数 C 是误分类惩罚的强度：C 越大越不肯放过错分点、间隔变窄、边界扭曲、易过拟合；C 越小间隔越宽、容许更多错分、更平滑。
+现实数据不可分，于是引入软间隔：允许部分点越界，用 hinge loss 加惩罚，目标变成最小化 0.5 乘 w 范数平方再加 C 乘松弛变量之和。参数 C 是误分类惩罚的强度：C 越大越不肯放过错分点、间隔变窄、边界扭曲、易过拟合；C 越小间隔越宽、容许更多错分、更平滑。
 
-核技巧解决非线性：把样本隐式映射到高维特征空间，在那个空间里做线性分隔，而不显式计算映射 φ(x)，只需一个核函数 `K(x,z)`=φ(x)·φ(z)。常用核有线性 `K=xᵀz`、多项式 K=(γ·xᵀz + r)^d、RBF（高斯）`K=exp`(-γ·||x-z||²)。
+核技巧解决非线性：把样本隐式映射到高维特征空间，在那个空间里做线性分隔，而不显式计算映射 φ(x)，只需一个核函数 `K(x,z)=phi(x).phi(z)`。
+
+常用核有线性核（x 与 z 的内积）、多项式核 `K=(gamma*x.z+r)^d`、RBF（高斯）核 `K(x,z)=exp(-gamma*||x-z||^2)`。
 
 RBF 的 gamma 控制单个样本的影响半径：gamma 大则影响范围小、边界碎、易过拟合，gamma 小则边界平滑、可能欠拟合。RBF 对特征尺度极敏感（指数里是距离平方），因此必须先标准化，否则大尺度维度主导核值。
 
-scikit-learn 里 SVC 的 C 默认 1.0、kernel 默认 'rbf'、gamma 默认 'scale'（按 1/(d·`Var(X)`) 缩放），这个默认已经依赖特征方差，未缩放时仍会失真。
+scikit-learn 里 `SVC` 的 C 默认 1.0、kernel 默认 'rbf'、gamma 默认 'scale'（按 1 除以特征数乘 X 的方差来缩放），这个默认已经依赖特征方差，未缩放时仍会失真。
 
 ```python
 def gini(labels):
@@ -67,13 +69,15 @@ print('best split', best_split(data))
 
 ## 树的划分准则：基尼、熵与最佳切分
 
-分类树递归地选一个特征与切分点，把节点里的样本分到左右子节点，目标是让子节点更「纯」。纯度用不纯度度量：基尼 `Gini = 1` - Σ p_k²（p_k 是该节点第 k 类占比），熵 `Entropy = -Σ` p_k·`log2(p_k)`，`信息增益 = 父不纯度` - 按样本数加权的子不纯度之和。
+分类树递归地选一个特征与切分点，把节点里的样本分到左右子节点，目标是让子节点更『纯』。
 
-CART 分类默认用基尼、回归用平方误差最小，ID3/C4.5 用信息增益 / 增益率；基尼不含对数、计算更快，二者在多数数据集上选出的切分很接近。对连续特征，候选切分点取相邻不同取值的中点，逐个试算加权不纯度、取最小者，复杂度约为 `O(d·n·log n)`（先对每列排序）。
+纯度用不纯度度量：基尼 `Gini=1-sum(p_k^2)`（p_k 是该节点第 k 类占比），熵 `Entropy=-sum(p_k*log2(p_k))`，信息增益等于父不纯度减去按样本数加权的子不纯度之和。
 
-树必须限制复杂度：max_depth 限深度、min_samples_leaf 限叶节点最少样本、min_samples_split 限可分裂的最小样本数、max_leaf_nodes 限叶子数，也可以在长成全树后按代价复杂度剪枝（ccp_alpha）。不设这些约束，树会一直分到每片叶子都纯，训练集必然满分而线上很差。
+`CART` 分类默认用基尼、回归用平方误差最小，ID3/C4.5 用信息增益或增益率；基尼不含对数、计算更快，二者在多数数据集上选出的切分很接近。对连续特征，候选切分点取相邻不同取值的中点，逐个试算加权不纯度、取最小者，复杂度约为 `O(d*n*log(n))`（先对每列排序）。
 
-树的两个固有边界要记住：决策边界是轴平行的阶梯状，做不了平滑斜边界；且它只能在训练数据的取值范围内做分段常数预测，超出范围不能外推，回归到新区间会系统性失真。
+树必须限制复杂度：`max_depth` 限深度、`min_samples_leaf` 限叶节点最少样本、`min_samples_split` 限可分裂的最小样本数、`max_leaf_nodes` 限叶子数，也可以在长成全树后按代价复杂度剪枝（`ccp_alpha`）。
+
+不设这些约束，树会一直分到每片叶子都纯，训练集必然满分而线上很差。树的两个固有边界要记住：决策边界是轴平行的阶梯状，做不了平滑斜边界；且它只能在训练数据的取值范围内做分段常数预测，超出范围不能外推，回归到新区间会系统性失真。
 
 ```python
 import statistics as st
@@ -115,13 +119,13 @@ print('K(-1,1)', poly_kernel(-1, 1), 'K(-1,0)', poly_kernel(-1, 0))
 
 ## Bagging、随机森林与降方差
 
-单棵深树方差大、对训练样本扰动敏感，Bagging（Bootstrap Aggregating）用「有放回重采样出多份训练集、各训一棵树、再平均或投票」来压方差：设单棵树方差 σ²、两两相关系数 ρ，B 棵平均后的方差约为 ρ·σ² + (1-ρ)·σ²/B，树越多第二项越小，但相关项 ρ·σ² 是下限，所以还要降低树与树之间的相关性。
+单棵深树方差大、对训练样本扰动敏感，Bagging（Bootstrap Aggregating）用『有放回重采样出多份训练集、各训一棵树、再平均或投票』来压方差：设单棵树方差 σ²、两两相关系数 ρ，B 棵平均后的方差约为 ρ 乘 σ² 加 (1-ρ) 乘 σ² 再除以 B，即 `rho*sigma^2+(1-rho)*sigma^2/B`；
 
-随机森林在 Bagging 之上再加一层随机：每个节点分裂时只从随机选出的 mtry 个特征子集里挑最优（分类常用 `sqrt(d)`、回归常用 d/3），进一步压低 ρ。随机森林几乎不需要特征缩放、能处理混合类型与缺失、抗过拟合，代价是模型体积大、单条预测要过所有树、且同样不能外推。
+树越多第二项越小，但相关项 ρ·σ² 是下限，所以还要降低树与树之间的相关性。随机森林在 Bagging 之上再加一层随机：每个节点分裂时只从随机选出的 mtry 个特征子集里挑最优（分类常用 `sqrt(d)`、回归常用 d/3），进一步压低 ρ。
 
-袋外样本（OOB，约 36.8% 未被某棵树抽到）可直接当验证集估泛化误差，省一次划分。特征重要性有两种口径：基于不纯度下降（impurity-based，倾向于高基数特征、有偏）与基于置换（permutation，打乱某列后看验证分数掉多少，更可信）。
+随机森林几乎不需要特征缩放、能处理混合类型与缺失、抗过拟合，代价是模型体积大、单条预测要过所有树、且同样不能外推。袋外样本（OOB，约 36.8% 未被某棵树抽到）可直接当验证集估泛化误差，省一次划分。
 
-无论哪种都只是「模型用到它的程度」，不是因果结论——把重要性排第一的特征写成业务原因，是常见越界。
+特征重要性有两种口径：基于不纯度下降（impurity-based，倾向于高基数特征、有偏）与基于置换（permutation，打乱某列后看验证分数掉多少，更可信）。无论哪种都只是『模型用到它的程度』，不是因果结论——把重要性排第一的特征写成业务原因，是常见越界。
 
 <ConceptDiagram type='compare2' title='第 099 讲 · 间隔最大化、核技巧与软间隔 C' labels='间隔最大化、核技巧与软间隔 C|树的划分准则、剪枝与深度控制|Bagging、随机森林与特征重要性' caption='掌握非线性模型与其适用边界' />
 
@@ -139,15 +143,17 @@ print('K(-1,1)', poly_kernel(-1, 1), 'K(-1,0)', poly_kernel(-1, 0))
 
 ## RBF 核为什么怕未缩放特征
 
-SVM 的原始问题是带约束的凸二次规划：min (1/2)||w||² `s.t`. `y_i(wᵀx_i+b)` ≥ 1。
+SVM 的原始问题是带约束的凸二次规划：最小化 0.5 乘 w 的范数平方，约束是每个样本 y_i 乘 (w 与 x_i 的内积加 b) 不小于 1。
 
-通过拉格朗日对偶可化为只依赖样本内积 x_iᵀx_j 的形式，于是把内积替换成核函数 `K(x_i,x_j)`=φ(x_i)·φ(x_j) 就得到高维空间的线性分隔，而不必显式构造 φ——只要 K 满足 Mercer 条件（对应的 Gram 矩阵半正定）即为合法核，这就是核技巧。
+通过拉格朗日对偶可化为只依赖样本内积的形式，于是把内积替换成核函数 `K(x_i,x_j)=phi(x_i).phi(x_j)` 就得到高维空间的线性分隔，而不必显式构造 φ——只要 K 满足 Mercer 条件（对应的 Gram 矩阵半正定）即为合法核，这就是核技巧。
 
-RBF 核 `exp(-γ||x-z||²)` 对应无限维特征空间，γ 控制距离衰减速度。
+RBF 核 `exp(-gamma*||x-z||^2)` 对应无限维特征空间，gamma 控制距离衰减速度。
 
-软间隔引入松弛变量 ξ_i 与惩罚 C，对偶后拉格朗日乘子被 C 截断（0 ≤ α_i ≤ C），C 同时决定支持向量的数量与边界复杂度。决策树的划分是贪心的：对每个特征排序后枚举相邻取值中点，选使加权不纯度下降最多的切分，本质是局部最优而非全局最优。
+软间隔引入松弛变量 ξ_i 与惩罚 C，对偶后拉格朗日乘子被 C 截断（0 不大于 alpha_i 不大于 C），C 同时决定支持向量的数量与边界复杂度。决策树的划分是贪心的：对每个特征排序后枚举相邻取值中点，选使加权不纯度下降最多的切分，本质是局部最优而非全局最优。
 
-Bagging 的方差公式 ρ·σ² + (1-ρ)·σ²/B 说明「平均」只能消掉不相关部分，随机森林再用特征子采样降低树间相关 ρ，才把方差进一步压下去；这也是为什么单棵深树方差大、森林却稳。
+Bagging 的方差公式 `rho*sigma^2+(1-rho)*sigma^2/B` 说明『平均』只能消掉不相关部分，随机森林再用特征子采样降低树间相关 ρ，才把方差进一步压下去；
+
+这也是为什么单棵深树方差大、森林却稳。
 
 **树 / SVM / 随机森林选型**
 
@@ -172,11 +178,11 @@ Bagging 的方差公式 ρ·σ² + (1-ρ)·σ²/B 说明「平均」只能消掉
 
 ## 深度受限的树：把「背下训练集」变成可核对的叶数
 
-一个二分类任务里，深度不受限的树会把每个样本都分到纯叶，训练集误差为零却毫无泛化能力。工程上把 max_depth 当成一等参数，与叶节点数、叶内基尼一起记录，就能在日志里看出模型是不是长得过细。
+一个二分类任务里，深度不受限的树会把每个样本都分到纯叶，训练集误差为零却毫无泛化能力。工程上把 `max_depth` 当成一等参数，与叶节点数、叶内基尼一起记录，就能在日志里看出模型是不是长得过细。
 
-下面用纯标准库实现一个按基尼递归划分的小型分类树：build 在达到 max_depth、节点已纯、或特征值不足两个时停止，leaves 数出叶节点个数，最后对比 `max_depth=1` 与 `max_depth=3` 两棵树的结构。
+下面用纯标准库实现一个按基尼递归划分的小型分类树：`build` 在达到 `max_depth`、节点已纯、或特征值不足两个时停止，`leaves` 数出叶节点个数，最后对比 `max_depth=1` 与 `max_depth=3` 两棵树的结构。
 
-真实项目把 gini / split 换成 DecisionTreeClassifier 的 criterion='gini'，把 max_depth 直接传给构造器，并用 GridSearchCV 在 2 到 10 的深度上做交叉验证，口径一致。
+真实项目把 gini 与 split 换成 `DecisionTreeClassifier` 的 `criterion='gini'`、把 `max_depth` 直接传给构造器，并用 `GridSearchCV` 在 2 到 10 的深度上做交叉验证，口径一致。
 
 ```python
 from collections import Counter
@@ -222,19 +228,39 @@ print('depth3 tree', build(data, 0, 1))
 
 ## 软间隔 SVM 的拉格朗日对偶与 KKT 条件
 
-软间隔原始问题是 min (1/2) 乘 w 范数平方 加 C 乘求和 xi_i，约束 `y_i(w 点乘 phi(x_i)` 加 b) 不小于 1 减 xi_i 且 xi_i 不小于 0。
+软间隔原始问题是最小化 0.5 乘 w 范数平方加 C 乘松弛变量之和，约束是每个样本 y_i 乘 (w 与 `phi(x_i)` 的内积加 b) 不小于 1 减 xi_i、且 xi_i 不小于 0。
 
-构造拉格朗日函数 L = (1/2)||w|| 平方 + C 求和 xi_i - 求和 alpha_i 乘 [`y_i(w 点乘 phi(x_i)` + b) - 1 + xi_i] - 求和 mu_i 乘 xi_i，其中 alpha_i 与 mu_i 均不小于 0。
+构造拉格朗日函数 L 后，对 w、b、xi 求偏导置零：对 w 得 w 等于各 alpha_i 乘 y_i 乘 `phi(x_i)` 之和，这就是表示定理——最优 w 只是训练样本的线性组合；对 b 得各 alpha_i 乘 y_i 之和为 0；
 
-对 w、b、xi 求偏导置零：对 w 得 `w = 求和` alpha_i y_i `phi(x_i)`，这就是表示定理——最优 w 只是训练样本的线性组合；对 b 得 求和 alpha_i `y_i = 0`；
+对 xi_i 得 C 减 alpha_i 减 mu_i 等于 0，配合 mu_i 不小于 0 才有 alpha_i 不大于 C。
 
-对 xi_i 得 C 减 alpha_i 减 `mu_i = 0`，配合 mu_i 不小于 0 才有 alpha_i 不大于 C。
+代回消去原始变量得到对偶：最大化各 alpha_i 之和，减去一半的各 alpha_i alpha_j y_i y_j 乘 `K(x_i,x_j)` 之和，约束 0 不大于 alpha_i 不大于 C、且各 alpha_i 乘 y_i 之和为 0。
 
-代回消去原始变量得到对偶：max 求和 alpha_i - (1/2) 求和 alpha_i alpha_j y_i y_j `K(x_i, x_j)`，约束 0 不大于 alpha_i 不大于 C 与 求和 alpha_i `y_i = 0`。
+注意对偶里样本只以内积 K 出现，把 K 换成核函数就是核技巧，且目标是 alpha 的凹二次型、全局最优无局部极小。KKT 互补松弛给出三类点：`alpha_i=0` 是间隔外的点，删掉不影响模型；0 小于 alpha_i 小于 C 是恰在间隔边界上的点、xi_i 为 0，用来定 b；
 
-注意对偶里样本只以内积 K 出现，把 K 换成核函数就是核技巧，且目标是 alpha 的凹二次型、全局最优无局部极小。KKT 互补松弛给出三类点：`alpha_i = 0` 是间隔外的点，删掉不影响模型；0 小于 alpha_i 小于 C 是恰在间隔边界上的点，xi_i 为 0，用来定 b；
+`alpha_i=C` 是越界或落在间隔内的点。
 
-`alpha_i = C` 是越界或落在间隔内的点。决策函数 `f(x)` = 求和 alpha_i y_i `K(x_i, x)` + b 只对 alpha_i 大于 0 的样本求和，这是正文「模型只由支持向量决定」的严格来源，而 C 截断 alpha 的来由只有走完这条推导链才看得见。
+决策函数 `f(x)=sum(alpha_i*y_i*K(x_i,x))+b` 只对 alpha_i 大于 0 的样本求和，这是正文『模型只由支持向量决定』的严格来源，而 C 截断 alpha 的来由只有走完这条推导链才看得见。
+
+把 `K(x,z)=exp(-gamma*||x-z||^2)` 展开：||x-z||² 等于 ||x||² 加 ||z||² 减 2 乘 x 与 z 的内积，于是 K 可以拆成 `exp(-gamma*||x||^2)`、`exp(-gamma*||z||^2)` 与 `exp(2*gamma*x.z)` 三项之积。
+
+前两项只依赖单个样本，可吸收进缩放；
+
+关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
+
+所以 RBF 对应的 `phi(x)` 落在无穷维空间，含从常数、一次到任意高次单项式的加权和，权重 (2gamma)^k/k! 随 k 快速衰减。
+
+这解释两件事：RBF 能表达任意复杂边界（无限维里做线性分隔），以及 gamma 控制衰减——gamma 大则高次项相对权重变大、边界碎，gamma 等价于高斯宽度 sigma 满足 `gamma=1/(2*sigma^2)`。
+
+实测用 12 项截断的级数重建 RBF 值能与直接公式吻合到 6 位小数，3 项截断就明显偏低，直观看到『无限维』不是比喻而是收敛的级数。Mercer 条件要求 Gram 矩阵半正定，正是这串非负系数 (2gamma)^k/k! 不小于 0 保证的；正文只说 RBF 对应无限维，这里给出级数与系数。
+
+一棵在训练集上长到 200 片叶子的树，直接用 `ccp_alpha=0.01` 剪完只剩 12 片，团队说不清这个数拍得对不对。
+
+代价复杂度剪枝其实不该猜单个 alpha：先自底向上算每个内部节点的 `g(t)`，按 g 从小到大依次剪，得到一串嵌套子树与对应的 alpha 序列，再用验证集误差在这串子树里挑，比一次性拍 alpha 可解释得多。
+
+下例给出三个内部节点的 `R(t)`、子树 R 与叶数，算出 g 并排序，能看到 t1 的 g 等于 0.1 最小、应最先被剪，alpha 到 0.15 才轮到 t2。
+
+真实项目把这套序列换成 `DecisionTreeClassifier.cost_complexity_pruning_path`，再对每棵候选树做交叉验证。
 
 ```python
 import math
@@ -282,7 +308,7 @@ print('gini(root)', round(gini(labels), 4))
 
 <OutputBox title='扩展示例运行结果' output='rbf direct 0.960789\nrbf series 12 terms 0.960789\nseries 3 terms 0.892249\ngini(id, 12 levels) 0.0\ngini(binary split) 0.5\ngini(root) 0.5' />
 
-<LineByLine code='import math\n\ndef rbf_direct(x, z, g=0.5):\n    d2 = sum((a - b) ** 2 for a, b in zip(x, z))\n    return math.exp(-g * d2)\n\ndef rbf_series(x, z, g=0.5, terms=12):\n    dot = sum(a * b for a, b in zip(x, z))\n    nx = sum(a * a for a in x)\n    nz = sum(b * b for b in z)\n    s = 0.0\n    coef = 1.0\n    for k in range(terms):\n        s += coef * (dot ** k) / math.factorial(k)\n        coef *= 2 * g\n    return math.exp(-g * nx) * math.exp(-g * nz) * s\n\nx = [1.0, 0.5]\nz = [0.8, 0.3]\nprint(&#39;rbf direct&#39;, round(rbf_direct(x, z), 6))\nprint(&#39;rbf series 12 terms&#39;, round(rbf_series(x, z), 6))\nprint(&#39;series 3 terms&#39;, round(rbf_series(x, z, terms=3), 6))\n\ndef gini(labels):\n    n = len(labels)\n    if not n:\n        return 0.0\n    c = {}\n    for l in labels:\n        c[l] = c.get(l, 0) + 1\n    return 1 - sum((v / n) ** 2 for v in c.values())\n\ndef weighted_gini(groups):\n    total = sum(len(g) for g in groups)\n    return sum(len(g) * gini(g) for g in groups) / total\n\nlabels = [0, 1] * 6\nprint(&#39;gini(id, 12 levels)&#39;, round(weighted_gini([[labels[i]] for i in range(12)]), 4))\nprint(&#39;gini(binary split)&#39;, round(weighted_gini([labels[:6], labels[6:]]), 4))\nprint(&#39;gini(root)&#39;, round(gini(labels), 4))\n' :notes='["导入 math，用 exp 与 factorial 构造级数", "rbf_direct 按距离平方的指数直接算核值", "rbf_series 拆成单样本因子与 exp(2g 乘点积) 的幂级数", "coef 逐项乘 2g，实现 (2gamma) 的 k 次方", "除以 k 阶乘，即泰勒展开的系数", "12 项截断已收敛到直接公式的 6 位小数", "3 项截断丢掉高次项，数值明显偏低", "gini 实现 1 减各类占比平方和", "weighted_gini 按子节点样本数加权", "12 个样本标签各半，根节点基尼 0.5", "把 id 类特征切成 12 个单样本纯叶，加权基尼降到 0", "二分切法加权基尼仍是 0.5，说明高基数切分是虚假增益", "SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚", "核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维", "C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma=&#39;scale&#39;", "树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点", "树必须限 max_depth / min_samples_leaf / ccp_alpha；边界是阶梯状且不能外推", "随机森林 = Bagging + 特征子采样，方差约 ρσ²+(1-ρ)σ²/B；特征重要性不是因果", "SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚", "核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维", "C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma=&#39;scale&#39;", "树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点", "树必须限 max_depth / min_samples_leaf / ccp_alpha；边界是阶梯状且不能外推", "随机森林 = Bagging + 特征子采样，方差约 ρσ²+(1-ρ)σ²/B；特征重要性不是因果", "SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚", "核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维", "C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma=&#39;scale&#39;", "树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点", "树必须限 max_depth / min_samples_leaf / ccp_alpha；边界是阶梯状且不能外推", "随机森林 = Bagging + 特征子采样，方差约 ρσ²+(1-ρ)σ²/B；特征重要性不是因果", "SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚", "核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维", "C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma=&#39;scale&#39;", "树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef rbf_direct(x, z, g=0.5):\n    d2 = sum((a - b) ** 2 for a, b in zip(x, z))\n    return math.exp(-g * d2)\n\ndef rbf_series(x, z, g=0.5, terms=12):\n    dot = sum(a * b for a, b in zip(x, z))\n    nx = sum(a * a for a in x)\n    nz = sum(b * b for b in z)\n    s = 0.0\n    coef = 1.0\n    for k in range(terms):\n        s += coef * (dot ** k) / math.factorial(k)\n        coef *= 2 * g\n    return math.exp(-g * nx) * math.exp(-g * nz) * s\n\nx = [1.0, 0.5]\nz = [0.8, 0.3]\nprint(&#39;rbf direct&#39;, round(rbf_direct(x, z), 6))\nprint(&#39;rbf series 12 terms&#39;, round(rbf_series(x, z), 6))\nprint(&#39;series 3 terms&#39;, round(rbf_series(x, z, terms=3), 6))\n\ndef gini(labels):\n    n = len(labels)\n    if not n:\n        return 0.0\n    c = {}\n    for l in labels:\n        c[l] = c.get(l, 0) + 1\n    return 1 - sum((v / n) ** 2 for v in c.values())\n\ndef weighted_gini(groups):\n    total = sum(len(g) for g in groups)\n    return sum(len(g) * gini(g) for g in groups) / total\n\nlabels = [0, 1] * 6\nprint(&#39;gini(id, 12 levels)&#39;, round(weighted_gini([[labels[i]] for i in range(12)]), 4))\nprint(&#39;gini(binary split)&#39;, round(weighted_gini([labels[:6], labels[6:]]), 4))\nprint(&#39;gini(root)&#39;, round(gini(labels), 4))\n' :notes='["导入 math，用 exp 与 factorial 构造级数", "rbf_direct 按距离平方的指数直接算核值", "rbf_series 拆成单样本因子与 exp(2g 乘点积) 的幂级数", "coef 逐项乘 2g，实现 (2gamma) 的 k 次方", "除以 k 阶乘，即泰勒展开的系数", "12 项截断已收敛到直接公式的 6 位小数", "3 项截断丢掉高次项，数值明显偏低", "gini 实现 1 减各类占比平方和", "weighted_gini 按子节点样本数加权", "12 个样本标签各半，根节点基尼 0.5", "把 id 类特征切成 12 个单样本纯叶，加权基尼降到 0", "二分切法加权基尼仍是 0.5，说明高基数切分是虚假增益", "SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合", "核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射", "RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel=&#39;rbf&#39;、gamma=&#39;scale&#39;", "树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度", "树边界轴平行、不能外推；Bagging 方差 rho*sigma^2+(1-rho)*sigma^2/B，随机森林再降树间相关", "OOB 约 36.8% 可当验证集；特征重要性（不纯度/置换）只是使用程度，不是因果结论", "SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合", "核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射", "RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel=&#39;rbf&#39;、gamma=&#39;scale&#39;", "树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度", "树边界轴平行、不能外推；Bagging 方差 rho*sigma^2+(1-rho)*sigma^2/B，随机森林再降树间相关", "OOB 约 36.8% 可当验证集；特征重要性（不纯度/置换）只是使用程度，不是因果结论", "SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合", "核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射", "RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel=&#39;rbf&#39;、gamma=&#39;scale&#39;", "树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度", "树边界轴平行、不能外推；Bagging 方差 rho*sigma^2+(1-rho)*sigma^2/B，随机森林再降树间相关", "OOB 约 36.8% 可当验证集；特征重要性（不纯度/置换）只是使用程度，不是因果结论", "SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合", "核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射", "RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel=&#39;rbf&#39;、gamma=&#39;scale&#39;", "树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度"]' title='扩展示例逐行讲解' />
 
 
 ### SMO 的双变量解析更新与工作集选择
@@ -300,17 +326,17 @@ print('gini(root)', round(gini(labels), 4))
 
 ## RBF 核的泰勒展开与无限维特征映射
 
-把 `K(x,z)` = `exp(-gamma 乘 ||x - z|| 平方)` 展开：||x - z|| 平方 = ||x|| 平方 + ||z|| 平方 - 2 乘 x 点乘 z，于是 `K = exp`(-gamma||x|| 平方) 乘 `exp(-gamma||z|| 平方)` 乘 `exp(2gamma 乘 x 点乘 z)`。
+把 `K(x,z)=exp(-gamma*||x-z||^2)` 展开：||x-z||² 等于 ||x||² 加 ||z||² 减 2 乘 x 与 z 的内积，于是 K 可以拆成 `exp(-gamma*||x||^2)`、`exp(-gamma*||z||^2)` 与 `exp(2*gamma*x.z)` 三项之积。
 
 前两项只依赖单个样本，可吸收进缩放；
 
-关键在 `exp(2gamma 乘 x 点乘 z)` = 从 `k = 0` 到无穷 求和 (2gamma) 的 k 次方 除以 k 阶乘 再乘 (x 点乘 z) 的 k 次方，而 (x 点乘 z) 的 k 次方正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
+关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
 
-所以 RBF 对应的 `phi(x)` 落在无穷维空间，含从常数、一次到任意高次单项式的加权和，权重 (2gamma) 的 k 次方 除以 k 阶乘 随 k 快速衰减。
+所以 RBF 对应的 `phi(x)` 落在无穷维空间，含从常数、一次到任意高次单项式的加权和，权重 (2gamma)^k/k! 随 k 快速衰减。
 
-这解释两件事：RBF 能表达任意复杂边界（无限维里做线性分隔），以及 gamma 控制衰减——gamma 大则高次项相对权重变大、边界碎，gamma 等价于高斯宽度 sigma 满足 `gamma = 1` 除以 (2 sigma 平方)。
+这解释两件事：RBF 能表达任意复杂边界（无限维里做线性分隔），以及 gamma 控制衰减——gamma 大则高次项相对权重变大、边界碎，gamma 等价于高斯宽度 sigma 满足 `gamma=1/(2*sigma^2)`。
 
-实测上用 12 项截断的级数重建 RBF 值能与直接公式吻合到 6 位小数，3 项截断就明显偏低，直观看到「无限维」不是比喻而是收敛的级数。Mercer 条件要求 Gram 矩阵半正定，正是这串非负系数 (2gamma) 的 k 次方 除以 k 阶乘 不小于 0 保证的；正文只说 RBF 对应无限维，这里给出级数与系数。
+实测用 12 项截断的级数重建 RBF 值能与直接公式吻合到 6 位小数，3 项截断就明显偏低，直观看到『无限维』不是比喻而是收敛的级数。Mercer 条件要求 Gram 矩阵半正定，正是这串非负系数 (2gamma)^k/k! 不小于 0 保证的；正文只说 RBF 对应无限维，这里给出级数与系数。
 
 <Term word='弱连接剪枝' text='Breiman 的 CART 代价复杂度剪枝把每个内部节点 t 的剪枝阈值定义为 g(t) = (R(t) - R(T_t)) 除以 (叶数 T_t 减 1)，R 是误分代价；取 g 最小的节点先剪，得到一串递增的 alpha 与嵌套子树序列，再用独立验证集或交叉验证在序列里选一棵。它保证每步剪掉的都是「单位叶数换来的代价增量最小」的子树，比一次性拍一个 ccp_alpha 更可解释。' />
 
@@ -343,7 +369,7 @@ print('first prune', seq[0][0], 'at alpha', round(seq[0][1], 4))
 
 ## 代价复杂度剪枝的 alpha 序列与弱连接消除
 
-<Quiz no='099-X' q='关于软间隔 SVM 的对偶与 RBF 核，下面哪项准确？' :options='["对偶里 0 不大于 alpha_i 不大于 C 由 C 减 alpha_i 减 mu_i = 0 推出；RBF 展开为 exp(2gamma 点积) 的幂级数，对应无限维特征空间", "alpha_i 没有上界，C 只影响偏置 b 的取值", "RBF 核对应有限三维特征空间，泰勒展开取三项就精确", "KKT 条件里 alpha_i 大于 0 的样本都是噪声点，删掉能提升效果"]' answer="0" explain='对拉格朗日函数求 xi_i 偏导得 C 减 alpha_i 减 mu_i = 0，配合 mu_i 不小于 0 才有 alpha_i 不大于 C，这正是软间隔在支持向量数量上的体现。RBF 的 exp(2gamma 乘 x 点乘 z) 级数含所有次数的多项式核，系数非负且随 k 衰减，故对应无限维且满足 Mercer 条件。alpha_i 大于 0 的是支持向量，恰是决定模型的点，删掉会改变边界。' />
+<Quiz no='099-1' q='关于软间隔 SVM 的对偶与 RBF 核，下面哪项准确？' :options='["对偶里 0 不大于 alpha_i 不大于 C 由 C 减 alpha_i 减 mu_i = 0 推出；RBF 展开为 exp(2gamma 点积) 的幂级数，对应无限维特征空间", "alpha_i 没有上界，C 只影响偏置 b 的取值", "RBF 核对应有限三维特征空间，泰勒展开取三项就精确", "KKT 条件里 alpha_i 大于 0 的样本都是噪声点，删掉能提升效果"]' answer="0" explain='对拉格朗日函数求 xi_i 偏导得 C 减 alpha_i 减 mu_i = 0，配合 mu_i 不小于 0 才有 alpha_i 不大于 C，这正是软间隔在支持向量数量上的体现。RBF 的 exp(2gamma 乘 x 点乘 z) 级数含所有次数的多项式核，系数非负且随 k 衰减，故对应无限维且满足 Mercer 条件。alpha_i 大于 0 的是支持向量，恰是决定模型的点，删掉会改变边界。' />
 
 <Exercise title='用 RBF 泰勒级数验证无限维映射' task='实现 rbf_series(x, z, g, terms)，用不同 terms 重建 exp(-gamma 乘 ||x-z|| 平方)，观察 12 项与 3 项的误差，并说明系数 (2gamma) 的 k 次方 除以 k 阶乘 为何保证核矩阵半正定。' solution='import math\n\ndef rbf_series(x, z, g=0.5, terms=12):\n    dot = sum(a * b for a, b in zip(x, z))\n    nx = sum(a * a for a in x)\n    nz = sum(b * b for b in z)\n    s = 0.0\n    coef = 1.0\n    for k in range(terms):\n        s += coef * (dot ** k) / math.factorial(k)\n        coef *= 2 * g\n    return math.exp(-g * nx) * math.exp(-g * nz) * s\n\nx, z = [1.0, 0.5], [0.8, 0.3]\ndirect = math.exp(-0.5 * sum((a - b) ** 2 for a, b in zip(x, z)))\nprint(&#39;direct&#39;, round(direct, 6))\nprint(&#39;3 terms&#39;, round(rbf_series(x, z, terms=3), 6))\nprint(&#39;12 terms&#39;, round(rbf_series(x, z), 6))\n' explain='exp(-gamma 乘 ||x-z|| 平方) 拆成单样本因子与 exp(2gamma 乘 x 点乘 z)，后者是 求和 (2gamma) 的 k 次方 乘 (x 点乘 z) 的 k 次方 除以 k 阶乘；每一项 (x 点乘 z) 的 k 次方 都是合法多项式核且系数非负，非负线性组合仍半正定，故 RBF 满足 Mercer 条件。三项截断丢掉高次项会明显偏低，12 项才收敛到直接公式，直观看到无限维不是修辞而是收敛的级数。' />
 
@@ -359,33 +385,33 @@ print('first prune', seq[0][0], 'at alpha', round(seq[0][1], 4))
 
 <Exercise title='进阶：用数值实验验证 Bagging 降方差' task='构造三棵树对同一批样本的预测，比较单棵方差与三棵逐样本平均后的方差，并说明随机森林为何还要做特征子采样。' solution='import statistics as st\ntrees=[[10.5,9.2,11.1,8.7,10.8],[9.8,11.5,9.1,10.6,9.9],[12.0,8.5,10.2,11.3,9.4]]\nprint(&#39;single&#39;, round(st.variance(trees[0]),3))\nprint(&#39;bagged&#39;, round(st.variance([st.mean(c) for c in zip(*trees)]),3))' explain='平均把不相关的扰动抵消，方差从 1.103 降到 0.142。但树间相关项 ρ·σ² 是平均消不掉的下限，随机森林再随机选特征子集来降低 ρ。' />
 
-<Quiz no='099-1' q='一棵决策树训练集 100% 准确、验证集很差，最直接的修复是？' :options='["限制 max_depth / min_samples_leaf 并做交叉验证或剪枝", "增加更多训练特征", "换更大的C（对SVM而言）", "把树改成不纯度更高的准则"]' answer="0" explain='不受限的树会分到每叶都纯、把噪声背下来，方差极大；限制深度、叶内最少样本或用 ccp_alpha 剪枝才是针对过拟合的修复。' />
+<Quiz no='099-2' q='一棵决策树训练集 100% 准确、验证集很差，最直接的修复是？' :options='["限制 max_depth / min_samples_leaf 并做交叉验证或剪枝", "增加更多训练特征", "换更大的C（对SVM而言）", "把树改成不纯度更高的准则"]' answer="0" explain='不受限的树会分到每叶都纯、把噪声背下来，方差极大；限制深度、叶内最少样本或用 ccp_alpha 剪枝才是针对过拟合的修复。' />
 
-<Quiz no='099-2' q='关于 RBF 核 SVM 的 C 与 gamma，下面哪项准确？' :options='["C 越大越不容忍错分、间隔越窄；gamma 越大影响半径越小、边界越碎", "C 越大模型越简单", "gamma 越大边界越平滑", "两者都不影响结果，只影响训练速度"]' answer="0" explain='C 是误分类惩罚强度，大 C 逼模型少犯错、间隔变窄易过拟合；gamma 控制 RBF 的衰减，大 gamma 让单样本影响范围变小、边界碎片化。' />
+<Quiz no='099-3' q='关于 RBF 核 SVM 的 C 与 gamma，下面哪项准确？' :options='["C 越大越不容忍错分、间隔越窄；gamma 越大影响半径越小、边界越碎", "C 越大模型越简单", "gamma 越大边界越平滑", "两者都不影响结果，只影响训练速度"]' answer="0" explain='C 是误分类惩罚强度，大 C 逼模型少犯错、间隔变窄易过拟合；gamma 控制 RBF 的衰减，大 gamma 让单样本影响范围变小、边界碎片化。' />
 
-<Quiz no='099-3' q='核技巧的核心收益是？' :options='["用核函数隐式计算高维内积，无需显式构造映射 φ(x)", "把数据量减少一半", "让所有数据线性可分且不用调参", "去掉支持向量"]' answer="0" explain='对偶形式只依赖内积，用满足 Mercer 条件的 K(x,z) 替换内积即等价于高维空间的线性分隔，避免显式计算高维甚至无限维特征。' />
+<Quiz no='099-4' q='核技巧的核心收益是？' :options='["用核函数隐式计算高维内积，无需显式构造映射 φ(x)", "把数据量减少一半", "让所有数据线性可分且不用调参", "去掉支持向量"]' answer="0" explain='对偶形式只依赖内积，用满足 Mercer 条件的 K(x,z) 替换内积即等价于高维空间的线性分隔，避免显式计算高维甚至无限维特征。' />
 
-<Predict no='099-P' q='前面 code 的 best_split(data) 返回的加权基尼是多少？' :options='["0.0", "0.5", "0.25"]' answer='0' output='best split (0.0, 3.5, 3, 3)' explain='在 t=3.5 处切开，左 3 个 N、右 3 个 P，两个子节点基尼都是 0，加权不纯度为 0.0，因此最佳切分返回 (0.0, 3.5, 3, 3)。' />
+<Predict no='099-5' q='前面 code 的 best_split(data) 返回的加权基尼是多少？' :options='["0.0", "0.5", "0.25"]' answer='0' output='best split (0.0, 3.5, 3, 3)' explain='在 t=3.5 处切开，左 3 个 N、右 3 个 P，两个子节点基尼都是 0，加权不纯度为 0.0，因此最佳切分返回 (0.0, 3.5, 3, 3)。' />
 
-<KnowledgeCard :points='["SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚", "核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维", "C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma=&#39;scale&#39;", "树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点", "树必须限 max_depth / min_samples_leaf / ccp_alpha；边界是阶梯状且不能外推", "随机森林 = Bagging + 特征子采样，方差约 ρσ²+(1-ρ)σ²/B；特征重要性不是因果"]' :pitfalls='["不设 max_depth / min_samples_leaf，训练集 100% 线上很差", "RBF SVM 直接喂未缩放特征，边界全是碎块", "把特征重要性排名当成业务因果结论", "不限制树深又不做交叉验证，训练集必然满分而线上表现很差"]' summary='树模型几乎不需要特征缩放、能处理混合类型，代价是外推能力差、边界呈阶梯状；SVM 在小样本高维上依然很强' />
+<KnowledgeCard :points='["SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合", "核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射", "RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel=&#39;rbf&#39;、gamma=&#39;scale&#39;", "树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度", "树边界轴平行、不能外推；Bagging 方差 rho*sigma^2+(1-rho)*sigma^2/B，随机森林再降树间相关", "OOB 约 36.8% 可当验证集；特征重要性（不纯度/置换）只是使用程度，不是因果结论"]' :pitfalls='["不设 max_depth / min_samples_leaf，训练集 100% 线上很差", "RBF SVM 直接喂未缩放特征，边界全是碎块", "把特征重要性排名当成业务因果结论", "不限制树深又不做交叉验证，训练集必然满分而线上表现很差"]' summary='树模型几乎不需要特征缩放、能处理混合类型，代价是外推能力差、边界呈阶梯状；SVM 在小样本高维上依然很强' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| SVM 最大化间隔 2/\|\|w\|\|，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚 | 建立直觉 |
-| 核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ\|\|x-z\|\|²) 对应无限维 | 跑通示例 |
-| C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma='scale' | 深入边界 |
-| 树用基尼 1-Σp² 或熵选切分，取加权不纯度最小处；连续特征候选点是相邻取值中点 | 工程落地 |
-| 树必须限 max_depth / min_samples_leaf / ccp_alpha；边界是阶梯状且不能外推 | 随堂检测 |
-| 随机森林 = Bagging + 特征子采样，方差约 ρσ²+(1-ρ)σ²/B；特征重要性不是因果 | 复盘 |
+| SVM 找间隔 2/\|\|w\|\| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合 | 建立直觉 |
+| 核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射 | 跑通示例 |
+| RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel='rbf'、gamma='scale' | 深入边界 |
+| 树用基尼 Gini=1-sum(p_k^2) 或熵选切分；max_depth、min_samples_leaf、ccp_alpha 控制复杂度 | 工程落地 |
+| 树边界轴平行、不能外推；Bagging 方差 rho*sigma^2+(1-rho)*sigma^2/B，随机森林再降树间相关 | 随堂检测 |
+| OOB 约 36.8% 可当验证集；特征重要性（不纯度/置换）只是使用程度，不是因果结论 | 复盘 |
 
-1. SVM 最大化间隔 2/||w||，模型只由支持向量决定；软间隔用 C 权衡误分类惩罚
+1. SVM 找间隔 2/||w|| 最大的超平面，支持向量决定模型；软间隔 C 越大间隔越窄越易过拟合
 
-2. 核技巧用 K(x,z)=φ(x)·φ(z) 隐式算高维内积；RBF 核 K=exp(-γ||x-z||²) 对应无限维
+2. 核技巧只需核函数 K(x,z)=phi(x).phi(z) 而不显式构造 phi；RBF、多项式、线性核对应不同高维映射
 
-3. C 大间隔窄易过拟合，gamma 大影响半径小边界碎；SVC 默认 C=1.0、gamma='scale'
+3. RBF 的 gamma 控制影响半径、对尺度极敏感，必须先标准化；SVC 默认 C=1.0、kernel='rbf'、gamma='scale'
 
 [下一讲：集成学习：Boosting、XGBoost 与 LightGBM](/data-ai/ensemble)
 
-<FillBlank no='099-F' tpl='___ gini(labels):' :answers='["def"]' hint='回想本讲关于 间隔最大化与核技巧 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 间隔最大化、核技巧与软间隔 C 的落点。' />
+<FillBlank no='099-6' tpl='___ gini(labels):' :answers='["def"]' hint='回想本讲关于 间隔最大化与核技巧 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 间隔最大化、核技巧与软间隔 C 的落点。' />

@@ -7,18 +7,18 @@ description: 掌握启动期扩展能力与其代价
 
 # 第 116 讲 · 导入系统源码与 import hook
 
-看完执行与内存，还有段少有人细看的路：一条 import 从写下到生效发生了什么。命令行工具冷启动慢半拍，插件导不进来，模块互相引用绕成一团——这些别扭多在启动阶段，一个包初始化做点重活，所有命令跟着慢。
+看完执行与内存，还有段少有人细看的路：一条 `import` 从写下到生效发生了什么。命令行工具冷启动慢半拍，插件导不进来，模块互相引用绕成一团——这些别扭大多在启动阶段，一个包初始化时做点重活，所有命令跟着慢。
 
-沿 importlib 的 _bootstrap 查找链，认清 find_spec 与 sys.modules 的配合；再看 pyc 缓存与循环导入；最后谈导入系统里路径钩子与 import hook 的能与代价，用 -X importtime 剖析。需要模块与包、sys.modules 基础；学完你能诊断循环导入、把重依赖延迟到函数内。
+沿 importlib 的 _bootstrap 查找链，认清 find_spec 与 `sys.modules` 的配合；再看 pyc 缓存与循环导入；最后谈路径钩子与 `import hook` 的能与代价，用 `-X importtime` 剖析。需要模块与包、`sys.modules` 基础；学完你能诊断循环导入、把重依赖延迟到函数内。
 
 
 ## 包在 __init__ 里连网络，所有命令都变慢
 
 一个 CLI 工具冷启动要 1.8 秒，用户每次执行都等得明显。排查发现入口文件在顶层 import 了一个重型数据模块，而那个模块的 `__init__.py` 又顺手连了一次网络读配置；
 
-更麻烦的是团队为了做自动补丁，注册了一个远程加载的 import hook，结果所有命令启动时都要先走一遍这个 hook，静态分析器与依赖审计工具再也看不出代码到底依赖什么。Serverless 场景里这类问题尤其致命，因为每次冷启动都要付一遍串行导入成本。
+更麻烦的是团队为了做自动补丁，注册了一个远程加载的 `import hook`，结果所有命令启动时都要先走一遍这个 hook，静态分析器与依赖审计工具再也看不出代码到底依赖什么。Serverless 场景里这类问题尤其致命，因为每次冷启动都要付一遍串行导入成本。
 
-另一个 bug 是运行时动态生成插件文件后 import 不到，改 `sys.path` 时好时坏，根因是 finder 的目录清单有缓存，需要 invalidate_caches。
+另一个 bug 是运行时动态生成插件文件后 import 不到，改 `sys.path` 时好时坏，根因是 finder 的目录清单有缓存，需要 `importlib.invalidate_caches()`。
 
 导入发生在启动期且多为串行，理解 `importlib._bootstrap` 的查找链与 hook 的代价，才能既拿到扩展能力又不牺牲冷启动与可审计性。
 
@@ -38,19 +38,19 @@ description: 掌握启动期扩展能力与其代价
 
 ## _bootstrap 查找链与 sys.modules 缓存
 
-importlib 的启动代码在 Lib/importlib/`_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。
+importlib 的启动代码在 `Lib/importlib/_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（由 FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。
 
-import x 编译成 IMPORT_NAME 字节码，运行时调内建 `__import__`，落到 `_bootstrap._find_and_load`：先查 `sys.modules`，命中且值非 None 直接返回；
+`import x` 编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `_bootstrap._find_and_load`：先查 `sys.modules`，命中且值非 None 就直接返回；
 
-把值设为 None 则表示「导入被阻止」，会抛 ModuleNotFoundError。
+把值设为 None 表示「导入被阻止」，会抛 `ModuleNotFoundError`。
 
-未命中则按序遍历 `sys.meta_path`，默认是 BuiltinImporter、FrozenImporter、PathFinder 三个类，依次调用 `find_spec(fullname, path=None, target=None)`，第一个返回非 None 的 ModuleSpec 胜出；
+未命中则按序遍历 `sys.meta_path`，默认是 BuiltinImporter、FrozenImporter、PathFinder 三个类，依次调用各自的 `find_spec`，谁先返回非 None 的 `ModuleSpec` 谁胜出；
 
-path 仅在导入子模块时传入父包的 `__path__`，target 供 reload 复用模块对象。ModuleSpec（PEP 451，3.4+）字段含 name、loader、origin、submodule_search_locations、has_location、cached；
+`path` 只在导入子模块时传入父包的 `__path__`，`target` 供 reload 复用模块对象。ModuleSpec（PEP 451，3.4 起）字段含 name、loader、origin、submodule_search_locations、has_location、cached；
 
-loader 实现 create_module 与 exec_module，旧 load_module 自 3.4 起弃用。
+loader 实现 `create_module` 与 `exec_module`，旧的 `load_module` 自 3.4 起弃用。
 
-PathFinder 用 `sys.path_hooks` 与 path_importer_cache 缓存目录清单，动态新建文件后必须 `importlib.invalidate_caches()` 才能被发现。
+PathFinder 用 `sys.path_hooks` 与 `path_importer_cache` 缓存目录清单，所以动态新建文件后必须调用 `importlib.invalidate_caches()` 才能被发现。
 
 **sys.meta_path 默认 finder 与职责**
 
@@ -68,13 +68,15 @@ PathFinder 用 `sys.path_hooks` 与 path_importer_cache 缓存目录清单，动
 
 ## find_spec 到 exec_module 的加载时序
 
-导入系统必须在解释器核心可用之前自举，因此 _bootstrap 与 _bootstrap_external 被冻结成字节码由 FrozenImporter 加载。
+导入系统必须在解释器核心可用之前自举，因此 _bootstrap 与 _bootstrap_external 被冻结成字节码，由 FrozenImporter 加载。
 
-一次导入是确定性的三段查找：先查 `sys.modules` 缓存，未命中再按 `sys.meta_path` 顺序询问 finder 拿 ModuleSpec，最后由 loader 的 exec_module 在模块 `__dict__` 命名空间里执行代码，并把模块写回 `sys.modules`。
+一次导入是确定性的三段查找：先查 `sys.modules` 缓存，未命中再按 `sys.meta_path` 顺序询问 finder 拿 `ModuleSpec`，最后由 loader 的 `exec_module` 在模块 `__dict__` 命名空间里执行代码，并把模块写回缓存——这一步等价于执行 `sys.modules[name] = module`。
 
-这个缓存语义解释了两件事：第二次 import 同名模块不会再次执行模块代码，也不会再次询问 finder；把 `sys.modules` 某项设为 None 则显式阻断该导入。PathFinder 还缓存目录清单（path_importer_cache），所以运行时新建文件后需要 invalidate_caches 清缓存。
+这套缓存语义解释了两件事：第二次 `import` 同名模块不会再次执行模块代码，也不会再次询问 finder；把 `sys.modules` 某项设为 None 则显式阻断该导入。
 
-自定义 finder 插在链首即进入每次导入的关键路径，任何 I/O 或异常都会被放大到所有命令的冷启动，且让静态依赖分析失效。pyc 用 mtime 加大小或 hash 校验，同一秒同大小改动可能不重编；PEP 552 的 hash-based pyc 把校验换成内容哈希，适合可复现构建。
+PathFinder 还缓存目录清单（`path_importer_cache`），所以运行时新建文件后需要 invalidate_caches 清缓存。
+
+自定义 finder 插在链首即进入每次导入的关键路径，任何 I/O 或异常都会被放大到所有命令的冷启动，也让静态依赖分析失效。pyc 用 mtime 加大小或 hash 校验，同一秒同大小的改动可能不重编；PEP 552 的 hash-based pyc 把校验换成内容哈希，适合可复现构建。
 
 ```python
 import sys, importlib.abc, importlib
@@ -116,24 +118,24 @@ print('origin_is_py', fractions.__spec__.origin.endswith('.py'))
 | has_location | 是否来自文件系统 | True |
 | cached | pyc 缓存路径 | __pycache__/x.cpython-313.pyc |
 
-<Term word='importlib._bootstrap' text='importlib 的启动代码在 Lib/importlib/_bootstrap.py 与 _bootstrap_external.py，二者被冻结进解释器（FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。import x 编译成 IMPORT_NAME 字节码，运行时调内建 __im' />
+<Term word='importlib._bootstrap' text='importlib 的启动代码在 `Lib/importlib/_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（由 FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。`import x` 编译成 `IMPORT_NAME` 字节码，运' />
 
-<Term word='find_spec / exec_module' text='字节码缓存落在 __pycache__/m.cpython-313.pyc，标签来自 sys.implementation.cache_tag；默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash / unchecked-hash 的 hash-based pyc，因此同一秒内改动且字' />
+<Term word='find_spec / exec_module' text='字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc' />
 
 
 ## pyc 缓存、命名空间包与循环导入
 
-字节码缓存落在 `__pycache__`/`m.cpython`-313.pyc，标签来自 `sys.implementation.cache_tag`；
+字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；
 
-默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash / unchecked-hash 的 hash-based pyc，因此同一秒内改动且字节数不变可能不触发重编。
+默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc，因此同一秒内改动、字节数又没变时可能不触发重编。
 
-`sys.dont_write_bytecode` 默认 False，`PYTHONDONTWRITEBYTECODE=1` 或 -B 可关写入，`sys.pycache_prefix` 能重定向缓存。
+`sys.dont_write_bytecode` 默认 False，`PYTHONDONTWRITEBYTECODE=1` 或 `-B` 可关掉写入，`sys.pycache_prefix` 能重定向缓存目录。
 
-命名空间包（PEP 420）是没有 `__init__.py` 的目录，`spec.origin` is None，submodule_search_locations 是运行时重算的 _NamespacePath，所以运行时往 `sys.path` 追加目录也能发现新子模块。
+命名空间包（PEP 420）是没有 `__init__.py` 的目录，`spec.origin` 为 None，`submodule_search_locations` 是运行时重算的 _NamespacePath，所以运行时往 `sys.path` 追加目录也能发现新子模块。
 
-循环导入报错的根因是时序：模块 a 执行到 import b 被挂起，此时 a 已写入 `sys.modules` 但只初始化了一部分，b 反向 from a import NAME 就拿不到尚未定义的名字，抛 ImportError: cannot import name ... from partially initialized module。
+循环导入报错的根因是时序：模块 a 执行到 `import b` 被挂起，此时 a 已写入 `sys.modules` 但只初始化了一部分，b 反过来 `from a import NAME` 就拿不到尚未定义的名字，抛 `ImportError`，提示从尚未初始化完成的模块里取不到该名字。
 
-三种修复是把导入挪进函数体、把公共依赖抽到第三模块、或改成 import a 后以 `a.NAME` 访问延迟读取。
+三种修复是把导入挪进函数体、把公共依赖抽到第三模块、或者改成 `import a` 后用 `a.NAME` 延迟读取。
 
 **导入相关版本与工具**
 
@@ -191,20 +193,22 @@ print('same_origin', spec.origin == spec2.origin)
 
 自定义 MetaPathFinder 或 PathEntryFinder 能做加密模块、远程模块、插件注册表等扩展，协议是鸭子类型，不必继承基类，但继承能拿到 invalidate_caches 的默认实现。
 
-把 finder 插到 `sys.meta_path`[0] 意味着它先于 BuiltinImporter 被询问，既能覆盖标准库，也意味着一个写错的 finder 会拖慢此后每一次导入——因为它处在所有导入的关键路径上，还会让静态分析器、打包工具与 find_spec 的结果不一致。
+把 finder 插到 `sys.meta_path[0]`，意味着它先于 BuiltinImporter 被询问，既能覆盖标准库，也意味着一个写错的 finder 会拖慢此后每一次导入——它处在所有导入的关键路径上，还会让静态分析器、打包工具与 `find_spec` 的结果不一致。
 
-启动期定位用 python -X importtime 打印每个模块的累计与自身导入耗时，找出在 `__init__` 里做重 IO 的包；
+启动期定位用解释器的 importtime 开关（写成 `-X importtime`）打印每个模块的累计与自身导入耗时，找出在 `__init__` 里做重 IO 的包；
 
 修复是把重依赖延迟到函数内（`importlib.util.LazyLoader` 自 3.5 起可延迟执行模块代码），或改用显式插件注册并校验来源，而不是隐式远程加载。
 
-安全模型上，远程 hook 等于让任意来源的代码进入进程，必须配签名校验、来源白名单、日志与降级路径，否则插件机制本身就是供应链入口。-X importtime 的输出是累计微秒与自身微秒两列，按累计值排序即可定位冷启动热点。
+安全模型上，远程 hook 等于让任意来源的代码进入进程，必须配签名校验、来源白名单、日志与降级路径，否则插件机制本身就是供应链入口。`-X importtime` 的输出是累计微秒与自身微秒两列，按累计值排序即可定位冷启动热点。
 
 
 ## 带计时与来源校验的插件加载器
 
-把插件机制做成显式、可审计、可计时的加载器：用自定义 MetaPathFinder 只接管白名单里的名字，记录每次 find_spec 的耗时与来源，模块代码在 exec_module 阶段执行，加载完成后把统计打到日志。
+把插件机制做成显式、可审计、可计时的加载器：用自定义 `MetaPathFinder` 只接管白名单里的名字，记录每次 `find_spec` 的耗时与来源，模块代码在 `exec_module` 阶段执行，加载完成后把统计打到日志。
 
-真实项目里源码来自受控目录并带签名，find_spec 返回 spec_from_loader 构造的 ModuleSpec。下面这段用内存源码演示最小链路，重点看 hook 如何限定接管范围、如何度量它进入关键路径的成本，以及为什么缓存命中后不再重复询问。
+真实项目里源码来自受控目录并带签名，`find_spec` 返回 `spec_from_loader` 构造的 `ModuleSpec`。
+
+下面这段用内存源码演示最小链路，重点看 hook 如何限定接管范围、如何度量它进入关键路径的成本，以及为什么缓存命中后不再重复询问。
 
 ```python
 import sys, time, importlib.abc, importlib.util
@@ -239,7 +243,7 @@ sys.meta_path.remove(f)
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **importlib._bootstrap** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `importlib._bootstrap` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -283,6 +287,6 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 
 [下一讲：asyncio 事件循环与 Task 源码](/advanced/asyncio-source)
 
-<Predict no='116-P' q='Spy finder 下先 importlib.import_module(&#39;fractions&#39;) 再 import fractions，seen 里 fractions 出现几次？' :options='["1 次，第二次命中 sys.modules 缓存", "2 次，每次 import 都询问", "0 次，finder 没被调用"]' answer='0' output='1 次（cached_not_reasked True）' explain='首次导入按 meta_path 询问 finder，之后模块写入 sys.modules；第二次 import 直接返回缓存对象，不再走 finder 链，因此计数保持 1。' />
+<Predict no='116-4' q='Spy finder 下先 importlib.import_module(&#39;fractions&#39;) 再 import fractions，seen 里 fractions 出现几次？' :options='["1 次，第二次命中 sys.modules 缓存", "2 次，每次 import 都询问", "0 次，finder 没被调用"]' answer='0' output='1 次（cached_not_reasked True）' explain='首次导入按 meta_path 询问 finder，之后模块写入 sys.modules；第二次 import 直接返回缓存对象，不再走 finder 链，因此计数保持 1。' />
 
-<FillBlank no='116-F' tpl='___ sys, importlib.abc, importlib' :answers='["import"]' hint='回想本讲关于 importlib._bootstrap 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 _bootstrap 查找链与 sys.modules 缓存 的落点。' />
+<FillBlank no='116-5' tpl='___ sys, importlib.abc, importlib' :answers='["import"]' hint='回想本讲关于 importlib._bootstrap 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 _bootstrap 查找链与 sys.modules 缓存 的落点。' />

@@ -7,20 +7,22 @@ description: 完整走一遍工程化闭环
 
 # 第 081 讲 · 阶段综合：把脚本重构成可发布包
 
-前几讲把测试、日志、配置、打包补齐，上一讲讲完 pyproject 与 wheel。手上还留着只在自己机器跑得顺的单文件脚本：路径写死、依赖随缘，改完没人敢说结果没变。这一讲是工程化阶段的阶段综合，把规矩合进一次交付。
+前几讲把测试、日志、配置、打包补齐，上一讲讲完 `pyproject.toml` 与 wheel。手上还留着只在自己机器跑得顺的单文件脚本：路径写死、依赖随缘，改完没人敢说结果没变。这一讲是工程化阶段的阶段综合，把规矩合进一次交付。
 
-设想同事想复用这份脚本，你发去文件和依赖清单，对方却导入不进来——本地能跑，只是仓库根目录恰好在搜索路径里。我们从目录重构起步，接着依赖锁定、补上守住旧行为的测试，最后把 CI 与可回滚的发布连成一条链。需要包与模块、pytest、pyproject.toml；做完后别人一条命令就能装、能测、能用，也为让人调用它留好入口。
+设想同事想复用这份脚本，你发去文件和依赖清单，对方却导入不进来——本地能跑，只是仓库根目录恰好在搜索路径里。我们从目录重构起步，接着依赖锁定、补上守住旧行为的测试，最后把 CI 与可回滚的发布连成一条链。需要包与模块、`pytest`、`pyproject.toml`；做完后别人一条命令就能装、能测、能用，也为让人调用它留好入口。
 
 
 ## 一份两千行的脚本，交给三个团队就翻车
 
-运维交给你一个跑了两年、两千行的 `report.py`：读固定路径的 CSV、连内网数据库、把结果发到群里，配置全写死在顶层，末尾用 if `__name__` == '__main__' 拉起。
+运维交给你一个跑了两年、两千行的 `report.py`：读固定路径的 CSV、连内网数据库、把结果发到群里，配置全写死在顶层，末尾用 `if __name__ == '__main__'` 拉起。
 
 现在要交给三个团队复用，最朴素的做法是把文件复制过去再附一份 `requirements.txt`。
 
-第一次交付就翻车：对方装完依赖后 import report 报 ModuleNotFoundError，因为单文件从未打成包，本地能跑靠的是仓库根目录恰好在 `sys.path` 里；有人机器上是 httpx 0.27、CI 解析到 0.28，接口行为变了；
+第一次交付就翻车：对方装完依赖后 `import report` 报 `ModuleNotFoundError`，因为单文件从未打成包，本地能跑靠的是仓库根目录恰好在 `sys.path` 里；
 
-重构把发消息的函数挪了位置，没有测试，谁也说不清金额统计是否和昨天一致；发版时才发现上一个版本号已经在 PyPI 上，覆盖不了，只能临时改版本号救火。这些不是四个独立故障，而是同一条工程化闭环缺了四段：可安装的目录结构、锁定的依赖、行为保持的测试、可重复且能回滚的发布。本讲按小步把四段补齐，并让每一步都有可运行的判据。
+有人机器上是 `httpx 0.27`、CI 解析到 `0.28`，接口行为变了；重构把发消息的函数挪了位置，没有测试，谁也说不清金额统计是否和昨天一致；发版时才发现上一个版本号已经在 PyPI 上，覆盖不了，只能临时改版本号救火。
+
+这些不是四个独立故障，而是同一条工程化闭环缺了四段：可安装的目录结构、锁定的依赖、行为保持的测试、可重复且能回滚的发布。本讲按小步把四段补齐，并让每一步都有可运行的判据。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='本机 pytest 全绿，别处 pip install 后 import 报 ModuleNotFoundError：flat layout 下测试从仓库根启动，sys.path[0] 恰好是源码所在目录，import 命中的是未安装的源码而非发行产物' />
 
@@ -38,15 +40,21 @@ description: 完整走一遍工程化闭环
 
 ## src layout 与 flat layout：能 import 到底是不是事实
 
-单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 tests/ 同级），pytest 从根目录启动时 `sys.path`[0] 就是仓库根，于是测试里 import report 总能成功——哪怕这个包根本没被安装。
+单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。
 
-src layout 把源码收进 src/pkgname/，根目录不再有可导入的包，必须先 pip install 才能 import，测试跑的正是安装后的产物，假通过当场暴露。
+src layout 把源码收进 `src/pkgname/`，根目录不再有可导入的包，必须先安装才能 `import`，测试跑的正是安装后的产物，假通过当场暴露。
 
-PEP 517 把构建拆成前端（pip、build）与后端（setuptools、hatchling、flit_core），由 `pyproject.toml` 的 `[build-system]` 声明 requires 与 build-backend；
+PEP 517 把构建拆成前端（`pip`、`build`）与后端（`setuptools`、`hatchling`、`flit_core`），由 `pyproject.toml` 的 `[build-system]` 声明 `requires` 与 `build-backend`；
 
-setuptools 从 61 版起支持在 `pyproject.toml` 里写 `[project]` 元数据，不必再维护 `setup.py`。PEP 660 定义可编辑安装，pip install -e . 会把源码目录挂进解释器路径，改代码即时生效。
+`setuptools` 从 61 版起支持在 `pyproject.toml` 里写 `[project]` 元数据，不必再维护 `setup.py`。
 
-自动发现包时要把 tests、docs 排除，否则它们会被打进 wheel；用 python -I 隔离模式启动（忽略 PYTHONPATH 与当前目录）复验 import，才是可信的安装检查。带类型注解的库还要按 PEP 561 放一个 `py.typed` 标记文件，下游 mypy 才会读取。
+PEP 660 定义可编辑安装，`pip install` 会把源码目录挂进解释器路径，改代码即时生效。
+
+```bash
+pip install -e .
+```
+
+自动发现包时要把 `tests`、`docs` 排除，否则它们会被打进 wheel；用 `python -I` 隔离模式启动（忽略 `PYTHONPATH` 与当前目录）复验 `import`，才是可信的安装检查。带类型注解的库还要按 PEP 561 放一个 `py.typed` 标记文件，下游 `mypy` 才会读取。
 
 **flat layout 与 src layout 对照**
 
@@ -100,7 +108,7 @@ print('guarded', any(isinstance(n, ast.If) for n in tree.body))
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（report.py 与 tests/ 同级），pytest 从根目录启动时 sys.path[0] 就是仓库根，于是测试里 import report 总能成功——哪怕这个包根本没被安装。src layout 把源码收' />
+<Callout type="tip" title='核心心智模型' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src l' />
 
 <ConceptDiagram type='flow4' title='第 081 讲 · src layout：让『能 import』成为被验证过的事实' labels='src layout：让『能 import』|依赖锁定与入口点：把『我这儿能跑』写成机器可|测试先行与 CI 矩阵：让重构可验证、发布可' caption='完整走一遍工程化闭环' />
 
@@ -109,17 +117,31 @@ print('guarded', any(isinstance(n, ast.If) for n in tree.body))
 
 ## 依赖锁定、控制台入口点与发布产物
 
-`[project]` 表是 PEP 621 标准化的元数据：name 是发行名（可与 import 包名不同，含连字符时 import 名用下划线），version 遵循 PEP 440（如 1.4.0、2.0rc1、1.0.dev3），发布到 PyPI 后同名同版本不可覆盖；
+`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖；
 
-requires-python = '>=3.9' 让 pip 在不兼容解释器上直接拒绝安装；dependencies 写兼容范围，锁文件里才 pin 精确值。
+`requires-python = '>=3.9'` 让 `pip` 在不兼容解释器上直接拒绝安装；
 
-范围与锁定是两件事：pip-compile 或 uv pip compile 读 pyproject 解析出 `requirements.lock`，带 --generate-hashes 后每条都附摘要，CI 用 pip install -c `constraints.txt` 或 `pip install --require-hashes 复现同一依赖集合`，杜绝解析漂移。
+`dependencies` 写兼容范围，锁文件里才 pin 精确值。
 
-开发依赖放 `[project.optional-dependencies]` 的 dev 组，避免测试框架进生产镜像。
+范围与锁定是两件事：`pip-compile` 或 `uv pip` 读 `pyproject.toml` 解析出 `requirements.lock`，带 `--generate-hashes` 后每条都附摘要，CI 用 `pip install` 或 `pip install` 复现同一依赖集合，杜绝解析漂移。
 
-`[project.scripts]` 声明控制台入口点，形如 shortly = 'shortly.cli:main'，pip 安装 wheel 时会在 bin 目录生成一个调用该函数的可执行脚本，这是把脚本变成命令的关键。
+```bash
+uv pip compile
+pip install -c constraints.txt
+pip install --require-hashes
+```
 
-产物分两种：wheel（PEP 427）是已构建的 zip，安装只解压写 .dist-info，不执行构建代码；sdist 是源码包，安装时要现场跑后端。python -m build 会同时产出两者，twine check 校验 METADATA 的 long_description 与 content-type 是否合法。
+开发依赖放 `[project.optional-dependencies]` 的 `dev` 组，避免测试框架进生产镜像。
+
+`[project.scripts]` 声明控制台入口点，形如 `shortly`，`pip` 安装 wheel 时会在 `bin` 目录生成一个调用该函数的可执行脚本，这是把脚本变成命令的关键。
+
+```python
+shortly = 'shortly.cli:main'
+```
+
+产物分两种：wheel（PEP 427）是已构建的 zip，安装只解压写 `.dist-info`、不执行构建代码；sdist 是源码包，安装时要现场跑后端。
+
+用 `build` 会同时产出两者，`twine check` 校验 `METADATA` 的 `long_description` 与 `content-type` 是否合法。
 
 **pyproject.toml 关键表与字段**
 
@@ -192,47 +214,49 @@ print('functions', [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
 
 ## 测试先行、CI 矩阵与可回滚发布
 
-顺序决定成败：先补 characterization test（特征测试），锁住当前可观察行为，哪怕其中藏着旧 bug 也照实记录，再动结构；这样每次小步重构后跑一遍，就能证明行为保持，而不是把重构做成重写。pytest 靠 rootdir 与 `conftest.py` 组织夹具，把被测包以可编辑安装方式装进同一环境；
+顺序决定成败：先补特征测试（characterization test）锁住当前可观察行为，哪怕其中藏着旧 bug 也照实记录，再动结构；这样每次小步重构后跑一遍，就能证明行为保持，而不是把重构做成重写。`pytest` 靠 `rootdir` 与 `conftest.py` 组织夹具，把被测包以可编辑安装方式装进同一环境；
 
-覆盖率用 `coverage.py` 或 pytest-cov 量化，但覆盖率是发现盲区的工具，不是行为正确的证明。
+覆盖率用 `coverage.py` 或 `pytest-cov` 量化，但覆盖率是发现盲区的工具，不是行为正确的证明。
 
-CI 矩阵用 tox、nox 或 GitHub Actions 的 matrix 覆盖 Python 3.9 到 3.13 与 Linux/macOS/Windows，每格都从锁文件安装后跑同一组命令，本地能过线上才能过。
+CI 矩阵用 `tox`、`nox` 或 GitHub Actions 的 matrix 覆盖 Python 3.9 到 3.13 与 Linux/macOS/Windows，每格都从锁文件安装后跑同一组命令，本地能过线上才能过。
 
-发布流水线把 git tag、版本号、构建、上传串起来：版本只能有一个来源，用 `importlib.metadata.version`('shortly') 从 .dist-info 读，而不是在源码里再写一份 `__version__`；
+发布流水线把 `git tag`、版本号、构建、上传串起来：版本只能有一个来源，用 `importlib.metadata.version('shortly')` 从 `.dist-info` 读，而不是在源码里再写一份 `__version__`；
 
-上传用 twine upload dist/*，仓库凭据走 OIDC 或 token 而不落盘。回滚不是覆盖：PyPI 拒绝同名同版本重传，紧急修复要发新版本；对已发布但有问题的版本可用 yank（PEP 592）阻止新解析命中，已 pin 的依赖仍能装。
+上传用 `twine upload dist/*`，仓库凭据走 `OIDC` 或 token 而不落盘。
 
-回滚路径是让下游 pin 回上一版本号，并在流水线里保留上一版产物与回滚脚本，发布后跑一次 python -I -c 'import pkg; print(pkg.__file__)' 冒烟。
+回滚不是覆盖：PyPI 拒绝同名同版本重传，紧急修复要发新版本；对已发布但有问题的版本可用 `yank`（PEP 592）阻止新解析命中，已 pin 的依赖仍能装。回滚路径是让下游 pin 回上一版本号，并在流水线里保留上一版产物与回滚脚本，发布后用 `python -I` 隔离模式跑一次导入冒烟。
 
-<FlowTimeline :steps='[{"title": "src layout：让『能 import』成为被验证过的事实", "desc": "单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（r…", "tone": "blue"}, {"title": "依赖锁定与入口点：把『我这儿能跑』写成机器可校验的约束", "desc": "[project] 表是 PEP 621 标准化的元数据：name 是发行名（可与 …", "tone": "purple"}, {"title": "测试先行与 CI 矩阵：让重构可验证、发布可回滚", "desc": "顺序决定成败：先补 characterization test（特征测试），锁住当前…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前门禁：把目录、元数据、导入写法做成可跑的检查", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "src layout：让『能 import』成为被验证过的事实", "desc": "单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`…", "tone": "blue"}, {"title": "依赖锁定与入口点：把『我这儿能跑』写成机器可校验的约束", "desc": "`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名…", "tone": "purple"}, {"title": "测试先行与 CI 矩阵：让重构可验证、发布可回滚", "desc": "顺序决定成败：先补特征测试（characterization test）锁住当前可观…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前门禁：把目录、元数据、导入写法做成可跑的检查", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## PEP 517 前后端解耦与 wheel 为何可复现
 
-PEP 517 把『怎么构建』与『谁来驱动构建』解耦：pip 或 build 作为前端，先创建隔离虚拟环境、装入 `[build-system]`.requires 声明的后端，再调用后端约定的 build_wheel / build_sdist 钩子。
+PEP 517 把「怎么构建」与「谁来驱动构建」解耦：`pip` 或 `build` 作为前端，先创建隔离虚拟环境、装入 `[build-system].requires` 声明的后端，再调用后端约定的 `build_wheel` / `build_sdist` 钩子。
 
-wheel 本质是 zip，内含包代码与一份 .dist-info（METADATA、RECORD、`entry_points.txt`、WHEEL），pip 安装 wheel 时只做解压、按 entry_points 生成脚本、写 RECORD 清单，不执行任何项目构建代码，因此安装快且可复现；
+wheel 本质是 zip，内含包代码与一份 `.dist-info`（`METADATA`、`RECORD`、`entry_points.txt`、`WHEEL`），`pip` 安装 wheel 时只做解压、按 `entry_points` 生成脚本、写 `RECORD` 清单，不执行任何项目构建代码，因此安装快且可复现；
 
-sdist 则要求目标机器具备编译器与后端，失败率更高。pip 解析依赖时读 METADATA 的 Requires-Dist，按 requires-python 与版本范围挑候选，这一步每次运行都可能得到不同结果，正是锁文件要消掉的不确定性。
+sdist 则要求目标机器具备编译器与后端，失败率更高。
 
-`importlib.metadata` 从已安装的 .dist-info 读版本与入口点，与源码里的 `__version__` 没有关联，所以版本必须收敛到单一来源。
+`pip` 解析依赖时读 `METADATA` 的 `Requires-Dist`，按 `requires-python` 与版本范围挑候选，这一步每次运行都可能得到不同结果，正是锁文件要消掉的不确定性。
 
-可编辑安装（PEP 660）由后端写一个 .pth 或自定义 MetaPathFinder，把 src 目录挂进 `sys.path`，让改动无需重装即可见，这也是 src layout 下本地开发的常规姿势。
+`importlib.metadata` 从已安装的 `.dist-info` 读版本与入口点，与源码里的 `__version__` 没有关联，所以版本必须收敛到单一来源。
 
-<Term word='目录重构' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（report.py 与 tests/ 同级），pytest 从根目录启动时 sys.path[0] 就是仓库根，于是测试里 import report 总能成功——哪怕这个包根本没被安装。src layout 把源码收进 src/pkgn' />
+可编辑安装（PEP 660）由后端写一个 `.pth` 或自定义 `MetaPathFinder`，把 src 目录挂进 `sys.path`，让改动无需重装即可见，这也是 src layout 下本地开发的常规姿势。
 
-<Term word='依赖锁定' text='[project] 表是 PEP 621 标准化的元数据：name 是发行名（可与 import 包名不同，含连字符时 import 名用下划线），version 遵循 PEP 440（如 1.4.0、2.0rc1、1.0.dev3），发布到 PyPI 后同名同版本不可覆盖；requires-python = &#39;&gt;=3' />
+<Term word='目录重构' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src layout 把源码收' />
+
+<Term word='依赖锁定' text='`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖；`require' />
 
 
 ## 发布前门禁：把目录、元数据、导入写成可跑的检查
 
 一个团队把脚本拆成包后，最容易在发布当天才发现打错了目录或漏了字段。
 
-把发布前的判据写成一个不依赖第三方库的检查器，随代码提交、在 CI 里执行：先确认仓库里存在 src/shortly/`__init__.py` 与 `pyproject.toml`（src layout 的最低证据），再用 tomllib 解析元数据，检查 name、version、requires-python、dependencies 四个必需字段是否齐全，顺便确认依赖里确实有精确 pin；
+把发布前的判据写成一个不依赖第三方库的检查器，随代码提交、在 CI 里执行：先确认仓库里存在 `src/shortly/__init__.py` 与 `pyproject.toml`（src layout 的最低证据），再用 `tomllib` 解析元数据，检查 `name`、`version`、`requires-python`、`dependencies` 四个必需字段是否齐全，顺便确认依赖里确实有精确 pin；
 
-接着用 ast 检查包内模块是否用相对导入（from .core import ...）而不是硬编码顶层包名，并确认 `__main__` guard 仍保留。这段检查把『工程化做没做对』从口头约定变成布尔结果，任何一项为假就卡住发布。
+接着用 `ast` 检查包内模块是否用相对导入（`from .core import ...`）而不是硬编码顶层包名，并确认 `__main__` guard 仍保留。
 
-真实项目再接 wheel 内容扫描与 twine check，但骨架就是这个：每一项失败都必须能指向具体文件与具体字段。
+这段检查把「工程化做没做对」从口头约定变成布尔结果，任何一项为假就卡住发布。真实项目再接 wheel 内容扫描与 `twine check`，但骨架就是这个：每一项失败都必须能指向具体文件与具体字段。
 
 ```python
 import tomllib
@@ -289,7 +313,7 @@ print('main guard', has_main_guard(CLI))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **目录重构** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 目录重构 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -316,9 +340,9 @@ python -m compileall -q . && python -m pytest -q
 
 <Quiz no='081-3' q='线上 1.4.0 有 bug，正确的处理顺序是？' :options='["发 1.4.1 修复，必要时 yank 1.4.0，并让下游 pin 回上一可用版本", "重新上传一份同名同版本的 1.4.0 覆盖", "直接删掉 PyPI 上的 1.4.0 文件", "把版本号改回 1.3.9 重新发布"]' answer="0" explain='PyPI 拒绝同名同版本重传，版本号只增不退；yank（PEP 592）只阻止新解析命中、不删文件也不影响已 pin 的依赖，回滚靠下游 pin 到上一可用版本。' />
 
-<Predict no='081-P' q='对一段含 from .core import shorten 的模块取 ast.walk，筛 ImportFrom 且 level &gt; 0，最可能得到什么？' :options='["[1]，表示一层相对导入", "[0]，表示绝对导入", "空列表，因为 ast 不解析相对导入"]' answer='0' output='relative import levels [1]' explain='from .core import ... 的 ImportFrom 节点 level 为 1（每多一个点加 1），module 为 &#39;core&#39;；level 为 0 才是绝对导入。用 ast 检查 level 能机器化地守住包内必须用相对导入的约定。' />
+<Predict no='081-4' q='对一段含 from .core import shorten 的模块取 ast.walk，筛 ImportFrom 且 level &gt; 0，最可能得到什么？' :options='["[1]，表示一层相对导入", "[0]，表示绝对导入", "空列表，因为 ast 不解析相对导入"]' answer='0' output='relative import levels [1]' explain='from .core import ... 的 ImportFrom 节点 level 为 1（每多一个点加 1），module 为 &#39;core&#39;；level 为 0 才是绝对导入。用 ast 检查 level 能机器化地守住包内必须用相对导入的约定。' />
 
-<FillBlank no='081-F' tpl='___ tomllib' :answers='["import"]' hint='回想本讲关于 目录重构 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 src layout：让『能 import』成为被验证过的事实 的落点。' />
+<FillBlank no='081-5' tpl='___ tomllib' :answers='["import"]' hint='回想本讲关于 目录重构 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 src layout：让『能 import』成为被验证过的事实 的落点。' />
 
 <KnowledgeCard :points='["src layout 把包收进 src/，让测试只能 import 到已安装产物；用 python -I 隔离复验", "PEP 517 由 pyproject.toml 的 [build-system] 声明后端；PEP 660 可编辑安装把源码挂进 sys.path", "[project] 的 version 遵循 PEP 440 且发布后不可覆盖；requires-python 让 pip 拒绝不兼容解释器", "范围写在 dependencies、精确值锁在 lock 文件；CI 用 --require-hashes 复现同一依赖集合", "wheel 是已构建 zip（安装只解压），sdist 现场构建；python -m build 同产两者，twine check 校验元数据", "重构先补特征测试锁行为；回滚靠发新版本 + pin 上一版，yank 只阻止新解析命中"]' :pitfalls='["本机 pytest 全绿，别处 pip install 后 import 报 ModuleNotFoundError", "依赖只写 requirements.txt 里的包名，CI 与本地行为不一致", "线上出了 bug 想用同一版本号重新上传修复包", "先重构完再补测试，改动面太大时无法判断行为是否保持，重构很容易变成重写"]' summary='工程化的价值在交付那一刻体现：一条命令构建、一条命令测试、一条命令发布，且每一步可重复' />
 

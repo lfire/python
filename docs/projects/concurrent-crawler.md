@@ -9,14 +9,14 @@ description: 把单机采集演进成可调度的分布式系统
 
 上一讲把单机管道做稳了；这一讲把采集摊到多个 worker 上，本以为吞吐翻倍，先来的却是单机没有的麻烦——重复、乱序、部分失败和节点失联。
 
-多节点后重复抓取涨到三成——每台各记一份已抓集合，同一批 URL 被反复请求；某台半夜掉线，取走却没确认的任务就此消失；没限速，短时间对同一域名发了几千次请求，被挡在门外。我们先立一条串行基线，再换 asyncio 配连接池与限流，接着用布隆过滤和最小堆做 URL 去重与优先级，最后靠任务队列的 ack 与断点快照补齐。需要你熟悉 asyncio、集合与哈希；学完能回答「节点崩了任务会不会丢」。
+多节点后重复抓取涨到三成——每台各记一份已抓集合，同一批 URL 被反复请求；某台半夜掉线，取走却没确认的任务就此消失；没限速，短时间对同一域名发了几千次请求，被挡在门外。我们先立一条串行基线，再换 `asyncio` 配连接池与限流，接着用布隆过滤和最小堆做 URL 去重与优先级，最后靠任务队列的 `ack` 与断点快照补齐。需要你熟悉 `asyncio`、集合与哈希；学完能回答「节点崩了任务会不会丢」。
 
 
 ## 分布式化之后，新增的不是「更快的抓取」
 
 把单机爬虫改成多 worker 分布式调度后，团队期待吞吐翻倍，结果监控里重复抓取率涨到 30%：每个节点各维护一份已抓集合，同一批 URL 被不同 worker 反复请求；某台节点半夜崩溃，它从队列取走但没确认的任务就此消失，第二天补数怎么都对不齐。还因为没做限速，短时间对同一个域名发了几千个请求，被对方直接封了 IP。
 
-朴素解法「多开几个进程 + 内存 set 去重」失败在三点：去重集合没有共享、任务取出即丢失缺少确认机制、频率与优先级没有统一约束。分布式化之后新增的不是「更快的抓取」，而是重复、乱序、部分失败与节点失联。本讲用标准库搭出布隆去重、优先队列、asyncio 限流、ack 出队与断点快照的最小可运行骨架。
+朴素解法「多开几个进程 + 内存 set 去重」失败在三点：去重集合没有共享、任务取出即丢失缺少确认机制、频率与优先级没有统一约束。分布式化之后新增的不是「更快的抓取」，而是重复、乱序、部分失败与节点失联。这一讲用标准库搭出布隆去重、优先队列、`asyncio` 限流、`ack` 出队与断点快照的最小可运行骨架。
 
 <ConceptDiagram type='hub4' title='第 128 讲 · 串行到 asyncio：连接池、限流与合规默认值' labels='串行到 asyncio：连接池、限流与合规默|URL 去重与优先级：布隆过滤与最小堆|任务队列、ack、断点续爬与监控' caption='把单机采集演进成可调度的分布式系统' />
 
@@ -25,15 +25,15 @@ description: 把单机采集演进成可调度的分布式系统
 
 ## 串行基线到 asyncio：连接池、限流与合规默认值
 
-串行 requests 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。
+串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。
 
-asyncio 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector(limit=100, limit_per_host=10)` 限制总连接与单主机连接，Semaphore 限制在途协程数，`ClientTimeout(total=10, connect=3)` 必须显式设置，否则一个慢响应会占住连接与协程。
+`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Semaphore` 限制在途协程数，`ClientTimeout` 必须显式给出总超时与连接超时，否则一个慢响应会占住连接与协程。
 
-`asyncio.gather` 保留结果顺序，但默认任一协程抛异常会取消其余任务，批量抓取应传 `return_exceptions=True` 或改用 3.11 起的 TaskGroup 管理生命周期。
+`asyncio.gather` 保留结果顺序，但默认只要有协程抛异常，异常就立刻向外传播、其余任务的结果不再被收集，批量抓取应传 `return_exceptions=True` 把失败当结果收下，或改用 3.11 起的 `TaskGroup` 统一管理生命周期。
 
-连接复用靠 keep-alive 与 DNS 缓存，别为每个 URL 新建 Session。
+连接复用靠 keep-alive 与 DNS 缓存，别为每个 URL 新建 `Session`。
 
-合规要写成默认策略：用 `urllib.robotparser.RobotFileParser` 读 `robots.txt`、按域名设最小请求间隔、带清楚标识的 User-Agent、对 429 与 5xx 做指数退避与重试上限。
+合规要写成默认策略：用 `urllib.robotparser.RobotFileParser` 读 `robots.txt`、按域名设最小请求间隔、带清楚标识的 User-Agent、对 `429` 与 `5xx` 做指数退避与重试上限。
 
 三个失效信号：某域名 QPS 突增触发封禁、在途任务数无限上涨、慢请求拖垮整个事件循环。
 
@@ -133,11 +133,15 @@ print('requeued', list(q.pending))
 
 去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。
 
-共享去重可用 Redis 的 SETNX（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 (1 - e^(-kn/m))^k，只增不删（要删用 Counting Bloom），因此它「说没见过一定没见过、说见过可能误判」，工程上把误判当作少抓一个 URL 的代价，并在后端再做一次精确判重。
+共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 `(1 - e^(-kn/m))^k`，只增不删（要删用 Counting Bloom），因此它「说没见过一定没见过、说见过可能误判」，工程上把误判当作少抓一个 URL 的代价，并在后端再做一次精确判重。
 
-标准库可用 `hashlib.md5` 加不同前缀生成多个哈希位置。优先级队列用 heapq 的最小堆：push 与 pop 都是 `O(log n)`，元素取 (priority, url) 元组，priority 数字越小越先抓；
+标准库可用 `hashlib.md5` 加不同前缀生成多个哈希位置。
 
-若优先级可能相同，要插入序号变成 (pri, seq, url)，避免两个不可比较的对象触发 TypeError。队列要定期快照到磁盘或 Redis，否则节点崩溃后优先级信息全部丢失。
+优先级队列用 `heapq` 的最小堆：push 与 pop 都是 `O(log n)`，元素取 `(priority, url)` 元组，priority 数字越小越先抓；
+
+若优先级可能相同，要插入序号变成 `(pri, seq, url)`，避免两个不可比较的对象触发 `TypeError`。
+
+队列要定期快照到磁盘或 Redis，否则节点崩溃后优先级信息全部丢失。
 
 **去重方案对照**
 
@@ -164,28 +168,30 @@ print('bits per item', round(1024 / 100, 2))
 
 ## 任务队列、ack 语义与断点续爬
 
-分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 ack 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写入，重复抓取不会产生重复数据。
+分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 `ack` 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写入，重复抓取不会产生重复数据。
 
 乱序：优先级只保证出队顺序，不保证完成顺序，结果表要带抓取时间戳。部分失败：失败的单个 URL 进失败队列并记录原因，不拖垮整批。节点失联：心跳与租约判定存活，定期把 done 集合与优先队列写成检查点（临时文件加原子 replace），重启从快照恢复，这就是断点续爬。
 
 监控至少要有：在途任务数、重复率、失败率、每域名 QPS、队列积压、节点心跳与快照时间；压测时先看这些指标再决定加 worker 还是加限流。
 
-<ArchBlueprint title='第 128 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "串行到 asyncio：连接池、限流与合规默认值", "protocol": "调用 / 请求", "items": [{"label": "串行到 asyncio：", "sub": "输入与前置", "detail": "串行 requests 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。asyncio 配 aiohttp.ClientSession 用单线程事件循环把等待重叠：TCPConnector(limit=100, limit_per_host=10) 限制总连接与单主机连接，Semaphore 限制", "tone": "blue"}]}, {"name": "核心规则", "note": "URL 去重与优先级：布隆过滤与最小堆", "protocol": "语言 / 运行时协议", "items": [{"label": "URL 去重与优先级：布", "sub": "状态与边界", "detail": "去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 SETNX（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 (1 -", "tone": "purple"}]}, {"name": "落地与收尾", "note": "任务队列、ack、断点续爬与监控", "items": [{"label": "任务队列、ack、断点续", "sub": "工程处理", "detail": "分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 ack 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写入，", "tone": "green"}]}]' />
+<ArchBlueprint title='第 128 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "串行到 asyncio：连接池、限流与合规默认值", "protocol": "调用 / 请求", "items": [{"label": "串行到 asyncio：", "sub": "输入与前置", "detail": "串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Sema", "tone": "blue"}]}, {"name": "核心规则", "note": "URL 去重与优先级：布隆过滤与最小堆", "protocol": "语言 / 运行时协议", "items": [{"label": "URL 去重与优先级：布", "sub": "状态与边界", "detail": "去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 `(", "tone": "purple"}]}, {"name": "落地与收尾", "note": "任务队列、ack、断点续爬与监控", "items": [{"label": "任务队列、ack、断点续", "sub": "工程处理", "detail": "分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 `ack` 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写", "tone": "green"}]}]' />
 
 
 ## 事件循环与 Semaphore 的等待者队列
 
-asyncio 用单线程事件循环加 selector 把大量 IO 等待重叠，Semaphore 内部是计数器加等待者队列，acquire 减到 0 时后续协程挂起，await 把控制权交回循环；因此并发上限由 Semaphore 与连接器 limit 共同决定，超时则决定慢请求不会永久占住槽位。
+`asyncio` 用单线程事件循环加 selector 把大量 IO 等待重叠，`Semaphore` 内部是计数器加等待者队列，acquire 减到 0 时后续协程挂起，`await` 把控制权交回循环；因此并发上限由 `Semaphore` 与连接器 `limit` 共同决定，超时则决定慢请求不会永久占住槽位。
 
-布隆过滤的误判率来自 k 个哈希独立置位的假设：某位仍为 0 的概率是 e^(-kn/m)，全被置 1 的概率是 (1 - e^(-kn/m))^k；它只会出现「误判为见过」的假阳性，不会漏判，因此适合做预筛，后面仍需一次精确判重。
+布隆过滤的误判率来自 k 个哈希独立置位的假设：某位仍为 0 的概率是 `e^(-kn/m)`，全被置 1 的概率是 `(1 - e^(-kn/m))^k`；
 
-heapq 用数组表示二叉最小堆，push/pop 都是 `O(log n)`，元组比较按字典序逐项进行，所以 (pri, seq, url) 的序号能避免优先级相同时比较不可排序对象。
+它只会出现「误判为见过」的假阳性，不会漏判，因此适合做预筛，后面仍需一次精确判重。
 
-分布式队列的 at-least-once 语义意味着任务可能被投递多次，只有「ack 后出队」加「按主键 upsert 的幂等写入」才能把重复投递收敛成一致结果；检查点用临时文件加原子 replace，保证快照不会是半截状态。
+`heapq` 用数组表示二叉最小堆，push/pop 都是 `O(log n)`，元组比较按字典序逐项进行，所以 `(pri, seq, url)` 的序号能避免优先级相同时比较不可排序对象。
 
-<Term word='串行基线到 asyncio' text='串行 requests 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。asyncio 配 aiohttp.ClientSession 用单线程事件循环把等待重叠：TCPConnector(limit=100, limit_per_host=10) 限制总连接与单主机连接，Semaphore 限制在途协程数，Clie' />
+分布式队列的 at-least-once 语义意味着任务可能被投递多次，只有「`ack` 后出队」加「按主键 upsert 的幂等写入」才能把重复投递收敛成一致结果；检查点用临时文件加原子 replace，保证快照不会是半截状态。
 
-<Term word='连接池与限流' text='去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 SETNX（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 (1 - e^(-kn/m)' />
+<Term word='串行基线到 asyncio' text='串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Semaphore` 限制在' />
+
+<Term word='连接池与限流' text='去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 `(1 - e^(-kn' />
 
 
 ## 去重方案对照：内存 set 与布隆过滤的边界
@@ -223,11 +229,11 @@ heapq 用数组表示二叉最小堆，push/pop 都是 `O(log n)`，元组比较
 
 ## 带优先级、ack 语义与断点快照的 worker
 
-一个可调度的采集节点要满足三点：按优先级出队、只处理未完成的任务、崩溃后能从快照续跑。下面用标准库实现最小骨架：Worker 启动时从 json 检查点恢复 done 集合与 heapq 优先队列；submit 先查 done 再入堆；
+一个可调度的采集节点要满足三点：按优先级出队、只处理未完成的任务、崩溃后能从快照续跑。下面用标准库实现最小骨架：Worker 启动时从 `json` 检查点恢复 done 集合与 `heapq` 优先队列；`submit` 先查 done 再入堆；
 
-run 弹出 n 个任务、把 URL 记入 done，并用「临时文件加 `Path.replace`」原子写回检查点；再次构造 Worker 即模拟节点重启，读回后发现已完成集合与剩余队列都被正确恢复。
+`run` 弹出 n 个任务、把 URL 记入 done，并用「临时文件加 `Path.replace`」原子写回检查点；再次构造 Worker 即模拟节点重启，读回后发现已完成集合与剩余队列都被正确恢复。
 
-真实项目把 done 换成 Redis 集合、给任务加 inflight 与 ack、用可见性超时重投未确认任务，并定期压缩快照。片段可直接运行，重点看快照如何把断点续爬变成可验证的行为。
+真实项目把 done 换成 Redis 集合、给任务加 inflight 与 `ack`、用可见性超时重投未确认任务，并定期压缩快照。片段可直接运行，重点看快照如何把断点续爬变成可验证的行为。
 
 ```python
 import heapq, json, tempfile
@@ -281,7 +287,7 @@ print('remaining', [u for _, u in sorted(w2.heap)])
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **串行基线到 asyncio** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 串行基线到 asyncio 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 动手练习、自测与速记
@@ -296,9 +302,9 @@ python -m compileall -q . && python -m pytest -q
 
 <Quiz no='128-3' q='asyncio 批量抓取时，关于 gather 与限流哪项准确？' :options='["gather 保留结果顺序，默认一个异常会取消其余任务；并发还要靠 Semaphore 与超时约束", "gather 会按完成顺序返回结果", "Semaphore 只限制连接数不影响协程数", "不设超时只是稍慢，没有其它后果"]' answer="0" explain='gather 按输入顺序收集，return_exceptions 默认 False 时一个异常会传播并取消其余任务；Semaphore 限制在途协程，ClientTimeout 防止慢请求永久占住槽位。' />
 
-<Predict no='128-P' q='对 (2,&#39;/a&#39;), (1,&#39;/b&#39;), (0,&#39;/c&#39;), (3,&#39;/d&#39;) 依次 heappush 再全部弹出，顺序是？' :options='["&#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;, &#39;/d&#39;", "&#39;/a&#39;, &#39;/b&#39;, &#39;/c&#39;, &#39;/d&#39;", "&#39;/d&#39;, &#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;"]' answer='0' output='priority order [&#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;, &#39;/d&#39;]' explain='heapq 是最小堆，按元组第一项 priority 升序弹出，同优先级才比较第二项；0 对应的 /c 最先出队，3 对应的 /d 最后。' />
+<Predict no='128-4' q='对 (2,&#39;/a&#39;), (1,&#39;/b&#39;), (0,&#39;/c&#39;), (3,&#39;/d&#39;) 依次 heappush 再全部弹出，顺序是？' :options='["&#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;, &#39;/d&#39;", "&#39;/a&#39;, &#39;/b&#39;, &#39;/c&#39;, &#39;/d&#39;", "&#39;/d&#39;, &#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;"]' answer='0' output='priority order [&#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;, &#39;/d&#39;]' explain='heapq 是最小堆，按元组第一项 priority 升序弹出，同优先级才比较第二项；0 对应的 /c 最先出队，3 对应的 /d 最后。' />
 
-<FillBlank no='128-F' tpl='import  ___ io, hashlib, heapq' :answers='["async"]' hint='回想本讲关于 串行基线到 asyncio 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 串行到 asyncio：连接池、限流与合规默认值 的落点。' />
+<FillBlank no='128-5' tpl='import  ___ io, hashlib, heapq' :answers='["async"]' hint='回想本讲关于 串行基线到 asyncio 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 串行到 asyncio：连接池、限流与合规默认值 的落点。' />
 
 <KnowledgeCard :points='["asyncio 用事件循环重叠 IO 等待；TCPConnector 的 limit/limit_per_host、Semaphore、ClientTimeout 三者共同约束并发", "URL 先规范化再去重；布隆误判率约 (1-e^(-kn/m))^k，只增不删，只做预筛需后端精确判重", "heapq 最小堆 push/pop 是 O(log n)，元素用 (pri, seq, url) 避免同优先级比较不可排序对象", "分布式队列 at-least-once：inflight + ack 后出队，未确认靠可见性超时重投，配 upsert 幂等写入", "断点续爬靠定期快照 done 集合与优先队列，临时文件加原子 replace 保证快照不半截", "robots.txt、按域名限速、User-Agent 标识、5xx/429 指数退避要做成默认策略并监控每域名 QPS"]' :pitfalls='["多 worker 各用内存 set 去重，重复抓取率飙升", "任务取出即出队，节点崩溃后任务永久丢失", "不限速短时间猛抓同一域名，被封 IP", "没有共享去重集合，多个 worker 会重复抓同一批 URL；节点崩溃后队列里的任务会永久丢失"]' summary='分布式化之后新增的不是「更快的抓取」，而是重复、乱序、部分失败与节点失联这些问题' />
 

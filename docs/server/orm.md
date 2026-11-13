@@ -9,35 +9,39 @@ description: 写出可控、可诊断的数据库访问层
 
 接口与推送都通了，数据得有落脚处。前面读写靠临时文件或内存字典，表一涨到几十万行，查询就从几十毫秒变成几秒。这一讲借 SQLAlchemy 把数据库访问收成可控、可诊断的层。
 
-订单列表小数据上很快，上线三个月却占满连接池；加索引没用，改成全局单例又读到未提交的数据——根子在循环里逐条查关联，SQL 条数随行数增长。理清 Engine、Session 与工作单元，再谈连接池参数与事务边界，接着用可数的 SQL 条数认出 N+1 查询，最后落到 Alembic 迁移的回滚。需要函数、上下文管理器与基本 SQL；学完能写出边界清楚的事务，也能诊断慢查询。
+订单列表小数据上很快，上线三个月却占满连接池；加索引没用，改成全局单例又读到未提交的数据——根子在循环里逐条查关联，SQL 条数随行数增长。理清 `Engine`、`Session` 与工作单元，再谈连接池参数与事务边界，接着用可数的 SQL 条数认出 N+1 查询，最后落到 Alembic 迁移的回滚。需要函数、上下文管理器与基本 SQL；学完能写出边界清楚的事务，也能诊断慢查询。
 
 
 ## 列表接口随数据量线性变慢，本地测试却完全正常
 
 一个订单列表接口在本地测试集上响应 30 毫秒，上线三个月后数据表涨到二十万行，同样的接口变成 8 秒，偶尔还把连接池占满。团队先给外键加索引，几乎没改善；再把数据库连接改成全局单例，结果并发下不同请求读到了彼此未提交的数据。
 
-真正原因藏在两处：一是 ORM 在循环里对每个用户各发一条关联查询，SQL 条数等于 1 加父行数，随数据线性增长，小数据集完全看不出来；二是把 Session 当成了连接，让一个长生命周期对象跨请求复用，事务边界与对象状态全部失控。另一类事故来自迁移脚本只写了 upgrade 没写 downgrade，发布失败时无法回滚。
+真正原因藏在两处：一是 ORM 在循环里对每个用户各发一条关联查询，SQL 条数等于 1 加父行数，随数据线性增长，小数据集完全看不出来；二是把 `Session` 当成了连接，让一个长生命周期对象跨请求复用，事务边界与对象状态全部失控。
 
-本讲用 sqlite3 把 N+1 变成可数的 SQL 条数，再把 Engine、Session、事务与迁移的边界讲清楚。
+另一类事故来自迁移脚本只写了 `upgrade` 没写 `downgrade`，发布失败时无法回滚。本讲用 `sqlite3` 把 N+1 变成可数的 SQL 条数，再把 `Engine`、`Session`、事务与迁移的边界讲清楚。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='列表接口随数据量线性变慢，本地测试却完全正常：循环中对每个父对象访问关联属性触发懒加载，SQL 条数为 1+N，小数据集看不出' />
 
 
 ## Engine、Session 与 Unit of Work 各管什么
 
-`create_engine(url)` 返回的是 Engine，它是连接池与 SQL 方言的入口，不是一条连接。
+`create_engine(url)` 返回的是 `Engine`，它是连接池与 SQL 方言的入口，不是一条连接。
 
-默认池是 QueuePool，关键参数：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeout=30`（无可用连接时等待的秒数）、`pool_recycle=3600`（连接存活超过该秒数就回收，规避 MySQL wait_timeout 主动断连）、`pool_pre_ping=True`（每次借出前发一条探活语句）、`echo=False`（为 True 时把所有 SQL 打到日志）。
+默认池是 `QueuePool`，几个默认值要记清：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeout=30`（无可用连接时等待的秒数）；
+
+另有两项常按场景调整而非默认开启——`pool_recycle` 默认是 `-1`（不主动回收），在 MySQL 前面通常设成 3600 之类小于 `wait_timeout` 的值，`pool_pre_ping` 默认是 `False`，生产上建议设成 `True` 让每次借出前先发一条探活语句。
+
+`echo=False` 是默认值，设为 `True` 会把所有 SQL 打到日志。
 
 `engine.connect()` 才真正借出连接。
 
-Session 由 `sessionmaker(bind=engine)` 产生，语义是工作单元（Unit of Work）而非连接：它维护 identity map（同一主键在同一 Session 里只对应一个对象）、跟踪新增/脏/删除状态、在 flush 时按依赖顺序生成 SQL、commit 时提交事务。
+`Session` 由 `sessionmaker(bind=engine)` 产生，语义是工作单元（Unit of Work）而非连接：它维护 `identity map`（同一主键在同一 `Session` 里只对应一个对象）、跟踪新增 / 脏 / 删除状态、在 `flush` 时按依赖顺序生成 SQL、`commit` 时提交事务。
 
-Session 借连接是惰性且用完即还的，因此长 Session 不等于长连接，但一个开了事务却迟迟不提交的 Session 会一直占着借出的连接。
+`Session` 借连接是惰性且用完即还的，因此长 `Session` 不等于长连接，但一个开了事务却迟迟不提交的 `Session` 会一直占着借出的连接。
 
-SQLAlchemy 2.0（2023 年发布）统一用 `select()` 配 `session.execute()`，弃用旧式 `session.query()`，并要求显式 begin，autocommit 模式被移除。
+SQLAlchemy 2.0（2023 年发布）统一用 `select()` 配 `session.execute()`，弃用旧式 `session.query()`，并要求显式 `begin`，`autocommit` 模式被移除。
 
-expire_on_commit 默认 True，commit 后对象属性过期，模板里再访问会触发重查甚至 DetachedInstanceError。
+`expire_on_commit` 默认 `True`，`commit` 后对象属性过期，模板里再访问会触发重查甚至 `DetachedInstanceError`。
 
 **create_engine 连接池关键参数（默认 QueuePool）**
 
@@ -50,7 +54,7 @@ expire_on_commit 默认 True，commit 后对象属性过期，模板里再访问
 | pool_pre_ping | False | 借出前发探活语句，建议设 True |
 | echo | False | 为 True 时打印全部 SQL 便于诊断 |
 
-<Callout type="tip" title='核心心智模型' text='create_engine(url) 返回的是 Engine，它是连接池与 SQL 方言的入口，不是一条连接。默认池是 QueuePool，关键参数：pool_size=5（常驻连接数）、max_overflow=10（池满后最多再临时借出的连接）、pool_timeout=30（无可用连接时等待的' />
+<Callout type="tip" title='核心心智模型' text='`create_engine(url)` 返回的是 `Engine`，它是连接池与 SQL 方言的入口，不是一条连接。默认池是 `QueuePool`，几个默认值要记清：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeo' />
 
 <ConceptDiagram type='layers3' title='第 087 讲 · Engine、Session 与 Unit of Work：三个常被当成一个东西的对象' labels='Engine、Session 与 Unit |事务边界与隔离级别：短事务、正确级别、可诊断|N+1、加载策略与 Alembic 迁移' caption='写出可控、可诊断的数据库访问层' />
 
@@ -159,17 +163,27 @@ print('after commit', db.execute('SELECT COUNT(*) FROM t').fetchone()[0])
 
 ## 事务边界与隔离级别：短事务、正确级别
 
-事务要满足 ACID，隔离级别决定并发下能看到什么：READ UNCOMMITTED 允许脏读；READ COMMITTED 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；REPEATABLE READ 靠 MVCC 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；
+事务要满足 `ACID`，隔离级别决定并发下能看到什么：`READ UNCOMMITTED` 允许脏读；
 
-SERIALIZABLE 最强但并发最低。PostgreSQL 默认是 READ COMMITTED，SQLAlchemy 用 create_engine(..., isolation_level='REPEATABLE READ') 或对连接设 execution_options 覆盖。
+`READ COMMITTED` 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；
 
-边界写法要显式且尽量短：写操作用 with `session.begin()`: 包住，只读查询开独立 Session，绝不把 HTTP 调用、文件 IO 或人工确认塞进事务里。
+`REPEATABLE READ` 靠 `MVCC` 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；
 
-长事务的代价很具体：借出的连接迟迟不归还池、行锁与间隙锁阻塞其它写入、MVCC 旧版本无法回收导致表膨胀。
+`SERIALIZABLE` 最强但并发最低。
 
-排查用数据库侧的 pg_stat_activity 或 `information_schema.innodb_trx` 找长事务，应用侧用 before_cursor_execute 事件记录每条 SQL 与耗时。
+PostgreSQL 默认是 `READ COMMITTED`，SQLAlchemy 用 `create_engine` 或对连接设 `execution_options` 覆盖。
 
-批量写用 bulk_insert_mappings 或 executemany 一次提交，别在循环里逐条 commit——那既放大往返开销，又把一次逻辑操作拆成多个事务。
+```python
+create_engine(..., isolation_level='REPEATABLE READ')
+```
+
+边界写法要显式且尽量短：写操作用 `with session.begin():` 包住，只读查询开独立 `Session`，绝不把 `HTTP` 调用、文件 IO 或人工确认塞进事务里。
+
+长事务的代价很具体：借出的连接迟迟不归还池、行锁与间隙锁阻塞其它写入、`MVCC` 旧版本无法回收导致表膨胀。
+
+排查用数据库侧的 `pg_stat_activity` 或 `information_schema.innodb_trx` 找长事务，应用侧用 `before_cursor_execute` 事件记录每条 SQL 与耗时。
+
+批量写用 `bulk_insert_mappings` 或 `executemany` 一次提交，别在循环里逐条 `commit`——那既放大往返开销，又把一次逻辑操作拆成多个事务。
 
 **隔离级别与并发现象**
 
@@ -183,40 +197,42 @@ SERIALIZABLE 最强但并发最低。PostgreSQL 默认是 READ COMMITTED，SQLAl
 
 ## 加载策略与迁移：从 N+1 到 Alembic 可回滚
 
-N+1 是遍历 N 个父对象、对每个再查一次关联，SQL 条数为 1+N，随 N 线性增长；二十万行父表就是二十万次往返，本地二十行测试集毫无征兆。加载策略按关系类型选：默认 lazy='select' 在访问属性时才查；
+N+1 是遍历 N 个父对象、对每个再查一次关联，SQL 条数为 `1+N`，随 N 线性增长；二十万行父表就是二十万次往返，本地二十行测试集毫无征兆。加载策略按关系类型选：默认 `lazy='select'` 在访问属性时才查；
 
-selectinload 用一条 WHERE id IN (...) 把全部关联一次取回（总条数固定、适合一对多集合）；joinedload 用 JOIN 一条 SQL 取回（条数 1，但一对多会让父行重复，需在内存去重，且大集合列数膨胀）；raiseload 可在测试环境把未预加载的访问直接抛错，让 N+1 当场暴露。
+`selectinload` 用一条 `WHERE id IN (...)` 把全部关联一次取回（总条数固定、适合一对多集合）；
 
-检测手段有 `echo=True`、SQLAlchemy 事件计数、或 sqlite3 的 set_trace_callback 数 SQL 条数。
+`joinedload` 用 `JOIN` 一条 SQL 取回（条数 1，但一对多会让父行重复，需在内存去重，且大集合列数膨胀）；`raiseload` 可在测试环境把未预加载的访问直接抛错，让 N+1 当场暴露。
 
-Alembic 管理 schema 演进：alembic init migrations 初始化，`revision --autogenerate -m` 'msg' 生成含 `upgrade()` 与 `downgrade()` 的脚本，upgrade head 应用、downgrade -1 回滚；
+检测手段有 `echo=True`、SQLAlchemy 事件计数、或 `sqlite3` 的 `set_trace_callback` 数 SQL 条数。
 
-脚本必须成对、纳入版本库，CI 里从空库 upgrade head 再 downgrade base 演一遍。部署顺序是先跑迁移再发代码，且迁移要对新旧两版代码兼容（先加可空列、分两次发布再删旧列），否则滚动发布期间旧代码会因缺列报错。
+Alembic 管理 schema 演进：`alembic init migrations` 初始化，再用 `revision --autogenerate` 配 `-m 'msg'` 生成含 `upgrade()` 与 `downgrade()` 的脚本，`upgrade head` 应用、`downgrade -1` 回滚；
 
-SQLAlchemy 的 Session 实现 Unit of Work：它内部用 identity map（以 (类, 主键) 为键的弱引用字典）保证同一行在一个事务里只有一个 Python 对象，用状态集合记录 new/dirty/deleted，flush 时按表间依赖拓扑排序生成 INSERT/UPDATE/DELETE，commit 时把整批语句放进一个数据库事务提交。
+脚本必须成对、纳入版本库，CI 里从空库 `upgrade head` 再 `downgrade base` 演一遍。部署顺序是先跑迁移再发代码，且迁移要对新旧两版代码兼容（先加可空列、分两次发布再删旧列），否则滚动发布期间旧代码会因缺列报错。
 
-这种延迟批量让多次属性修改合并成一条 UPDATE，但也意味着 SQL 在你访问属性或 flush 之前不会发出——N+1 正是懒加载在遍历时逐条触发这条机制的结果。
+SQLAlchemy 的 `Session` 实现 Unit of Work：它内部用 `identity map`（以类与主键为键的弱引用字典）保证同一行在一个事务里只有一个 Python 对象，用状态集合记录 `new` / `dirty` / `deleted`，`flush` 时按表间依赖拓扑排序生成 `INSERT` / `UPDATE` / `DELETE`，`commit` 时把整批语句放进一个数据库事务提交。
 
-连接来自 Engine 的 QueuePool：池用队列保存空闲连接，借出时校验 pool_recycle 与 pre_ping，归还时回滚未提交事务并放回队列，所以『连接』和『Session』生命周期解耦。
+这种延迟批量让多次属性修改合并成一条 `UPDATE`，但也意味着 SQL 在你访问属性或 `flush` 之前不会发出——N+1 正是懒加载在遍历时逐条触发这条机制的结果。
 
-数据库侧的隔离由 MVCC 与锁实现：READ COMMITTED 每条语句新建读视图，REPEATABLE READ 整个事务复用同一快照，InnoDB 再用间隙锁阻止范围内插入以抑制幻读。
+连接来自 `Engine` 的 `QueuePool`：池用队列保存空闲连接，借出时校验 `pool_recycle` 与 `pool_pre_ping`，归还时回滚未提交事务并放回队列，所以「连接」和「Session」生命周期解耦。
 
-Alembic 不直接改库，而是把 schema 差异渲染成带 upgrade/downgrade 的 Python 脚本，靠 version 表记录当前 revision，从而让迁移可版本化、可回滚。
+数据库侧的隔离由 `MVCC` 与锁实现：`READ COMMITTED` 每条语句新建读视图，`REPEATABLE READ` 整个事务复用同一快照，InnoDB 再用间隙锁阻止范围内插入以抑制幻读。
 
-<Term word='Engine / Session / Unit of Work' text='create_engine(url) 返回的是 Engine，它是连接池与 SQL 方言的入口，不是一条连接。默认池是 QueuePool，关键参数：pool_size=5（常驻连接数）、max_overflow=10（池满后最多再临时借出的连接）、pool_timeout=30（无可用连接时等待的秒数）、pool_r' />
+Alembic 不直接改库，而是把 schema 差异渲染成带 `upgrade` / `downgrade` 的 Python 脚本，靠 version 表记录当前 revision，从而让迁移可版本化、可回滚。
 
-<Term word='连接池参数' text='事务要满足 ACID，隔离级别决定并发下能看到什么：READ UNCOMMITTED 允许脏读；READ COMMITTED 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；REPEATABLE READ 靠 MVCC 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；SERIAL' />
+<Term word='Engine / Session / Unit of Work' text='`create_engine(url)` 返回的是 `Engine`，它是连接池与 SQL 方言的入口，不是一条连接。默认池是 `QueuePool`，几个默认值要记清：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeout=30`（无可用' />
+
+<Term word='连接池参数' text='事务要满足 ACID，隔离级别决定并发下能看到什么：`READ UNCOMMITTED` 允许脏读；`READ COMMITTED` 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；`REPEATABLE READ` 靠 MVCC 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；' />
 
 
 ## 可控的仓储层：短事务、预加载与可回滚迁移
 
-下面把数据访问层做成不依赖 ORM 框架的最小实现，用来说明三条工程约束如何落地：`report()` 用一条 JOIN 把所有关联一次取回，绝不在循环里查库，等价 selectinload 的效果；
+下面把数据访问层做成不依赖 ORM 框架的最小实现，用来说明三条工程约束如何落地：`report()` 用一条 `JOIN` 把所有关联一次取回，绝不在循环里查库，等价 `selectinload` 的效果；
 
-`transfer()` 把两步 UPDATE 包在同一个 BEGIN/COMMIT 里，异常则 ROLLBACK，保证转账要么全做要么全不做，且事务里没有远程调用；所有读都通过同一个连接句柄但每次 execute 自备语句，不缓存跨请求的 Session。
+`transfer()` 把两步 `UPDATE` 包在同一个 `BEGIN` / `COMMIT` 里，异常则 `ROLLBACK`，保证转账要么全做要么全不做，且事务里没有远程调用；所有读都通过同一个连接句柄但每次 `execute` 自备语句，不缓存跨请求的 `Session`。
 
-真实项目把 conn 换成 Session、把 JOIN 换成 selectinload、把 BEGIN/COMMIT 换成 with `session.begin()`，结构不变。
+真实项目把 `conn` 换成 `Session`、把 `JOIN` 换成 `selectinload`、把 `BEGIN` / `COMMIT` 换成 `with session.begin()`，结构不变。
 
-迁移侧同理：每个变更都写成可 upgrade 可 downgrade 的成对脚本，发布前在 CI 里从空库演一遍。
+迁移侧同理：每个变更都写成可 `upgrade` 可 `downgrade` 的成对脚本，发布前在 CI 里从空库演一遍。
 
 ```python
 import sqlite3
@@ -266,7 +282,7 @@ print('after', repo.report())
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **Engine / Session / Unit of Work** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 Engine / Session / Unit of Work 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -283,19 +299,19 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 ## identity map 的键结构与 Unit of Work 的拓扑排序
 
-identity map 的源码在 Lib/sqlalchemy/orm/`identity.py` 的 WeakInstanceDict：键是 identity key，即 (映射类, 主键值元组, identity_token)，值是 `weakref.ref` 到实例，实例被 GC 时由回调把键清掉。
+identity map 的源码在 `Lib/sqlalchemy/orm/identity.py` 的 WeakInstanceDict：键是 identity key，即 (映射类, 主键值元组, identity_token)，值是 `weakref.ref` 到实例，实例被 GC 时由回调把键清掉。
 
 为什么用 identity key 而不是 `id(obj)`：Session 在 refresh、merge 与跨结果集查询时是按数据库主键判断「这是同一行」，与 Python 对象地址无关；identity_token 用于分片或多绑定场景区分同主键不同库的记录。
 
-InstanceState（Lib/sqlalchemy/orm/`state.py`）挂在每个映射实例的 _sa_instance_state 上，committed_state 保存上次 flush 后的属性快照，属性赋值经 InstrumentedAttribute 的 `__set__` 触发 `state._modified_event()` 把对象标脏但不发 SQL。
+InstanceState（`Lib/sqlalchemy/orm/state.py`）挂在每个映射实例的 _sa_instance_state 上，committed_state 保存上次 flush 后的属性快照，属性赋值经 InstrumentedAttribute 的 `__set__` 触发 `state._modified_event()` 把对象标脏但不发 SQL。
 
-flush 时 Lib/sqlalchemy/orm/`unitofwork.py` 的 UOWTransaction 按 mapper 的外键依赖图做拓扑排序：先 INSERT 父表再 INSERT 子表，DELETE 逆序；
+flush 时 `Lib/sqlalchemy/orm/unitofwork.py` 的 UOWTransaction 按 mapper 的外键依赖图做拓扑排序：先 `INSERT` 父表再 `INSERT` 子表，`DELETE` 逆序；
 
-两表互引外键形成的环由 relationship 的 `post_update=True` 断掉，即第二轮补一条 UPDATE。
+两表互引外键形成的环由 relationship 的 `post_update=True` 断掉，即第二轮补一条 `UPDATE`。
 
 `persistence.py` 的 _organize_states_for_save 再按 (表, 操作类型) 分组走 executemany 批量执行，复杂度 `O(V+E)`（V 是待 flush 的 mapper 与 state 数）。
 
-这就是正文「多次属性修改合并成一条 UPDATE」「N+1 是懒加载触发」的源码根据，而不是 API 层面的约定。
+这就是正文「多次属性修改合并成一条 `UPDATE`」「N+1 是懒加载触发」的源码根据，而不是 API 层面的约定。
 
 ```python
 class InstanceState:
@@ -356,15 +372,15 @@ print('second flush', s.flush(['users', 'orders']))
 
 ### pysqlite 的隐式 BEGIN 与 autocommit 边界
 
-Python 标准库 sqlite3 的 legacy transaction control 是 PEP 249 留下的坑：默认 isolation_level 非空串时，pysqlite 只对 INSERT、UPDATE、DELETE、REPLACE 这类 DML 隐式发 BEGIN，对 SELECT 与 DDL 不开事务，COMMIT 之后也不会自动开启新事务；
+Python 标准库 sqlite3 的 legacy transaction control 是 PEP 249 留下的坑：默认 isolation_level 非空串时，pysqlite 只对 `INSERT`、`UPDATE`、`DELETE`、`REPLACE` 这类 DML 隐式发 `BEGIN`，对 `SELECT` 与 DDL 不开事务，`COMMIT` 之后也不会自动开启新事务；
 
-connect(':memory:') 在多线程下每个线程拿到独立连接，只有 SingletonThreadPool 或 StaticPool 才共享同一个内存库。
+`connect(':memory:')` 在多线程下每个线程拿到独立连接，只有 SingletonThreadPool 或 StaticPool 才共享同一个内存库。
 
-把 isolation_level 设为 None 进入 autocommit，此时必须显式写 BEGIN 或 BEGIN IMMEDIATE 才能拿到写锁，否则两个连接并发写会撞上 database is locked，而且 SQLite 的锁是库级而非行级，一个写事务会阻塞所有其它写者。
+把 isolation_level 设为 None 进入 autocommit，此时必须显式写 `BEGIN` 或 `BEGIN` `IMMEDIATE` 才能拿到写锁，否则两个连接并发写会撞上 database is locked，而且 SQLite 的锁是库级而非行级，一个写事务会阻塞所有其它写者。
 
-SQLAlchemy 的 pysqlite 方言（Lib/sqlalchemy/dialects/sqlite/`pysqlite.py`）为此在 do_begin 里补发 BEGIN，并用事件钩子把 BEGIN 追加到 DDL 之前，官方文档专门用一节讲 Serializable isolation、Savepoints 与 Transactional DDL。
+SQLAlchemy 的 pysqlite 方言（`Lib/sqlalchemy/dialects/sqlite/pysqlite.py`）为此在 do_begin 里补发 `BEGIN`，并用事件钩子把 `BEGIN` 追加到 DDL 之前，官方文档专门用一节讲 Serializable isolation、Savepoints 与 Transactional DDL。
 
-故障往往出在「以为把 with `session.begin()` 换成显式 BEGIN 就等价」：DDL 没进事务，迁移中途失败就留下半张表，且 rollback 只撤掉了 INSERT。
+故障往往出在「以为把 `with session.begin()` 换成显式 `BEGIN` 就等价」：DDL 没进事务，迁移中途失败就留下半张表，且 rollback 只撤掉了 `INSERT`。
 
 正文讲的是隔离级别标准，这里讲的是驱动层到底什么时候才真的开了事务。
 
@@ -382,13 +398,17 @@ SQLAlchemy 的 pysqlite 方言（Lib/sqlalchemy/dialects/sqlite/`pysqlite.py`）
 
 ### QueuePool 借还路径与 pre_ping 的失效探测
 
-一次迁移脚本在测试库跑得好好的，上预发却留下半张表：脚本用 `sqlite3.connect(..., isolation_level=None)` 关掉了 pysqlite 的 legacy 事务控制，以为显式 BEGIN 加 COMMIT 与 ORM 的 with `session.begin()` 等价。
+一次迁移脚本在测试库跑得好好的，上预发却留下半张表：脚本用 `sqlite3.connect` 关掉了 pysqlite 的 legacy 事务控制，以为显式 `BEGIN` 加 `COMMIT` 与 ORM 的 `with session.begin()` 等价。
 
-但 autocommit 模式下 DDL 不进任何事务，CREATE TABLE 之后第二条语句失败时前一张表已经永久落盘，ROLLBACK 只撤掉了显式 BEGIN 里的 INSERT。
+```python
+sqlite3.connect(..., isolation_level=None)
+```
 
-排查还发现并发写时两个连接都报 database is locked，因为 SQLite 是库级写锁，必须显式 BEGIN IMMEDIATE 才能提前占锁。
+但 autocommit 模式下 DDL 不进任何事务，`CREATE` `TABLE` 之后第二条语句失败时前一张表已经永久落盘，`ROLLBACK` 只撤掉了显式 `BEGIN` 里的 `INSERT`。
 
-下面用标准库复现：显式 BEGIN 内的 INSERT 能被 ROLLBACK 撤销，而 autocommit 下直接 INSERT 立刻生效，in_transaction 始终为 False，说明驱动根本没有替你开事务。
+排查还发现并发写时两个连接都报 database is locked，因为 SQLite 是库级写锁，必须显式 `BEGIN` `IMMEDIATE` 才能提前占锁。
+
+下面用标准库复现：显式 `BEGIN` 内的 `INSERT` 能被 `ROLLBACK` 撤销，而 autocommit 下直接 `INSERT` 立刻生效，in_transaction 始终为 False，说明驱动根本没有替你开事务。
 
 ```python
 import sqlite3
@@ -406,7 +426,7 @@ print('in_transaction after autocommit insert', db.in_transaction)
 
 ```
 
-<Quiz no='087-X' q='关于 SQLAlchemy 的 identity map 与 flush 排序，下面哪项准确？' :options='["identity key 由类、主键元组与 identity_token 组成，用 weakref 存实例；flush 按 mapper 依赖拓扑排序，循环依赖靠 post_update 补 UPDATE 断环", "identity map 用 id(obj) 作键，因此同一行被查两次会得到两个对象", "flush 按对象创建顺序逐条发 SQL，每次属性赋值各发一条 UPDATE", "QueuePool 在每次属性访问时借出一条连接"]' answer="0" explain='identity key 与 Python 对象地址无关，Session 靠它保证同一主键一行一对象；UOWTransaction 对外键依赖做拓扑排序，父子表按序 INSERT、DELETE 逆序，互引外键用 post_update 的第二轮 UPDATE 断环。属性赋值只标脏、不发 SQL，flush 时按表分组批量执行；连接来自 QueuePool 且是惰性借还，与属性访问无关。' />
+<Quiz no='087-1' q='关于 SQLAlchemy 的 identity map 与 flush 排序，下面哪项准确？' :options='["identity key 由类、主键元组与 identity_token 组成，用 weakref 存实例；flush 按 mapper 依赖拓扑排序，循环依赖靠 post_update 补 UPDATE 断环", "identity map 用 id(obj) 作键，因此同一行被查两次会得到两个对象", "flush 按对象创建顺序逐条发 SQL，每次属性赋值各发一条 UPDATE", "QueuePool 在每次属性访问时借出一条连接"]' answer="0" explain='identity key 与 Python 对象地址无关，Session 靠它保证同一主键一行一对象；UOWTransaction 对外键依赖做拓扑排序，父子表按序 INSERT、DELETE 逆序，互引外键用 post_update 的第二轮 UPDATE 断环。属性赋值只标脏、不发 SQL，flush 时按表分组批量执行；连接来自 QueuePool 且是惰性借还，与属性访问无关。' />
 
 
 ### expire_on_commit 之后的对象状态机
@@ -422,15 +442,15 @@ print('in_transaction after autocommit insert', db.in_transaction)
 
 <Exercise title='进阶：给事务加失败回滚验证原子性' task='写一个 transfer 函数把两步 UPDATE 放进同一事务，在第二步故意触发异常，验证转账前后两账户总额不变、未留下半做状态。' solution='import sqlite3\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE acct (id INT, bal INT)&#39;)\ndb.executemany(&#39;INSERT INTO acct VALUES (?,?)&#39;, [(1,100),(2,100)])\ndef transfer(src, dst, amt, fail=False):\n    try:\n        db.execute(&#39;BEGIN&#39;)\n        db.execute(&#39;UPDATE acct SET bal=bal-? WHERE id=?&#39;, (amt, src))\n        if fail: raise ValueError(&#39;boom&#39;)\n        db.execute(&#39;UPDATE acct SET bal=bal+? WHERE id=?&#39;, (amt, dst))\n        db.execute(&#39;COMMIT&#39;)\n    except Exception:\n        db.execute(&#39;ROLLBACK&#39;)\ntransfer(1, 2, 30, fail=True)\nprint(db.execute(&#39;SELECT SUM(bal) FROM acct&#39;).fetchone()[0])' explain='异常发生在两步之间时被 ROLLBACK 整体撤销，总额仍为 200；事务的原子性保证不会出现只扣不加的中间态，异常分支必须显式回滚。' />
 
-<Quiz no='087-1' q='关于 SQLAlchemy 的 Session，下面哪项准确？' :options='["Session 是工作单元而非连接，维护 identity map 并在 flush 时批量生成 SQL", "Session 就是一条数据库连接", "Session 是线程安全的全局单例", "Session 每次属性赋值立即发一条 UPDATE"]' answer="0" explain='Session 用 identity map 保证同一主键一个对象、跟踪脏状态、flush 时批量发 SQL；它从 Engine 的池里惰性借连接、用完归还，本身不是连接也不线程安全。' />
+<Quiz no='087-2' q='关于 SQLAlchemy 的 Session，下面哪项准确？' :options='["Session 是工作单元而非连接，维护 identity map 并在 flush 时批量生成 SQL", "Session 就是一条数据库连接", "Session 是线程安全的全局单例", "Session 每次属性赋值立即发一条 UPDATE"]' answer="0" explain='Session 用 identity map 保证同一主键一个对象、跟踪脏状态、flush 时批量发 SQL；它从 Engine 的池里惰性借连接、用完归还，本身不是连接也不线程安全。' />
 
-<Quiz no='087-2' q='某对多集合关联在循环里被逐条访问，导致响应随数据量线性变慢，最合适的加载策略是？' :options='["selectinload，用一条 IN 查询一次性取回集合", "保持 lazy=&#39;select&#39; 并给外键加索引", "joinedload 并关闭去重", "在循环里手动 commit"]' answer="0" explain='selectinload 把 1+N 压成固定 2 条 SQL；joinedload 虽是 1 条但一对多会重复父行需去重；加索引不能减少往返条数，循环里 commit 更糟。' />
+<Quiz no='087-3' q='某对多集合关联在循环里被逐条访问，导致响应随数据量线性变慢，最合适的加载策略是？' :options='["selectinload，用一条 IN 查询一次性取回集合", "保持 lazy=&#39;select&#39; 并给外键加索引", "joinedload 并关闭去重", "在循环里手动 commit"]' answer="0" explain='selectinload 把 1+N 压成固定 2 条 SQL；joinedload 虽是 1 条但一对多会重复父行需去重；加索引不能减少往返条数，循环里 commit 更糟。' />
 
-<Quiz no='087-3' q='关于隔离级别，下面哪项准确？' :options='["MySQL InnoDB 默认 REPEATABLE READ，PostgreSQL 默认 READ COMMITTED", "两者默认都是 SERIALIZABLE", "MySQL 默认 READ UNCOMMITTED", "PostgreSQL 默认 REPEATABLE READ"]' answer="0" explain='MySQL InnoDB 默认 REPEATABLE READ 并用 MVCC + 间隙锁缓解幻读；PostgreSQL 默认 READ COMMITTED，每条语句新建读视图。跨库迁移时这个差异会影响并发表现。' />
+<Quiz no='087-4' q='关于隔离级别，下面哪项准确？' :options='["MySQL InnoDB 默认 REPEATABLE READ，PostgreSQL 默认 READ COMMITTED", "两者默认都是 SERIALIZABLE", "MySQL 默认 READ UNCOMMITTED", "PostgreSQL 默认 REPEATABLE READ"]' answer="0" explain='MySQL InnoDB 默认 REPEATABLE READ 并用 MVCC + 间隙锁缓解幻读；PostgreSQL 默认 READ COMMITTED，每条语句新建读视图。跨库迁移时这个差异会影响并发表现。' />
 
-<Predict no='087-P' q='对 3 个用户各发一条关联查询的循环，配合 1 条父查询，用 set_trace_callback 会数到几条 SQL？' :options='["4 条", "1 条", "3 条"]' answer='0' output='sql count 4 且序列为 SELECT id FROM u 加三条 SELECT * FROM o WHERE uid=...' explain='父查询 1 条 + 每个用户 1 条子查询共 3 条 = 4，正是 1+N。看到回调里逐条展开的 uid=1/2/3，就是 N+1 最直接的证据；改成一条 JOIN 后恒为 1 条。' />
+<Predict no='087-5' q='对 3 个用户各发一条关联查询的循环，配合 1 条父查询，用 set_trace_callback 会数到几条 SQL？' :options='["4 条", "1 条", "3 条"]' answer='0' output='sql count 4 且序列为 SELECT id FROM u 加三条 SELECT * FROM o WHERE uid=...' explain='父查询 1 条 + 每个用户 1 条子查询共 3 条 = 4，正是 1+N。看到回调里逐条展开的 uid=1/2/3，就是 N+1 最直接的证据；改成一条 JOIN 后恒为 1 条。' />
 
-<FillBlank no='087-F' tpl='___ sqlite3' :answers='["import"]' hint='回想本讲关于 Engine / Session / Unit of Work 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Engine、Session 与 Unit of Work：三个常被当成一个东西的对象 的落点。' />
+<FillBlank no='087-6' tpl='___ sqlite3' :answers='["import"]' hint='回想本讲关于 Engine / Session / Unit of Work 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Engine、Session 与 Unit of Work：三个常被当成一个东西的对象 的落点。' />
 
 <KnowledgeCard :points='["Engine 是连接池工厂（默认 QueuePool：pool_size=5、max_overflow=10、pool_pre_ping 建议 True），不是连接", "Session 是 Unit of Work：identity map + 脏状态跟踪 + flush 批量发 SQL，不线程安全、按请求创建", "SQLAlchemy 2.0 用 select() + session.execute()，弃用 query()，要求显式 begin；expire_on_commit 默认 True", "N+1 是 1+N 条 SQL；集合用 selectinload（2 条）、多对一用 joinedload（1 条），测试用 raiseload 暴露", "隔离级别：MySQL InnoDB 默认 REPEATABLE READ，PostgreSQL 默认 READ COMMITTED；事务要短", "Alembic 的 upgrade/downgrade 必须成对且 CI 演一遍；滚动发布期迁移要兼容新旧代码"]' :pitfalls='["列表接口随数据量线性变慢，本地测试却完全正常", "把 Session 做成模块级全局单例，并发请求串了数据", "迁移脚本只写 upgrade，发布失败无法回滚", "在循环里逐条查询关联对象（N+1），数据一多响应会呈线性劣化，而本地测试集太小看不出来"]' summary='ORM 的 Session 是工作单元而不是连接，理解这一点才能控制事务边界与对象生命周期' />
 

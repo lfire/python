@@ -7,16 +7,16 @@ description: 交付一个可发布的抽象工具集
 
 # 第 037 讲 · 阶段综合：缓存装饰器库与插件注册表
 
-参数、闭包、装饰器、模块、注解一路走来，是时候放进同一个小项目收一收。作为阶段综合，这一讲不添新语法，只检验那些抽象经不经得起并发、测试和扩展。团队想发一个内部工具库，给任意函数加带时限的缓存、留一个插件登记表；第一版用全局字典，压测时同一个冷键被算了好几遍，异常也被当成结果存下。
+参数、闭包、装饰器、模块、注解一路走来，是时候放进同一个小项目收一收。作为阶段综合，这一讲不添新语法，只检验那些抽象经不经得起并发、测试和扩展：团队想发一个内部工具库，给任意函数加带时限的缓存、留一个插件登记表；第一版用全局字典，压测时同一个冷键被算了好几遍，异常也被当成结果存了下来。
 
-先把 TTL 缓存做扎实——单调时钟、加锁、异常不入库、留出统计；再把注册表从裸字典改成显式接口，让第三方通过入口点接进来；最后用假时钟和并发用例把单元测试补齐。要用到整个阶段的装饰器、functools、模块与注解，外加异常；完成后你手里是可发布、可禁用的工具集。
+先把 `TTL` 缓存做扎实——单调时钟、加锁、异常不入库、留出统计；再把注册表从裸字典改成显式接口，让第三方通过入口点接进来；最后用假时钟和并发用例把单元测试补齐。要用到整个阶段的装饰器、`functools`、模块与注解，外加异常；完成后你手里是一套可发布、可禁用的工具集。
 
 
 ## 一个想做成库的缓存装饰器，需求清单
 
-团队要发布一个内部工具库，包含给任意函数加 TTL 缓存和插件注册表两件事。第一版 @cache 用一个全局 dict 存结果、TTL 用 `time.time()` 判断过期，多线程压测下出现同一冷键被并发重复计算，偶发还有字典竞争；更糟的是把异常也缓存了，上游一次超时被反复返回。
+团队要发布一个内部工具库，做两件事：给任意函数加 `TTL` 缓存，再留一张插件注册表。第一版 `@cache` 用一个全局 `dict` 存结果、`TTL` 用 `time.time()` 判断过期，多线程压测下同一个冷键被并发算了好几遍，偶尔还出现字典竞争；更糟的是连异常也一并缓存，上游一次超时被反复返回。
 
-插件注册表则写成模块级裸字典，测试之间互相污染，第三方想加插件必须改核心代码。朴素解法是给每个函数各写一份缓存逻辑、把插件名字硬编码进核心列表，结果重复代码越堆越多、扩展一次改一次。本讲把这两件事做成可发布的抽象：带锁的 TTL 缓存、单调时钟、异常处理、统计与单测隔离，以及显式注册 API 与 entry_points。
+插件注册表则写成模块级裸字典，测试之间互相污染，第三方想加插件还得改核心代码。有人给每个函数各写一份缓存逻辑、把插件名字硬编码进核心列表，结果重复代码越堆越多、每扩展一次就改一次。本讲把这两件事做成可发布的抽象：带锁的 `TTL` 缓存、单调时钟、异常处理、统计与单测隔离，以及显式注册 API 与 `entry_points`。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='装饰器里用全局 dict 缓存不加锁，多线程重复计算且状态竞争：查 + 算 + 写跨多步，线程切换会让同一冷键被算多次，字典并发读写也不安全' />
 
@@ -34,28 +34,28 @@ description: 交付一个可发布的抽象工具集
 
 ## 整体蓝图：缓存、注册表与发布边界
 
-<Callout type="tip" title='核心心智模型' text='TTL 必须用 time.monotonic() 而不是 time.time()：前者由操作系统保证单调递增，不受 NTP 回拨或管理员手动改时影响，用墙上时钟存 expire_at 一旦回拨就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 (expire_at, value)，命中时' />
+<Callout type="tip" title='核心心智模型' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 `(expire_at' />
 
 <SequenceDiagram title='第 037 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "TTL 缓存：单调时钟、锁与", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "注册表与 entry_poi", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
-<FlowTimeline :steps='[{"title": "TTL 缓存：单调时钟、锁与异常处理", "desc": "TTL 必须用 time.monotonic() 而不是 time.time()：前…", "tone": "blue"}, {"title": "注册表与 entry_points", "desc": "注册表不要写成模块级裸全局 dict，而要做成显式实例 API：一个 Registr…", "tone": "purple"}, {"title": "单元测试与可发布抽象", "desc": "可发布的抽象必须自带可测性。TTL 缓存把 clock 参数化，测试里传一个假时钟、…", "tone": "orange"}, {"title": "工程落地", "desc": "把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "TTL 缓存：单调时钟、锁与异常处理", "desc": "`TTL` 必须用 `time.monotonic()` 而不是 `time.tim…", "tone": "blue"}, {"title": "注册表与 entry_points", "desc": "注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Regis…", "tone": "purple"}, {"title": "单元测试与可发布抽象", "desc": "可发布的抽象必须自带可测性。`TTL` 缓存把 `clock` 参数化，测试里传一个…", "tone": "orange"}, {"title": "工程落地", "desc": "把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## TTL 缓存：单调时钟、锁与异常处理
 
-TTL 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 NTP 回拨或管理员手动改时影响，用墙上时钟存 expire_at 一旦回拨就可能把刚写入的条目误判为过期、或把过期条目当成有效。
+`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。
 
-缓存项存 (expire_at, value)，命中时比较 `monotonic()` < expire_at 决定复用还是重算。
+缓存项存 `(expire_at, value)`，命中时比较 `monotonic() < expire_at` 决定复用还是重算。
 
-并发上，检查—计算—写入是典型的 check-then-act 竞态：用 `threading.RLock` 把整段包住，N 个线程同时未命中时只有一个真正执行底层函数，避免 thundering herd 与字典并发读写；
+并发上，检查—计算—写入是典型的 `check-then-act` 竞态：用 `threading.RLock` 把整段包住，`N` 个线程同时未命中时只有一个真正执行底层函数，既避免惊群也免去字典并发读写；
 
-RLock 可重入，能容忍同线程嵌套调用，但持锁期间绝不能调用可能回调本缓存的外部代码。异常处理同样关键：只有 fn 正常返回才把结果写进 store，异常直接抛出，否则一次上游抖动会被缓存放大成整段 TTL 的持续失败。
+`RLock` 可重入，能容忍同线程嵌套调用，但持锁期间绝不能调用可能回调本缓存的外部代码。异常处理同样关键：只有 `fn` 正常返回才把结果写进 `store`，异常直接抛出，否则一次上游抖动会被缓存放大成整段 `TTL` 的持续失败。
 
-生产版还要有容量上限：除了 TTL，用 maxsize 配合 `OrderedDict.move_to_end` 做 `O(1)` 的 LRU 淘汰或定期清理，防止长跑内存无界增长。
+生产版还要有容量上限：除了 `TTL`，用 `maxsize` 配合 `OrderedDict.move_to_end` 做 `O(1)` 的 LRU 淘汰或定期清理，防止长跑内存无界增长。
 
-键由 args 加排序后的 kwargs 构成，必须全部可哈希；
+键由 `args` 加排序后的 `kwargs` 构成，必须全部可哈希；
 
-用 `functools.wraps` 保留元数据，并暴露 cache_clear 与 cache_info 供测试、灰度与热更新。
+用 `functools.wraps` 保留元数据，并暴露 `cache_clear` 与 `cache_info` 供测试、灰度与热更新。
 
 ```python
 import time, threading
@@ -150,41 +150,41 @@ print(build.calls['n'], build(1), build.__name__, inspect.signature(build))
 
 <OutputBox title='原理验证' output='1 10 build (k)' />
 
-<Predict no='037-P' q='带锁 TTL 缓存里执行 slow(3); slow(3) 后 print(calls[&#39;n&#39;], slow.cache_info()) 输出什么？' :options='["1 {&#39;hit&#39;: 1, &#39;miss&#39;: 1, &#39;size&#39;: 1}", "2 {&#39;hit&#39;: 0, &#39;miss&#39;: 2, &#39;size&#39;: 1}", "1 {&#39;hit&#39;: 0, &#39;miss&#39;: 1, &#39;size&#39;: 1}"]' answer='0' output='1 {&#39;hit&#39;: 1, &#39;miss&#39;: 1, &#39;size&#39;: 1}' explain='第一次未命中并计算，第二次命中缓存；底层函数只执行一次，store 里留 1 条，命中与未命中各计 1 次。' />
+<Predict no='037-1' q='带锁 TTL 缓存里执行 slow(3); slow(3) 后 print(calls[&#39;n&#39;], slow.cache_info()) 输出什么？' :options='["1 {&#39;hit&#39;: 1, &#39;miss&#39;: 1, &#39;size&#39;: 1}", "2 {&#39;hit&#39;: 0, &#39;miss&#39;: 2, &#39;size&#39;: 1}", "1 {&#39;hit&#39;: 0, &#39;miss&#39;: 1, &#39;size&#39;: 1}"]' answer='0' output='1 {&#39;hit&#39;: 1, &#39;miss&#39;: 1, &#39;size&#39;: 1}' explain='第一次未命中并计算，第二次命中缓存；底层函数只执行一次，store 里留 1 条，命中与未命中各计 1 次。' />
 
 
 ## 底层：锁、哈希表与异常边界
 
-TTL 缓存的正确性来自三件事的协同。
+`TTL` 缓存的正确性来自三件事的协同。
 
-单调时钟 `time.monotonic()` 由操作系统提供保证递增的计时源，不受系统墙上时钟被 NTP 或管理员回拨的影响，用 `time.time()` 存 expire_at 一旦回拨就可能把刚写入的条目判成过期或把过期条目判成有效。
+其一是计时源：单调时钟 `time.monotonic()` 由操作系统保证递增，不受墙上时钟被 `NTP` 或管理员回拨的影响，用 `time.time()` 存 `expire_at` 一旦回拨，就可能把刚写入的条目判成过期、或把过期条目判成有效。
 
-并发上，检查—计算—写入是典型的 check-then-act 竞态：若不加锁包住整段，N 个线程同时未命中会各自执行一遍底层函数，既浪费又可能让后写的结果覆盖先写的；
+其二是并发：检查—计算—写入是典型的 `check-then-act` 竞态，不加锁包住整段的话，`N` 个线程同时未命中会各自跑一遍底层函数，既浪费又可能让后写的覆盖先写的；
 
-用 `threading.RLock` 把这段串行化，并用可重入避免同一线程嵌套调用时自锁，但持锁期间不能调用会回调本缓存的外部代码。
+`threading.RLock` 把这段串行化，可重入也避免同一线程嵌套调用时自锁，但持锁期间不能调用会回调本缓存的外部代码。
 
-异常必须排除在写入路径之外：只有 fn 正常返回才把 (expire_at, value) 存进 store，否则一次上游抖动会被缓存成整段 TTL 的持续失败。
+其三是异常必须排除在写入路径之外：只有 `fn` 正常返回才把 `(expire_at, value)` 存进 `store`，否则一次上游抖动会被缓存成整段 `TTL` 的持续失败。
 
-注册表用实例而非模块全局字典，是为了让每个测试拿到干净状态，并让第三方通过 entry_points 的 `load()` 把实现注入进来，核心只依赖协议而不依赖具体插件。
+注册表之所以用实例而非模块全局字典，是为了让每个测试拿到干净状态，也让第三方通过 `entry_points` 的 `load()` 把实现注入进来——核心只依赖协议，不依赖具体插件。
 
 <ConceptDiagram type='layers3' title='第 037 讲 · 分层视角' labels='TTL 缓存：单调时钟、锁与异常处理|注册表与 entry_points|单元测试与可发布抽象|打包配置' caption='单元测试与可发布抽象' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **打包配置** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 打包配置 落在哪一层。
 
-<Term word='装饰器组合设计' text='TTL 必须用 time.monotonic() 而不是 time.time()：前者由操作系统保证单调递增，不受 NTP 回拨或管理员手动改时影响，用墙上时钟存 expire_at 一旦回拨就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 (expire_at, value)，命中时比较 monoton' />
+<Term word='装饰器组合设计' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 `(expire_at, value)`，' />
 
-<Term word='注册表与入口点' text='注册表不要写成模块级裸全局 dict，而要做成显式实例 API：一个 Registry 类提供 register(name) 装饰器、get(name)、names() 与 clear()，实例可注入让每个测试拿到干净状态。重复注册要有明确约定——默认抛 KeyError 或显式覆盖，绝不能静默覆盖掉已有插件；按名字查' />
+<Term word='注册表与入口点' text='注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Registry` 类提供 `register(name)` 装饰器、`get(name)`、`names()` 与 `clear()`，实例可注入，让每个测试拿到干净状态。重复注册要有明确约定——默认抛 `KeyError` 或显式覆盖，绝不能' />
 
 
 ## 注册表与 entry_points
 
-注册表不要写成模块级裸全局 dict，而要做成显式实例 API：一个 Registry 类提供 `register(name)` 装饰器、`get(name)`、`names()` 与 `clear()`，实例可注入让每个测试拿到干净状态。重复注册要有明确约定——默认抛 KeyError 或显式覆盖，绝不能静默覆盖掉已有插件；
+注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Registry` 类提供 `register(name)` 装饰器、`get(name)`、`names()` 与 `clear()`，实例可注入，让每个测试拿到干净状态。
 
-按名字查找失败时给出清晰的 KeyError 而不是 None。
+重复注册要有明确约定——默认抛 `KeyError` 或显式覆盖，绝不能静默顶掉已有插件；按名字查找失败时给出清晰的 `KeyError` 而不是 `None`。
 
-第三方扩展靠 `importlib.metadata.entry_points`（3.8 起的新 API，用 `group= 过滤`）：第三方包在 `pyproject.toml` 里声明 `[project.entry-points.GROUP]`，核心在运行时用 `entry_points(group=...)` 发现并调用 `ep.load()`，无需改动核心代码即可接入新能力；
+第三方扩展靠 `importlib.metadata.entry_points`（3.8 起的新 API，用 `group` 参数过滤）：第三方包在 `pyproject.toml` 里声明 `[project.entry-points.GROUP]`，核心在运行时用 `entry_points(group=...)` 发现并调用 `ep.load()`，无需改动核心代码就能接入新能力；
 
-3.10 前旧 API 返回 dict，3.12 起去掉了旧的字典式接口，用 group 参数才跨版本稳妥。插件要有统一协议（约定函数签名或 Protocol），加载时要隔离异常，一个坏插件不能拖垮全部；核心只依赖协议、不依赖具体实现。
+3.10 前旧 API 返回 `dict`，3.12 起去掉了旧的字典式接口，用 `group` 参数才跨版本稳妥。插件要有统一协议（约定函数签名或 `Protocol`），加载时隔离异常，一个坏插件不能拖垮全部；核心只依赖协议、不依赖具体实现。
 
 打包侧用 `pyproject.toml` 声明 `[build-system]`、`[project]`、依赖与入口点，版本与元数据用 `importlib.metadata.version()` 读取。
 
@@ -253,17 +253,17 @@ print(len(calls))
 
 可发布的抽象必须自带可测性。
 
-TTL 缓存把 clock 参数化，测试里传一个假时钟、调用 `advance(ttl + 1)` 就能验证过期重算，完全不用真 sleep；
+`TTL` 缓存把 `clock` 参数化，测试里传一个假时钟、调用 `advance(ttl + 1)` 就能验证过期重算，完全不用真 `sleep`；
 
-`cache_info()` 返回 hits / misses / size 让命中率可观测，低命中时及时关掉缓存。异常不缓存要有专门用例：让函数抛 ValueError、再调用一次，断言第二次仍会真正执行而不是直接抛旧异常。
+`cache_info()` 返回 `hits` / `misses` / `size`，让命中率可观测，低命中时及时关掉缓存。异常不缓存要有专门用例：让函数抛 `ValueError`、再调用一次，断言第二次仍会真正执行，而不是直接抛出旧异常。
 
 并发正确性是最容易漏掉的用例：用 `threading.Barrier` 让 8 个线程同时到达冷键，断言底层函数只执行一次，这能直接暴露忘记加锁的回归。
 
-注册表每个测试用新实例或 `clear()`，并覆盖重复注册、缺失名字与 bypass 开关。
+注册表每个测试用新实例或 `clear()`，并覆盖重复注册、缺失名字与 `bypass` 开关。
 
-装饰器还要可禁用（`enabled=False` 直接返回原函数）、可单测（借 `__wrapped__` 测原逻辑）、可观测（`functools.wraps` 保留 `__name__` 让日志带上真名）。
+装饰器还要可禁用（`enabled=False` 直接返回原函数）、可单测（借 `__wrapped__` 测原逻辑）、可观测（`functools.wraps` 保留 `__name__`，让日志带上真名）。
 
-文档里写清 TTL 单位、键的可哈希要求与线程语义，才算达到可交付标准。
+文档里写清 `TTL` 单位、键的可哈希要求与线程语义，才算达到可交付标准。
 
 **可发布抽象的测试清单**
 
@@ -280,11 +280,11 @@ TTL 缓存把 clock 参数化，测试里传一个假时钟、调用 `advance(tt
 
 ## 把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展
 
-一个报表框架要允许业务方注册自定义导出器。若用模块级裸字典，单元测试之间会互相污染，第三方加插件还得改核心代码。正确做法是把注册表封装成一个类：`register(name)` 返回装饰器并把函数登记进实例字典，get / names / clear 提供显式访问与清理；
+一个报表框架要允许业务方注册自定义导出器。若用模块级裸字典，单元测试之间会互相污染，第三方加插件还得改核心代码。稳妥的做法是把注册表封装成一个类：`register(name)` 返回装饰器并把函数登记进实例字典，`get` / `names` / `clear` 提供显式访问与清理；
 
-重复注册直接抛 KeyError 而不是静默覆盖，避免同名插件悄悄顶掉别人。下面用标准库实现一个可直接运行的 Registry，演示注册两个插件、读取调用、拦截重复注册、以及 clear 后清空。
+重复注册直接抛 `KeyError` 而不是静默覆盖，避免同名插件悄悄顶掉别人。下面用标准库实现一个可直接运行的 `Registry`，演示注册两个插件、读取调用、拦截重复注册、以及 `clear` 后清空。
 
-对外发布时再把第三方发现换成 `importlib.metadata.entry_points(group=...)`，核心只依赖一个统一的插件协议，既能测试隔离也能不改代码扩展。
+对外发布时再把第三方发现换成 `importlib.metadata.entry_points(group=...)`，核心只依赖一个统一的插件协议，既能测试隔离，也能不改代码就扩展。
 
 ```python
 from functools import wraps
@@ -339,7 +339,7 @@ print(plugins.names())
 python -c "from functools import lru_cache; print(lru_cache(8)(lambda n:n)(1))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **装饰器组合设计** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 装饰器组合设计 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 全局 dict、NTP 回拨与缓存异常
@@ -363,13 +363,13 @@ python -c "from functools import lru_cache; print(lru_cache(8)(lambda n:n)(1))"
 
 <Exercise title='进阶：注册表拒绝重复注册' task='写一个 Reg 类，register 在名字已存在时抛 KeyError，names 返回有序名字列表，演示注册、调用与重复拦截。' solution='class Reg:\n    def __init__(self):\n        self.d = {}\n    def register(self, name):\n        def deco(fn):\n            if name in self.d:\n                raise KeyError(name)\n            self.d[name] = fn\n            return fn\n        return deco\n    def names(self):\n        return sorted(self.d)\n\nr = Reg()\n@r.register(&#39;a&#39;)\ndef a():\n    return 1\nprint(r.names(), r.d[&#39;a&#39;]())\ntry:\n    @r.register(&#39;a&#39;)\n    def b():\n        return 2\nexcept KeyError as e:\n    print(type(e).__name__, str(e))' explain='重复注册默认报错而非静默覆盖，避免同名插件悄悄顶掉已有实现；实例化的 Reg 让每个测试状态隔离。' />
 
-<Quiz no='037-1' q='TTL 缓存判断过期，用哪个时钟最稳妥？' :options='["time.monotonic()", "time.time()", "time.clock()", "datetime.now()"]' answer="0" explain='单调时钟保证递增，不受 NTP 回拨或手动改时影响；time.time() 是墙上时钟，回拨会让 expire_at 比较失真。' />
+<Quiz no='037-2' q='TTL 缓存判断过期，用哪个时钟最稳妥？' :options='["time.monotonic()", "time.time()", "time.clock()", "datetime.now()"]' answer="0" explain='单调时钟保证递增，不受 NTP 回拨或手动改时影响；time.time() 是墙上时钟，回拨会让 expire_at 比较失真。' />
 
-<Quiz no='037-2' q='装饰器里用全局 dict 缓存却不加锁，主要风险是？' :options='["并发下同一冷键被重复计算且字典读写竞争", "缓存命中变慢", "TTL 自动失效", "functools.wraps 失效"]' answer="0" explain='查 + 算 + 写是多步竞态，N 个线程同时未命中会各算一遍；用 threading.RLock 把整段串行化。' />
+<Quiz no='037-3' q='装饰器里用全局 dict 缓存却不加锁，主要风险是？' :options='["并发下同一冷键被重复计算且字典读写竞争", "缓存命中变慢", "TTL 自动失效", "functools.wraps 失效"]' answer="0" explain='查 + 算 + 写是多步竞态，N 个线程同时未命中会各算一遍；用 threading.RLock 把整段串行化。' />
 
-<Quiz no='037-3' q='让第三方不改核心代码就能扩展插件，应使用？' :options='["importlib.metadata.entry_points 发现并 load()", "在核心里硬编码插件列表", "把所有插件塞进一个全局 list", "用 eval 动态执行外部代码"]' answer="0" explain='第三方在 pyproject.toml 声明入口点，核心用 entry_points(group=...) 发现并 load()，只依赖统一协议。' />
+<Quiz no='037-4' q='让第三方不改核心代码就能扩展插件，应使用？' :options='["importlib.metadata.entry_points 发现并 load()", "在核心里硬编码插件列表", "把所有插件塞进一个全局 list", "用 eval 动态执行外部代码"]' answer="0" explain='第三方在 pyproject.toml 声明入口点，核心用 entry_points(group=...) 发现并 load()，只依赖统一协议。' />
 
-<FillBlank no='037-F' tpl='___ time, threading' :answers='["import"]' hint='回想本讲关于 装饰器组合设计 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 TTL 缓存：单调时钟、锁与异常处理 的落点。' />
+<FillBlank no='037-5' tpl='___ time, threading' :answers='["import"]' hint='回想本讲关于 装饰器组合设计 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 TTL 缓存：单调时钟、锁与异常处理 的落点。' />
 
 <KnowledgeCard :points='["TTL 用 time.monotonic()（单调），不用 time.time()（可回拨）；缓存项存 (expire_at, value)", "threading.RLock 包住查 + 算 + 写，避免并发冷键重复计算与字典竞争；持锁时不回调本缓存", "异常不缓存：只在 fn 正常返回时写 store，否则一次失败被放大成整段 TTL", "键由 args + 排序后的 kwargs 构成且须可哈希；functools.wraps 保留元数据；暴露 cache_clear / cache_info", "注册表做成显式实例 API（register / get / names / clear），每测 clear 隔离；第三方用 entry_points(group=...) 扩展", "测试要点：注入假时钟推进 TTL、Barrier 并发冷键断言只算一次、enabled=False 绕过、cache_info 观测命中率"]' :pitfalls='["装饰器里用全局 dict 缓存不加锁，多线程重复计算且状态竞争", "TTL 用 time.time() 判断，NTP 回拨后缓存行为错乱", "把异常结果也缓存，一次超时被返回整个 TTL", "装饰器里用全局字典缓存而不加锁，多线程下会出现重复计算与状态竞争"]' summary='好的抽象让调用方只写一行 @cache(ttl=60)，却把失效、统计、异常与并发都处理妥当' />
 

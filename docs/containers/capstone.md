@@ -18,7 +18,7 @@ description: 用容器与生成器交付一个可测的小工具
 
 第二个工单来自另一个方向：统计逻辑和文件读取写死在一个函数里，单元测试为了跑一次要造临时文件、还要清理，CI 上频繁因为权限和路径失败。第三个更长期：KV 缓存直接用模块级 dict 暴露给业务代码，后来要接持久化时十几个调用点全部得改。这三个问题分别对应内存、可测性与接口抽象。
 
-本讲把文本规整、生成器管道、Counter 增量统计、get/set/delete 窄接口与基准测量串成一个可交付的小工具。
+本讲把文本规整、生成器管道、Counter 增量统计、get / set / delete 窄接口与基准测量串成一个可交付的小工具。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='一次性把所有行 read() 进 list 做词频，文件一大就 OOM：物化整份文本与中间词列表，内存随数据量线性增长' />
 
@@ -40,13 +40,13 @@ description: 用容器与生成器交付一个可测的小工具
 
 词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。
 
-去标点用 `str.translate`(`str.maketrans`('', '', `string.punctuation`))，字符映射在 C 层一次完成，比逐字符 replace 或正则替换更快；
+去标点用 `str.translate` 配 `str.maketrans()`，字符映射在 C 层一次完成，比逐字符 `replace()` 或正则替换更快；
 
-也可以直接用 `re.findall`(r'[a-z0-9]+', cleaned) 自定义词法。`str.split()` 默认按任意空白切分且忽略首尾空白，适合已规整的文本。要注意标点删除会把 '3.13' 拼成 '313'、把连字符词合成一个 token，这类取舍必须按语料定，并写进测试样本。
+也可以直接用 `re.findall()` 自定义词法。`str.split()` 默认按任意空白切分且忽略首尾空白，适合已规整的文本。要注意标点删除会把 '3.13' 拼成 '313'、把连字符词合成一个 token，这类取舍必须按语料定，并写进测试样本。
 
-统计侧用 `collections.Counter`：`update(iterable)` 是累加而非覆盖，缺键返回 0，`most_common(n)` 按计数降序、相等时按首次出现顺序，`total()` 返回所有计数之和（3.10+）；
+统计侧用 `collections.Counter`：`update()` 是累加而非覆盖，缺键返回 0，`most_common(n)` 按计数降序、相等时按首次出现顺序，`total()` 返回所有计数之和（3.10+）；
 
-数据量大时 `heapq.nlargest(n, counts, key=counts.get)` 比全表排序更省。
+数据量大时取 top-N 用 `heapq.nlargest()` 比全表 `sorted()` 更省。
 
 ```python
 import re, string
@@ -121,18 +121,22 @@ print('bench ran', big.total() == 2000, cost >= 0)
 | 计数 | collections.Counter.update(iterable) | 累加语义，缺键返回 0 |
 | Top-N | most_common(n) / heapq.nlargest(n, d, key=d.get) | 数据量大时 nlargest 省一次全排序 |
 
-<Callout type="tip" title='核心心智模型' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 str.casefold()（3.3+）而不是 lower()：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。去标点用' />
+<Callout type="tip" title='核心心智模型' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。' />
 
 
 ## 生成器管道与增量统计：内存只与不同词有关
 
-把'去标点 → 转小写 → 分词 → 计数'每一步写成生成器表达式或小的生成器函数，再用 yield from 串成惰性管道，只有最终 Counter 或聚合才真正消费。CPython 里 for line in file 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；
+把「去标点 → 转小写 → 分词 → 计数」每一步写成生成器表达式或小的生成器函数，再用 `yield from` 串成惰性管道，只有最终 Counter 或聚合才真正消费。
+
+CPython 里 `for line in file` 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；
 
 生成器表达式更进一步，连中间词列表都省掉，每个 token 产出后立刻被计数、随即释放。于是内存占用与不同词的数量相关，而不是文件字节数或总行数，几百 MB 的日志也能在固定内存里跑完。反面写法是 `read()` / `readlines()` 全量读入、再用列表推导物化词列表，内存随数据量线性增长，文件一大就 OOM。
 
-工程上把统计逻辑做成只接受可迭代对象的纯函数：测试传 list、生产传文件对象或标准输入都不用改，也不必造临时文件；命令分发把输入解析成 (op, key, value) 元组走分发表，新增命令只改分发表而不是改统计核心。
+工程上把统计逻辑做成只接受可迭代对象的纯函数：测试传 list、生产传文件对象或标准输入都不用改，也不必造临时文件；
 
-基准用 `time.perf_counter` 测墙钟、tracemalloc 测峰值分配，两者结合才能证明'省内存'而不是凭感觉。
+命令分发把输入解析成 `(op, key, value)` 元组走分发表，新增命令只改分发表而不是改统计核心。
+
+基准用 `time.perf_counter` 测墙钟、tracemalloc 测峰值分配，两者结合才能证明「省内存」而不是凭感觉。
 
 ```python
 import io, shelve, tempfile, os
@@ -204,11 +208,17 @@ print('incremental total', lazy.total(), 'peak positive', peak > 0)
 
 把统计逻辑与 IO 分开，核心是一个接受任意可迭代对象的纯函数：它逐行取数据、用生成器把去标点、转小写、分词串成惰性管道，再用 `Counter.update` 增量累计，内存只与不同词的数量有关，而不是文件字节数。
 
-CPython 里 for line in file 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；生成器表达式更进一步，把中间结果也省掉，每个 token 产出后立刻被消费。
+CPython 里 `for line in file` 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；
 
-`casefold()`（3.3+）比 `lower()` 更彻底（如德语 ß 变成 ss），`str.translate` 配 `str.maketrans` 在 C 层做字符映射。Counter 的 most_common 用 `heapq.nlargest`，大数据下比 sorted 全表更省。
+生成器表达式更进一步，把中间结果也省掉，每个 token 产出后立刻被消费。
 
-KV 层定义 get / set / delete 三个窄方法：内存版用 dict，持久化版换 shelve（值必须可 pickle）或 sqlite3，业务代码完全不用改；命令分发把输入解析成 (op, key, value) 元组后走分发表，新命令只增不改。
+`casefold()`（3.3+）比 `lower()` 更彻底（如德语 ß 变成 ss），`str.translate` 配 `str.maketrans()` 在 C 层做字符映射。
+
+Counter 的 `most_common()` 内部用 `heapq.nlargest()`，大数据下比 `sorted()` 全表更省。
+
+KV 层定义 get / set / delete 三个窄方法：内存版用 dict，持久化版换 shelve（值必须可 pickle）或 sqlite3，业务代码完全不用改；
+
+命令分发把输入解析成 `(op, key, value)` 元组后走分发表，新命令只增不改。
 
 基准用 `time.perf_counter` 测墙钟、tracemalloc 测峰值分配，两者才能证明省内存而不是凭感觉。
 
@@ -217,9 +227,11 @@ KV 层定义 get / set / delete 三个窄方法：内存版用 dict，持久化�
 
 内存版 KV 只需暴露 get / set / delete 三个操作：dict 实现最快、进程内、重启即丢，适合测试与短期缓存；把业务代码直接绑在 dict 上，后面换持久化就要改十几个调用点。定义窄接口后，实现可以无痛替换：shelve 是标准库的 dbm 键值存储，值必须可 pickle，接口与 dict 几乎一致；
 
-sqlite3 提供事务与查询；redis 提供跨进程共享与过期淘汰能力。命令分发把 (op, key, value) 映射到接口调用，业务层不知道底层是内存还是磁盘，测试用内存版跑同一组断言、生产注入持久化版即可。可观测性也要跟上：统计 total 与不同词数、记录处理行数与耗时、对异常行做计数而不是静默跳过。
+sqlite3 提供事务与查询；redis 提供跨进程共享与过期淘汰能力。
 
-持久化版本还要考虑序列化成本、连接生命周期与并发写，这些属于实现细节，不应渗进业务接口。把'统计与 IO 分离、存储与业务分离'两条边界守住，后面接网络层、分片层都只是换一个实现类。
+命令分发把 `(op, key, value)` 映射到接口调用，业务层不知道底层是内存还是磁盘，测试用内存版跑同一组断言、生产注入持久化版即可。
+
+可观测性也要跟上：统计 total 与不同词数、记录处理行数与耗时、对异常行做计数而不是静默跳过。持久化版本还要考虑序列化成本、连接生命周期与并发写，这些属于实现细节，不应渗进业务接口。把「统计与 IO 分离、存储与业务分离」两条边界守住，后面接网络层、分片层都只是换一个实现类。
 
 
 ### 为什么 dict 不该直接暴露给业务代码
@@ -234,16 +246,18 @@ sqlite3 提供事务与查询；redis 提供跨进程共享与过期淘汰能力
 | sqlite3 / redis | 事务、查询或跨进程共享 | 实现同一接口即可 |
 | 命令分发 (op, key, value) | 把输入解析与存储解耦 | 加新命令只改分发表 |
 
-<Term word='文本规整与分词' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 str.casefold()（3.3+）而不是 lower()：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。去标点用 str.trans' />
+<Term word='文本规整与分词' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。去标点用 `str.' />
 
-<Term word='Counter 与排序' text='把&#39;去标点 → 转小写 → 分词 → 计数&#39;每一步写成生成器表达式或小的生成器函数，再用 yield from 串成惰性管道，只有最终 Counter 或聚合才真正消费。CPython 里 for line in file 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；生成器表达式更进一步，连中间词列' />
+<Term word='Counter 与排序' text='把「去标点 → 转小写 → 分词 → 计数」每一步写成生成器表达式或小的生成器函数，再用 `yield from` 串成惰性管道，只有最终 Counter 或聚合才真正消费。CPython 里 `for line in file` 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；生成器表达式更进一步，连' />
 
 
 ## 可测的词频 CLI：核心纯函数、生成器管道与可替换 KV
 
 把词频工具拆成三层：tokenize 只做文本规整与分词、count_stream 对任意可迭代行做增量统计、MemoryKV 提供 get / set / delete 窄接口缓存结果。核心函数只接受可迭代对象，测试时传 list、生产时传文件或标准输入都不用改，也不必造临时文件。
 
-命令分发把 (op, key, value) 元组映射到 KV 操作，新增命令只改分发表。整个工具没有把整份文本物化，内存只与不同词的数量有关；用 `io.StringIO` 模拟文件即可端到端验证。重点是统计与 IO 分离、存储与业务分离这两条边界，以及每一步都留可自动化的测试入口，而不是把逻辑堆在一个函数里。
+命令分发把 `(op, key, value)` 元组映射到 KV 操作，新增命令只改分发表。
+
+整个工具没有把整份文本物化，内存只与不同词的数量有关；用 `io.StringIO` 模拟文件即可端到端验证。重点是统计与 IO 分离、存储与业务分离这两条边界，以及每一步都留可自动化的测试入口，而不是把逻辑堆在一个函数里。
 
 ```python
 import io, re, string
@@ -291,7 +305,7 @@ print('total', counts.total(), 'hello', counts['hello'], 'python', counts['pytho
 python -m timeit -n 1000 "sum(range(100))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **文本规整与分词** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 文本规整与分词 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 失败模式、基准测量与交付自检
@@ -321,9 +335,9 @@ python -m timeit -n 1000 "sum(range(100))"
 
 <Quiz no='027-3' q='为 KV 定义 get / set / delete 窄接口的主要收益是？' :options='["让 dict 变快", "业务代码不依赖具体存储，后面换 shelve / sqlite3 / redis 只改实现", "自动支持事务", "省掉所有测试"]' answer="1" explain='窄接口把存储与业务解耦，测试可跑内存版、生产换持久化实现；持久化本身还需处理序列化与连接管理。' />
 
-<Predict no='027-P' q='c = Counter(); c.update(&#39;aab&#39;); c.update([&#39;a&#39;]); print(c[&#39;a&#39;], c.total()) 输出什么？' :options='["2 3", "3 4", "3 5"]' answer='1' output='3 4' explain='&#39;aab&#39; 让 a 为 2、b 为 1；Counter.update 是累加，再加一个 a 得 3；total() 返回所有计数之和 3 + 1 = 4。若误把 update 当覆盖会得到 1。' />
+<Predict no='027-4' q='c = Counter(); c.update(&#39;aab&#39;); c.update([&#39;a&#39;]); print(c[&#39;a&#39;], c.total()) 输出什么？' :options='["2 3", "3 4", "3 5"]' answer='1' output='3 4' explain='&#39;aab&#39; 让 a 为 2、b 为 1；Counter.update 是累加，再加一个 a 得 3；total() 返回所有计数之和 3 + 1 = 4。若误把 update 当覆盖会得到 1。' />
 
-<FillBlank no='027-F' tpl='___ re, string' :answers='["import"]' hint='回想本讲关于 文本规整与分词 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 文本规整与分词：把噪声挡在统计之前 的落点。' />
+<FillBlank no='027-5' tpl='___ re, string' :answers='["import"]' hint='回想本讲关于 文本规整与分词 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 文本规整与分词：把噪声挡在统计之前 的落点。' />
 
 <KnowledgeCard :points='["词频管道：casefold / translate 规整、生成器分词、Counter 增量累计，统计与 IO 分离", "核心函数只接受可迭代对象，测试传 list、生产传文件或标准输入，不必造临时文件", "逐行迭代加生成器管道让内存只与不同词数量有关；read() 全量会随文件大小线性增长", "casefold()（3.3+）比 lower() 更适合 Unicode 无大小写归一；top-N 用 most_common 或 heapq.nlargest", "KV 定义 get / set / delete 窄接口，dict 内存版可无痛替换为 shelve / sqlite3 / redis", "命令分发把 (op, key, value) 映射到接口调用；基准用 perf_counter 测耗时、tracemalloc 测峰值内存"]' :pitfalls='["一次性把所有行 read() 进 list 做词频，文件一大就 OOM", "用 lower() 做大小写归一，非 ASCII 文本统计对不上", "把 KV 的 dict 直接暴露给业务代码，后面加持久化要全改", "一次性把所有行读进 list 做统计，文件一大就 OOM；应逐行迭代、增量累计"]' summary='把统计逻辑与 IO 分开，同一套核心既能读文件也能读标准输入，测试时才不必造临时文件' />
 

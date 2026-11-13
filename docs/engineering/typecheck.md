@@ -14,9 +14,9 @@ description: 让类型契约在 CI 中真正生效
 
 ## 一个没写返回类型的函数，让十几处调用全被推断成 Any
 
-一个数据平台的公共函数 `read_config()` 没写返回类型，内部调用了某个没有类型标注的第三方 SDK，调用链上十几处地方全被推断成 Any。有人给赶进度在几十个文件里加了 # type: ignore，mypy 从此一片绿，直到某次把字符串当 int 传进计费逻辑才在夜里炸——静态检查早被这些口子架空了。
+一个数据平台的公共函数 `read_config()` 没写返回类型，内部调用了某个没有类型标注的第三方 SDK，调用链上十几处地方全被推断成 Any。有人为赶进度在几十个文件里加了 `# type: ignore`，mypy 从此一片绿，直到某次把字符串当 int 传进计费逻辑才在夜里炸——静态检查早被这些口子架空了。
 
-另一类事故是误以为注解会在运行时校验：add('x', 'y') 照样返回 'xy'，而 `isinstance(x, list[int])` 直接抛 TypeError。
+另一类事故是误以为注解会在运行时校验：`add('x', 'y')` 照样返回 'xy'，而 `isinstance(x, list[int])` 直接抛 TypeError。
 
 静态类型的收益与覆盖率成正比，Any 会像漏洞一样沿调用链传播。本讲把检查器配置、stub 与 `py.typed`、泛型不变性、ignore 治理，以及与运行时校验的互补关系讲成能落地的 CI 契约。
 
@@ -25,15 +25,15 @@ description: 让类型契约在 CI 中真正生效
 
 ## mypy 与 pyright：配置项与严格度怎么选
 
-mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 disallow_untyped_defs、check_untyped_defs、warn_return_any、no_implicit_optional、warn_unused_ignores 等一组开关；
+mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implicit_optional`、`warn_unused_ignores` 等一组开关；
 
-ignore_missing_imports 与 follow_imports = 'skip' 用来处理无标注的第三方库；
+`ignore_missing_imports` 与 `follow_imports = 'skip'` 用来处理无标注的第三方库；
 
-[`[tool.mypy.overrides]`] module = 'legacy.*' `ignore_errors = True` 可对老代码按模块降严格度。
+`[tool.mypy.overrides]` 下把某个模块设成 `ignore_errors = True`，可对老代码按模块降严格度。
 
-命令行用 `mypy --strict pkg`/。
+命令行等价写法是 `mypy --strict`。
 
-pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，核心是 typeCheckingMode = 'strict' | 'basic' | 'off' 与 reportUnknownMemberType、reportMissingTypeStubs 等细粒度开关。
+pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，核心是 `typeCheckingMode='strict'`（也可取 basic、off）与 `reportUnknownMemberType`、`reportMissingTypeStubs` 等细粒度开关。
 
 两者都提供 `reveal_type(x)`：这是检查器的特殊内建，只在静态分析时打印推断类型，运行时并不存在，不能当普通函数调用。渐进式接入的正确顺序是从公开 API 与数据边界（IO、配置、DB 行）开始加类型，按目录逐步提高严格度，把未覆盖文件列成清单逐步清零，而不是一上来全仓 strict 后满仓 ignore。
 
@@ -49,7 +49,7 @@ pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，�
 | pyright typeCheckingMode='strict' | pyright 总严格度 | 逐项 report* 开关可细调 |
 | reveal_type(x) | 静态分析内建 | 打印推断类型，运行时不存在 |
 
-<Callout type="tip" title='核心心智模型' text='mypy 配置在 mypy.ini 或 pyproject.toml 的 [tool.mypy]：strict = True 一次打开 disallow_untyped_defs、check_untyped_defs、warn_return_any、no_implicit_optional、warn' />
+<Callout type="tip" title='核心心智模型' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implici' />
 
 <ConceptDiagram type='compare2' title='第 074 讲 · 检查器配置与严格度：mypy 与 pyright' labels='检查器配置与严格度：mypy 与 pyrig|stub、py.typed 与 Any 的传|泛型不变性、协议与运行时互补' caption='让类型契约在 CI 中真正生效' />
 
@@ -72,17 +72,19 @@ pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，�
 
 ## 注解在 CPython 里只是 __annotations__ 元数据
 
-注解在 CPython 里只是函数对象 `__annotations__` 字典里的元数据：默认（3.13）在定义时求值成类型对象，from `__future__` import annotations（PEP 563）则把它们编译成字符串常量，`typing.get_type_hints` 再在函数的 `__globals__` 与局部命名空间里 eval 还原，所以用 exec 动态定义的函数也能被解析。
+注解在 CPython 里只是函数对象 `__annotations__` 字典里的元数据：默认在定义时求值成类型对象（到 3.13 仍如此，3.14 起 PEP 649 改为惰性求值），PEP 563 的 future 导入则把它们编译成字符串常量，`typing.get_type_hints` 再在函数的 `__globals__` 与局部命名空间里 eval 还原，所以用 exec 动态定义的函数也能被解析。
 
-list`[int]` 在运行时是 `types.GenericAlias`，其 `__instancecheck__` 未实现，isinstance 检测到第二参数是参数化泛型就抛 TypeError。
+`list[int]` 在运行时是 `types.GenericAlias`，其 `__instancecheck__` 未实现，isinstance 检测到第二参数是参数化泛型就抛 TypeError。
 
-静态检查器不走运行时：它解析 AST 建符号表与类型图，做约束求解与子类型判定；Any 被定义成同时是格顶与格底（与任意类型双向兼容），因此一旦进入表达式就短路后续检查并沿返回值传播，这就是 warn_return_any 要卡的点。PEP 561 的 `py.typed` 是个空标记文件，检查器据此决定是否读取该包的行内注解；
+静态检查器不走运行时：它解析 AST 建符号表与类型图，做约束求解与子类型判定；
 
-没有它，stub（.pyi）或 Any 就是唯一出路。
+Any 被定义成同时是格顶与格底（与任意类型双向兼容），因此一旦进入表达式就短路后续检查并沿返回值传播，这正是 `warn_return_any` 要卡的点。
 
-<Term word='检查器配置与严格度' text='mypy 配置在 mypy.ini 或 pyproject.toml 的 [tool.mypy]：strict = True 一次打开 disallow_untyped_defs、check_untyped_defs、warn_return_any、no_implicit_optional、warn_unused_ig' />
+PEP 561 的 `py.typed` 是个空标记文件，检查器据此决定是否读取该包的行内注解；没有它，stub（`.pyi`）或 Any 就是唯一出路。
 
-<Term word='stub 与第三方库' text='PEP 561 规定：一个包只有在自身里带上 py.typed 标记文件，检查器才会使用它的内联注解；缺了这个标记，即便源码写了类型，第三方项目 import 它时也会被当成无类型，名字全部退化成 Any。无标注的库靠 stub 文件（.pyi）补：typeshed 随检查器附带标准库与常见第三方库的 stub，stu' />
+<Term word='检查器配置与严格度' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implicit_optional' />
+
+<Term word='stub 与第三方库' text='PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器才会使用它的内联注解；缺了这个标记，即便源码写了类型，第三方项目 import 它时也会被当成无类型，名字全部退化成 Any。无标注的库靠 stub 文件（`.pyi`）补：typeshed 随检查器附带标准库与常见第三方库的 stub' />
 
 
 ## 对照：isinstance(x, list[int]) 与运行时校验
@@ -143,11 +145,15 @@ print('python', sys.version_info[0], sys.version_info[1])
 
 PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器才会使用它的内联注解；缺了这个标记，即便源码写了类型，第三方项目 import 它时也会被当成无类型，名字全部退化成 Any。
 
-无标注的库靠 stub 文件（.pyi）补：typeshed 随检查器附带标准库与常见第三方库的 stub，stubgen 可从源码生成草稿，stubtest 校验 stub 与运行时签名一致。
+无标注的库靠 stub 文件（`.pyi`）补：typeshed 随检查器附带标准库与常见第三方库的 stub，`stubgen` 可从源码生成草稿，`stubtest` 校验 stub 与运行时签名一致。
 
-Any 的特殊之处在于它与任何类型双向兼容：一旦某个值被标成 Any，对它的每一次属性访问、函数调用、运算都不再检查，并会把 Any 沿返回值继续传给下游，等于整片代码失去保护。对策是开 warn_return_any 与 disallow_any_generics、给第三方库补 stub 或局部隔离。
+Any 的特殊之处在于它与任何类型双向兼容：一旦某个值被标成 Any，对它的每一次属性访问、函数调用、运算都不再检查，并会把 Any 沿返回值继续传给下游，等于整片代码失去保护。
 
-行内抑制用 # type: ignore 或精确到码的 # type: ignore`[arg-type]`，pyright 用 # pyright: ignore；配合 warn_unused_ignores 清掉过时抑制，否则检查器会被慢慢掏空。
+对策是开 `warn_return_any` 与 `disallow_any_generics`、给第三方库补 stub 或局部隔离。
+
+行内抑制用 `# type: ignore` 或精确到码的写法，pyright 用 `# pyright: ignore`；
+
+配合 `warn_unused_ignores` 清掉过时抑制，否则检查器会被慢慢掏空。
 
 **typing 构造与运行时可查性**
 
@@ -169,19 +175,19 @@ Any 的特殊之处在于它与任何类型双向兼容：一旦某个值被标�
 
 ## 泛型不变性、Protocol 与运行时互补
 
-PEP 585（3.9+）让内置容器可直接下标：list`[int]`、dict[str, int] 是 `types.GenericAlias`；
+PEP 585（3.9 起）让内置容器可直接下标：`list[int]`、`dict[str, int]` 是 `types.GenericAlias`；
 
-PEP 604（3.10+）让 int | str 等价于 `typing.Union`[int, str]，`typing.get_origin(list[int])` 返回 list、`get_args(list[int])` 返回 (int,)。
+PEP 604（3.10 起）让 `int | str` 等价于 `typing.Union[int, str]`，`typing.get_origin(list[int])` 返回 list、`get_args(list[int])` 返回 (int,)。
 
-可变容器是不变的：list`[int]` 不能赋给 list`[object]`，因为后者允许 append 一个 str 破坏前者；
+可变容器是不变的：`list[int]` 不能赋给 `list[object]`，因为后者允许 append 一个 str 破坏前者；
 
-只读的 Sequence`[int]` 才协变，用 `TypeVar(covariant=True)` 声明。
+只读的 `Sequence[int]` 才协变，用 `TypeVar(covariant=True)` 声明。
 
-还有 Literal（PEP 586）、Annotated（PEP 593）、Protocol（PEP 544 结构化子类型，配 @runtime_checkable 才能做 isinstance）、TypeGuard（PEP 647）、3.12 的 PEP 695 type 参数语法。
+还有 `Literal`（PEP 586）、`Annotated`（PEP 593）、`Protocol`（PEP 544 结构化子类型，配 `@runtime_checkable` 才能做 isinstance）、`TypeGuard`（PEP 647）、3.12 的 PEP 695 type 参数语法。
 
-关键边界：注解默认只是元数据，运行时不强制——`typing.get_type_hints` 能读出类型，from `__future__` import annotations（PEP 563）把注解存成字符串，`isinstance(x, list[int])` 会抛 TypeError: `isinstance()` argument 2 cannot be a parameterized generic，只能判未参数化的 list。
+关键边界：注解默认只是元数据，运行时不强制——`typing.get_type_hints` 能读出类型，PEP 563 的 future 导入把注解存成字符串，`isinstance(x, list[int])` 会抛 TypeError，只能判未参数化的 list。
 
-所以静态检查负责开发期约束，运行期校验交给 pydantic、dataclasses 或手写 validate，两者互补而非替代。
+所以静态检查负责开发期约束，运行期校验交给 `pydantic` 这类校验库、attrs 的验证器或手写的 validate；`dataclasses` 只提供带注解的结构、并不校验类型，别把它当成运行时守卫。两者互补而非替代。
 
 **版本 / PEP 与能力**
 
@@ -197,7 +203,7 @@ PEP 604（3.10+）让 int | str 等价于 `typing.Union`[int, str]，`typing.get
 
 ## 静态注解与运行时校验互补的边界守卫
 
-类型检查只能覆盖有注解的代码路径，外部输入（HTTP 参数、配置、DB 行）在运行时仍是未校验的裸值。
+类型检查只能覆盖有注解的代码路径，外部输入（`HTTP` 参数、配置、DB 行）在运行时仍是未校验的裸值。
 
 稳妥做法是在数据边界放一层轻量 validate：用 `typing.get_type_hints` 读出函数声明的契约，逐项 isinstance 校验后再调用核心函数；
 
@@ -244,9 +250,9 @@ print('annotation not enforced', add('x', 'y'))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **检查器配置与严格度** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 检查器配置与严格度 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
-<FlowTimeline :steps='[{"title": "检查器配置与严格度：mypy 与 pyright", "desc": "mypy 配置在 mypy.ini 或 pyproject.toml 的 [tool…", "tone": "blue"}, {"title": "stub、py.typed 与 Any 的传播", "desc": "PEP 561 规定：一个包只有在自身里带上 py.typed 标记文件，检查器才会…", "tone": "purple"}, {"title": "泛型不变性、协议与运行时互补", "desc": "PEP 585（3.9+）让内置容器可直接下标：list[int]、dict[str…", "tone": "orange"}, {"title": "工程落地", "desc": "静态注解与运行时校验互补的边界守卫", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "检查器配置与严格度：mypy 与 pyright", "desc": "mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `…", "tone": "blue"}, {"title": "stub、py.typed 与 Any 的传播", "desc": "PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器…", "tone": "purple"}, {"title": "泛型不变性、协议与运行时互补", "desc": "PEP 585（3.9 起）让内置容器可直接下标：`list[int]`、`dict…", "tone": "orange"}, {"title": "工程落地", "desc": "静态注解与运行时校验互补的边界守卫", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 练习、自测与一页纸速记
@@ -261,11 +267,11 @@ python -m compileall -q . && python -m pytest -q
 
 <Quiz no='074-3' q='isinstance(x, list[int]) 的结果是？' :options='["抛 TypeError，参数化泛型不能作 isinstance 第二参数", "返回 True", "返回 False", "等价于 isinstance(x, list)"]' answer="0" explain='list[int] 是参数化 GenericAlias，未实现针对下标的 __instancecheck__；isinstance 只接受未参数化的 list，运行期校验要另写。' />
 
-<Predict no='074-P' q='执行 isinstance([1, 2], list[int]) 最可能的输出是？' :options='["TypeError: isinstance() argument 2 cannot be a parameterized generic", "True", "False"]' answer='0' output='TypeError: isinstance() argument 2 cannot be a parameterized generic' explain='3.13 对参数化泛型作 isinstance 第二参数明确报这条 TypeError；这是「注解是静态元数据、运行时不识下标泛型」的直接证据，校验要改用未参数化的 list 加逐元素判断。' />
+<Predict no='074-4' q='执行 isinstance([1, 2], list[int]) 最可能的输出是？' :options='["TypeError: isinstance() argument 2 cannot be a parameterized generic", "True", "False"]' answer='0' output='TypeError: isinstance() argument 2 cannot be a parameterized generic' explain='3.13 对参数化泛型作 isinstance 第二参数明确报这条 TypeError；这是「注解是静态元数据、运行时不识下标泛型」的直接证据，校验要改用未参数化的 list 加逐元素判断。' />
 
-<FillBlank no='074-F' tpl='___ typing, inspect' :answers='["import"]' hint='回想本讲关于 检查器配置与严格度 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 检查器配置与严格度：mypy 与 pyright 的落点。' />
+<FillBlank no='074-5' tpl='___ typing, inspect' :answers='["import"]' hint='回想本讲关于 检查器配置与严格度 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 检查器配置与严格度：mypy 与 pyright 的落点。' />
 
-<KnowledgeCard :points='["mypy --strict / pyright typeCheckingMode=&#39;strict&#39; 从公开 API 与数据边界起步，按目录渐进提高严格度", "PEP 561 py.typed 决定内联注解是否被采信；缺标记的库靠 .pyi stub 或退化成 Any", "Any 与任意类型双向兼容并沿调用链传播，用 warn_return_any / disallow_any_generics 治理", "PEP 585 list[int]（3.9+）、PEP 604 int | str（3.10+）；可变容器不变、Sequence 协变", "注解默认不强制运行时校验，isinstance(x, list[int]) 抛 TypeError；静态与 pydantic/手写校验互补", "# type: ignore 要精确到码并开 warn_unused_ignores，reveal_type 只在静态分析时存在"]' :pitfalls='["为赶进度满仓 # type: ignore", "公共函数返回 Any 且不治理", "以为注解运行时会校验、或写 isinstance(x, list[int])", "为赶进度满仓 # type: ignore，等于把检查器变成装饰；技术债会集中在最难查的地方"]' summary='静态类型的收益与覆盖率成正比，Any 会像漏洞一样沿调用链传播，让一片代码失去保护' />
+<KnowledgeCard :points='["mypy --strict / pyright typeCheckingMode=&#39;strict&#39; 从公开 API 与数据边界起步，按目录渐进提高严格度", "PEP 561 py.typed 决定内联注解是否被采信；缺标记的库靠 .pyi stub 或退化成 Any", "Any 与任意类型双向兼容并沿调用链传播，用 warn_return_any / disallow_any_generics 治理", "PEP 585 list[int]（3.9+）、PEP 604 int | str（3.10+）；可变容器不变、Sequence 协变", "注解默认不强制运行时校验，isinstance(x, list[int]) 抛 TypeError；dataclasses 不校验，运行时交给 pydantic/手写", "# type: ignore 要精确到码并开 warn_unused_ignores，reveal_type 只在静态分析时存在"]' :pitfalls='["为赶进度满仓 # type: ignore", "公共函数返回 Any 且不治理", "以为注解运行时会校验、或写 isinstance(x, list[int])", "为赶进度满仓 # type: ignore，等于把检查器变成装饰；技术债会集中在最难查的地方"]' summary='静态类型的收益与覆盖率成正比，Any 会像漏洞一样沿调用链传播，让一片代码失去保护' />
 
 **速记索引**
 
@@ -275,7 +281,7 @@ python -m compileall -q . && python -m pytest -q
 | PEP 561 py.typed 决定内联注解是否被采信；缺标记的库靠 .pyi stub 或退化成 Any | 跑通示例 |
 | Any 与任意类型双向兼容并沿调用链传播，用 warn_return_any / disallow_any_generics 治理 | 深入边界 |
 | PEP 585 list[int]（3.9+）、PEP 604 int \| str（3.10+）；可变容器不变、Sequence 协变 | 工程落地 |
-| 注解默认不强制运行时校验，isinstance(x, list[int]) 抛 TypeError；静态与 pydantic/手写校验互补 | 随堂检测 |
+| 注解默认不强制运行时校验，isinstance(x, list[int]) 抛 TypeError；dataclasses 不校验，运行时交给 pydantic/手写 | 随堂检测 |
 | # type: ignore 要精确到码并开 warn_unused_ignores，reveal_type 只在静态分析时存在 | 复盘 |
 
 1. mypy --strict / pyright typeCheckingMode='strict' 从公开 API 与数据边界起步，按目录渐进提高严格度

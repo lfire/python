@@ -7,16 +7,16 @@ description: 设计可撤销、可审计的身份体系
 
 # 第 090 讲 · 认证授权：Session、JWT、OAuth2 与 RBAC
 
-服务能被别人调用了，紧接着要回答来的是谁、能做什么。登录与权限常被混成一团。本讲把身份体系摊开，目标是令牌可撤销、判定在服务端、密码经得起泄露。
+服务能被别人调用了，紧接着要回答两件事：来的是谁、能做什么。登录和权限常被混成一团，其实一个管身份、一个管边界。本讲把身份体系摊开，目标是令牌可撤销、判定留在服务端、密码经得起一次拖库。
 
-一个安静的场景：员工离职后管理员点了禁用，他手里的令牌到期前仍能调接口；有人绕过隐藏按钮读到别人数据；库一旦泄露，MD5 密码被批量还原。我们分清认证与授权的区别，再比 Session 与 JWT 在能否主动失效上的取舍，接着谈令牌刷新与撤销、密码哈希与加盐，最后走到 OAuth2 与 RBAC 的集中判定。需要 HTTP 头部、Cookie、哈希函数与路由层；读完能设计可撤销、可审计的认证授权。
+设想一个安静的场景：员工离职后管理员点了禁用，他手里的令牌到期前仍能调接口；有人绕过隐藏按钮读到别人的数据；数据库一旦泄露，MD5 存的密码被批量还原。我们先分清认证与授权，再比 Session 与 JWT 在能否主动失效上的取舍，接着谈令牌刷新与撤销、密码哈希与加盐，最后走到 OAuth2 与 `RBAC` 的集中判定。需要 `HTTP` 头部、Cookie、哈希函数与路由层；读完能设计一套可撤销、可审计的认证授权。
 
 
 ## 点了「禁用用户」，旧 token 到期前仍能调接口
 
-一个后台系统把用户登录信息全放进 JWT，权限判断写在前端路由里，密码用 MD5 存。上线后三个问题接踵而至：员工离职后管理员在后台点了『禁用』，该员工手里的 token 在到期前仍能调用接口，因为 JWT 签发后服务端没有状态可撤销；有人直接改前端路由或用脚本调接口，绕过按钮隐藏读到了别人的数据；
+一个后台系统把用户登录信息全放进 JWT，权限判断写在前端路由里，密码用 MD5 存。上线后三个问题接踵而至：员工离职后管理员在后台点了『禁用』，该员工手里的 token 到期前仍能调用接口，因为 JWT 签发后服务端没有状态可撤销；有人直接改前端路由或用脚本调接口，绕开按钮隐藏读到了别人的数据；
 
-数据库泄露后 MD5 值被彩虹表批量还原。第一反应是『把 token 有效期调短』，这缓解了吊销却解释不了越权，也不解决密码存储。三件事对应三层不同机制：会话状态的存放位置决定能否主动失效，授权判定必须在服务端，密码要靠带盐的慢哈希。本讲用标准库手工签发并验证一个 HS256 JWT，把无状态的代价变成可测的结论。
+数据库泄露后 MD5 值被彩虹表批量还原。第一反应是『把 token 有效期调短』，这缓解了吊销，却解释不了越权，也不解决密码存储。三件事对应三层不同机制：会话状态放在哪里决定能否主动失效，授权判定必须在服务端，密码要靠带盐的慢哈希。本讲用标准库手工签发并验证一个 `HS256` JWT，把无状态的代价变成可测的结论。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='JWT 签发后点了『禁用用户』，对方 token 到期前仍能调接口：JWT 无状态，服务端没有可删除的会话记录，验签通过即放行' />
 
@@ -34,17 +34,17 @@ description: 设计可撤销、可审计的身份体系
 
 ## 认证与授权：Session 与 JWT 的取舍
 
-认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，二者不能混：登录校验凭据是认证，判断能否删除订单是授权。
+认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，两者不能混：登录校验凭据是认证，判断能否删除订单是授权。
 
-Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 session_id 的 Cookie，常见 Set-Cookie 属性：HttpOnly 禁止 JS 读取、Secure 仅 HTTPS 传输、`SameSite=Lax`/Strict 缓解 CSRF。
+Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 `session_id` 的 Cookie，常见 Set-Cookie 属性有 HttpOnly（禁止 JS 读取）、Secure（仅 `HTTPS` 传输）、`SameSite=Lax/Strict`（缓解 `CSRF`）。
 
-优点是删掉服务端记录即可主动踢人、改动即时生效，代价是需要集中会话存储，跨域与水平扩展要处理共享。
+好处是删掉服务端记录即可主动踢人、改动即时生效，代价是要有一份集中会话存储，跨域与水平扩展都得处理共享。
 
-JWT（RFC 7519）是 `header.payload.signature` 三段 base64url，payload 自带 sub、exp、iat，服务端验签后无需查库，无状态适合微服务与多方验证；
+JWT（RFC 7519）是 `header.payload.signature` 三段 base64url，payload 自带 `sub`、`exp`、`iat`，服务端验签后无需查库，无状态适合微服务与多方验证；
 
-代价是签发后无法主动失效，除非再引入状态：黑名单、短时效 access token（如 15 分钟）配可轮换的 refresh token、或 token 版本号与用户状态比对。判据要具体：需要即时下线、改权限立刻生效 → Session 或 JWT 黑名单；服务无共享存储、要跨服务自校验 → JWT。
+代价是签发后无法主动失效，除非再引入状态：黑名单、短时效 access token（如 15 分钟）配可轮换的 refresh token，或 token 版本号与用户状态比对。判据要具体到需求：需要即时下线、改权限立刻生效，选 Session 或 JWT 黑名单；服务无共享存储、要跨服务自校验，选 JWT。
 
-把两者当风格差异选，就会在离职踢人这类需求上翻车。
+把两者当成风格差异来选，就会在离职踢人这类需求上翻车。
 
 **Session 与 JWT 对照**
 
@@ -57,7 +57,7 @@ JWT（RFC 7519）是 `header.payload.signature` 三段 base64url，payload 自�
 | 典型时效 | 随会话与滑动续期 | access 15 分钟 + refresh 轮换 |
 | 适合 | 需即时踢人、改权限即生效 | 微服务、跨域、多方验证 |
 
-<Callout type="tip" title='核心心智模型' text='认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，二者不能混：登录校验凭据是认证，判断能否删除订单是授权。Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 session_id 的 Cookie，常见 Set-' />
+<Callout type="tip" title='核心心智模型' text='认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，两者不能混：登录校验凭据是认证，判断能否删除订单是授权。Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 `session_id` 的 Cookie，常见 Se' />
 
 
 ## 主示例：签发、验证与黑名单撤销
@@ -145,15 +145,15 @@ print('wrong', hmac.compare_digest(h, hash_password('wrong', bytes.fromhex(s))[1
 
 ## 密码哈希与 OAuth2 授权码流程
 
-验证 JWT 必须做全：用 `hmac.compare_digest` 常量时间比对签名（HS256 用 HMAC-SHA256、RS256 用 RSA 公钥验），校验 exp/iat/nbf、aud/iss，并显式拒绝 `alg=none` 与算法混淆（把 RS256 公钥当 HS256 密钥用）。
+验证 JWT 必须做全：用 `hmac.compare_digest` 常量时间比对签名（`HS256` 用 `HMAC-SHA256`、`RS256` 用 RSA 公钥验），校验 `exp`/`iat`/`nbf`、`aud`/`iss`，并显式拒绝 `alg=none` 与算法混淆（把 `RS256` 公钥当 `HS256` 密钥用）。
 
 base64url 只是编码不是加密，payload 任何人可解码，所以里面绝不能放密码、手机号，只放最小声明。
 
-密码绝不能明文或单轮 MD5/SHA：用 argon2id（首选）、bcrypt、scrypt，或标准库 `hashlib.pbkdf2_hmac`('sha256', pw, salt, 200000)，每个用户独立 16 字节随机 salt、验证时重算并 compare_digest。
+密码绝不能明文或单轮 MD5/SHA：用 argon2id（首选）、bcrypt、scrypt，或标准库 `hashlib.pbkdf2_hmac`，每个用户独立 16 字节随机 salt、验证时重算并 `compare_digest`。
 
-OAuth2 授权码流程配 PKCE（RFC 7636）：客户端生成 code_verifier，`code_challenge = base64url`(`SHA256(verifier)`)，授权请求带 challenge 与 S256 方法，换 token 时带原始 verifier 由服务端比对，防止授权码被截获冒用；
+OAuth2 授权码流程配 `PKCE`（RFC 7636）：客户端生成 `code_verifier`，把 `code_challenge=base64url(SHA256(verifier))` 连同 `S256` 方法放进授权请求，换 token 时带上原始 verifier 由服务端比对，防止授权码被截获冒用；
 
-state 参数防 CSRF。access token 短时效，refresh token 一次一换并检测重放（旧 token 复用触发整族吊销）。
+`state` 参数防 `CSRF`。access token 短时效，refresh token 一次一换并检测重放（旧 token 复用触发整族吊销）。
 
 **密码哈希与 OAuth2 / RBAC 要点**
 
@@ -170,38 +170,40 @@ state 参数防 CSRF。access token 短时效，refresh token 一次一换并检
 
 ## RBAC / ABAC：可审计的判定入口从哪来
 
-RBAC 把权限绑到角色、用户绑到角色，判定收敛到一个函数 `has_permission(user, action, resource)` 查『角色 → 权限』映射；
+`RBAC` 把权限绑到角色、用户绑到角色，判定收敛到一个函数 `has_permission(user,action,resource)` 查『角色 → 权限』映射；
 
-ABAC 再引入属性（部门、时间、资源归属、IP）做更细粒度控制。铁律是权限判定必须在服务端集中执行：前端隐藏按钮只是体验改善，绝不是安全边界，任何脚本都能直接调接口；每个受保护端点都要经过同一个判定入口，避免新加接口漏判。敏感操作（改密、支付、导出）要二次校验，重新输密码或 MFA。
+`ABAC` 再引入属性（部门、时间、资源归属、IP）做更细粒度控制。铁律是权限判定必须在服务端集中执行：前端隐藏按钮只是体验改善，绝不是安全边界，任何脚本都能直接调接口；每个受保护端点都要经过同一个判定入口，避免新加接口漏判。敏感操作（改密、支付、导出）要二次校验，重新输密码或 MFA。
 
-审计日志记录 who / when / what / resource / result / trace_id，append-only 或写独立存储，越权尝试要告警。密钥要支持轮换（用 kid 标识当前密钥），全站强制 HTTPS，Cookie 加 HttpOnly/Secure/SameSite。
+审计日志记录 who、when、what、resource、result、trace_id，append-only 或写独立存储，越权尝试要告警。密钥要支持轮换（用 `kid` 标识当前密钥），全站强制 `HTTPS`，Cookie 加 HttpOnly、Secure、SameSite。
 
 令牌里放角色即可，别把权限判定结果缓存到不受控的客户端；服务间调用同样要带身份（mTLS 或签发的 service token），不能因为『内网』就默认可信。
 
-JWT 的安全完全建立在签名上：header 与 payload 经 base64url 编码后拼成 signing_input，HS256 用共享密钥对其做 HMAC-SHA256，RS256 用私钥签、公钥验；验证方重算签名并用常量时间比较，任何一位被改动都会导致不匹配。
+JWT 的安全完全建立在签名上：header 与 payload 经 base64url 编码后拼成 `signing_input`，`HS256` 用共享密钥对其做 `HMAC-SHA256`（即 RFC 2104 的 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))` 嵌套结构），`RS256` 用私钥签、公钥验；
 
-因为编码不是加密，payload 只是『防篡改』而非『防读取』，所以令牌里只能放非敏感声明。无状态带来一个结构性代价：服务端没有『已签发令牌』的清单，无法像 Session 那样删一条记录就撤销，要恢复可撤销性就必须重新引入状态（黑名单、token 版本、短 exp + refresh 轮换）。
+验证方重算签名并用常量时间比较，任何一位被改动都会导致不匹配。因为编码不是加密，payload 只是『防篡改』而非『防读取』，所以令牌里只能放非敏感声明。
 
-密码哈希用 pbkdf2_hmac 这类 KDF 把口令与随机 salt 迭代二十万次，故意放慢单次要让离线暴力破解成本极高，salt 保证相同密码得到不同摘要、彩虹表失效。
+无状态带来一个结构性代价：服务端没有『已签发令牌』的清单，无法像 Session 那样删一条记录就撤销，要恢复可撤销性就必须重新引入状态（黑名单、token 版本、短 exp 加 refresh 轮换）。
 
-PKCE 把 code_verifier 的 SHA-256 摘要先交给授权服务器，换 token 时再出示原值，使截获授权码的攻击者因拿不到 verifier 而无法兑换。RBAC 的本质是把『谁能做什么』收敛到服务端一个必过的判定点，前端展示层不构成边界。
+密码哈希用 pbkdf2_hmac 这类 KDF 把口令与随机 salt 迭代二十万次，故意放慢单次计算让离线暴力破解成本极高，salt 保证相同密码得到不同摘要、彩虹表失效。
 
-<Term word='认证与授权的区别' text='认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，二者不能混：登录校验凭据是认证，判断能否删除订单是授权。Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 session_id 的 Cookie，常见 Set-Cookie 属性：' />
+`PKCE` 把 code_verifier 的 SHA-256 摘要先交给授权服务器，换 token 时再出示原值，使截获授权码的攻击者因拿不到 verifier 而无法兑换。`RBAC` 的本质，是把『谁能做什么』收敛到服务端一个必过的判定点，前端展示层不构成边界。
 
-<Term word='Session 与 JWT 取舍' text='验证 JWT 必须做全：用 hmac.compare_digest 常量时间比对签名（HS256 用 HMAC-SHA256、RS256 用 RSA 公钥验），校验 exp/iat/nbf、aud/iss，并显式拒绝 alg=none 与算法混淆（把 RS256 公钥当 HS256 密钥用）。base64url 只是编' />
+<Term word='认证与授权的区别' text='认证（authentication）回答『你是谁』，授权（authorization）回答『你能做什么』，两者不能混：登录校验凭据是认证，判断能否删除订单是授权。Session 方案在服务端保存会话状态（内存或 Redis），浏览器只持一个随机 `session_id` 的 Cookie，常见 Set-Cookie 属' />
+
+<Term word='Session 与 JWT 取舍' text='验证 JWT 必须做全：用 `hmac.compare_digest` 常量时间比对签名（`HS256` 用 `HMAC-SHA256`、`RS256` 用 RSA 公钥验），校验 `exp`/`iat`/`nbf`、`aud`/`iss`，并显式拒绝 `alg=none` 与算法混淆（把 `RS256` 公钥当 `H' />
 
 <ConceptDiagram type='layers3' title='第 090 讲 · 分层视角' labels='认证、授权与 Session/JWT 的|JWT 验证、密码哈希与 OAuth2 |RBAC / ABAC 与可审计的判定入|RBAC / ABAC' caption='RBAC / ABAC 与可审计的判定入口' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **RBAC / ABAC** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 `RBAC` / `ABAC` 落在哪一层。
 
 
 ## 带黑名单、RBAC 与审计的最小认证层
 
-下面把身份体系写成不依赖 Web 框架的骨架：issue 签发带 sub/roles/exp 的 HS256 token，verify 同时验签、验过期、查 revoked 黑名单（补上 JWT 缺失的可撤销性）；authorize 集中做 RBAC 判定，任何端点都必须先过它，并写一条审计记录；
+下面把身份体系写成不依赖 Web 框架的骨架：`issue` 签发带 `sub`/`roles`/`exp` 的 `HS256` token，`verify` 同时验签、验过期、查 `revoked` 黑名单（补上 JWT 缺失的可撤销性）；
 
-password 相关用带盐的 pbkdf2_hmac 与 compare_digest。重点看三层职责如何组合：认证产出的身份只是输入，授权是唯一判定入口，审计把所有判定留痕。
+`authorize` 集中做 `RBAC` 判定，任何端点都必须先过它，并写一条审计记录；password 相关用带盐的 pbkdf2_hmac 与 `compare_digest`。重点看三层职责如何组合：认证产出的身份只是输入，授权是唯一判定入口，审计把所有判定留痕。
 
-真实项目把 revoked 换成带 TTL 的 Redis 集合、把审计写进 append-only 存储、密钥从 KMS 取并支持 kid 轮换，结构不变。
+真实项目把 `revoked` 换成带 TTL 的 Redis 集合、把审计写进 append-only 存储、密钥从 KMS 取并支持 `kid` 轮换，结构不变。
 
 ```python
 import hmac, hashlib, base64, json, time
@@ -253,7 +255,7 @@ print('audit rows', len(audit))
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **认证与授权的区别** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 认证与授权的区别 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -270,15 +272,37 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 ## HMAC-SHA256 的 ipad/opad 与 JWS 签名输入
 
-RFC 2104 定义 `HMAC(K, m)` = `H((K 异或 opad)` 拼接 `H((K 异或 ipad)` 拼接 m))，块长 `B = 64` 字节（SHA-256 的分组大小），K 若超过 B 先哈希再右补零到 B，ipad 是 0x36 重复 64 次、opad 是 0x5c 重复 64 次。
+RFC 2104 把消息认证码紧凑地定义成 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))`，其中 `^` 是按位异或、`||` 是拼接；
 
-外层再套一次哈希不是冗余：裸 `H(secret 拼接 m)` 扛不住长度扩展攻击，攻击者拿到摘要与长度就能续接数据；HMAC 把内部状态封进第二次哈希，续接无从下手。
+块长 `B=64` 字节（SHA-256 的分组大小），密钥 K 若超过 B 先哈希再右补零到 B，ipad 是 0x36 重复 64 次、opad 是 0x5c 重复 64 次。
 
-JWS（RFC 7515）的 signing input 是 `BASE64URL(UTF8(Protected Header)`) 加一个点号再接 `BASE64URL(Payload)`，注意签名覆盖的是编码后的 ASCII 字节串而不是原始 JSON，于是 header 的键顺序、空格、Unicode 转义方式都会改变签名，签发方与验证方必须字节级一致，不能 `json.loads` 之后重新 dumps，这是跨语言验签最常见的失败点。
+外层再套一次哈希不是冗余：裸 `H(secret||m)` 扛不住长度扩展攻击，攻击者拿到摘要与消息长度就能续接数据，而 `HMAC` 把内部状态封进第二次哈希，续接无从下手。
 
-HS256 的 K 就是共享密钥，RS256 改用 RSASSA-PKCS1-v1_5 私钥签公钥验，`alg=none` 是 JWA 里合法但危险的算法，验证方必须白名单显式拒绝。
+JWS（RFC 7515）的 signing input 是 `BASE64URL` 加一个点号再接 `BASE64URL(Payload)`，签名覆盖的是编码后的 `ASCII` 字节串而不是原始 `JSON`：header 的键顺序、空格、Unicode 转义方式都会改变签名，签发方与验证方必须字节级一致，不能 `json.loads` 之后重新 `dumps`，这是跨语言验签最常见的失败点。
 
-CPython 的 Lib/`hmac.py` 把摘要计算交给 _hashlib，compare_digest 走常量时间比较，避免按字节提前退出泄漏匹配前缀长度。
+```python
+BASE64URL(UTF8(Protected Header))
+```
+
+`HS256` 的 K 就是共享密钥，`RS256` 改用 `RSASSA-PKCS1-v1_5` 私钥签、公钥验，`alg=none` 是 JWA 里合法但危险的算法，验证方必须用白名单显式拒绝。
+
+CPython 的 `Lib/hmac.py` 把摘要计算交给 `_hashlib`，`compare_digest` 走常量时间比较，避免按字节提前退出泄漏匹配前缀长度。
+
+RFC 8018 把派生密钥写成 `DK=PBKDF2(PRF,P,S,c,dkLen)`：输出按 hLen 切成块 `T_i`，`T_i=F(P,S,c,i)`，而 `F` 是 U_1 到 U_c 逐个异或，`U_1=PRF(P,S||INT_32_BE(i))`、`U_j=PRF(P,U_{j-1})`。
+
+每块固定要做 c 次 PRF，`dkLen=32` 且 `hLen=32` 时单次验证就是 c 次 `HMAC-SHA256`，与密码长度无关，工作量对 c 严格线性：本机 Python 3.13 实测 `c=1000` 约 0.5 毫秒、`c=200000` 约 17 毫秒，迭代次数提高到两百倍，纯哈希耗时也抬升约两个数量级（低迭代时固定开销占比大，两者不呈严格比例），攻击者离线爆破的 GPU 时间同样水涨船高，而登录接口每用户只多十几毫秒。
+
+salt 的作用不是保密而是破坏预计算：16 字节随机 salt 有 2 的 128 次方种取值，彩虹表要按每个 salt 各存一份，存储上不可行，全局固定 salt 等于没 salt。
+
+argon2id 更进一步加内存硬度（m 参数默认 64MB）与并行度 p，让 GPU 与 `ASIC` 的内存带宽成为瓶颈，而 `PBKDF2` 几乎不占内存、最容易被显卡并行。
+
+架构上要算两边账：迭代次数同时是登录接口的 CPU 成本，QPS 高时得按『可接受登录延迟乘峰值 QPS』反推核数，或把口令验证挪到独立服务并限流，不能只盯着破解成本往上调。一次渗透测试里，服务用 `RS256` 签发 token、把 RSA 公钥通过接入文档公开给合作方验签。
+
+测试者把 header 的 alg 改成 `HS256`，用那串公开的公钥 PEM 当作 `HMAC` 共享密钥重新签名，服务端竟然验签通过、直接拿到 admin 身份。
+
+根因是验证代码从 token 自己的 header 里读 alg 来分派算法，并在 `HS256` 分支把『验签公钥』当成『共享密钥』传入：公钥本来就是公开的，用它当对称密钥等于把密钥写进了文档。修复是服务端按配置固定期望算法、忽略 token 里的 alg，并把 `HS256` 与 `RS256` 的密钥材料彻底隔离。
+
+下面用标准库复现这个缺陷，`naive` 验证器会接受用 `PUBLIC_KEY` 签出的 `HS256` 伪造 token。
 
 ```python
 import base64
@@ -312,7 +336,7 @@ print('decoded payload', base64.urlsafe_b64decode(p + b'===').decode())
 
 <OutputBox title='扩展示例运行结果' output='matches stdlib True\nsigning input eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1NDIiLCJleHAiOjE3MDAwMDAwMDB9\npadding needed 0\ndecoded payload {"sub":"u42","exp":1700000000}' />
 
-<LineByLine code='import base64\nimport hashlib\nimport hmac\nimport json\n\ndef hmac_sha256_raw(key, msg):\n    block = 64\n    if len(key) &gt; block:\n        key = hashlib.sha256(key).digest()\n    key = key + bytes(block - len(key))\n    ipad = bytes([0x36]) * block\n    opad = bytes([0x5c]) * block\n    inner = hashlib.sha256(bytes(a ^ b for a, b in zip(key, ipad)) + msg).digest()\n    return hashlib.sha256(bytes(a ^ b for a, b in zip(key, opad)) + inner).digest()\n\nkey = b&#39;dev-secret&#39;\nheader = json.dumps({&#39;alg&#39;: &#39;HS256&#39;, &#39;typ&#39;: &#39;JWT&#39;}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\npayload = json.dumps({&#39;sub&#39;: &#39;u42&#39;, &#39;exp&#39;: 1700000000}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\nsigning_input = base64.urlsafe_b64encode(header).rstrip(b&#39;=&#39;) + b&#39;.&#39; + base64.urlsafe_b64encode(payload).rstrip(b&#39;=&#39;)\nmine = hmac_sha256_raw(key, signing_input)\nstdlib = hmac.new(key, signing_input, hashlib.sha256).digest()\nprint(&#39;matches stdlib&#39;, mine == stdlib)\nprint(&#39;signing input&#39;, signing_input.decode())\np = signing_input.split(b&#39;.&#39;)[1]\nprint(&#39;padding needed&#39;, (-len(p)) % 4)\nprint(&#39;decoded payload&#39;, base64.urlsafe_b64decode(p + b&#39;===&#39;).decode())\n' :notes='["导入 base64、hashlib、hmac、json，全部来自标准库", "从零实现 HMAC：块长 64 字节，长密钥先哈希再补零", "ipad 是 0x36 重复 64 次，opad 是 0x5c 重复 64 次", "内层哈希算 H((K 异或 ipad) 拼接 msg)", "外层哈希把内部状态封进去，挡住长度扩展攻击", "用 json.dumps 紧凑序列化，避免手写 JSON 影响字节串", "signing input 是两段 base64url 用点号拼接的 ASCII 串", "手工实现与标准库 hmac 的结果应完全一致", "打印被签名的字节串，说明它覆盖的是编码后内容", "按模 4 计算 payload 段还缺几个填充位", "补三个等号后解码，多余的填充被 base64 解码器忽略", "RBAC 收敛到 has_permission 必过入口，敏感操作二次校验，审计记 who/when/what/result", "认证是『你是谁』、授权是『你能做什么』；判定必须集中在服务端，前端隐藏不是边界", "JWT 三段 header.payload.signature，base64url 非加密；验签+验 exp/iat/aud/iss+拒 alg=none", "JWT 签发后难主动失效，靠黑名单/短时效+refresh 轮换/版本号补回状态", "密码用 argon2id / bcrypt / pbkdf2_hmac + 每用户独立 16 字节 salt，compare_digest 比对", "OAuth2 授权码 + PKCE(S256)、state 防 CSRF；access 短时效、refresh 一次一换", "RBAC 收敛到 has_permission 必过入口，敏感操作二次校验，审计记 who/when/what/result", "认证是『你是谁』、授权是『你能做什么』；判定必须集中在服务端，前端隐藏不是边界", "JWT 三段 header.payload.signature，base64url 非加密；验签+验 exp/iat/aud/iss+拒 alg=none", "JWT 签发后难主动失效，靠黑名单/短时效+refresh 轮换/版本号补回状态", "密码用 argon2id / bcrypt / pbkdf2_hmac + 每用户独立 16 字节 salt，compare_digest 比对", "OAuth2 授权码 + PKCE(S256)、state 防 CSRF；access 短时效、refresh 一次一换", "RBAC 收敛到 has_permission 必过入口，敏感操作二次校验，审计记 who/when/what/result"]' title='扩展示例逐行讲解' />
+<LineByLine code='import base64\nimport hashlib\nimport hmac\nimport json\n\ndef hmac_sha256_raw(key, msg):\n    block = 64\n    if len(key) &gt; block:\n        key = hashlib.sha256(key).digest()\n    key = key + bytes(block - len(key))\n    ipad = bytes([0x36]) * block\n    opad = bytes([0x5c]) * block\n    inner = hashlib.sha256(bytes(a ^ b for a, b in zip(key, ipad)) + msg).digest()\n    return hashlib.sha256(bytes(a ^ b for a, b in zip(key, opad)) + inner).digest()\n\nkey = b&#39;dev-secret&#39;\nheader = json.dumps({&#39;alg&#39;: &#39;HS256&#39;, &#39;typ&#39;: &#39;JWT&#39;}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\npayload = json.dumps({&#39;sub&#39;: &#39;u42&#39;, &#39;exp&#39;: 1700000000}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\nsigning_input = base64.urlsafe_b64encode(header).rstrip(b&#39;=&#39;) + b&#39;.&#39; + base64.urlsafe_b64encode(payload).rstrip(b&#39;=&#39;)\nmine = hmac_sha256_raw(key, signing_input)\nstdlib = hmac.new(key, signing_input, hashlib.sha256).digest()\nprint(&#39;matches stdlib&#39;, mine == stdlib)\nprint(&#39;signing input&#39;, signing_input.decode())\np = signing_input.split(b&#39;.&#39;)[1]\nprint(&#39;padding needed&#39;, (-len(p)) % 4)\nprint(&#39;decoded payload&#39;, base64.urlsafe_b64decode(p + b&#39;===&#39;).decode())\n' :notes='["导入 base64、hashlib、hmac、json，全部来自标准库", "从零实现 HMAC：块长 64 字节，长密钥先哈希再补零", "ipad 是 0x36 重复 64 次，opad 是 0x5c 重复 64 次", "内层哈希算 H((K 异或 ipad) 拼接 msg)", "外层哈希把内部状态封进去，挡住长度扩展攻击", "用 json.dumps 紧凑序列化，避免手写 JSON 影响字节串", "signing input 是两段 base64url 用点号拼接的 ASCII 串", "手工实现与标准库 hmac 的结果应完全一致", "打印被签名的字节串，说明它覆盖的是编码后内容", "按模 4 计算 payload 段还缺几个填充位", "补三个等号后解码，多余的填充被 base64 解码器忽略", "权限判定必须在服务端集中过同一入口，前端隐藏按钮不是边界；密钥用 kid 轮换、审计 append-only", "认证回答『你是谁』、授权回答『你能做什么』；登录校验是认证，判断能否删订单是授权", "Session 有服务端状态、可主动踢人；JWT 无状态自校验、签发后难撤销，靠黑名单/短 exp+refresh 补", "验签要做全：hmac.compare_digest、exp/iat/nbf、aud/iss，显式拒绝 alg=none 与算法混淆", "密码用 argon2id/bcrypt/scrypt 或 pbkdf2_hmac，每用户独立 16 字节 salt，绝不用单轮 MD5/SHA", "PKCE 用 code_challenge=base64url(SHA256(verifier)) 配 S256，state 防 CSRF；refresh token 一次一换", "权限判定必须在服务端集中过同一入口，前端隐藏按钮不是边界；密钥用 kid 轮换、审计 append-only", "认证回答『你是谁』、授权回答『你能做什么』；登录校验是认证，判断能否删订单是授权", "Session 有服务端状态、可主动踢人；JWT 无状态自校验、签发后难撤销，靠黑名单/短 exp+refresh 补", "验签要做全：hmac.compare_digest、exp/iat/nbf、aud/iss，显式拒绝 alg=none 与算法混淆", "密码用 argon2id/bcrypt/scrypt 或 pbkdf2_hmac，每用户独立 16 字节 salt，绝不用单轮 MD5/SHA", "PKCE 用 code_challenge=base64url(SHA256(verifier)) 配 S256，state 防 CSRF；refresh token 一次一换", "权限判定必须在服务端集中过同一入口，前端隐藏按钮不是边界；密钥用 kid 轮换、审计 append-only"]' title='扩展示例逐行讲解' />
 
 <Term word='JWS signing input' text='RFC 7515 规定被签名的字节串是 BASE64URL(UTF8(Protected Header)) 加一个点号再接 BASE64URL(Payload)，即编码后的 ASCII 字符串而非原始 JSON。这意味着 header 的键顺序、空格与 Unicode 转义方式都会改变签名，验证方必须逐字节比对而不能 json.loads 后重新 dumps；这是跨语言验签最隐蔽的失败点，也是「签名正确却验不过」的常见根因。' />
 
@@ -324,15 +348,15 @@ print('decoded payload', base64.urlsafe_b64decode(p + b'===').decode())
 
 ## PBKDF2 的迭代成本与离线破解工作量
 
-RFC 8018 定义 `DK = PBKDF2`(PRF, P, S, c, dkLen)：输出按 hLen 切成块 T_i，`T_i = F`(P, S, c, i)，而 `F = U_1` 异或 U_2 一直异或到 U_c，`U_1 = PRF`(P, S 拼接 `INT_32_BE(i)`)，`U_j = PRF`(P, U_&#123;j-1&#125;)。
+RFC 8018 把派生密钥写成 `DK=PBKDF2(PRF,P,S,c,dkLen)`：输出按 hLen 切成块 `T_i`，`T_i=F(P,S,c,i)`，而 `F` 是 U_1 到 U_c 逐个异或，`U_1=PRF(P,S||INT_32_BE(i))`、`U_j=PRF(P,U_{j-1})`。
 
-每块固定要做 c 次 PRF，`dkLen = 32` 且 `hLen = 32` 时单次验证就是 c 次 HMAC-SHA256，与密码长度无关，工作量对 c 严格线性：本机 Python 3.13 实测 `c = 1000` 约 0.5 毫秒、`c = 200000` 约 17.3 毫秒，正好约 200 倍，把迭代从一千提到二十万，攻击者离线爆破的 GPU 时间乘以两百，而登录接口每用户只多十几毫秒。
+每块固定要做 c 次 PRF，`dkLen=32` 且 `hLen=32` 时单次验证就是 c 次 `HMAC-SHA256`，与密码长度无关，工作量对 c 严格线性：本机 Python 3.13 实测 `c=1000` 约 0.5 毫秒、`c=200000` 约 17 毫秒，迭代次数提高到两百倍，纯哈希耗时也抬升约两个数量级（低迭代时固定开销占比大，两者不呈严格比例），攻击者离线爆破的 GPU 时间同样水涨船高，而登录接口每用户只多十几毫秒。
 
-salt 的作用不是保密而是破坏预计算：16 字节随机 salt 有 2 的 128 次方种取值，彩虹表要按每个 salt 各存一份，存储上不可行；全局固定 salt 等于没 salt。
+salt 的作用不是保密而是破坏预计算：16 字节随机 salt 有 2 的 128 次方种取值，彩虹表要按每个 salt 各存一份，存储上不可行，全局固定 salt 等于没 salt。
 
-argon2id 更进一步加内存硬度（m 参数默认 64MB）与并行度 p，让 GPU 与 ASIC 的内存带宽成为瓶颈，而 PBKDF2 几乎不占内存、最容易被显卡并行。
+argon2id 更进一步加内存硬度（m 参数默认 64MB）与并行度 p，让 GPU 与 `ASIC` 的内存带宽成为瓶颈，而 `PBKDF2` 几乎不占内存、最容易被显卡并行。
 
-架构权衡要算两边账：迭代次数同时是登录接口的 CPU 成本，QPS 高时要按「可接受登录延迟乘峰值 QPS」反推核数，或把口令验证挪到独立服务并限流，不能只看着破解成本往上调。
+架构上要算两边账：迭代次数同时是登录接口的 CPU 成本，QPS 高时得按『可接受登录延迟乘峰值 QPS』反推核数，或把口令验证挪到独立服务并限流，不能只盯着破解成本往上调。
 
 **JWT 与口令体系的 RFC 与源码位置**
 
@@ -347,11 +371,11 @@ argon2id 更进一步加内存硬度（m 参数默认 64MB）与并行度 p，�
 
 ## 算法混淆攻击里公钥即密钥的成因
 
-一次渗透测试里，服务用 RS256 签发 token、把 RSA 公钥通过接入文档公开给合作方验签。测试者把 header 的 alg 改成 HS256，用那串公开的公钥 PEM 当作 HMAC 共享密钥重新签名，服务端竟然验签通过、直接拿到 admin 身份。
+一次渗透测试里，服务用 `RS256` 签发 token、把 RSA 公钥通过接入文档公开给合作方验签。测试者把 header 的 alg 改成 `HS256`，用那串公开的公钥 PEM 当作 `HMAC` 共享密钥重新签名，服务端竟然验签通过、直接拿到 admin 身份。
 
-根因是验证代码从 token 自己的 header 里读 alg 来分派算法，并在 HS256 分支把「验签公钥」当「HMAC 密钥」传入：公钥本来就是公开的，用它当对称密钥等于把密钥写进了文档。修复是服务端按配置固定期望算法、忽略 token 里的 alg，并把 HS256 与 RS256 的密钥材料彻底隔离。
+根因是验证代码从 token 自己的 header 里读 alg 来分派算法，并在 `HS256` 分支把『验签公钥』当成『共享密钥』传入：公钥本来就是公开的，用它当对称密钥等于把密钥写进了文档。修复是服务端按配置固定期望算法、忽略 token 里的 alg，并把 `HS256` 与 `RS256` 的密钥材料彻底隔离。
 
-下面用标准库复现这个缺陷，naive 验证器接受用 PUBLIC_KEY 签出的 HS256 伪造 token。
+下面用标准库复现这个缺陷，`naive` 验证器会接受用 `PUBLIC_KEY` 签出的 `HS256` 伪造 token。
 
 ```python
 import base64
@@ -383,7 +407,7 @@ print('naive verifier accepts forged', verify_naive(forged, PUBLIC_KEY))
 
 ```
 
-<Quiz no='090-X' q='关于 HS256 与 RS256 的算法混淆攻击，下面哪项准确？' :options='["验证方按 token 自带 alg 分派、且把公开的 RSA 公钥当作 HS256 的 HMAC 密钥时，攻击者可用公钥伪造任意 token", "RS256 的私钥可以安全公开，只有公钥需要保密", "HMAC 的 ipad 与 opad 让攻击者无法从签名反推密钥，因此算法混淆不成立", "只要 payload 用了 base64url 编码，算法混淆就自动失效"]' answer="0" explain='算法混淆的前提正是「验证方信任 token 里的 alg」加上「HS256 分支用了公开的 RSA 公钥作密钥」。HMAC 的 ipad 与 opad 只保证在密钥保密时不可伪造，密钥一旦公开便无从谈起；base64url 只是编码，与算法选择无关。修复是服务端白名单固定 alg 并隔离不同算法的密钥材料，而不是加强签名算法本身。' />
+<Quiz no='090-1' q='关于 HS256 与 RS256 的算法混淆攻击，下面哪项准确？' :options='["验证方按 token 自带 alg 分派、且把公开的 RSA 公钥当作 HS256 的 HMAC 密钥时，攻击者可用公钥伪造任意 token", "RS256 的私钥可以安全公开，只有公钥需要保密", "HMAC 的 ipad 与 opad 让攻击者无法从签名反推密钥，因此算法混淆不成立", "只要 payload 用了 base64url 编码，算法混淆就自动失效"]' answer="0" explain='算法混淆的前提正是「验证方信任 token 里的 alg」加上「HS256 分支用了公开的 RSA 公钥作密钥」。HMAC 的 ipad 与 opad 只保证在密钥保密时不可伪造，密钥一旦公开便无从谈起；base64url 只是编码，与算法选择无关。修复是服务端白名单固定 alg 并隔离不同算法的密钥材料，而不是加强签名算法本身。' />
 
 
 ### JWKS 与 kid 轮换的密钥分发结构
@@ -397,33 +421,33 @@ print('naive verifier accepts forged', verify_naive(forged, PUBLIC_KEY))
 
 <Exercise title='进阶：给 JWT 加可撤销黑名单与 RBAC' task='在 verify 里加 revoked 集合检查，写 authorize(tok, action) 集中做角色权限判定并记审计，验证用户被加入黑名单后即使 token 未过期也被拒绝。' solution='revoked = set()\nROLES = {&#39;admin&#39;: {&#39;read&#39;,&#39;write&#39;}, &#39;viewer&#39;: {&#39;read&#39;}}\ndef authorize(tok_obj, action):\n    if tok_obj[&#39;sub&#39;] in revoked: return False\n    return action in set().union(*(ROLES.get(r,set()) for r in tok_obj[&#39;roles&#39;]))\nu = {&#39;sub&#39;:&#39;u1&#39;,&#39;roles&#39;:[&#39;admin&#39;]}\nprint(authorize(u,&#39;write&#39;))\nrevoked.add(&#39;u1&#39;)\nprint(authorize(u,&#39;write&#39;))' explain='黑名单给无状态 JWT 补回可撤销性；授权必须集中在服务端一个判定入口，前端隐藏按钮不构成边界，审计记录每次判定结果。' />
 
-<Quiz no='090-1' q='JWT 签发后无法主动失效，根本原因是什么？' :options='["服务端不保存已签发令牌的状态，验签通过即放行", "签名算法太弱", "payload 用了 base64url", "exp 设得太长"]' answer="0" explain='无状态是 JWT 的优点也是枷锁：没有会话清单可删。要可撤销就得引入黑名单、token 版本号或短 access + refresh 轮换，等于重新加回一份状态。' />
+<Quiz no='090-2' q='JWT 签发后无法主动失效，根本原因是什么？' :options='["服务端不保存已签发令牌的状态，验签通过即放行", "签名算法太弱", "payload 用了 base64url", "exp 设得太长"]' answer="0" explain='无状态是 JWT 的优点也是枷锁：没有会话清单可删。要可撤销就得引入黑名单、token 版本号或短 access + refresh 轮换，等于重新加回一份状态。' />
 
-<Quiz no='090-2' q='关于密码存储，下面哪项准确？' :options='["用 argon2id / bcrypt / pbkdf2_hmac 配每用户独立随机 salt", "MD5 加一个全局固定 salt 即可", "SHA-256 单轮足够", "把密码加密后可逆存，方便找回"]' answer="0" explain='慢 KDF + 独立 salt 让离线暴力成本极高、彩虹表失效；MD5/SHA 单轮太快，加密可逆反而是泄露风险，找回密码应走重置流程。' />
+<Quiz no='090-3' q='关于密码存储，下面哪项准确？' :options='["用 argon2id / bcrypt / pbkdf2_hmac 配每用户独立随机 salt", "MD5 加一个全局固定 salt 即可", "SHA-256 单轮足够", "把密码加密后可逆存，方便找回"]' answer="0" explain='慢 KDF + 独立 salt 让离线暴力成本极高、彩虹表失效；MD5/SHA 单轮太快，加密可逆反而是泄露风险，找回密码应走重置流程。' />
 
-<Quiz no='090-3' q='OAuth2 授权码流程配 PKCE 的主要作用是？' :options='["用 code_challenge(S256) 绑定授权码，防止授权码被截获后冒用兑换 token", "给 access token 加密", "替代 HTTPS", "让 refresh token 永不过期"]' answer="0" explain='客户端先交 SHA-256(verifier) 摘要、换 token 时出示原 verifier，服务端比对；截获授权码者拿不到 verifier 就无法兑换，state 另防 CSRF。' />
+<Quiz no='090-4' q='OAuth2 授权码流程配 PKCE 的主要作用是？' :options='["用 code_challenge(S256) 绑定授权码，防止授权码被截获后冒用兑换 token", "给 access token 加密", "替代 HTTPS", "让 refresh token 永不过期"]' answer="0" explain='客户端先交 SHA-256(verifier) 摘要、换 token 时出示原 verifier，服务端比对；截获授权码者拿不到 verifier 就无法兑换，state 另防 CSRF。' />
 
-<Predict no='090-P' q='对一个 exp 已过 1 秒、签名正确的 HS256 token 调 verify，最可能返回什么？' :options='["expired", "valid sub=...", "bad signature"]' answer='0' output='expired' explain='验签通过只证明没被篡改；exp 是独立的时间检查，服务端必须自己比对当前时间。签名正确但过期仍要拒绝，这正是 『验签 ≠ 有效』 的边界。' />
+<Predict no='090-5' q='对一个 exp 已过 1 秒、签名正确的 HS256 token 调 verify，最可能返回什么？' :options='["expired", "valid sub=...", "bad signature"]' answer='0' output='expired' explain='验签通过只证明没被篡改；exp 是独立的时间检查，服务端必须自己比对当前时间。签名正确但过期仍要拒绝，这正是 『验签 ≠ 有效』 的边界。' />
 
-<FillBlank no='090-F' tpl='___ hmac, hashlib, base64, json, time' :answers='["import"]' hint='回想本讲关于 认证与授权的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 认证、授权与 Session/JWT 的取舍 的落点。' />
+<FillBlank no='090-6' tpl='___ hmac, hashlib, base64, json, time' :answers='["import"]' hint='回想本讲关于 认证与授权的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 认证、授权与 Session/JWT 的取舍 的落点。' />
 
-<KnowledgeCard :points='["认证是『你是谁』、授权是『你能做什么』；判定必须集中在服务端，前端隐藏不是边界", "JWT 三段 header.payload.signature，base64url 非加密；验签+验 exp/iat/aud/iss+拒 alg=none", "JWT 签发后难主动失效，靠黑名单/短时效+refresh 轮换/版本号补回状态", "密码用 argon2id / bcrypt / pbkdf2_hmac + 每用户独立 16 字节 salt，compare_digest 比对", "OAuth2 授权码 + PKCE(S256)、state 防 CSRF；access 短时效、refresh 一次一换", "RBAC 收敛到 has_permission 必过入口，敏感操作二次校验，审计记 who/when/what/result"]' :pitfalls='["JWT 签发后点了『禁用用户』，对方 token 到期前仍能调接口", "用 MD5 存密码，拖库后被批量还原", "把权限判断只写在前端，脚本直接调接口越权", "把权限判断只写在前端、或用 MD5 存密码，都是会直接导致越权与拖库后果的错误"]' summary='JWT 的无状态是优点也是枷锁：签发后无法主动失效，除非再引入一份状态（黑名单或短时效加刷新）' />
+<KnowledgeCard :points='["认证回答『你是谁』、授权回答『你能做什么』；登录校验是认证，判断能否删订单是授权", "Session 有服务端状态、可主动踢人；JWT 无状态自校验、签发后难撤销，靠黑名单/短 exp+refresh 补", "验签要做全：hmac.compare_digest、exp/iat/nbf、aud/iss，显式拒绝 alg=none 与算法混淆", "密码用 argon2id/bcrypt/scrypt 或 pbkdf2_hmac，每用户独立 16 字节 salt，绝不用单轮 MD5/SHA", "PKCE 用 code_challenge=base64url(SHA256(verifier)) 配 S256，state 防 CSRF；refresh token 一次一换", "权限判定必须在服务端集中过同一入口，前端隐藏按钮不是边界；密钥用 kid 轮换、审计 append-only"]' :pitfalls='["JWT 签发后点了『禁用用户』，对方 token 到期前仍能调接口", "用 MD5 存密码，拖库后被批量还原", "把权限判断只写在前端，脚本直接调接口越权", "把权限判断只写在前端、或用 MD5 存密码，都是会直接导致越权与拖库后果的错误"]' summary='JWT 的无状态是优点也是枷锁：签发后无法主动失效，除非再引入一份状态（黑名单或短时效加刷新）' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| 认证是『你是谁』、授权是『你能做什么』；判定必须集中在服务端，前端隐藏不是边界 | 建立直觉 |
-| JWT 三段 header.payload.signature，base64url 非加密；验签+验 exp/iat/aud/iss+拒 alg=none | 跑通示例 |
-| JWT 签发后难主动失效，靠黑名单/短时效+refresh 轮换/版本号补回状态 | 深入边界 |
-| 密码用 argon2id / bcrypt / pbkdf2_hmac + 每用户独立 16 字节 salt，compare_digest 比对 | 工程落地 |
-| OAuth2 授权码 + PKCE(S256)、state 防 CSRF；access 短时效、refresh 一次一换 | 随堂检测 |
-| RBAC 收敛到 has_permission 必过入口，敏感操作二次校验，审计记 who/when/what/result | 复盘 |
+| 认证回答『你是谁』、授权回答『你能做什么』；登录校验是认证，判断能否删订单是授权 | 建立直觉 |
+| Session 有服务端状态、可主动踢人；JWT 无状态自校验、签发后难撤销，靠黑名单/短 exp+refresh 补 | 跑通示例 |
+| 验签要做全：hmac.compare_digest、exp/iat/nbf、aud/iss，显式拒绝 alg=none 与算法混淆 | 深入边界 |
+| 密码用 argon2id/bcrypt/scrypt 或 pbkdf2_hmac，每用户独立 16 字节 salt，绝不用单轮 MD5/SHA | 工程落地 |
+| PKCE 用 code_challenge=base64url(SHA256(verifier)) 配 S256，state 防 CSRF；refresh token 一次一换 | 随堂检测 |
+| 权限判定必须在服务端集中过同一入口，前端隐藏按钮不是边界；密钥用 kid 轮换、审计 append-only | 复盘 |
 
-1. 认证是『你是谁』、授权是『你能做什么』；判定必须集中在服务端，前端隐藏不是边界
+1. 认证回答『你是谁』、授权回答『你能做什么』；登录校验是认证，判断能否删订单是授权
 
-2. JWT 三段 header.payload.signature，base64url 非加密；验签+验 exp/iat/aud/iss+拒 alg=none
+2. Session 有服务端状态、可主动踢人；JWT 无状态自校验、签发后难撤销，靠黑名单/短 exp+refresh 补
 
-3. JWT 签发后难主动失效，靠黑名单/短时效+refresh 轮换/版本号补回状态
+3. 验签要做全：hmac.compare_digest、exp/iat/nbf、aud/iss，显式拒绝 alg=none 与算法混淆
 
 [下一讲：文件、对象存储、搜索与 gRPC](/server/storage)

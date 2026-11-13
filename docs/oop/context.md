@@ -7,22 +7,26 @@ description: 写出异常安全的资源管理代码
 
 # 第 042 讲 · 上下文管理器与 with 协议
 
-顺着上一讲的协议视角，with 是看似语法糖、实则有确定规则的入口，也就是上下文管理器。接着处理更日常的事：开文件、连库、加锁，用完都得还回去。
+顺着上一讲的协议视角，`with` 看似语法糖，实则是带确定规则的入口，也就是上下文管理器。接着处理更日常的事：开文件、连库、加锁，用完都得还回去。
 
-夜间批量任务结束后告警没响，清算事务出错时只关了文件却把半截数据提交了出去，别扭都在「申请」与「释放」没绑在一起。本讲先摊开 __enter__ 与 __exit__ 的三参数、说清返回真值为何抑制异常，再走到 contextlib 的 contextmanager 与 ExitStack，最后用事务、计时收尾。需要阶段一的异常、阶段三的生成器与第 41 讲的特殊方法；学完你能写出异常安全的资源管理代码。
+夜间批量任务结束后告警没响，清算事务出错时只关了文件却把半截数据提交了出去，别扭都在「申请」与「释放」没绑在一起。本讲先摊开 `__enter__` 与 `__exit__` 的三个参数、说清返回真值为何抑制异常，再走到 `contextlib` 的 `contextmanager` 与 `ExitStack`，最后用事务、计时收尾。需要阶段一的异常、阶段三的生成器与第 41 讲的特殊方法；学完你能写出异常安全的资源管理代码。
 
 
 ## 一个忘记关闭连接导致事务半提交的事故
 
-一批夜间批量任务结束后，告警系统始终没报出失败：排查发现有人图省事在 `__exit__` 里写了 return True，把所有数据库异常都吞掉了，日志里连一条堆栈都没有。
+一批夜间批量任务结束后，告警系统始终没报出失败：排查发现有人图省事在 `__exit__` 里写了 `return True`，把所有数据库异常都吞掉了，日志里连一条堆栈都没有。
 
-另一处工单方向相反：清算事务在 with 块里抛错，开发者以为资源会自动回滚，结果 `__exit__` 里只做了 `file.close()`，事务把半截数据 commit 了出去。
+另一处工单方向相反：清算事务在 `with` 块里抛错，开发者以为资源会自动回滚，结果 `__exit__` 里只做了 `file.close()`，事务把半截数据 `commit` 了出去。
 
-还有人用 `contextlib.contextmanager` 写清理逻辑，却在生成器里 yield 了两次，运行时抛 RuntimeError: generator didn't stop；
+还有人用 `contextlib.contextmanager` 写清理逻辑，却在生成器里 `yield` 了两次，运行时抛 `RuntimeError: ge…`；
 
-以及把同步 with 直接套在异步数据库连接上，`__exit__` 里的 await 根本没法执行。with 看起来只是「自动关文件」的语法糖，实际上它是一条带异常分发的协议：`__enter__` 的返回值、`__exit__` 的三个参数、返回值是否抑制异常、以及 LIFO 的组合顺序，每一处都有确定的规则。
+```text
+RuntimeError: generator didn't stop
+```
 
-本讲把这些规则与 contextlib 的工具逐一对上，并给出事务、计时、动态组合三类场景的正确写法。
+以及把同步 `with` 直接套在异步数据库连接上，`__exit__` 里的 `await` 根本没法执行。
+
+`with` 看起来只是「自动关文件」的语法糖，实际上它是一条带异常分发的协议：`__enter__` 的返回值、`__exit__` 的三个参数、返回值是否抑制异常、以及 `LIFO` 的组合顺序，每一处都有确定的规则。本讲把这些规则与 `contextlib` 的工具逐一对上，并给出事务、计时、动态组合三类场景的正确写法。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='__exit__ 里随手 return True 吞掉真实异常：返回真值即抑制异常，异常不会传播、traceback 也不记录，日志里只剩「任务成功」' />
 
@@ -37,24 +41,28 @@ description: 写出异常安全的资源管理代码
 | 一句话目标 | 写出异常安全的资源管理代码 |
 | 为下一讲铺垫 | __slots__、弱引用与对象内存布局 |
 
-<Callout type="tip" title='核心心智模型' text='with EXPR as VAR 的语义由数据模型固定：先求值 EXPR 得到上下文管理器，调用其 __enter__()，把返回值绑定到 VAR（没有 as 则返回值被丢弃），然后执行 with 体；无论体里是否抛异常，最后都调用 __exit__(exc_type, exc_value, tra' />
+<Callout type="tip" title='核心心智模型' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用 `__exit__(exc_type, e' />
 
 
 ## with 的展开：__enter__、三参数 __exit__ 与异常抑制
 
-with EXPR as VAR 的语义由数据模型固定：先求值 EXPR 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 VAR（没有 as 则返回值被丢弃），然后执行 with 体；
+`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；
 
-无论体里是否抛异常，最后都调用 `__exit__(exc_type, exc_value, traceback)`。
+无论体里是否抛异常，最后都调用 `__exit__`。
 
-正常结束时三个参数全是 None；体里抛异常时分别是异常类、异常实例、traceback 对象。`__exit__` 返回一个真值（通常是 True）就抑制该异常，异常不会向上传播；返回 False 或 None 则异常继续抛出。
+```python
+__exit__(exc_type, exc_value, traceback)
+```
 
-正因如此，「随手 return True」等价于给整段代码加了一个空的 except: pass，是日志里最危险的静默失败源。
+正常结束时三个参数全是 `None`；体里抛异常时分别是异常类、异常实例、`traceback` 对象。`__exit__` 返回一个真值（通常是 `True`）就抑制该异常，异常不会向上传播；返回 `False` 或 `None` 则异常继续抛出。
 
-需要抑制时也应精确匹配类型，例如只在 exc_type is not None and `issubclass(exc_type, FileNotFoundError)` 时返回 True，其余返回 False 并记录。
+正因如此，「随手 `return True`」等价于给整段代码加了一个空的 `except: pass`，是日志里最危险的静默失败源。
 
-还要注意 VAR 绑定的是 `__enter__` 的返回值而非管理器本身：数据库事务常让 `__enter__` 返回 cursor，文件管理器返回文件对象。`__enter__` 里抛异常时 `__exit__` 不会被调用，因为它还没「进入」。
+需要抑制时也应精确匹配类型，例如只在 `exc_type` 非空且确属 `FileNotFoundError` 时返回 `True`，其余返回 `False` 并记录。
 
-CPython 3.11 起 with 的字节码改由 BEFORE_WITH、WITH_EXCEPT_START 与异常表驱动，替代了 3.10 之前的 SETUP_WITH 块栈，但协议层的三参数语义没变。
+还要注意 `VAR` 绑定的是 `__enter__` 的返回值而非管理器本身：数据库事务常让 `__enter__` 返回 `cursor`，文件管理器返回文件对象。`__enter__` 里抛异常时 `__exit__` 不会被调用，因为它还没「进入」。
+
+CPython 3.11 起 `with` 的字节码改由 `BEFORE_WITH`、`WITH_EXCEPT_START` 与异常表驱动，替代了 3.10 之前的 `SETUP_WITH` 块栈，但协议层的三参数语义没变。
 
 ```python
 class Transaction:
@@ -95,21 +103,31 @@ except ValueError as e:
 
 ## contextlib 三件套：contextmanager、ExitStack 与 suppress
 
-`contextlib.contextmanager` 把一个「只 yield 一次」的生成器函数变成上下文管理器：yield 之前的代码对应 `__enter__`，yield 之后的代码对应 `__exit__`，且必须用 try/finally 包住 yield，否则异常路径不会执行清理。
+`contextlib.contextmanager` 把一个「只 `yield` 一次」的生成器函数变成上下文管理器：`yield` 之前的代码对应 `__enter__`，`yield` 之后的代码对应 `__exit__`，且必须用 `try/finally` 包住 `yield`，否则异常路径不会执行清理。
 
-它返回的 _GeneratorContextManager 通过 `generator.throw()` 把异常送回生成器；
+它返回的 `_GeneratorContextManager` 通过 `generator.throw()` 把异常送回生成器；
 
-若生成器又 yield 了第二个值，会抛 RuntimeError: generator didn't stop after `throw()`。这个对象同时是 ContextDecorator，因此也能当装饰器给整个函数套上下文。
+若生成器又 `yield` 了第二个值，会抛 `RuntimeError: ge…`。
 
-ExitStack（3.3 引入）解决「上下文数量运行时才确定」：`enter_context(cm)` 逐个进入，`callback(fn, *args)` 注册任意清理回调，`push(cm)` 接管实现了 `__exit__` 但没 `__enter__` 的对象；
+```python
+RuntimeError: generator didn't stop after throw()
+```
 
-退出时严格按进入的逆序（LIFO）执行，后进入的先清理。
+这个对象同时是 `ContextDecorator`，因此也能当装饰器给整个函数套上下文。
 
-`contextlib.suppress(*exceptions)` 精确抑制列出的异常类型，比裸 try/except: pass 可读；
+`ExitStack`（3.3 引入）解决「上下文数量运行时才确定」：`enter_context(cm)` 逐个进入，`callback(fn, *args)` 注册任意清理回调，`push(cm)` 接管实现了 `__exit__` 但没 `__enter__` 的对象；
 
-`closing(obj)` 对只有 `close()` 的对象适配成上下文；redirect_stdout 临时替换 `sys.stdout`；nullcontext 用于「有时需要上下文、有时不需要」的分支。
+退出时严格按进入的逆序（`LIFO`）执行，后进入的先清理。
 
-异步侧对应 `__aenter__`/`__aexit__` 与 async with，asynccontextmanager（3.7）和 AsyncExitStack（3.7）提供同样的组合能力，`__aexit__` 必须是 async def 才能 await 清理动作。
+`contextlib.suppress(*exceptions)` 精确抑制列出的异常类型，比裸 `try/except: pass` 可读；
+
+`closing(obj)` 对只有 `close()` 的对象适配成上下文；
+
+`redirect_stdout` 临时替换 `sys.stdout`；
+
+`nullcontext` 用于「有时需要上下文、有时不需要」的分支。
+
+异步侧对应 `__aenter__` / `__aexit__` 与 `async with`，`asynccontextmanager`（3.7）和 `AsyncExitStack`（3.7）提供同样的组合能力，`__aexit__` 必须是 `async def` 才能 `await` 清理动作。
 
 ```python
 from contextlib import contextmanager, ExitStack, suppress
@@ -145,36 +163,44 @@ print('after suppress')
 | asynccontextmanager | 3.7 | async with 的生成器写法 | __aexit__ 必须是 async def |
 | AsyncExitStack | 3.7 | 异步上下文的动态组合 | enter_async_context 返回可等待对象 |
 
-<Term word='__enter__ / __exit__' text='with EXPR as VAR 的语义由数据模型固定：先求值 EXPR 得到上下文管理器，调用其 __enter__()，把返回值绑定到 VAR（没有 as 则返回值被丢弃），然后执行 with 体；无论体里是否抛异常，最后都调用 __exit__(exc_type, exc_value, traceback)。正常' />
+<Term word='__enter__ / __exit__' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用 `__exit__(exc_type, exc_value, ' />
 
-<Term word='异常三参数与抑制' text='contextlib.contextmanager 把一个「只 yield 一次」的生成器函数变成上下文管理器：yield 之前的代码对应 __enter__，yield 之后的代码对应 __exit__，且必须用 try/finally 包住 yield，否则异常路径不会执行清理。它返回的 _GeneratorCon' />
+<Term word='异常三参数与抑制' text='`contextlib.contextmanager` 把一个「只 `yield` 一次」的生成器函数变成上下文管理器：`yield` 之前的代码对应 `__enter__`，`yield` 之后的代码对应 `__exit__`，且必须用 `try/finally` 包住 `yield`，否则异常路径不会执行清理。它返' />
 
 
 ## 事务与资源场景：把申请与释放写成一段强制配对
 
-上下文管理器最大的工程价值是让「申请—使用—释放」在语法层面强制配对，异常路径和正常路径共用同一份清理代码。
+上下文管理器最大的工程价值，是让「申请—使用—释放」在语法层面强制配对，异常路径和正常路径共用同一份清理代码。
 
-数据库事务是典型：`__enter__` 拿到 cursor 并 BEGIN，`__exit__` 检查 exc_type，为 None 就 commit，否则 rollback，然后 close 并返回 False 让异常继续向上（绝不吞掉）。
+数据库事务是典型：`__enter__` 拿到 `cursor` 并 `BEGIN`，`__exit__` 检查 `exc_type`，为 `None` 就 `commit`，否则 `rollback`，然后 `close` 并返回 `False` 让异常继续向上（绝不吞掉）。
 
-计时上下文在 `__enter__` 记 `perf_counter()`，在 finally 里算差值并打点；分布式锁在 `__exit__` 里释放锁并带上 fencing token 校验；
+计时上下文在 `__enter__` 记 `perf_counter()`，在 `finally` 里算差值并打点；分布式锁在 `__exit__` 里释放锁并带上 fencing token 校验；
 
 临时目录用 `tempfile.TemporaryDirectory` 已经是一个写好的上下文。
 
-组合多个资源时优先用 ExitStack：它保证逆序释放，避免嵌套 with 越写越深，也避免某个资源申请失败时前面已申请的资源漏掉清理。
+组合多个资源时优先用 `ExitStack`：它保证逆序释放，避免嵌套 `with` 越写越深，也避免某个资源申请失败时前面已申请的资源漏掉清理。
 
-写自定义管理器时有一条自检清单：`__exit__` 是否只在有明确理由时返回 True、是否把清理放进 finally、是否对 `__enter__` 失败留有兜底、异步资源是否用了 `__aexit__`。这四点能挡住绝大多数线上静默故障。
+写自定义管理器时有一条自检清单：`__exit__` 是否只在有明确理由时返回 `True`、是否把清理放进 `finally`、是否对 `__enter__` 失败留有兜底、异步资源是否用了 `__aexit__`。这四点能挡住绝大多数线上静默故障。
 
-CPython 3.11 之前，with 靠块栈实现：SETUP_WITH 把 `__exit__` 与块信息压栈，异常发生时解释器逐层弹出块栈并调用对应清理，正常路径也要执行 WITH_CLEANUP 系列指令，因此无异常也付指令成本。
+CPython 3.11 之前，`with` 靠块栈实现：`SETUP_WITH` 把 `__exit__` 与块信息压栈，异常发生时解释器逐层弹出块栈并调用对应清理，正常路径也要执行 `WITH_CLEANUP` 系列指令，因此无异常也付指令成本。
 
-3.11 起改成异常表（zero-cost exception handling）：co_exceptiontable 记录受保护字节码区间到处理器的跳转，无异常时不执行任何额外指令；
+3.11 起改成异常表（零成本异常处理）：`co_exceptiontable` 记录受保护字节码区间到处理器的跳转，无异常时不执行任何额外指令；
 
-with 用 BEFORE_WITH 取 `__exit__` 并压栈，WITH_EXCEPT_START 在异常路径调用它，若返回真则 POP_TOP 吞掉异常，否则 RERAISE。
+`with` 用 `BEFORE_WITH` 取 `__exit__` 并压栈，`WITH_EXCEPT_START` 在异常路径调用它，若返回真则 `POP_TOP` 吞掉异常，否则 `RERAISE`。
 
-contextmanager 生成的对象在 `_GeneratorContextManager.__exit__` 里对生成器调用 `gen.throw(exc_type, exc_value, tb)`；
+`contextmanager` 生成的对象在 `_GeneratorContextManager.__exit__` 里对生成器调用 `gen.throw`；
 
-生成器若在 yield 之后又 yield，则 throw 无法让它终止，抛出 RuntimeError: generator didn't stop after `throw()`。ExitStack 内部维护一个回调栈，退出时 while 循环 pop 并逆序调用，这就是 LIFO 的来源。
+```python
+gen.throw(exc_type, exc_value, tb)
+```
 
-三参数与抑制规则的语义在两套实现里保持一致，变的只是异常分发机制。
+生成器若在 `yield` 之后又 `yield`，`throw` 便无法让它终止，抛出 `RuntimeError: ge…`。
+
+```python
+RuntimeError: generator didn't stop after throw()
+```
+
+`ExitStack` 内部维护一个回调栈，退出时用 `while` 循环 `pop` 并逆序调用，这就是 `LIFO` 的来源。三参数与抑制规则的语义在两套实现里保持一致，变的只是异常分发机制。
 
 <Compare :panels='[{"label": "主示例", "code": "class Transaction:\n    def __init__(self, name):\n        self.name = name\n    def __enter__(self):\n        print(&#39;begin&#39;, self.name)\n        return self\n    def __exit__(self, exc_type, exc_value, tb):\n        print(&#39;exit&#39;, exc_type is None, type(exc_value).__name__ if exc_value else &#39;no-error&#39;)\n        return False\n\nwith Transaction(&#39;t1&#39;) as t:\n    print(&#39;body&#39;, t.name)\ntry:\n    with Transaction(&#39;t2&#39;):\n        raise ValueError(&#39;boom&#39;)\nexcept ValueError as e:\n    print(&#39;caught&#39;, str(e))", "note": "with 的展开：__enter__、三参数 __exit__ 与异常抑制"}, {"label": "对照 / 进阶", "code": "from contextlib import contextmanager, ExitStack, suppress\n\n@contextmanager\ndef tag(label):\n    print(&#39;enter&#39;, label)\n    try:\n        yield label\n    finally:\n        print(&#39;exit&#39;, label)\n\nwith ExitStack() as stack:\n    stack.enter_context(tag(&#39;A&#39;))\n    stack.enter_context(tag(&#39;B&#39;))\n    stack.callback(print, &#39;callback&#39;)\n    print(&#39;body&#39;)\nwith suppress(ZeroDivisionError):\n    print(1 / 0)\nprint(&#39;after suppress&#39;)", "note": "contextlib 三件套：contextmanager、ExitStack 与 suppress"}]' title='两种写法对照' note='差异集中在 __enter__ / __exit__；先看输出，再找背后的规则。' />
 
@@ -211,18 +237,18 @@ except KeyError:
 
 <ConceptDiagram type='layers3' title='第 042 讲 · 分层视角' labels='with 的展开：__enter__、三|contextlib 三件套：conte|事务与资源场景：把申请与释放写成一段强制|事务与计时场景' caption='事务与资源场景：把申请与释放写成一段强制配对' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **事务与计时场景** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 事务与计时场景 落在哪一层。
 
-<FlowTimeline :steps='[{"title": "with 的展开：__enter__、三参数 __exit__ 与异常抑制", "desc": "with EXPR as VAR 的语义由数据模型固定：先求值 EXPR 得到上下文…", "tone": "blue"}, {"title": "contextlib 三件套：contextmanager、ExitStack 与 suppress", "desc": "contextlib.contextmanager 把一个「只 yield 一次」的…", "tone": "purple"}, {"title": "事务与资源场景：把申请与释放写成一段强制配对", "desc": "上下文管理器最大的工程价值是让「申请—使用—释放」在语法层面强制配对，异常路径和正常…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sqlite3 事务上下文保证异常回滚与成功提交", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "with 的展开：__enter__、三参数 __exit__ 与异常抑制", "desc": "`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得…", "tone": "blue"}, {"title": "contextlib 三件套：contextmanager、ExitStack 与 suppress", "desc": "`contextlib.contextmanager` 把一个「只 `yield` …", "tone": "purple"}, {"title": "事务与资源场景：把申请与释放写成一段强制配对", "desc": "上下文管理器最大的工程价值，是让「申请—使用—释放」在语法层面强制配对，异常路径和正…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sqlite3 事务上下文保证异常回滚与成功提交", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 用 sqlite3 事务上下文保证异常回滚与成功提交
 
-账务脚本要在一条事务里先扣款再写明细，任何一步失败都必须整体回滚，否则会出现扣了钱却没记流水。用 try/finally 手写容易漏掉 commit 与 rollback 的分支，也不好复用；把它做成上下文管理器后，申请（拿 cursor）与释放（提交或回滚并关闭）在语法层面强制配对。
+账务脚本要在一条事务里先扣款再写明细，任何一步失败都必须整体回滚，否则会出现扣了钱却没记流水。用 `try/finally` 手写容易漏掉 `commit` 与 `rollback` 的分支，也不好复用；把它做成上下文管理器后，申请（拿 `cursor`）与释放（提交或回滚并关闭）在语法层面强制配对。
 
-下面用标准库 sqlite3 的内存库跑通：`__enter__` 返回 cursor，`__exit__` 依据 exc_type 决定 commit 还是 rollback，并且始终返回 False 让异常继续上抛。第二段 with 正常结束则提交。
+下面用标准库 `sqlite3` 的内存库跑通：`__enter__` 返回 `cursor`，`__exit__` 依据 `exc_type` 决定 `commit` 还是 `rollback`，并且始终返回 `False` 让异常继续上抛。第二段 `with` 正常结束则提交。
 
-SQL 一律用 ? 占位符传参，既避免字符串拼接注入，也把参数化查询的习惯固化进框架雏形。注意 `__exit__` 里没有吞异常，外层仍需自己处理业务错误。
+`SQL` 一律用 `?` 占位符传参，既避免字符串拼接注入，也把参数化查询的习惯固化进框架雏形。注意 `__exit__` 里没有吞异常，外层仍需自己处理业务错误。
 
 ```python
 import sqlite3
@@ -267,7 +293,7 @@ conn.close()
 python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **__enter__ / __exit__** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `__enter__` / `__exit__` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## __exit__ 随手 return True 吞异常的错因速查
@@ -297,9 +323,9 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 
 <Quiz no='042-3' q='ExitStack 退出多个上下文时的顺序是？' :options='["LIFO，后进入的先清理", "FIFO，先进入的先清理", "按字母序", "随机，取决于 GC"]' answer="0" explain='ExitStack 内部是回调栈，退出时循环 pop 并调用，因此严格逆序。嵌套资源（先连接后加锁）逆序释放才能先解锁再关连接，这与手写嵌套 with 一致。' />
 
-<Predict no='042-P' q='下面 with 块里抛异常且 __exit__ 返回 False，最终输出是什么？' :options='["exit False ValueError / caught boom", "exit True no-error / 无 caught", "exit False ValueError / 抛未捕获异常"]' answer='0' output='exit False ValueError\ncaught boom' explain='异常作为三参数传给 __exit__，exc_type 非 None、exc_value 是 ValueError 实例；返回 False 不抑制，异常被外层 except ValueError 接住并打印 caught boom。' />
+<Predict no='042-4' q='下面 with 块里抛异常且 __exit__ 返回 False，最终输出是什么？' :options='["exit False ValueError / caught boom", "exit True no-error / 无 caught", "exit False ValueError / 抛未捕获异常"]' answer='0' output='exit False ValueError\ncaught boom' explain='异常作为三参数传给 __exit__，exc_type 非 None、exc_value 是 ValueError 实例；返回 False 不抑制，异常被外层 except ValueError 接住并打印 caught boom。' />
 
-<FillBlank no='042-F' tpl='___ __init__(self, name):' :answers='["def"]' hint='回想本讲关于 __enter__ / __exit__ 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 with 的展开：__enter__、三参数 __exit__ 与异常抑制 的落点。' />
+<FillBlank no='042-5' tpl='___ __init__(self, name):' :answers='["def"]' hint='回想本讲关于 __enter__ / __exit__ 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 with 的展开：__enter__、三参数 __exit__ 与异常抑制 的落点。' />
 
 <KnowledgeCard :points='["__exit__(exc_type, exc_value, tb) 固定三参数；正常结束全为 None，返回真值抑制异常", "__enter__ 返回值绑定到 as；它抛异常时 __exit__ 不会被调用", "contextmanager 生成器只 yield 一次并配 try/finally；二次 yield 抛 RuntimeError: generator didn&#39;t stop after throw()", "ExitStack 动态组合上下文，退出严格 LIFO；suppress 精确抑制指定异常类型", "事务上下文：exc_type 为 None 则 commit，否则 rollback，且始终返回 False 不吞异常", "异步资源用 __aenter__/__aexit__ 与 async with；3.11 起 with 由异常表而非块栈驱动"]' :pitfalls='["__exit__ 里随手 return True 吞掉真实异常", "contextmanager 生成器 yield 了两次或没用 try/finally", "在异步代码里用同步 with 管理数据库连接", "在 __exit__ 里随手返回 True，会把真正的错误吞掉，日志里什么线索都不留"]' summary='__exit__ 收到异常信息并可选择返回 True 抑制它，这让 with 能同时表达正常与异常两条清理路径' />
 

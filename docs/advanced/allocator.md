@@ -9,33 +9,33 @@ description: 定位并解决苛刻场景下的内存问题
 
 顺着源码往下，上一讲看清了语句怎么跑，紧接着碰到脚下那层：对象从哪块内存长出来、又何时还回去。长跑服务里对象明明都删了，进程占的内存却不见降；有人顺手调一次收集，只多出停顿。现象会骗人，得看分配器怎么管。
 
-先铺开 pymalloc 的 arena、pool、block 三级结构，看小对象分配走哪条路；再读分代 GC 何时触发、gcmodule 怎样收走循环引用，解释 RSS 不降只是 arena 没空闲；最后用 tracemalloc 区分仍被引用、碎片与未归还。需要引用计数、GC 和对象模型；学完你能定位内存分配的疑难现象，不再凭 RSS 下判断。
+先铺开 pymalloc 的 arena、pool、block 三级结构，看小对象分配走哪条路；再读分代 GC 何时触发、gcmodule 怎样收走循环引用，解释 RSS 不降只是 arena 没整体空闲；最后用 tracemalloc 区分仍被引用、碎片与未归还。需要引用计数、GC 和对象模型；学完你能定位内存分配的疑难现象，不再凭 RSS 下判断。
 
 
 ## 对象都释放了，RSS 为什么还是不降
 
 一个长驻服务跑几天后 RSS 从 300MB 涨到 1.2GB，运维第一反应是内存泄漏，值班手册写的动作是定时调 `gc.collect()`。加了之后每次收集都带来明显停顿，RSS 却几乎不降。
 
-用 tracemalloc 一查，Python 对象总量其实稳定，真正增长的是某个 C 扩展的原生缓冲与 pymalloc 的 arena 没有整体空闲；另一份误判来自把「对象还被引用」当成「泄漏」，实际是全局缓存按设计持有。
+用 tracemalloc 一查，Python 对象总量其实稳定，真正增长的是某个 C 扩展的原生缓冲，以及 pymalloc 的 arena 没有整体空闲；另一份误判来自把「对象还被引用」当成「泄漏」，实际是全局缓存按设计持有。
 
-要定位苛刻场景下的内存问题，得先分清三类：仍被引用、pymalloc 碎片、以及分配器未把内存归还 OS。本讲把 `obmalloc.c` 的三级结构、`gcmodule.c` 的分代收集与 tracemalloc 的观测手段对应起来，给出可核对的定位顺序，而不是一上来就 collect。
+要定位苛刻场景下的内存问题，得先分清三类：仍被引用、pymalloc 碎片、分配器未把内存归还 OS。本讲把 `obmalloc.c` 的三级结构、`gcmodule.c` 的分代收集与 tracemalloc 的观测手段对应起来，给出可核对的定位顺序，而不是一上来就 collect。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='看到 RSS 高就定时 gc.collect()：若增长来自 pymalloc arena 未归还或 C 扩展原生内存，收集既不动这些也不降 RSS，只增加停顿' />
 
-<Callout type="tip" title='核心心智模型' text='CPython 对小于 512 字节的对象走专用分配器 pymalloc（Objects/obmalloc.c），大对象直接交给 libc 的 malloc。它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；arena 内切成 4 KiB 的 pool，每' />
+<Callout type="tip" title='核心心智模型' text='CPython 对小于 512 字节的对象走专用分配器 pymalloc（`Objects/obmalloc.c`），大对象直接交给 libc 的 malloc。它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；arena 内切成 4 KiB 的 pool' />
 
 
 ## pymalloc 三级结构：arena / pool / block
 
-CPython 对小于 512 字节的对象走专用分配器 pymalloc（Objects/`obmalloc.c`），大对象直接交给 libc 的 malloc。它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；
+CPython 对小于 512 字节的对象走专用分配器 pymalloc（`Objects/obmalloc.c`），大对象直接交给 libc 的 malloc。
 
-arena 内切成 4 KiB 的 pool，每个 pool 只服务一个 size class；size class 以 8 字节为步长（8、16、24 ... 512 字节，共 64 档），block 是 pool 内按该档大小切出的单元。
+它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；arena 内切成 4 KiB 的 pool，每个 pool 只服务一个 size class；
 
-分配时根据请求大小映射到 size class，从对应 pool 的 freeblock 链表取一块，`O(1)`；释放时把 block 挂回 freeblock。usedpools 数组按 size class 维护可用 pool，arena 用 usable_arenas 链表管理。
+size class 以 8 字节为步长（8、16、24 直到 512 字节，共 64 档），block 是 pool 内按该档大小切出的单元。分配时按请求大小映射到 size class，从对应 pool 的 `freeblock` 链表取一块，代价是 `O(1)`；释放时把 block 挂回 `freeblock`。
 
-关键点：只有当某个 arena 内所有 pool 都完全空闲时，该 arena 才可能通过 `free()` 归还 OS；只要 arena 里还留着一个存活的小对象，整块 256 KiB 就继续计入 RSS。这解释了「对象已释放但 RSS 不降」：不是泄漏，而是碎片与未归还。
+`usedpools` 数组按 size class 维护可用 pool，arena 用 `usable_arenas` 链表管理。关键点：只有当某个 arena 内所有 pool 都完全空闲时，它才可能通过 `free()` 归还 OS；只要 arena 里还留着一个存活的小对象，整块 256 KiB 就继续计入 RSS。
 
-`sys.getsizeof` 返回对象自身占用（3.13 空 dict 为 64 字节、小 int 为 28 字节），不含容器引用的元素，也不含原生内存。
+这解释了「对象已释放但 RSS 不降」：不是泄漏，而是碎片与未归还。`sys.getsizeof` 返回对象自身占用（3.13 里空 dict 为 64 字节、小 int 为 28 字节），不含容器引用的元素，也不含原生内存。
 
 **pymalloc 三级结构与参数**
 
@@ -48,7 +48,7 @@ arena 内切成 4 KiB 的 pool，每个 pool 只服务一个 size class；size c
 
 <ConceptDiagram type='layers3' title='第 115 讲 · 分层视角' labels='pymalloc 三级结构：arena |分代 GC 的触发逻辑与 gcmodul|tracemalloc、pympler |与 glibc malloc 关系' caption='tracemalloc、pympler 与定位顺序' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **与 glibc malloc 关系** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 与 glibc malloc 关系 落在哪一层。
 
 
 ### arena 只有整体空闲才归还 OS
@@ -74,17 +74,19 @@ tracemalloc.stop()
 
 ## 引用计数、循环引用与分代 GC 的触发逻辑
 
-引用计数能即时回收大多数对象，但处理不了循环引用，因此 CPython 还有分代标记-清除 GC（Modules/`gcmodule.c`）。容器对象（list、dict、带 `__dict__` 的实例等）创建时被 GC 追踪，记入 gen0 链表；
+引用计数能即时回收大多数对象，但处理不了循环引用，因此 CPython 还有分代标记-清除 GC（`Modules/gcmodule.c`）。
 
-不参与循环的类型（如 int、str、tuple 在不可变且不含可变引用时）不被追踪，`gc.is_tracked(1)` 返回 False。
+容器对象（list、dict、带 `__dict__` 的实例等）创建时被 GC 追踪，记入 gen0 链表；
 
-三代阈值由 `gc.get_threshold()` 给出，3.13 默认是 (2000, 10, 10)：当 gen0 分配数减去释放数超过 2000 就触发 gen0 收集，每 10 次 gen0 收集触发一次 gen1，每 10 次 gen1 触发一次 gen2 全量收集。
+不参与循环的类型（如 int、str，以及不可变且不含可变引用的 tuple）不被追踪，`gc.is_tracked(1)` 返回 False。
+
+三代阈值由 `gc.get_threshold()` 给出，3.13 默认是 `(2000, 10, 10)`：gen0 分配数减去释放数超过 2000 就触发 gen0 收集，每 10 次 gen0 收集触发一次 gen1，每 10 次 gen1 触发一次 gen2 全量收集。
 
 收集时先把每个可达对象的 gc_refs 设为引用计数，再减去内部引用，剩下的即为不可达循环垃圾；带 `__del__` 的对象自 PEP 442（3.4）起先调用终结器再决定回收，避免旧版本把整个循环放进 `gc.garbage`。
 
 `gc.collect(generation=2)` 可手动全量收集，返回找到的不可达对象数。
 
-注意 `gc.collect` 只处理 Python 对象循环，C 扩展的原生内存、mmap、文件缓冲都在它视野之外。
+要注意 `gc.collect` 只处理 Python 对象循环，C 扩展的原生内存、mmap、文件缓冲都在它视野之外。
 
 **分代 GC 参数（3.13 实测）**
 
@@ -158,13 +160,13 @@ gc.enable()
 
 ## tracemalloc、pympler 与定位顺序
 
-定位内存问题要按证据分三层走。第一层用 tracemalloc（3.4 起，PEP 454）在分配点打快照，compare_to 按 lineno 或 traceback 找出增长最多的代码位置，它统计的是 Python 分配器经手的块，能区分「哪些代码还持有对象」；
+定位内存问题要按证据分三层走。第一层用 tracemalloc（3.4 起，PEP 454）在分配点打快照，`compare_to` 按 lineno 或 traceback 找出增长最多的代码位置，它统计的是 Python 分配器经手的块，能区分「哪些代码还持有对象」；
 
-第二层对比 tracemalloc 总量与进程 RSS，差值大说明内存不在 Python 对象里，方向转向 C 扩展原生内存、glibc malloc 缓存或 mmap，需要 valgrind / jemalloc prof 或扩展自身的统计接口；
+第二层对比 tracemalloc 总量与进程 RSS，差值大说明内存不在 Python 对象里，方向转向 C 扩展原生内存、glibc malloc 缓存或 mmap，需要 valgrind、jemalloc prof 或扩展自身的统计接口；
 
-第三层看 pymalloc 碎片，用 `gc.get_stats()` 看各代收集次数与 collected 数、用 `gc.get_referrers` 追谁还引用着对象、用 weakref 验证对象能否被回收。
+第三层看 pymalloc 碎片，用 `gc.get_stats()` 看各代收集次数与 collected 数，用 `gc.get_referrers` 追谁还引用着对象，用 weakref 验证对象能否被回收。
 
-`gc.freeze()`（3.7+）可把长期存活对象移出收集范围，减少启动时反复扫描。盲目 `gc.collect` 只增加停顿：若 RSS 高来自 arena 未归还或原生内存，收集既不动这些也不降 RSS。正确修复取决于分类：仍被引用就改生命周期或缓存上限，碎片就减少长短生命周期对象混布，原生内存就查扩展的释放路径。
+`gc.freeze()`（3.7 起）可把长期存活对象移出收集范围，减少启动时反复扫描。盲目 `gc.collect` 只增加停顿：若 RSS 高来自 arena 未归还或原生内存，收集既不动这些也不降 RSS。正确修复取决于分类：仍被引用就改生命周期或缓存上限，碎片就减少长短生命周期对象混布，原生内存就查扩展的释放路径。
 
 **内存现象分类与定位手段**
 
@@ -175,11 +177,11 @@ gc.enable()
 | 对象已释放但 RSS 不降 | pymalloc arena 未整体空闲 | gc.get_stats、减少长短生命周期混布 |
 | 带 __del__ 的循环不回收 | 历史遗留（3.4 前） | PEP 442 后先终结再回收，查 gc.garbage |
 
-pymalloc 用空间换单线程分配速度：把小于 512 字节的请求按 8 字节步长归入 64 个 size class，每个 pool 只服务一档，从 freeblock 链表 `O(1)` 取还，避免频繁进 libc malloc。
+pymalloc 用空间换单线程分配速度：把小于 512 字节的请求按 8 字节步长归入 64 个 size class，每个 pool 只服务一档，从 `freeblock` 链表以 `O(1)` 取还，避免频繁进 libc malloc。
 
-代价是内存按 arena 粒度向 OS 申请，只有整个 arena 的所有 pool 都空闲时才可能 free 归还；长短生命周期对象混在同一个 arena，会让少数存活对象钉住整块 256 KiB，RSS 因此不随对象释放下降，这是碎片而非泄漏。
+代价是内存按 arena 粒度向 OS 申请，只有整个 arena 的所有 pool 都空闲时才可能 `free` 归还；长短生命周期对象混在同一个 arena，会让少数存活对象钉住整块 256 KiB，RSS 因而不随对象释放下降，这是碎片而非泄漏。
 
-引用计数即时回收无环对象，剩余循环垃圾交给分代 GC：容器对象进 gen0 链表，分配减释放超过阈值即触发标记-清除，通过把可达对象的 gc_refs 减去内部引用识别不可达环。阈值 (2000, 10, 10) 体现分代假设——多数对象朝生暮死，年轻代高频小收集、老年代低频全收集。
+引用计数即时回收无环对象，剩余循环垃圾交给分代 GC：容器对象进 gen0 链表，分配减释放超过阈值即触发标记-清除，通过把可达对象的 gc_refs 减去内部引用识别不可达环。阈值 `(2000, 10, 10)` 体现分代假设——多数对象朝生暮死，年轻代高频小收集、老年代低频全收集。
 
 tracemalloc 在分配路径上记录 traceback，能按代码位置归因，但它只覆盖 Python 分配器经手的块，看不到 C 扩展的原生 malloc，因此 tracemalloc 总量与 RSS 的差值本身就是重要的分类信号。
 
@@ -188,7 +190,7 @@ tracemalloc 在分配路径上记录 traceback，能按代码位置归因，但�
 
 把一次内存排查写成可复用的诊断函数：采集 tracemalloc 快照、对比分配点、读各代收集统计、用 weakref 验证循环对象能否被回收，并打印 RSS 与 Python 分配量的差值提示。真实长驻服务里这段定时运行，把增长点归因到具体文件行，再决定是改缓存上限、调整对象生命周期还是查 C 扩展。
 
-重点是先分类再动手，避免用 `gc.collect` 掩盖真正原因。下面这段用标准库把观测层搭起来，输出的是可核对的数字而非主观判断。
+重点是先分类再动手，避免用 `gc.collect` 掩盖真正原因；下面这段用标准库把观测层搭起来，输出的是可核对的数字而非主观判断。
 
 ```python
 import gc, tracemalloc, weakref, sys
@@ -225,7 +227,7 @@ diagnose(Node)
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **arena / pool / block 三级** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 arena / pool / block 三级 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -244,7 +246,7 @@ pool_header 描述一个 4 KiB pool：refcnt 是已分配 block 数，freeblock 
 
 分配从 freeblock 取头节点，为空则按 nextoffset 切新块；释放挂回 freeblock 并 refcnt--，归零时整个 pool 移出 usedpools、链入 arena 的 freepools。
 
-usedpools 是哨兵数组：usedpools[i+i] 与 usedpools[i+i+1] 伪装成一个假 pool_header，作为 size class i 的部分空闲 pool 双向链表头，插入删除 `O(1)`，`POOL_ADDR(P)` 用按位与把 block 地址取整到 pool 头。
+usedpools 是哨兵数组：`usedpools[i+i]` 与 `usedpools[i+i+1]` 伪装成一个假 pool_header，作为 size `class i` 的部分空闲 pool 双向链表头，插入删除 `O(1)`，`POOL_ADDR(P)` 用按位与把 block 地址取整到 pool 头。
 
 arena_object 记录 address、nfreepools、ntotalpools、freepools 与 prevarena/nextarena 两个 usable_arenas 链表指针。
 
@@ -297,11 +299,11 @@ print('stats_keys', sorted(gc.get_stats()[0].keys()))
 
 被追踪容器在对象头前多一段 PyGC_Head，3.9 起实现为 _gc_next 与 _gc_prev 两个 uintptr_t：低位存链表指针，高位复用为标记位，gc_refs 打包进 _gc_next 高位，收集态用掩码标注，于是原地维护三色而不额外分配数组。
 
-struct gc_generation 只有 PyGC_Head head、int threshold、int count 三个字段，三代组成 generations[3]；
+struct gc_generation 只有 PyGC_Head head、int threshold、int count 三个字段，三代组成 `generations[3]`；
 
-_PyObject_GC_Alloc 把对象挂进 gen0 时执行 generations[0].count++，超过 threshold（默认 2000）就调用 collect_generations。gc_collect_main 依次：update_refs 把 ob_refcnt 拷进 gc_refs；
+_PyObject_GC_Alloc 把对象挂进 gen0 时执行 `generations[0].count`++，超过 threshold（默认 2000）就调用 collect_generations。
 
-subtract_refs 对每个可达容器调 tp_traverse，把访问到的对象 gc_refs 减一，扣除内部引用；move_unreachable 按 gc_refs>0 拆可达与不可达两条链；
+gc_collect_main 依次：update_refs 把 ob_refcnt 拷进 gc_refs；subtract_refs 对每个可达容器调 tp_traverse，把访问到的对象 gc_refs 减一，扣除内部引用；move_unreachable 按 gc_refs>0 拆可达与不可达两条链；
 
 PEP 442 起先 handle_weakrefs、再 finalize_garbage 调 `__del__`，最后 delete_garbage 用 tp_clear 打断循环。dict 的 tp_traverse 在 `dictobject.c` 里只访问 value，tuple 遍历逐元素，决定扣除是否完整。
 
@@ -347,9 +349,9 @@ tracemalloc.stop()
 
 <Quiz no='115-3' q='tracemalloc 与进程 RSS 差距很大，说明什么？' :options='["存在 C 扩展原生内存、glibc 缓存或 mmap 等不在 Python 分配器统计内的占用", "tracemalloc 统计有 bug", "所有对象都已被 GC 回收", "RSS 读数不准"]' answer="0" explain='tracemalloc 只覆盖 Python 分配器经手的块；差值正是把排查方向转向原生内存与分配器缓存的关键信号。' />
 
-<Predict no='115-P' q='gc.is_tracked(1) 与 gc.is_tracked([]) 分别返回什么？' :options='["False 与 True", "True 与 True", "False 与 False"]' answer='0' output='tracked_int False，tracked_list True' explain='int 是不可变标量、不含指向其它对象的引用，不可能参与循环，因此不被 GC 追踪；list 是容器，创建时进入 gen0 链表被追踪。' />
+<Predict no='115-4' q='gc.is_tracked(1) 与 gc.is_tracked([]) 分别返回什么？' :options='["False 与 True", "True 与 True", "False 与 False"]' answer='0' output='tracked_int False，tracked_list True' explain='int 是不可变标量、不含指向其它对象的引用，不可能参与循环，因此不被 GC 追踪；list 是容器，创建时进入 gen0 链表被追踪。' />
 
-<FillBlank no='115-F' tpl='___ gc' :answers='["import"]' hint='回想本讲关于 arena / pool / block 三级 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pymalloc 三级结构：arena / pool / block 的落点。' />
+<FillBlank no='115-5' tpl='___ gc' :answers='["import"]' hint='回想本讲关于 arena / pool / block 三级 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pymalloc 三级结构：arena / pool / block 的落点。' />
 
 <KnowledgeCard :points='["pymalloc 管小于 512 字节对象：arena 256KiB / pool 4KiB / block 8 字节步长共 64 档", "arena 只有整体空闲才归还 OS，少数存活对象钉住整块，造成对象已释放但 RSS 不降", "引用计数即时回收，循环垃圾交分代 GC；3.13 阈值 (2000, 10, 10)，collect(2) 全量", "容器被 GC 追踪、int/str 不被追踪；PEP 442 起带 __del__ 的循环先终结再回收", "gc.collect 只处理 Python 对象循环；C 扩展原生内存与 glibc 缓存不受它影响", "定位顺序：tracemalloc 找分配点 → 对比 RSS 差值 → gc.get_referrers/weakref 查引用与碎片"]' :pitfalls='["看到 RSS 高就定时 gc.collect()", "把 tracemalloc 统计当作进程全部内存", "认为 del 之后对象一定被释放", "看到 RSS 高就断定泄漏、直接调 gc.collect，往往只增加停顿而不解决问题"]' summary='pymalloc 为小于 512 字节的对象做了专用池，所以「对象已释放但 RSS 不降」常常是 arena 没整体空闲，而非泄漏' />
 

@@ -9,35 +9,39 @@ description: 理解所有序列共享的一套接口
 
 你大概已经顺手用过切片，从一串记录里截一段。可不同容器切出来的并不都一样，有的改了原物不动，有的改一处就写坏整块。这一讲退一步，去看它们共同遵守的序列协议。
 
-一个数据面板把几条记录切给前端，前端标了已读，刷新后原数据纹丝不动；另一处却因以为切片总是副本，把整块缓冲写坏。我们先弄清序列与可迭代的区别，看清两个魔术方法怎样撑起索引、切片和迭代；再走到抽象基类给的现成方法与版本迁移；最后借 slice 对象说清切片何时给副本、何时是视图。需要你熟悉 list、str、索引和循环。学完你能自己写一个行为规矩的序列类，也能判断某次切片动没动到原对象。
+一个数据面板把几条记录切给前端，前端标了已读，刷新后原数据纹丝不动；另一处却因以为切片总是副本，把整块缓冲写坏。我们先弄清序列与可迭代的区别，看清两个魔术方法怎样撑起索引、切片和迭代；再走到抽象基类给的现成方法与版本迁移；最后借 `slice` 对象说清切片何时给副本、何时是视图。需要你熟悉 `list`、`str`、索引和循环。学完你能自己写一个行为规矩的序列类，也能判断某次切片动没动到原对象。
 
 
 ## 改了半天切片，原列表却一动不动
 
-一个数据面板要展示最近若干条记录，工程师把内部 list 直接切成 `view = records`[1:4] 交给前端组件，组件里做了 view[0] = '已读'，刷新后发现原 records 纹丝不动，状态标记全丢了；反过来另一个模块以为切片一定是副本，对 memoryview 的切片原地改字节，结果把整块缓冲区写坏。
+一个数据面板要展示最近若干条记录，工程师把内部 `list` 直接切成 `view = records[1:4]` 交给前端组件，组件里给 `view[0]` 赋了个新值，刷新后发现原 `records` 纹丝不动，状态标记全丢了；
 
-两处 bug 都来自把'切片'当成一个笼统动作，没区分谁返回副本、谁返回视图。更深一层是：有人手写了一个只实现 `__getitem__` 的容器，发现 for x in obj 和 'Wed' in obj 居然能用，而 obj[1:3] 却抛 TypeError，于是给每个方法都补一份样板代码。
+反过来另一个模块以为切片一定是副本，对 `memoryview` 的切片原地改字节，结果把整块缓冲区写坏。两处 bug 都来自把「切片」当成一个笼统动作，没区分谁返回副本、谁返回视图。
 
-实际上 CPython 的序列协议只要求 `__len__` 与 `__getitem__` 两个方法，迭代、成员判断、reversed 都由固定回退规则或 `collections.abc.Sequence` 的 mixin 免费提供。
+更深一层是：有人手写了一个只实现 `__getitem__` 的容器，发现 `for x in obj` 与 `'Wed' in obj` 居然能用，而 `obj[1:3]` 却抛 `TypeError`，于是给每个方法都补一份样板代码。
 
-本讲把这套协议、slice 对象如何传给 `__getitem__`、以及 3.10 移除顶层 collections 别名的迁移点讲清楚。
+实际上 CPython 的序列协议只要求 `__len__` 与 `__getitem__` 两个方法，迭代、成员判断、`reversed` 都由固定回退规则或 `collections.abc.Sequence` 的 mixin 免费提供。
+
+本讲把这套协议、`slice` 对象如何传给 `__getitem__`、以及 3.10 移除顶层 `collections` 别名的迁移点讲清楚。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='改了切片得到的子序列，原列表却没变：list / tuple / str 的切片返回同类型新对象（浅拷贝副本），只有 memoryview 切片是共享内存的视图' />
 
 
 ## 序列协议：两个方法撑起一整套操作
 
-CPython 对序列的操作分两条独立通道。`len(obj)` 走 PyObject_Size 对应的 sq_length 槽（即 `__len__`），返回值必须能用 `__index__` 转成 Py_ssize_t，负数抛 ValueError、超过 `sys.maxsize` 抛 OverflowError。
+CPython 对序列的操作分两条独立通道。
 
-下标 obj`[i]` 走 mp_subscript 或 sq_item 槽，最终调用 `__getitem__`；
+`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize` 抛 `OverflowError`。
 
-编译器把 obj[a:b:c] 编译成 BUILD_SLICE 加 BINARY_SUBSCR，因此自定义 `__getitem__` 收到的是单个 slice 对象，而不是三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
+下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；
 
-'序列'与'可迭代'不是一回事：可迭代只要求 `__iter__` 返回一个迭代器；而序列要求 `__len__` 加 `__getitem__`，能按整数下标随机访问。
+编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是单个 `slice` 对象，而不是三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
 
-有趣的是 `iter(obj)` 会先查 tp_iter（`__iter__`），缺失时回退到 C 层的 PySeqIter_New，它持有从 0 开始的自增计数器，反复调 `__getitem__(i)` 直到抛 IndexError 才停——这就是'只写 __getitem__ 就能 for'的全部原因，也是老式容器仍能工作的底层机制。
+「序列」与「可迭代」不是一回事：可迭代只要求 `__iter__` 返回一个迭代器；而序列要求 `__len__` 加 `__getitem__`，能按整数下标随机访问。
 
-in 的查找顺序则是 `__contains__`，其次 `__iter__` 迭代，最后才回退到 `__getitem__` 序列协议。
+有趣的是 `iter(obj)` 会先查 `tp_iter`（`__iter__`），缺失时回退到 C 层的 `PySeqIter_New`，它持有从 0 开始的自增计数器，反复调 `__getitem__(i)` 直到抛 `IndexError` 才停——这就是「只写 `__getitem__` 就能 `for`」的全部原因，也是老式容器仍能工作的底层机制。
+
+`in` 的查找顺序则是 `__contains__`，其次 `__iter__` 迭代，最后才回退到 `__getitem__` 序列协议。
 
 ```python
 from collections.abc import Sequence
@@ -71,7 +75,7 @@ print(a, b)
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 对序列的操作分两条独立通道。len(obj) 走 PyObject_Size 对应的 sq_length 槽（即 __len__），返回值必须能用 __index__ 转成 Py_ssize_t，负数抛 ValueError、超过 sys.maxsize 抛 OverflowErro' />
+<Callout type="tip" title='核心心智模型' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize' />
 
 <ConceptDiagram type='layers3' title='第 017 讲 · 序列协议：两个方法撑起一整套操作' labels='序列协议：两个方法撑起一整套操作|collections.abc.Sequen|切片语义：副本、视图与 slice.indi' caption='理解所有序列共享的一套接口' />
 
@@ -94,15 +98,15 @@ print(a, b)
 
 ## collections.abc.Sequence 的 mixin 与版本迁移
 
-手写容器时重复实现 `__iter__` / `__contains__` / `__reversed__` / index / count 纯属样板。
+手写容器时重复实现 `__iter__` / `__contains__` / `__reversed__` / `index` / `count` 纯属样板。
 
-`collections.abc.Sequence` 把这套约定固化：它只把 `__len__` 与 `__getitem__` 声明为抽象方法（继承自 Sized / Collection 的契约被 mixin 具体化），其余五个方法都用纯 Python 基于这两个方法实现——`__iter__` 用自增下标迭代，`__contains__` 用迭代比较，`__reversed__` 从 len-1 递减，index 与 count 线性扫描。
+`collections.abc.Sequence` 把这套约定固化：它只把 `__len__` 与 `__getitem__` 声明为抽象方法（继承自 `Sized` / `Collection` 的契约被 mixin 具体化），其余五个方法都用纯 Python 基于这两个方法实现——`__iter__` 用自增下标迭代，`__contains__` 用迭代比较，`__reversed__` 从 len-1 递减，`index` 与 `count` 线性扫描。
 
-所以继承它只需补两个方法，isinstance 判断也为真，协议一致性由抽象基类保证。要注意 mixin 不提供 + 拼接与 * 重复，这两个运算符由 `__add__` / `__mul__` 单独实现，`abc.Sequence` 里没有；需要它们就得自己写或用 tuple / list 组合。
+所以继承它只需补两个方法，`isinstance` 判断也为真，协议一致性由抽象基类保证。要注意 mixin 不提供 `+` 拼接与 `*` 重复，这两个运算符由 `__add__` / `__mul__` 单独实现，`abc.Sequence` 里没有；需要它们就得自己写或用 `tuple` / `list` 组合。
 
-版本上有一条真实迁移：ABC 在 3.3 从 collections 顶层迁到 `collections.abc`，顶层别名 `collections.Sequence` / Mapping / Iterable 在 3.9 弃用、3.10 正式移除，今天必须写 from `collections.abc` import Sequence。
+版本上有一条真实迁移：ABC 在 3.3 从 `collections` 顶层迁到 `collections.abc`，顶层别名 `collections.Sequence` / `Mapping` / `Iterable` 在 3.9 弃用、3.10 正式移除，今天必须从 `collections.abc` 导入 `Sequence`。
 
-range 是标准库里序列协议的范本：实现 `__len__` 与 `__getitem__` 却不存全部元素，内存恒定，切片仍返回一个 range。
+`range` 是标准库里序列协议的范本：实现 `__len__` 与 `__getitem__` 却不存全部元素，内存恒定，切片仍返回一个 `range`。
 
 ```python
 class Legacy:
@@ -135,20 +139,22 @@ print(slice(1, 10, 2).indices(5))
 | obj['k'] | str | 抛 TypeError | 非 int 非 slice 一律拒绝 |
 | for x in obj | 依次 0, 1, 2 ... | 抛 IndexError 终止迭代 | 仅当未定义 __iter__ 时回退 |
 
-<Term word='序列与可迭代的区别' text='CPython 对序列的操作分两条独立通道。len(obj) 走 PyObject_Size 对应的 sq_length 槽（即 __len__），返回值必须能用 __index__ 转成 Py_ssize_t，负数抛 ValueError、超过 sys.maxsize 抛 OverflowError。下标 obj[i' />
+<Term word='序列与可迭代的区别' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize` 抛 `Overf' />
 
-<Term word='__len__ 与 __getitem__' text='手写容器时重复实现 __iter__ / __contains__ / __reversed__ / index / count 纯属样板。collections.abc.Sequence 把这套约定固化：它只把 __len__ 与 __getitem__ 声明为抽象方法（继承自 Sized / Collection ' />
+<Term word='__len__ 与 __getitem__' text='手写容器时重复实现 `__iter__` / `__contains__` / `__reversed__` / `index` / `count` 纯属样板。`collections.abc.Sequence` 把这套约定固化：它只把 `__len__` 与 `__getitem__` 声明为抽象方法（继承自 `Si' />
 
 
 ## 切片语义：副本、视图与 slice.indices
 
-内置序列的切片返回同类型的浅拷贝副本：list 切片得到 list、tuple 得到 tuple、str 得到 str，改副本不影响原对象；唯一的例外是 memoryview 的切片返回共享同一块内存的视图，原地写会改到缓冲区。
+内置序列的切片返回同类型的浅拷贝副本：`list` 切片得到 `list`、`tuple` 得到 `tuple`、`str` 得到 `str`，改副本不影响原对象；唯一的例外是 `memoryview` 的切片返回共享同一块内存的视图，原地写会改到缓冲区。
 
-自定义类要自己决定切片返回什么：把底层 tuple 的切片结果包装回本类，就能保持类型一致并继续享受 mixin 方法。
+自定义类要自己决定切片返回什么：把底层 `tuple` 的切片结果包装回本类，就能保持类型一致并继续享受 mixin 方法。
 
-规范化边界不要手写负步长逻辑，用 `slice.indices(length)` 一步拿到 (start, stop, step) 三个具体整数：`slice(None, None, -1)`.`indices(3)` 得到 (2, -1, -1)，`slice(1, 10, 2)`.`indices(5)` 得到 (1, 5, 2)，把它展开给 range 就能同时正确处理负数、越界与负步长。
+规范化边界不要手写负步长逻辑，用 `slice.indices(length)` 一步拿到 `(start, stop, step)` 三个具体整数：`slice(None, None, -1)` 调 `.indices(3)` 得到 `(2, -1, -1)`，`slice(1, 10, 2)` 调 `.indices(5)` 得到 `(1, 5, 2)`，把它展开给 `range` 就能同时正确处理负数、越界与负步长。
 
-`__getitem__` 收到非 int 非 slice 的下标（如字符串）应抛 TypeError，越界应抛 IndexError，这两个信号是迭代回退与 reversed 能停下来的依据。负索引 obj[-1] 由内置序列在 C 层规范化，自定义类要么自己加 len，要么委托给底层容器，否则会得到错误元素。
+`__getitem__` 收到非 int 非 slice 的下标（如字符串）应抛 `TypeError`，越界应抛 `IndexError`，这两个信号是迭代回退与 `reversed` 能停下来的依据。
+
+负索引 `obj[-1]` 由内置序列在 C 层规范化，自定义类要么自己加 `len`，要么委托给底层容器，否则会得到错误元素。
 
 ```python
 from collections.abc import Sequence
@@ -172,26 +178,26 @@ print('mixin owner', Sequence.__iter__.__qualname__)
 
 <OutputBox title='原理验证' output='abstract [&#39;__getitem__&#39;, &#39;__len__&#39;]\nisabstract True\n__iter__ True\n__contains__ True\n__reversed__ True\nindex True\ncount True\nisinstance True\nmixin owner Sequence.__iter__' />
 
-CPython 对序列的操作分成两条独立通道。`len(obj)` 走 PyObject_Size 对应的 sq_length 槽，返回值必须能用 `__index__` 转成 Py_ssize_t，负数或超过 `sys.maxsize` 分别抛 ValueError 与 OverflowError。
+CPython 对序列的操作分成两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽，返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数或超过 `sys.maxsize` 分别抛 `ValueError` 与 `OverflowError`。
 
-下标 obj`[i]` 走 mp_subscript 或 sq_item 槽，最终调用 `__getitem__`；
+下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；
 
-编译器把 obj[a:b:c] 编译成 BUILD_SLICE 加 BINARY_SUBSCR，因此自定义 `__getitem__` 收到的是 slice 对象而非三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
+编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是 `slice` 对象而非三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
 
-迭代更微妙：`iter(obj)` 先查 tp_iter（`__iter__`），缺失时回退到 PySeqIter_New，它持有从 0 开始的自增计数器，反复调用 `__getitem__(i)` 直到 IndexError——这就是只写 `__getitem__` 也能 for 的底层机制。
+迭代更微妙：`iter(obj)` 先查 `tp_iter`（`__iter__`），缺失时回退到 `PySeqIter_New`，它持有从 0 开始的自增计数器，反复调用 `__getitem__(i)` 直到 `IndexError`——这就是只写 `__getitem__` 也能 `for` 的底层机制。
 
-in 的查找顺序是 `__contains__`，其次 `__iter__`，最后才是 `__getitem__` 序列回退。
+`in` 的查找顺序是 `__contains__`，其次 `__iter__`，最后才是 `__getitem__` 序列回退。
 
-`collections.abc.Sequence` 把这套约定固化：只声明 `__len__` 与 `__getitem__` 为抽象方法，其余 `__iter__` / `__contains__` / `__reversed__` / index / count 用纯 Python mixin 基于这两个方法实现，所以继承它能免费拿到一批方法，但 + 拼接与 * 重复不在 mixin 里，需要自己实现。
+`collections.abc.Sequence` 把这套约定固化：只声明 `__len__` 与 `__getitem__` 为抽象方法，其余 `__iter__` / `__contains__` / `__reversed__` / `index` / `count` 用纯 Python mixin 基于这两个方法实现，所以继承它能免费拿到一批方法，但 `+` 拼接与 `*` 重复不在 mixin 里，需要自己实现。
 
 
 ## 给日志环形缓冲区实现只读序列视图
 
-一个实时面板要展示最近 N 条日志，底层是一个不断覆盖写入的固定容量缓冲区。直接把内部 list 暴露出去，调用方一个 append 就破坏了容量约束；每次返回 list 副本又浪费内存且拿不到实时变化。
+一个实时面板要展示最近 N 条日志，底层是一个不断覆盖写入的固定容量缓冲区。直接把内部 `list` 暴露出去，调用方一个 `append` 就破坏了容量约束；每次返回 `list` 副本又浪费内存且拿不到实时变化。
 
-做法是实现一个继承 `collections.abc.Sequence` 的 RingView：只存底层 list 与一个写指针，用 `__len__` 返回有效长度，用 `__getitem__` 把逻辑下标映射成环形物理下标，并对 slice 用 `slice.indices(len(self)`) 规范化后返回 tuple 快照。
+做法是实现一个继承 `collections.abc.Sequence` 的 `RingView`：只存底层 `list` 与一个写指针，用 `__len__` 返回有效长度，用 `__getitem__` 把逻辑下标映射成环形物理下标，并对 `slice` 用 `slice.indices(len(self))` 规范化后返回 `tuple` 快照。
 
-这样 for、in、reversed、index、count 全部由 mixin 免费提供，切片拿到的是副本不会误以为是视图，调用方也无法通过视图修改缓冲区。重点是把'只读、有序、可切片'这组语义用两个方法表达清楚，而不是复制一批样板方法；当第 N+1 条写入时最老的条目被覆盖，视图长度始终不超过容量。
+这样 `for`、`in`、`reversed`、`index`、`count` 全部由 mixin 免费提供，切片拿到的是副本不会误以为是视图，调用方也无法通过视图修改缓冲区。重点是把「只读、有序、可切片」这组语义用两个方法表达清楚，而不是复制一批样板方法；当第 N+1 条写入时最老的条目被覆盖，视图长度始终不超过容量。
 
 ```python
 from collections.abc import Sequence
@@ -265,7 +271,7 @@ print('slice', v[1:3], 'reversed', list(reversed(v)))
 
 <Quiz no='017-3' q='从 collections 顶层导入 Sequence，在 3.10+ 会怎样？' :options='["正常可用", "ImportError，别名已在 3.10 移除", "触发 DeprecationWarning 但仍可用", "返回 list 的别名"]' answer="1" explain='3.3 起 ABC 迁到 collections.abc，顶层别名 3.9 弃用、3.10 正式删除；应写 from collections.abc import Sequence。' />
 
-<Predict no='017-P' q='对 a = [&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] 执行 b = a[1:]; b[0] = &#39;Y&#39; 后，print(a, b) 输出什么？' :options='["[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]", "[&#39;x&#39;, &#39;Y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]", "[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;y&#39;, &#39;z&#39;]"]' answer='0' output='[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]' explain='list 切片返回同类型的浅拷贝副本，b 与原列表不共享存储，改 b[0] 不影响 a；只有 memoryview 的切片是共享内存的视图。要把修改写回原列表应使用切片赋值 a[1:] = [...].' />
+<Predict no='017-4' q='对 a = [&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] 执行 b = a[1:]; b[0] = &#39;Y&#39; 后，print(a, b) 输出什么？' :options='["[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]", "[&#39;x&#39;, &#39;Y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]", "[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;y&#39;, &#39;z&#39;]"]' answer='0' output='[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]' explain='list 切片返回同类型的浅拷贝副本，b 与原列表不共享存储，改 b[0] 不影响 a；只有 memoryview 的切片是共享内存的视图。要把修改写回原列表应使用切片赋值 a[1:] = [...].' />
 
 <KnowledgeCard :points='["序列协议的核心只有 __len__ 与 __getitem__；索引、切片、len、迭代、in、reversed 都建立在它们之上", "iter() 优先 __iter__，缺失时回退 PySeqIter_New 从 0 调 __getitem__ 直到 IndexError；in 的顺序是 __contains__ 到 __iter__ 到序列回退", "切片传入 slice 对象，用 slice.indices(length) 规范化 start / stop / step（含负步长）", "collections.abc.Sequence 只抽象 __len__ 与 __getitem__，mixin 免费提供迭代、contains、reversed、index、count，但不提供 + 与 *", "list / tuple / str 切片是副本，memoryview 切片是视图；3.10 起顶层 collections.Sequence 别名已移除", "自定义序列继承 abc.Sequence 能保持协议一致并少写一批样板方法"]' :pitfalls='["改了切片得到的子序列，原列表却没变", "自定义类只写了 __getitem__，obj[a:b] 抛 TypeError", "from collections import Sequence 报 ImportError", "把切片得到的副本当成原对象的视图，改了半天发现没生效，是初学者最常见的误会"]' summary='Python 的容器不是各自为政：只要实现 __len__ 与 __getitem__，索引、切片、in、迭代就基本可用' />
 
@@ -288,4 +294,4 @@ print('slice', v[1:3], 'reversed', list(reversed(v)))
 
 [下一讲：list：动态数组、操作与时间复杂度](/containers/list-basics)
 
-<FillBlank no='017-F' tpl='from collections.abc  ___ Sequence' :answers='["import"]' hint='回想本讲关于 序列与可迭代的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 序列协议：两个方法撑起一整套操作 的落点。' />
+<FillBlank no='017-5' tpl='from collections.abc  ___ Sequence' :answers='["import"]' hint='回想本讲关于 序列与可迭代的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 序列协议：两个方法撑起一整套操作 的落点。' />

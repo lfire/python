@@ -9,18 +9,18 @@ description: 用数据而不是直觉做优化
 
 状态从哪来、归谁、怎么复制都摸清了，接下来常有人急着把循环换种写法、把结构换个实现，好让程序快一点。但仍在单线程里，动手之前更该先拿数据代替直觉。凭一次计时下结论很容易翻车：缓存预热、磁盘预读和输入规模一变，原本「快了一截」的改法换台机器就反了过来。
 
-本讲按测量的颗粒度往前走：先用 timeit 隔离解释器启动与预热，再用 cProfile 把耗时拆到函数级，接着用 tracemalloc 做快照对比看内存，最后谈基准怎样才可复现。需要你会写函数与循环、理解基本的时间与内存概念；学完能用数据判断该换算法、换数据结构还是换实现层，而不是拍脑袋优化。
+本讲按测量的颗粒度往前走：先用 `timeit` 隔离解释器启动与预热，再用 `cProfile` 把耗时拆到函数级，接着用 `tracemalloc` 做快照对比看内存，最后谈基准怎样才可复现。需要你会写函数与循环、理解基本的时间与内存概念；学完能用数据判断该换算法、换数据结构还是换实现层，而不是拍脑袋优化。
 
 
 ## 把列表推导当成热点，只快了 3%
 
 一个批处理脚本变慢，开发者凭「感觉」把最显眼的 for 循环改成列表推导，压测后只快了 3%，而真正吃掉 70% 时间的是一个每次迭代都做 `json.loads` 的小函数。
 
-另一个团队用 `time.perf_counter` 包住一段含 `time.sleep` 的逻辑，得出「CPU 很重、要上多进程」的结论，实际那段几乎全在等网络。
+另一处，团队用 `time.perf_counter` 包住一段含 `time.sleep` 的逻辑，得出「CPU 很重、要上多进程」的结论，实际那段几乎全在等网络。
 
-还有人把微基准写在 REPL 里跑一次就下结论，结果被缓存预热、GC 与哈希随机化搅得忽快忽慢。共同的错误是：把直觉当数据，把墙钟时间当 CPU 时间，把一次运行当基准。优化的第一步永远是把耗时拆到函数级，再决定换算法、换数据结构还是换实现层；
+还有人把微基准写在 `REPL` 里跑一次就下结论，结果被缓存预热、GC 与哈希随机化搅得忽快忽慢。三件事的共同错误是：把直觉当数据，把墙钟时间当 CPU 时间，把一次运行当基准。优化的第一步永远是把耗时拆到函数级，再决定换算法、换数据结构还是换实现层；
 
-而要做到这一点，必须知道 timeit 怎么隔离噪声、cProfile 的 tottime 与 cumtime 分别代表什么、tracemalloc 的快照差值能证明什么，以及 3.12 起 `sys.monitoring` 为何能把采样开销降下来。
+而要做到这一点，得先弄清 timeit 怎么隔离噪声、cProfile 的 `tottime` 与 `cumtime` 各代表什么、`tracemalloc` 的快照差值能证明什么，以及 3.12 起 `sys.monitoring` 为何能把采样开销降下来。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 perf_counter 量含 sleep 的逻辑，得出「该上多进程」：墙钟把等待时间也算进去，误判成 CPU 密集' />
 
@@ -31,13 +31,15 @@ description: 用数据而不是直觉做优化
 
 `time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；
 
-3.7+ 另有 perf_counter_ns / process_time_ns 返回整数纳秒，避免浮点误差。判断任务类型要看两者之差：wall - cpu 近似等待时长，占比高就是 IO 密集。
+3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。
 
-`timeit.timeit`(stmt, setup='pass', `timer=perf_counter`, `number=1000000`, `globals=None`) 默认跑 100 万次，`timeit.repeat` 默认 `repeat=5`，`Timer.autorange()` 会自动挑 number 使单次总时长不小于 0.2 秒。
+判断任务类型要看两者之差：`wall` 减去 `cpu` 近似等待时长，占比高就是 IO 密集。
 
-微基准要遵守四条：取 `min(samples)` 而不是均值（最小值受偶发调度干扰最小）、把 import 与数据构造放进 setup、用 -S 或同进程内预热排除解释器启动、必要时 `gc.disable()` 与固定 PYTHONHASHSEED。
+`timeit.timeit` 默认 `number=1000000`，`timeit.repeat` 默认 `repeat=5`，`Timer.autorange()` 会自动挑一个 number，使单次总时长不小于 0.2 秒。
 
-timeit 内部把 stmt 编译成函数循环执行，所以多行语句要正确缩进，且它默认关闭 GC 再在每轮结束后恢复。
+微基准要守四条：取 `min(samples)` 而不是均值（最小值受偶发调度干扰最小）、把 import 与数据构造放进 setup、用 `-S` 或同进程内预热排除解释器启动、必要时 `gc.disable()` 并固定 `PYTHONHASHSEED`。
+
+timeit 内部把 stmt 编译成函数循环执行，所以多行语句要正确缩进，且它默认关闭 GC，每轮结束后再恢复。
 
 **计时函数口径对照**
 
@@ -48,7 +50,7 @@ timeit 内部把 stmt 编译成函数循环执行，所以多行语句要正确�
 | time.perf_counter_ns() 3.7+ | 同上，整数纳秒 | 含 | 避免浮点累计误差 |
 | timeit.repeat(...) | 固定 number 下多轮总耗时 | 含 | 微基准，取 min(samples) |
 
-<Callout type="tip" title='核心心智模型' text='time.perf_counter() 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；time.process_time() 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 perf_counter_ns / process_time_ns 返回整数纳秒，避免浮点误差。判断任务' />
+<Callout type="tip" title='核心心智模型' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮' />
 
 <ConceptDiagram type='hub4' title='第 058 讲 · 计时口径：墙钟、CPU 时间与 timeit 的正确姿势' labels='计时口径：墙钟、CPU 时间与 timeit|cProfile / pstats：把耗时拆|tracemalloc 快照与可复现基准' caption='用数据而不是直觉做优化' />
 
@@ -137,15 +139,15 @@ tracemalloc.stop()
 
 ## cProfile 把耗时拆到函数级
 
-`cProfile.Profile()` 是 C 扩展实现的确定性 profiler，通过 `sys.setprofile` 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 profile 模块。
+`cProfile.Profile()` 是 C 扩展实现的确定性 profiler，通过 `sys.setprofile` 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 `profile` 模块。
 
-常用 `pr.enable()` → 跑代码 → `pr.disable()`，或 `cProfile.run`('f()', 'out.prof') 写文件。
+常用 `pr.enable()` 跑代码再用 `pr.disable()` 收尾，或直接 `cProfile.run` 把结果写文件。
 
-`pstats.Stats(pr, stream=...)` 的列含义必须分清：ncalls 调用次数（含 3/2 形式的递归标记）、tottime 是本函数自身消耗、不含子调用，cumtime 是含所有子调用的累计，percall 为商，最后一列是 filename:`lineno(function)`。
+`pstats.Stats` 的列含义必须分清：`ncalls` 是调用次数（含 3/2 形式的递归标记），`tottime` 是本函数自身消耗、不含子调用，`cumtime` 是含所有子调用的累计，`percall` 为二者之商，最后一列是 `filename:lineno(function)`。
 
-排序用 `sort_stats(pstats.SortKey.CUMULATIVE)` 或字符串 'cumtime'、'tottime'、'calls'；
+排序用 `sort_stats(pstats.SortKey.CUMULATIVE)`，也可以写字符串 'cumtime'、'tottime'、'calls'；
 
-3.7+ 推荐 SortKey 枚举。cProfile 看不到 C 函数内部，也不区分行级耗时——line_profiler（第三方，kernprof -l -v）按行统计但侵入更大。确定性 profiler 本身会扭曲结果：函数越多、调用越碎，附加事件越多，所以结论要看相对占比而非绝对毫秒数。
+3.7+ 推荐 `SortKey` 枚举。cProfile 看不到 C 函数内部，也不区分行级耗时——`line_profiler`（第三方，`kernprof -l -v`）按行统计但侵入更大。确定性 profiler 本身会扭曲结果：函数越多、调用越碎，附加事件越多，所以结论要看相对占比而非绝对毫秒数。
 
 **cProfile / pstats 列与排序键**
 
@@ -157,22 +159,22 @@ tracemalloc.stop()
 | SortKey.CUMULATIVE (3.7+) | 按累计耗时排序，值为 cumulative | 按 tottime 排会漏掉包装层 |
 | pstats.Stats.print_stats(10) | 只打印前 10 行 | 不看 strip_dirs 会让路径刷屏 |
 
-<Term word='测量优先于猜测' text='time.perf_counter() 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；time.process_time() 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 perf_counter_ns / process_time_ns 返回整数纳秒，避免浮点误差。判断任务类型要看两者之差：w' />
+<Term word='测量优先于猜测' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。判断任务类型' />
 
-<Term word='timeit 的正确姿势' text='cProfile.Profile() 是 C 扩展实现的确定性 profiler，通过 sys.setprofile 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 profile 模块。常用 pr.enable() → 跑代码 → pr.disable()，或 cProf' />
+<Term word='timeit 的正确姿势' text='`cProfile.Profile()` 是 C 扩展实现的确定性 profiler，通过 `sys.setprofile` 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 `profile` 模块。常用 `pr.enable()` 跑代码再用 `pr.disable()`' />
 
 
 ## tracemalloc 快照差值与可复现基线
 
-`tracemalloc.start(nframe=1)` 起在 Python 对象分配器（pymalloc）层挂钩，记录每块分配的回溯；
+`tracemalloc.start(nframe=1)` 在 Python 对象分配器（pymalloc）层挂钩，记录每块分配的回溯；
 
-`take_snapshot()` 生成快照，statistics('lineno'/'filename'/'traceback') 按维度聚合，compare_to(other, 'lineno') 返回 StatisticDiff 列表，含 size_diff 与 count_diff，是定位「哪一行多分配了内存」的直接证据。
+`take_snapshot()` 生成快照，`statistics('lineno')` 一类调用按维度聚合，`compare_to(other, 'lineno')` 返回 `StatisticDiff` 列表，含 `size_diff` 与 `count_diff`，是定位「哪一行多分配了内存」的直接证据。
 
-`get_traced_memory()` 返回 (current, peak) 字节数，`reset_peak()`（3.9+）可重置峰值；
+`get_traced_memory()` 返回 (current, peak) 字节数，`reset_peak()`（3.9+）可重置峰值，`stop()` 关闭追踪。
 
-`stop()` 关闭。它只统计 Python 层分配，NumPy 的 C 缓冲区不计入，且开启后内存与 CPU 有明显开销，适合测试环境或短时灰度。基准要可复现：同一台机器、同一组输入、同一解释器版本、关闭后台负载、把关键基准写进 CI 并设回归阈值。
+它只统计 Python 层分配，NumPy 的 C 缓冲区不计入，且开启后内存与 CPU 有明显开销，适合测试环境或短时灰度。基准要可复现：同一台机器、同一组输入、同一解释器版本、关闭后台负载、把关键基准写进 CI 并设回归阈值。
 
-3.12 起 `sys.monitoring`（PEP 669）提供按工具 ID 注册回调的低开销事件（PY_START/PY_RETURN 等），可替代 setprofile 做采样，且不需要构造 frame 对象；3.13 沿用并扩展。优化前后必须保留同一组数据与同一测量脚本，否则数字不可比。
+3.12 起 `sys.monitoring`（PEP 669）提供按工具 ID 注册回调的低开销事件（`PY_START` / `PY_RETURN` 等），可替代 setprofile 做采样，且不需要构造 frame 对象；3.13 沿用并扩展。优化前后必须保留同一组数据与同一测量脚本，否则数字不可比。
 
 **剖析工具能力与开销**
 
@@ -187,20 +189,20 @@ tracemalloc.stop()
 
 ## 剖析钩子底层：setprofile 与 sys.monitoring
 
-cProfile 基于 CPython 的 PyEval_SetProfile 钩子：解释器在每次进入/离开 Python 函数、以及调用 C 函数时发出事件，C 层把它们累计进一张以 code object 为键的表，因此它统计的是「事件次数 + 两次事件间的墙钟」，而不是采样。
+cProfile 基于 CPython 的 `PyEval_SetProfile` 钩子：解释器在每次进入或离开 Python 函数、以及调用 C 函数时发出事件，C 层把它们累计进一张以 code object 为键的表，因此它统计的是「事件次数加两次事件间的墙钟」，而不是采样。
 
-tottime 只把当前帧两次事件之间的时间记到自己名下，子调用的时间被单独记入子帧，cumtime 则是当前帧及其所有后代之和——这也是为什么包装函数 tottime 很小、cumtime 却很大。profile 纯 Python 版对每个事件都走 Python 回调，开销高得多。
+`tottime` 只把当前帧两次事件之间的时间记到自己名下，子调用的时间单独记入子帧，`cumtime` 则是当前帧及其所有后代之和——这也是为什么包装函数 `tottime` 很小、`cumtime` 却很大。`profile` 纯 Python 版对每个事件都走 Python 回调，开销高得多。
 
-tracemalloc 在 _PyObject_Malloc / _PyObject_Free 层插入钩子，把分配大小与回溯栈存进哈希表，take_snapshot 只是把当前表按维度聚合，compare_to 对两次聚合做差，故 size_diff 直接对应「这一行多分配了多少字节」。
+tracemalloc 在 `_PyObject_Malloc` / `_PyObject_Free` 层插入钩子，把分配大小与回溯栈存进哈希表，`take_snapshot` 只是把当前表按维度聚合，`compare_to` 对两次聚合做差，故 `size_diff` 直接对应「这一行多分配了多少字节」。
 
-`sys.monitoring` 让工具用 use_tool_id 注册回调并只订阅需要的事件位，解释器在指令流里就地检查，无需为每个事件构造 frame 对象，开销比 setprofile 低一个量级；3.11 的自适应特化解释器、3.13 的 JIT 骨架也会改变字节码执行时间，因此跨版本的性能数字必须重测。
+`sys.monitoring` 让工具用 `use_tool_id` 注册回调并只订阅需要的事件位，解释器在指令流里就地检查，无需为每个事件构造 frame 对象，开销比 setprofile 低一个量级；3.11 的自适应特化解释器、3.13 的 JIT 骨架也会改变字节码执行时间，因此跨版本的性能数字必须重测。
 
 
 ## 给批处理加一条可回归的性能基线
 
-一个 ETL 脚本每次上线都被抱怨变慢，但没人说得清慢在哪。工程做法是写一段独立基准：用同一份固定输入，先分别测总墙钟与 CPU 时间判明负载类型，再用 cProfile 把耗时拆到函数级、按 cumtime 排序打印前几名，最后用 tracemalloc 的 compare_to 看新版本有没有引入额外分配。
+一个 ETL 脚本每次上线都被抱怨变慢，但没人说得清慢在哪。工程做法是写一段独立基准：用同一份固定输入，先分别测总墙钟与 CPU 时间判明负载类型，再用 cProfile 把耗时拆到函数级、按 `cumtime` 排序打印前几名，最后用 tracemalloc 的 `compare_to` 看新版本有没有引入额外分配。
 
-脚本把三项结果打印成结构化文本随代码提交，CI 里设 tottime 与峰值内存的回归阈值；超阈值就失败，而不是靠人凭感觉评审。这样优化前后用的是同一组数据与同一测量脚本，数字才可比；也避免把缓存预热或某次 GC 抖动当成趋势。
+脚本把三项结果打印成结构化文本随代码提交，CI 里设 `tottime` 与峰值内存的回归阈值；超阈值就失败，而不是靠人凭感觉评审。这样优化前后用的是同一组数据与同一测量脚本，数字才可比；也避免把缓存预热或某次 GC 抖动当成趋势。
 
 ```python
 import cProfile
@@ -271,24 +273,24 @@ if __name__ == '__main__':
 
 <Quiz no='058-3' q='关于 tracemalloc，下列哪项准确？' :options='["它在 pymalloc 层挂钩，compare_to 的 size_diff 能定位哪行多分配", "它统计包括 NumPy C 缓冲区在内的全部进程内存", "开启后几乎没有开销，可常驻生产", "它按函数计时，可替代 cProfile"]' answer="0" explain='tracemalloc 只追踪 Python 层分配，NumPy 的 C 缓冲区不计入；开启有明显内存/CPU 开销。它是内存工具，不是计时工具，不能替代 cProfile。' />
 
-<Predict no='058-P' q='timeit.repeat(&#39;pass&#39;, number=100, repeat=7) 返回的列表长度是多少，且 min(samples) 与均值关系如何？' :options='["长度 7，且 min &lt;= mean", "长度 100，且 min &gt; mean", "长度 1，返回总秒数", "长度 7，且每项都相等"]' answer='0' output='7 个元素，min(samples) &lt;= sum(samples)/7' explain='repeat 的 repeat 参数决定轮数，每轮是 number 次执行的总耗时；最小值不大于算术平均是恒等性质，微基准取 min 正是为压低偶发调度噪声。' />
+<Predict no='058-4' q='timeit.repeat(&#39;pass&#39;, number=100, repeat=7) 返回的列表长度是多少，且 min(samples) 与均值关系如何？' :options='["长度 7，且 min &lt;= mean", "长度 100，且 min &gt; mean", "长度 1，返回总秒数", "长度 7，且每项都相等"]' answer='0' output='7 个元素，min(samples) &lt;= sum(samples)/7' explain='repeat 的 repeat 参数决定轮数，每轮是 number 次执行的总耗时；最小值不大于算术平均是恒等性质，微基准取 min 正是为压低偶发调度噪声。' />
 
-<FillBlank no='058-F' tpl='___ time' :answers='["import"]' hint='回想本讲关于 测量优先于猜测 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 计时口径：墙钟、CPU 时间与 timeit 的正确姿势 的落点。' />
+<FillBlank no='058-5' tpl='___ time' :answers='["import"]' hint='回想本讲关于 测量优先于猜测 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 计时口径：墙钟、CPU 时间与 timeit 的正确姿势 的落点。' />
 
-<KnowledgeCard :points='["perf_counter 含等待，process_time 只算 CPU；wall - cpu 的占比决定线程/进程/异步的选型", "timeit.repeat 默认 repeat=5、number=1000000；微基准取 min，构造放 setup，固定 PYTHONHASHSEED 并预热", "cProfile 是 setprofile 之上的 C 实现；tottime 不含子调用、cumtime 含全部后代，按 SortKey.CUMULATIVE 定位热点", "tracemalloc 在 pymalloc 层挂钩，snapshot.compare_to(..., &#39;lineno&#39;) 的 size_diff 定位多分配的行；不含 C 扩展缓冲区", "3.12+ sys.monitoring (PEP 669) 按工具 ID 注册低开销事件，替代 setprofile 采样；3.13 有实验性 JIT 骨架", "基准要同机器、同输入、同版本、写进 CI 设回归阈值；只跑一次或凭直觉优化几乎一定优化错地方"]' :pitfalls='["用 perf_counter 量含 sleep 的逻辑，得出「该上多进程」", "微基准只跑一次、且把数据构造写在被测语句里", "看 cProfile 的 tottime 找热点，结果优化了只占 3% 的函数", "缓存命中、JIT、磁盘预读都会让单次计时失真，凭一次运行下结论常常优化错地方"]' summary='优化的第一步是把耗时拆到函数级，再决定是否换算法、换数据结构或换实现层；微基准必须隔离解释器启动与缓存预热' />
+<KnowledgeCard :points='["perf_counter 含等待，process_time 只算 CPU；wall 减 cpu 的占比决定线程/进程/异步的选型", "timeit.repeat 默认 repeat=5、number=1000000；微基准取 min，构造放 setup，固定 PYTHONHASHSEED 并预热", "cProfile 是 setprofile 之上的 C 实现；tottime 不含子调用、cumtime 含全部后代，按 SortKey.CUMULATIVE 定位热点", "tracemalloc 在 pymalloc 层挂钩，compare_to 的 size_diff 定位多分配的行；不含 C 扩展缓冲区", "3.12+ sys.monitoring (PEP 669) 按工具 ID 注册低开销事件，替代 setprofile 采样；3.13 有实验性 JIT 骨架", "基准要同机器、同输入、同版本、写进 CI 设回归阈值；只跑一次或凭直觉优化几乎一定优化错地方"]' :pitfalls='["用 perf_counter 量含 sleep 的逻辑，得出「该上多进程」", "微基准只跑一次、且把数据构造写在被测语句里", "看 cProfile 的 tottime 找热点，结果优化了只占 3% 的函数", "缓存命中、JIT、磁盘预读都会让单次计时失真，凭一次运行下结论常常优化错地方"]' summary='优化的第一步是把耗时拆到函数级，再决定是否换算法、换数据结构或换实现层；微基准必须隔离解释器启动与缓存预热' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| perf_counter 含等待，process_time 只算 CPU；wall - cpu 的占比决定线程/进程/异步的选型 | 建立直觉 |
+| perf_counter 含等待，process_time 只算 CPU；wall 减 cpu 的占比决定线程/进程/异步的选型 | 建立直觉 |
 | timeit.repeat 默认 repeat=5、number=1000000；微基准取 min，构造放 setup，固定 PYTHONHASHSEED 并预热 | 跑通示例 |
 | cProfile 是 setprofile 之上的 C 实现；tottime 不含子调用、cumtime 含全部后代，按 SortKey.CUMULATIVE 定位热点 | 深入边界 |
-| tracemalloc 在 pymalloc 层挂钩，snapshot.compare_to(..., 'lineno') 的 size_diff 定位多分配的行；不含 C 扩展缓冲区 | 工程落地 |
+| tracemalloc 在 pymalloc 层挂钩，compare_to 的 size_diff 定位多分配的行；不含 C 扩展缓冲区 | 工程落地 |
 | 3.12+ sys.monitoring (PEP 669) 按工具 ID 注册低开销事件，替代 setprofile 采样；3.13 有实验性 JIT 骨架 | 随堂检测 |
 | 基准要同机器、同输入、同版本、写进 CI 设回归阈值；只跑一次或凭直觉优化几乎一定优化错地方 | 复盘 |
 
-1. perf_counter 含等待，process_time 只算 CPU；wall - cpu 的占比决定线程/进程/异步的选型
+1. perf_counter 含等待，process_time 只算 CPU；wall 减 cpu 的占比决定线程/进程/异步的选型
 
 2. timeit.repeat 默认 repeat=5、number=1000000；微基准取 min，构造放 setup，固定 PYTHONHASHSEED 并预热
 
@@ -300,4 +302,4 @@ if __name__ == '__main__':
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **测量优先于猜测** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 测量优先于猜测 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

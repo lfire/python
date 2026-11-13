@@ -7,35 +7,41 @@ description: 能编写 import hook 并解决复杂导入问题
 
 # 第 055 讲 · 导入系统源码级：finder、loader 与缓存
 
-上一讲量清了 GIL 的影响边界，但那还在说线程排队，没回答更靠前一问：一行 import 之前，模块怎么被找出来、又被记住。先别让多条执行流掺和，把单个执行流的状态从哪来弄清，才谈得上几个人同时改它。常见的是同一脚本在测试机正常，进容器却偶发找不到模块。
+上一讲量清了 GIL 的影响边界，但那还在说线程排队，没回答更靠前一问：一行 `import` 之前，模块怎么被找出来、又被记住。先别让多条执行流掺和，把单个执行流的状态从哪来弄清，才谈得上几个人同时改它。常见的是同一脚本在测试机正常，进容器却偶发找不到模块。
 
-从导入的查找顺序起步，看清 sys.meta_path 上 finder 依次询问、loader 建模块的分工，再走到 sys.modules 缓存与 __pycache__ 何时失效，末了处理循环导入与命名空间包。需熟悉模块、包与函数作用域；读完能写出导入系统钩子，说得清这类时灵时不灵的成因。
+从导入的查找顺序起步，看清 `sys.meta_path` 上 finder 依次询问、loader 建模块的分工，再走到 `sys.modules` 缓存与 `__pycache__` 何时失效，末了处理循环导入与命名空间包。需熟悉模块、包与函数作用域；读完能写出导入系统钩子，说得清这类时灵时不灵的成因。
 
 
 ## 一个偶发 ModuleNotFoundError 与半初始化模块
 
-上线脚本里有个 import config 在测试环境正常，进容器后偶发 ModuleNotFoundError，另一个模块又报 cannot import name ... from partially initialized module。团队先怀疑路径写错，反复改 `sys.path` 却时好时坏；
+上线脚本里有个 `import config` 在测试环境正常，进容器后偶发 `ModuleNotFoundError`，另一个模块又报『无法从半初始化的模块里导入名字』。
 
-再怀疑打包漏文件，把源码又拷了一遍。
+团队先怀疑路径写错，反复改 `sys.path` 却时好时坏；再怀疑打包漏文件，把源码又拷了一遍。
 
 真正原因是两层机制都没对齐：一是 `sys.meta_path` 上的 finder 按固定顺序询问、`sys.modules` 有缓存，运行时生成的配置文件必须先注册 finder 或调 `importlib.invalidate_caches()`；
 
-二是包 `__init__.py` 里反向导入子模块时撞上半初始化状态。只靠「把文件放到能找到的地方」这种朴素解法，解释不了为什么同一个 import 有时成功、有时抛属性错误，也说不清 `__pycache__` 何时失效。要修好这类问题，得把导入当成一次可拦截、可缓存、有明确时序的查找过程。
+二是包 `__init__.py` 里反向导入子模块时撞上半初始化状态。只靠「把文件放到能找到的地方」这种朴素解法，解释不了为什么同一个 `import` 有时成功、有时抛属性错误，也说不清 `__pycache__` 何时失效。要修好这类问题，得把导入当成一次可拦截、可缓存、有明确时序的查找过程。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='运行时生成新模块后 import 仍报 ModuleNotFoundError：PathFinder 缓存了目录清单与 FileFinder 实例，新文件不会自动进入视野' />
 
 
 ## sys.meta_path 上的三类 finder
 
-import x 会编译成 IMPORT_NAME 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 None 就直接返回。
+`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。
 
-未命中则按序遍历 `sys.meta_path`，默认是三个类 BuiltinImporter、FrozenImporter、PathFinder，依次调用 `find_spec(fullname, path=None, target=None)`。
+未命中则按序遍历 `sys.meta_path`，默认是三个类 `BuiltinImporter`、`FrozenImporter`、`PathFinder`，依次调用 `find_spec`。
 
-第一个返回非 None 的 ModuleSpec 胜出，返回 None 表示「不归我管」；全部返回 None 才抛 ModuleNotFoundError。参数 path 只在导入子模块时传入父包的 `__path__`，顶层模块为 None；
+第一个返回非 `None` 的 `ModuleSpec` 胜出，返回 `None` 表示「不归我管」；
 
-target 供 `importlib.reload` 复用同一个模块对象。
+全部返回 `None` 才抛 `ModuleNotFoundError`。
 
-自定义 finder 不必继承 MetaPathFinder，协议是鸭子类型，但继承能拿到 invalidate_caches 的默认实现。`sys.meta_path` 的下标就是优先级，插到 0 会先于内建模块被询问，因此既能覆盖标准库，也意味着一个写错的 finder 会拖慢此后每一次导入。
+参数 `path` 只在导入子模块时传入父包的 `__path__`，顶层模块为 `None`；
+
+`target` 供 `importlib.reload` 复用同一个模块对象。
+
+自定义 finder 不必继承 `MetaPathFinder`，协议是鸭子类型，但继承能拿到 `invalidate_caches` 的默认实现。
+
+`sys.meta_path` 的下标就是优先级，插到 0 会先于内建模块被询问，因此既能覆盖标准库，也意味着一个写错的 finder 会拖慢此后每一次导入。
 
 **sys.meta_path 默认 finder 与职责**
 
@@ -46,7 +52,7 @@ target 供 `importlib.reload` 复用同一个模块对象。
 | 3 | PathFinder | sys.path 上的 .py / 包 / zip / 命名空间包 | 全部落空则抛 ModuleNotFoundError |
 | 自定义 | 插入 sys.meta_path[0] 的对象 | 注册表名、加密源码、远程模块 | 返回 None 让默认链路兜底 |
 
-<Callout type="tip" title='核心心智模型' text='import x 会编译成 IMPORT_NAME 字节码，运行时调内建 __import__，落到 importlib._bootstrap._find_and_load：先以模块名查 sys.modules，命中且值非 None 就直接返回。未命中则按序遍历 sys.meta_path，默认是三' />
+<Callout type="tip" title='核心心智模型' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历 `sys.m' />
 
 
 ### sys.modules 命中即返回的代价
@@ -68,21 +74,21 @@ print('json_is_package', importlib.util.find_spec('json').submodule_search_locat
 
 ## ModuleSpec、Loader 与 exec_module 的加载时序
 
-ModuleSpec 自 3.4 引入，字段含 name、loader、origin、submodule_search_locations（包非 None）、has_location、cached。
+`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、`origin`、`submodule_search_locations`（包非 `None`）、`has_location`、`cached`。
 
-loader 实现两个方法：`create_module(spec)` 返回模块对象或 None，None 表示用 module_from_spec 走默认创建；
+loader 实现两个方法：`create_module(spec)` 返回模块对象或 `None`，`None` 表示用 `module_from_spec` 走默认创建；
 
 `exec_module(module)` 在模块的 `__dict__` 命名空间里执行代码，这是 3.4+ 的正式入口，旧 `load_module()` 自 3.4 起被弃用、只留作遗留兼容。
 
-origin 只是给人看与给调试器定位的字符串，可写成 memory:xxx 之类的自定义值。
+`origin` 只是给人看与给调试器定位的字符串，可写成 `memory:xxx` 之类的自定义值。
 
-字节码缓存落在 `__pycache__`/`m.cpython`-313.pyc，标签来自 `sys.implementation.cache_tag`；
+字节码缓存落在 `__pycache__/m.cpython-313.pyc`，标签来自 `sys.implementation.cache_tag`；
 
 默认按源文件 mtime 加大小校验（PEP 552 另支持 checked-hash / unchecked-hash 的 hash-based pyc），所以同一秒内改动且字节数不变可能不触发重编。
 
-`sys.dont_write_bytecode` 默认 False，`PYTHONDONTWRITEBYTECODE=1` 或 -B 可关写入，`sys.pycache_prefix` 能把缓存重定向。
+`sys.dont_write_bytecode` 默认 `False`，`PYTHONDONTWRITEBYTECODE=1` 或 `-B` 可关写入，`sys.pycache_prefix` 能把缓存重定向。
 
-find_spec 与目录清单都有缓存，动态新建文件后要 `importlib.invalidate_caches()`。
+`find_spec` 与目录清单都有缓存，动态新建文件后要 `importlib.invalidate_caches()`。
 
 **ModuleSpec 关键字段（3.4+）**
 
@@ -165,15 +171,17 @@ except ModuleNotFoundError as e:
 
 ## 循环导入与命名空间包的加载时序
 
-循环导入报错的根因是加载时序：模块 a 执行到 import b 时被挂起，此时 a 已写入 `sys.modules` 但只初始化了一部分；
+循环导入报错的根因是加载时序：模块 a 执行到 `import b` 时被挂起，此时 a 已写入 `sys.modules` 但只初始化了一部分；
 
-b 反向 from a import NAME，拿到的正是这个半初始化模块，若 NAME 定义在 import b 之后，就抛 ImportError: cannot import name 'NAME' from partially initialized module 'a'。
+b 反向 `from a import NAME`，拿到的正是这个半初始化模块，若 `NAME` 定义在 `import b` 之后，就抛 `ImportError`，提示无法从未完成初始化的模块导入名字。
 
-三种修复：把导入挪进函数体延迟到调用时、把公共依赖抽到第三个模块、或改成 import a 后以 `a.NAME` 访问（只读模块对象，不要求属性此刻就绪）。
+三种修复：把导入挪进函数体延迟到调用时、把公共依赖抽到第三个模块、或改成 `import a` 后以 `a.NAME` 访问（只读模块对象，不要求属性此刻就绪）。
 
-命名空间包（PEP 420）是没有 `__init__.py` 的目录，`spec.origin` is None，submodule_search_locations 是运行时重算的 _NamespacePath，因此运行时往 `sys.path` 追加目录也能发现新子模块；
+命名空间包（PEP 420）是没有 `__init__.py` 的目录，`spec.origin` 为 `None`，`submodule_search_locations` 是运行时重算的 `_NamespacePath`，因此运行时往 `sys.path` 追加目录也能发现新子模块；
 
-3.11+ 由 _NamespaceLoader 接管。自定义 import hook 对加密模块、远程模块、插件注册表很有用，代价是进入每次导入的关键路径，增加冷启动耗时，还会让静态分析器与 find_spec 的结果不一致，生产上必须配日志与降级路径。
+3.11+ 由 `_NamespaceLoader` 接管。
+
+自定义 `import hook` 对加密模块、远程模块、插件注册表很有用，代价是进入每次导入的关键路径，增加冷启动耗时，还会让静态分析器与 `find_spec` 的结果不一致，生产上必须配日志与降级路径。
 
 
 ## 从 3.4 到 3.13 的导入系统版本线
@@ -189,33 +197,35 @@ b 反向 from a import NAME，拿到的正是这个半初始化模块，若 NAME
 | 3.11 | 命名空间包改由 _NamespaceLoader 接管 | 自定义 finder 要正确处理 origin=None |
 | 3.13 | cache_tag 为 cpython-313，pyc 名随之变化 | 多版本解释器共用目录须清 __pycache__ |
 
-<FlowTimeline :steps='[{"title": "sys.meta_path 的三段查找与 Finder 协议", "desc": "import x 会编译成 IMPORT_NAME 字节码，运行时调内建 __imp…", "tone": "blue"}, {"title": "ModuleSpec、Loader 与 pyc 失效规则", "desc": "ModuleSpec 自 3.4 引入，字段含 name、loader、origin…", "tone": "purple"}, {"title": "循环导入、命名空间包与 hook 的代价", "desc": "循环导入报错的根因是加载时序：模块 a 执行到 import b 时被挂起，此时 a…", "tone": "orange"}, {"title": "工程落地", "desc": "配置插件注册表：把字典加载成可 import 的模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "sys.meta_path 的三段查找与 Finder 协议", "desc": "`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `…", "tone": "blue"}, {"title": "ModuleSpec、Loader 与 pyc 失效规则", "desc": "`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、…", "tone": "purple"}, {"title": "循环导入、命名空间包与 hook 的代价", "desc": "循环导入报错的根因是加载时序：模块 a 执行到 `import b` 时被挂起，此时…", "tone": "orange"}, {"title": "工程落地", "desc": "配置插件注册表：把字典加载成可 import 的模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## _find_and_load 为什么先写缓存再执行
 
-CPython 的导入逻辑由冻结进解释器的 `importlib._bootstrap` 实现，核心是 _find_and_load_unlocked：先以模块名为键查 `sys.modules`，命中即返回，这正是 `importlib.reload` 必须显式绕过缓存重新执行的原因；
+CPython 的导入逻辑由冻结进解释器的 `importlib._bootstrap` 实现，核心是 `_find_and_load_unlocked`：先以模块名为键查 `sys.modules`，命中即返回，这正是 `importlib.reload` 必须显式绕过缓存重新执行的原因；
 
-未命中则遍历 `sys.meta_path` 调 find_spec，拿到 ModuleSpec 后用 module_from_spec 建空模块、先写入 `sys.modules`、再调 `loader.exec_module` 填充，最后从缓存取值返回。
+未命中则遍历 `sys.meta_path` 调 `find_spec`，拿到 `ModuleSpec` 后用 `module_from_spec` 建空模块、先写入 `sys.modules`、再调 `loader.exec_module` 填充，最后从缓存取值返回。
 
-先把模块对象写进缓存再执行，是为了让循环导入能拿到「已存在但可能半初始化」的模块而不是无限递归，这恰好是 partially initialized module 报错的根源。每条 import 语句编译为 IMPORT_NAME 字节码，运行时调内建 `__import__`。
+先把模块对象写进缓存再执行，是为了让循环导入能拿到「已存在但可能半初始化」的模块而不是无限递归，这恰好是 partially initialized module 报错的根源。每条 `import` 语句编译为 `IMPORT_NAME` 字节码，运行时调内建 `__import__`。
 
-PathFinder 借助 `sys.path_hooks`（默认 zipimporter 与 `FileFinder.path_hook`）把每个 `sys.path` 条目映射成 finder，结果缓存在 `sys.path_importer_cache`；
+`PathFinder` 借助 `sys.path_hooks`（默认 `zipimporter` 与 `FileFinder.path_hook`）把每个 `sys.path` 条目映射成 finder，结果缓存在 `sys.path_importer_cache`；
 
-FileFinder 在目录内按扩展名探测并生成带 SourceFileLoader 的 spec。pyc 用 marshal 序列化 code object，头部记 magic number、标志位与源 mtime/大小，加载时比对决定是否复用。
+`FileFinder` 在目录内按扩展名探测并生成带 `SourceFileLoader` 的 spec。
 
-<Term word='sys.meta_path 与 path_hooks' text='import x 会编译成 IMPORT_NAME 字节码，运行时调内建 __import__，落到 importlib._bootstrap._find_and_load：先以模块名查 sys.modules，命中且值非 None 就直接返回。未命中则按序遍历 sys.meta_path，默认是三个类 Builtin' />
+pyc 用 `marshal` 序列化 code object，头部记 magic number、标志位与源 mtime / 大小，加载时比对决定是否复用。
 
-<Term word='Finder / Loader 协议' text='ModuleSpec 自 3.4 引入，字段含 name、loader、origin、submodule_search_locations（包非 None）、has_location、cached。loader 实现两个方法：create_module(spec) 返回模块对象或 None，None 表示用 modul' />
+<Term word='sys.meta_path 与 path_hooks' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历 `sys.meta_path`，' />
+
+<Term word='Finder / Loader 协议' text='`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、`origin`、`submodule_search_locations`（包非 `None`）、`has_location`、`cached`。loader 实现两个方法：`create_module(spec)` 返回模块对象或 `' />
 
 
 ## 配置插件注册表：把字典加载成可 import 的模块
 
-一个灰度系统希望把规则以源码字符串形式存在配置中心，进程启动后注册成模块供业务代码 import，而不是往镜像里塞一堆 .py 文件。直接写文件再 append `sys.path` 有缓存失效与并发写同一目录的问题；
+一个灰度系统希望把规则以源码字符串形式存在配置中心，进程启动后注册成模块供业务代码 `import`，而不是往镜像里塞一堆 `.py` 文件。直接写文件再 `append` 到 `sys.path` 有缓存失效与并发写同一目录的问题；
 
-用 import hook 更干净：一个 MetaPathFinder 只认注册表里的名字，一个 Loader 在 exec_module 里取源码并 compile 到模块的 `__dict__`。因为 find_spec 会被多个导入线程调用，注册表读取用 Lock 保护；
+用 `import hook` 更干净：一个 `MetaPathFinder` 只认注册表里的名字，一个 `Loader` 在 `exec_module` 里取源码并 `compile` 到模块的 `__dict__`。因为 `find_spec` 会被多个导入线程调用，注册表读取用 `Lock` 保护；
 
-origin 写成 registry: 前缀，日志里一眼能看出模块不是来自磁盘。这个结构也就是插件系统、加密模块分发、远程模块的最小骨架，真实项目再加签名校验、版本字段与加载失败降级。
+`origin` 写成 `registry:` 前缀，日志里一眼能看出模块不是来自磁盘。这个结构也就是插件系统、加密模块分发、远程模块的最小骨架，真实项目再加签名校验、版本字段与加载失败降级。
 
 ```python
 import sys
@@ -269,7 +279,7 @@ if __name__ == '__main__':
 python -X importtime -c "import json" 2>&1 | tail -4
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **sys.meta_path 与 path_hooks** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `sys.meta_path` 与 path_hooks 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 <SequenceDiagram title='第 055 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "sys.meta_path ", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "ModuleSpec、Loa", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
@@ -291,15 +301,17 @@ python -X importtime -c "import json" 2>&1 | tail -4
 
 ## import.c 与 _bootstrap._find_and_load 的模块锁时序
 
-import x 编译成 IMPORT_NAME，`ceval.c` 的 import_name 调 Python/`import.c` 的 PyImport_ImportModuleLevelObject，处理相对导入的 level 与 fromlist 后转入冻结模块 `importlib._bootstrap` 的 _find_and_load（源码在 Lib/importlib/`_bootstrap.py`，解释器启动时已冻结进可执行文件）。
+`import x` 编译成 `IMPORT_NAME`，`ceval.c` 的 import_name 调 Python/`import.c` 的 PyImport_ImportModuleLevelObject，处理相对导入的 level 与 fromlist 后转入冻结模块 `importlib._bootstrap` 的 _find_and_load（源码在 `Lib/importlib/_bootstrap.py`，解释器启动时已冻结进可执行文件）。
 
 时序里有两处数据结构决定行为。第一是模块锁：_bootstrap 用 _module_locks 这个字典给每个模块名配一把 _ModuleLock，外加一把全局 _module_locks_lock 保护字典本身；
 
 _find_and_load 先取锁再加载，同一模块被两个线程同时导入时后到者阻塞，避免 exec_module 跑两遍，并在检测到循环等待时抛 _DeadlockError 而不是挂死。
 
-第二是 `sys.modules` 的写入时机：_load_unlocked 在 module_from_spec 建好空模块后立刻执行 `sys.modules``[name]` = module，然后才 `spec.loader.exec_module(module)`。
+第二是 `sys.modules` 的写入时机：_load_unlocked 在 module_from_spec 建好空模块后立刻执行 `sys.modules[name] = module`，然后才 `spec.loader.exec_module(module)`。
 
-先登记再执行，是为了让循环导入里的反向 import 能拿到一个已存在的模块对象，从而不触发对该模块的重复加锁；代价正是正文里那个 partially initialized module，拿到的对象只跑了一半，from a import NAME 若 NAME 定义在 import 之后就会失败。
+先登记再执行，是为了让循环导入里的反向 import 能拿到一个已存在的模块对象，从而不触发对该模块的重复加锁；
+
+代价正是正文里那个 partially initialized module，拿到的对象只跑了一半，`from a import NAME` 若 `NAME` 定义在 import 之后就会失败。
 
 exec 抛异常时 except 分支会把该键从 `sys.modules` 删掉，这解释了导入失败后重试能重新加载。_call_with_frames_removed 则让 importlib 自己的帧不出现在 traceback 里。
 
@@ -346,7 +358,7 @@ print('source size', size)
 
 PathFinder 并不每次都去读目录。
 
-Lib/importlib/`_bootstrap_external.py` 里 `PathFinder._path_importer_cache(path)` 先查全局的 `sys.path_importer_cache`：键是 `sys.path` 里的条目字符串，值是一个 finder 对象或 None（None 表示这条路径不可用，也会被缓存，避免反复试探）。
+`Lib/importlib/_bootstrap_external.py` 里 `PathFinder._path_importer_cache(path)` 先查全局的 `sys.path_importer_cache`：键是 `sys.path` 里的条目字符串，值是一个 finder 对象或 None（None 表示这条路径不可用，也会被缓存，避免反复试探）。
 
 未命中时它按 `sys.path_hooks` 依次尝试，默认链里最后是 `FileFinder.path_hook` 构造出的源码、字节码、扩展三类 loader 组合，构造完就写回缓存。
 
@@ -361,7 +373,7 @@ zipimport 的 zip_directory_cache 也走同一套约定。工程上的结论：�
 
 ### 动态生成模块时 invalidate_caches 的失败复盘
 
-容器里的配置文件由 sidecar 在进程启动后写入 /etc/app/`config.py`，脚本 import config 偶发 ModuleNotFoundError，改 `sys.path` 与重拷源码都时好时坏。
+容器里的配置文件由 sidecar 在进程启动后写入 /`etc/app/config.py`，脚本 `import config` 偶发 ModuleNotFoundError，改 `sys.path` 与重拷源码都时好时坏。
 
 复盘发现两条缓存都在起作用：进程在处理更早的 import 时已经为 /etc/app 构造过 FileFinder 并缓存了当时的空目录清单；sidecar 写入太快，目录 mtime 的秒级值没变，FileFinder 便跳过重新 listdir，直接判定文件不存在。
 
@@ -407,9 +419,9 @@ print('cache key present', folder in sys.path_importer_cache)
 
 <Quiz no='055-3' q='默认 pyc 失效校验依据是什么？' :options='["源文件 mtime 加大小，二者都变才判定失效", "只比对文件内容的哈希", "每次启动无条件重编", "按进程启动时间判断"]' answer="0" explain='默认 timestamp-based pyc 记录源 mtime 与大小；同秒同大小改动可能不触发重编。PEP 552 另提供 checked-hash / unchecked-hash 模式。' />
 
-<Predict no='055-P' q='把某模块名在 sys.modules 里手动设为 None，再 importlib.import_module 它，会发生什么？' :options='["抛 ModuleNotFoundError，消息含 halted; None in sys.modules", "返回一个空模块对象", "正常从磁盘重新加载该模块", "抛 AttributeError"]' answer='0' output='ModuleNotFoundError: import of _blocked_55 halted; None in sys.modules' explain='_find_and_load_unlocked 发现缓存值是 None 时主动抛 ModuleNotFoundError 阻止加载，这是导入锁与循环导入防护的一部分，常被用作「禁止导入」的占位技巧。' />
+<Predict no='055-4' q='把某模块名在 sys.modules 里手动设为 None，再 importlib.import_module 它，会发生什么？' :options='["抛 ModuleNotFoundError，消息含 halted; None in sys.modules", "返回一个空模块对象", "正常从磁盘重新加载该模块", "抛 AttributeError"]' answer='0' output='ModuleNotFoundError: import of _blocked_55 halted; None in sys.modules' explain='_find_and_load_unlocked 发现缓存值是 None 时主动抛 ModuleNotFoundError 阻止加载，这是导入锁与循环导入防护的一部分，常被用作「禁止导入」的占位技巧。' />
 
-<FillBlank no='055-F' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 sys.meta_path 与 path_hooks 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 sys.meta_path 的三段查找与 Finder 协议 的落点。' />
+<FillBlank no='055-5' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 sys.meta_path 与 path_hooks 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 sys.meta_path 的三段查找与 Finder 协议 的落点。' />
 
 <KnowledgeCard :points='["导入链路：IMPORT_NAME → __import__ → _find_and_load → 查 sys.modules → 遍历 sys.meta_path 的 find_spec", "默认 meta_path 顺序：BuiltinImporter / FrozenImporter / PathFinder；返回 None 表示交给下一个", "ModuleSpec 自 3.4 起承载 name/loader/origin/submodule_search_locations；exec_module 取代 load_module", "模块对象先写入 sys.modules 再执行，是循环导入能拿到半初始化模块、也是 partially initialized 报错的根源", "pyc 默认按 mtime+大小校验，文件名含 cache_tag（3.13 为 cpython-313）；动态文件要 invalidate_caches()", "命名空间包（PEP 420）无 __init__.py、origin 为 None；import hook 会拖慢每次导入，须配降级"]' :pitfalls='["运行时生成新模块后 import 仍报 ModuleNotFoundError", "包 __init__.py 里 from . import sub 偶发 partially initialized 报错", "改了 .py 但进程里行为没变", "在包 __init__ 里反向导入子模块，很容易撞上半初始化状态，报出看似无关的 AttributeError"]' summary='导入不是简单的文件读取：meta_path 上的 finder 依次尝试，loader 负责创建并执行模块，全过程围绕 sys.modules 做缓存' />
 

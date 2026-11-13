@@ -7,37 +7,45 @@ description: 让线上问题可检索、可关联、可告警
 
 # 第 078 讲 · 日志：logging、结构化日志与追踪关联
 
-上线前的边界补得差不多了，真出了问题还得能查。一次支付故障翻遍记录，只看到满屏「处理中」和一句笼统的失败，既没有订单号也没有请求标识，二十个服务的记录串不成一条链；更麻烦的是有人把完整账号打了进去，差点成了合规事故。
+前面几讲把输入校验与异常边界这些上线前的护栏补齐了，可真出了线上故障，光有护栏不够，还得查得动。一次支付排障翻遍记录，只看到满屏「处理中」和一句笼统的失败，既没有订单号也没有请求标识，二十个服务的记录串不成一条链；更麻烦的是有人把完整账号打了进去，差点成了合规事故。
 
-从 Logger、Handler、Formatter 三者怎么配合说起，走到级别与传播为什么会重复打印，再把记录改成结构化 JSON 并注入 trace_id 把一次请求串起来，接着谈采样与脱敏，最后关联到分布式追踪。带着函数、异常与模块的基础来；学完能统一日志格式、按级别采样、让敏感字段默认脱敏，异常也带上上下文而不是一句失败。
+从 `Logger`、`Handler`、`Formatter` 三者怎么配合说起，走到级别与传播为什么会重复打印，再把记录改成结构化 `JSON` 并注入 `trace_id` 把一次请求串起来，接着谈采样与脱敏，最后关联到分布式追踪。带着函数、异常与模块的基础来；学完能统一日志格式、按级别采样、让敏感字段默认脱敏，异常也带上上下文而不是一句失败。
 
 
 ## 满屏 INFO: processing 和一句 failed，二十个服务串不成一条链
 
-一次支付故障排查翻遍日志，只看到满屏 INFO: processing 和一句 failed，既没有订单号也没有请求标识，二十个服务的日志无法串成一条链；更糟的是有人把完整卡号和密钥打进了 INFO，差点变成合规事故。日志不是给人读的散文，而是给机器检索的数据：结构化字段加 trace_id 才能把一次请求跨服务关联起来。
+一次支付故障排查，翻遍日志只看到满屏 `INFO: processing` 和一句 `failed`，既没有订单号也没有请求标识，二十个服务的日志串不成一条链；
 
-另一个常见坑是子 logger 自己挂了 handler 又没关 propagate，同一条记录被打印两遍；多进程共写同一个 RotatingFileHandler 时轮转互相覆盖。本讲把 Logger/Handler/Formatter、级别传播、结构化 JSON、trace_id 注入与采样脱敏讲到能支撑线上排障。
+更糟的是有人把完整卡号和密钥打进了 `INFO`，差点变成合规事故。根子在于把日志当成给人读的散文，而不是给机器检索的数据：只有结构化字段加上 `trace_id`，才能把一次请求跨服务关联起来。另有两个反复出现的坑：子 logger 自己挂了 handler 又没关 `propagate`，同一条记录被打印两遍；
+
+多进程共写同一个 `RotatingFileHandler`，轮转时互相覆盖。
+
+本讲把 `Logger` / `Handler` / `Formatter`、级别传播、结构化 `JSON`、`trace_id` 注入与采样脱敏讲到能支撑线上排障。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='循环里打 INFO、把卡号/密钥写进日志：磁盘被洪泛压垮且制造合规事故，异常只打一句 failed 无上下文' />
 
 
 ## Logger / Handler / Formatter 与级别传播
 
-logging 级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回 'WARNING'。
+logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `'WARNING'`。
 
-Logger 按点分名字形成层级：`app.db` 的祖先是 app 再到 root，`propagate=True`（默认）会把记录继续交给祖先 handlers；
+Logger 按点分名字形成层级，`app.db` 的祖先依次是 `app` 再到 root，`propagate=True` 是默认值，会把记录继续交给祖先的 handlers；
 
-若子 logger 与 root 都挂了 handler，同一条日志会打印两次，应设 `logger.propagate = False` 或只在 root 挂 handler。
+若子 logger 与 root 都挂了 handler，同一条日志就会打印两次，此时应设 `logger.propagate = False`，或者统一只在 root 上挂 handler。
 
-`logging.basicConfig(level=, format=, handlers=, force=True)`（3.8+ force）只在 root 无 handler 时配置，`force=True` 会先清掉已有 root handler。
+`logging.basicConfig` 常用 `level`、`format`、`handlers` 等参数，默认只在 root 还没有 handler 时生效；
 
-未设 level 的 logger 用 `getEffectiveLevel()` 沿祖先上溯，root 默认 `WARNING=30`，故 `child.info` 被丢弃、`child.warning` 才输出。
+Python 3.8 起加入的 `force=True` 会先移除已有的 root handler 再重新配置，适合需要覆盖旧配置的场景。
 
-Handler 常见 StreamHandler、FileHandler、`RotatingFileHandler(maxBytes, backupCount)`、TimedRotatingFileHandler、QueueHandler，库代码应加 NullHandler 避免「No handlers」告警。
+未设 level 的 logger 通过 `getEffectiveLevel()` 沿祖先上溯，root 默认是 `WARNING=30`，所以子 logger 上的 `child.info(...)` 会被丢弃、`child.warning(...)` 才输出。
 
-Formatter 用 %(asctime)s %(levelname)s %(name)s %(message)s %(lineno)d，配 datefmt 与 style；
+常见 Handler 有 `StreamHandler`、`FileHandler`、`RotatingFileHandler`（按 `maxBytes` 切割、保留 `backupCount` 份）、`TimedRotatingFileHandler` 与 `QueueHandler`；
 
-`logger.isEnabledFor(DEBUG)` 可在构造昂贵消息前先判断。
+库代码应加一个 `NullHandler`，避免「No handlers could be found」告警。
+
+Formatter 的格式串由 `%(asctime)s`、`%(levelname)s`、`%(name)s`、`%(message)s`、`%(lineno)d` 这类占位符组成，可配 `datefmt` 与 `style`；
+
+在拼接昂贵消息前用 `logger.isEnabledFor(logging.DEBUG)` 先判断，能省下这次开销。
 
 **日志级别与传播**
 
@@ -51,7 +59,7 @@ Formatter 用 %(asctime)s %(levelname)s %(name)s %(message)s %(lineno)d，配 da
 | basicConfig(force=True) | 3.8+ 先清 root handler | 重复调用不再静默失效 |
 | NullHandler | 库代码添加 | 避免 No handlers could be found 告警 |
 
-<Callout type="tip" title='核心心智模型' text='logging 级别是整数常量：NOTSET=0、DEBUG=10、INFO=20、WARNING=30、ERROR=40、CRITICAL=50，logging.getLevelName(30) 返回 &#39;WARNING&#39;。Logger 按点分名字形成层级：app.db 的祖先是 app 再到 ro' />
+<Callout type="tip" title='核心心智模型' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级，`' />
 
 **Handler 与 Formatter 选型**
 
@@ -64,19 +72,23 @@ Formatter 用 %(asctime)s %(levelname)s %(name)s %(message)s %(lineno)d，配 da
 | Formatter 的 %(name)s/%(lineno)d | 格式字段 | extra 可加自定义字段 |
 | 自定义 Formatter / Filter | JSON、trace_id、脱敏 | filter 返回 bool 决定是否输出 |
 
-`Logger.makeRecord`（或 setLogRecordFactory 指定的工厂）构造 LogRecord，属性来自固定字段、extra 字典与 Filter 注入；
+记录是怎么产生的：`Logger.makeRecord`（或 `logging.setLogRecordFactory` 指定的工厂）构造 `LogRecord`，属性来自固定字段、`extra` 字典与 `Filter` 的注入。
 
-`Logger.handle` 调 callHandlers 沿 logger 及其祖先逐级找 handler，handler 先比 level、再过自己的 Filters、最后在 `self.lock`（`threading.RLock`）保护下 emit，propagate 决定是否继续上溯——这正是「子与 root 都挂 handler 就重复」的来源。
+`Logger.handle` 再调 `callHandlers`，沿当前 logger 及其祖先逐级找 handler；
 
-basicConfig 给 root 加一个 StreamHandler；未设 level 的 logger 由 getEffectiveLevel 上溯到 root 的 `WARNING(30)`，所以 INFO 被丢弃。
+每个 handler 先比较 `level`、再过自身的过滤器、最后在 `self.lock`（一把 `threading.RLock`）保护下 `emit`，而 `propagate` 决定要不要继续上溯——「子 logger 与 root 都挂 handler 就打印两遍」正是从这里来的。
 
-`contextvars.ContextVar` 把值存在上下文局部映射里，asyncio 在 create_task 时复制当前 context，故 trace_id 能在同一请求的多协程里一致而在进程级 `threading.local` 里不行。
+`logging.basicConfig` 默认给 root 加一个 `StreamHandler`；
 
-JSON Formatter 覆盖 `format()` 生成结构化字段；脱敏在 format/filter 阶段对长数字串做掩码，避免敏感值落地。
+未设 level 的 logger 由 `getEffectiveLevel` 上溯到 root 的 `WARNING(30)`，所以 `INFO` 被丢弃。
 
-<Term word='Logger / Handler / Formatter' text='logging 级别是整数常量：NOTSET=0、DEBUG=10、INFO=20、WARNING=30、ERROR=40、CRITICAL=50，logging.getLevelName(30) 返回 &#39;WARNING&#39;。Logger 按点分名字形成层级：app.db 的祖先是 app 再到 root，propaga' />
+`contextvars.ContextVar` 把值存在上下文局部映射里，`asyncio` 在 `create_task` 时复制当前 context，因此 `trace_id` 在同一请求的多个协程里一致，而线程级的 `threading.local` 做不到。
 
-<Term word='级别与传播' text='结构化日志把一行日志做成可解析的 JSON 对象（level、msg、trace、event 等字段），而不是自然语言句子。做法有三：Formatter 里 json.dumps 一条 dict；用 extra={&#39;order_id&#39;: ...} 给 LogRecord 加字段；或自定义 Filter 在 filter' />
+最后，自定义 `JSON` `Formatter` 覆盖 `format()` 生成结构化字段，脱敏则在 `format` / `filter` 阶段对长数字串做掩码，避免敏感值落地。
+
+<Term word='Logger / Handler / Formatter' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级，`app.db` 的祖' />
+
+<Term word='级别与传播' text='结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、`trace`、`event` 这类字段各自独立——而不是一句自然语言。做法大致三种：在自定义 `Formatter` 里对一条 `dict` 调 `json.dumps`；用 `extra={&#39;order_id&#39;: ...}` 给 `' />
 
 
 ### 子 logger 挂了 handler 为什么还会打两遍
@@ -181,15 +193,21 @@ print(buf.getvalue().strip())
 
 ## 结构化日志、trace_id 与上下文注入
 
-结构化日志把一行日志做成可解析的 JSON 对象（level、msg、trace、event 等字段），而不是自然语言句子。做法有三：Formatter 里 `json.dumps` 一条 dict；用 extra=&#123;'order_id': ...&#125; 给 LogRecord 加字段；
+结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、`trace`、`event` 这类字段各自独立——而不是一句自然语言。做法大致三种：在自定义 `Formatter` 里对一条 `dict` 调 `json.dumps`；
 
-或自定义 Filter 在 `filter(record)` 里 setattr 注入字段后返回 True。
+用 `extra={'order_id': ...}` 给 `LogRecord` 追加字段；
 
-trace_id 要在异步/多服务间正确传播，用 `contextvars.ContextVar`（3.7+）：它随 Task 创建被复制进上下文，`logging.Filter` 里 `trace_id.get()` 取当前值写进 record，比 `threading.local` 更适合 asyncio。
+或写一个 `Filter`，在 `filter(record)` 里 `setattr` 注入字段后返回 `True`。
 
-更彻底的做法是 `logging.setLogRecordFactory`（3.2+）让每条记录出生就带 trace_id。
+`trace_id` 要能在异步任务与多个服务之间正确传递，标准库给的是 `contextvars.ContextVar`（Python 3.7 起）：`asyncio` 在 `create_task` 时复制当前上下文，于是在 `logging.Filter` 里用 `trace_id.get()` 取到的就是本次请求的值；
 
-跨服务用 W3C Trace Context 的 traceparent 头传递，与 OpenTelemetry 的 trace_id/span_id 对齐，日志与链路追踪才能互相跳转。结构化字段让「按 trace_id 聚合、按 level 过滤、按 event 计数」成为一次查询，而不是全文 grep。
+`threading.local` 是线程级的，分不清同一线程里的多个协程，不适合 asyncio。
+
+想让每条记录自出生就带 `trace_id`，可以用 `logging.setLogRecordFactory`（3.2 起）替换记录工厂。
+
+跨服务则靠 W3C Trace Context 的 `traceparent` 头传递，与 OpenTelemetry 的 `trace_id` / `span_id` 对齐，日志和链路追踪才能互相跳转。
+
+字段一旦结构化，「按 `trace_id` 聚合、按 `level` 过滤、按 `event` 计数」就是一次查询，而不是全文 `grep`。
 
 **结构化、采样、脱敏与追踪**
 
@@ -204,31 +222,35 @@ trace_id 要在异步/多服务间正确传播，用 `contextvars.ContextVar`（
 
 <ConceptDiagram type='layers3' title='第 078 讲 · 分层视角' labels='Logger / Handler / F|结构化日志、trace_id 与上下文注|采样、脱敏、性能与并发安全|与 OpenTelemetry 关联' caption='采样、脱敏、性能与并发安全' />
 
-换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 **与 OpenTelemetry 关联** 落在哪一层。
+换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 与 OpenTelemetry 关联 落在哪一层。
 
 
 ### trace_id 怎么跨服务串起一次请求
 
-<FlowTimeline :steps='[{"title": "Logger / Handler / Formatter 与级别传播", "desc": "logging 级别是整数常量：NOTSET=0、DEBUG=10、INFO=20、…", "tone": "blue"}, {"title": "结构化日志、trace_id 与上下文注入", "desc": "结构化日志把一行日志做成可解析的 JSON 对象（level、msg、trace、e…", "tone": "purple"}, {"title": "采样、脱敏、性能与并发安全", "desc": "采样与分级：用 Filter.filter 返回 bool 丢掉生产环境 DEBUG…", "tone": "orange"}, {"title": "工程落地", "desc": "带 trace_id、采样与脱敏的结构化日志装配", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "Logger / Handler / Formatter 与级别传播", "desc": "logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`IN…", "tone": "blue"}, {"title": "结构化日志、trace_id 与上下文注入", "desc": "结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、…", "tone": "purple"}, {"title": "采样、脱敏、性能与并发安全", "desc": "采样与分级可以放在 `Filter.filter` 里：返回 `bool` 丢掉生产…", "tone": "orange"}, {"title": "工程落地", "desc": "带 trace_id、采样与脱敏的结构化日志装配", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 采样、脱敏、性能与多进程并发安全
 
-采样与分级：用 `Filter.filter` 返回 bool 丢掉生产环境 DEBUG、或按 trace_id 哈希保留固定比例，避免循环里打 INFO 压垮磁盘；
+采样与分级可以放在 `Filter.filter` 里：返回 `bool` 丢掉生产环境的 `DEBUG`，或按 `trace_id` 取哈希只保留固定比例，避免循环里刷 `INFO` 把磁盘压垮。
 
-异常用 `logger.exception()`（在 except 内调用，自动带 exc_info 堆栈）。
+异常要用 `logger.exception()`，且只在 `except` 块内调用，它会自动带上 `exc_info` 堆栈。
 
-脱敏是硬要求：手机号、身份证、卡号、token 默认不进日志，必须在 Formatter/Filter 里做掩码（如保留前 6 后 4、中间打星），密钥用 SecretStr 类包装避免 `__str__`/`__repr__` 泄漏。
+脱敏是硬要求：手机号、身份证、卡号、token 默认不该进日志，要在 `Formatter` 或 `Filter` 阶段做掩码（比如保留前 6 后 4、中间打星）；
 
-性能上 logging 的每个 Handler 用 `threading.RLock` 保护 emit，线程安全；
+密钥则用自定义包装类重写 `__str__` / `__repr__`，让它们只返回掩码——Pydantic 的 `SecretStr` 就是现成例子，能避免敏感值被格式化函数取到。
 
-但多进程共写同一个 RotatingFileHandler 的轮转不是进程安全的，要用 QueueHandler + 单一 QueueListener 进程写文件，或 concurrent-log-handler。
+性能上，每个 `Handler` 的 `emit` 都由一把 `threading.RLock` 保护，线程安全；
 
-用 %-style 惰性格式化（`logger.info`('x=%s', val)）延后字符串拼接，昂贵参数先用 isEnabledFor 包一层；
+但多进程共写同一个 `RotatingFileHandler` 时轮转不是进程安全的，正确做法是 `QueueHandler` 配一个独立的 `QueueListener` 进程统一写文件，或换用进程安全的 `concurrent-log-handler`。
 
-`logger.exception` 带上下文而非只打一句 failed。
+日志用 `%s` 这类占位符做惰性格式化，`logger.info('x=%s', val)` 会把字符串拼接推迟到真正需要输出时；
 
-库代码绝不 print，统一交给 logger。
+构造昂贵参数前先拿 `isEnabledFor` 包一层更稳妥。
+
+异常路径要 `logger.exception` 带上下文，而不是只打一句 `failed`；
+
+库代码一律不 `print`，统一交给 logger。
 
 <Callout type="warn" title='本讲最容易踩的坑' text='循环里打 INFO、把卡号/密钥写进日志：磁盘被洪泛压垮且制造合规事故，异常只打一句 failed 无上下文' />
 
@@ -236,16 +258,18 @@ trace_id 要在异步/多服务间正确传播，用 `contextvars.ContextVar`（
 python -c "import logging; logging.basicConfig(level=logging.INFO); logging.info('hello')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **Logger / Handler / Formatter** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 Logger / Handler / Formatter 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 带 trace_id、采样与脱敏的结构化日志装配
 
-线上排障要求一条日志同时满足三件事：能按 trace_id 聚合到一次请求、是机器可解析的 JSON、且不泄漏敏感值。
+线上排障对一条日志有三条要求：能按 `trace_id` 聚合到一次请求、是机器可解析的 `JSON`、且不泄漏敏感值。
 
-做法是把 ContextVar 里当前请求的 trace_id 经 Filter 注入每条记录，用返回 bool 的 Filter 丢掉生产 DEBUG，再用自定义 Formatter 输出 JSON 并对长数字串做掩码。下面片段装配这套 handler，模拟两个请求共四条调用，最后解析回 JSON 验证字段；
+做法是先把 `ContextVar` 里当前请求的 `trace_id` 经 `Filter` 注入每条记录，再用一个返回 `bool` 的 `Filter` 丢掉生产环境的 `DEBUG`，最后让自定义 `Formatter` 输出 `JSON` 并对长数字串做掩码。
 
-ts 用 created 时间戳但只在结构里、不参与输出比对，重点看 trace 切换与 DEBUG 被采样丢弃是否正确。
+下面片段装配这套 handler，模拟两个请求共四次调用，最后把输出解析回 `JSON` 验证字段；
+
+`ts` 取自 `LogRecord.created` 时间戳，只出现在结构里、不参与比对，重点看 `trace_id` 切换是否正确，以及 `DEBUG` 是否被采样丢掉。
 
 ```python
 import logging, io, json, contextvars
@@ -312,9 +336,9 @@ for line in lines:
 
 <Quiz no='078-3' q='多进程共写同一个 RotatingFileHandler 的风险是？' :options='["轮转时多进程同时切割文件，日志覆盖或丢失", "级别自动被改成 DEBUG", "JSON 格式失效", "trace_id 无法注入"]' answer="0" explain='Handler 的 RLock 只保证单进程内线程安全，跨进程轮转没有协调；应改 QueueHandler + 单一 QueueListener 写者或进程安全实现。' />
 
-<Predict no='078-P' q='logging.getLevelName(30) 的输出是？' :options='["WARNING", "INFO", "30"]' answer='0' output='WARNING' explain='级别常量里 WARNING=30，getLevelName 把数值映射回名称；NOTSET/DEBUG/INFO/WARNING/ERROR/CRITICAL 对应 0/10/20/30/40/50。' />
+<Predict no='078-4' q='logging.getLevelName(30) 的输出是？' :options='["WARNING", "INFO", "30"]' answer='0' output='WARNING' explain='级别常量里 WARNING=30，getLevelName 把数值映射回名称；NOTSET/DEBUG/INFO/WARNING/ERROR/CRITICAL 对应 0/10/20/30/40/50。' />
 
-<FillBlank no='078-F' tpl='___ logging, io, json, contextvars' :answers='["import"]' hint='回想本讲关于 Logger / Handler / Formatter 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Logger / Handler / Formatter 与级别传播 的落点。' />
+<FillBlank no='078-5' tpl='___ logging, io, json, contextvars' :answers='["import"]' hint='回想本讲关于 Logger / Handler / Formatter 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Logger / Handler / Formatter 与级别传播 的落点。' />
 
 <KnowledgeCard :points='["级别 NOTSET/DEBUG/INFO/WARNING/ERROR/CRITICAL = 0/10/20/30/40/50，root 默认 WARNING", "Logger 按点分层级，propagate=True 会把记录传给祖先；子与 root 都挂 handler 会重复输出", "结构化日志用 JSON Formatter + extra/Filter 字段；trace_id 用 contextvars.ContextVar 跨协程传播", "logging.setLogRecordFactory（3.2+）让每条记录出生带 trace_id；W3C traceparent 对齐 OpenTelemetry", "采样用 Filter.filter 返回 bool、脱敏在 Formatter/Filter 做掩码、logger.exception 带 exc_info", "Handler 用 RLock 保证线程安全，但多进程轮转不安全；改 QueueHandler + QueueListener 单写者"]' :pitfalls='["循环里打 INFO、把卡号/密钥写进日志", "子 logger 挂 handler 且 propagate 仍为 True", "多进程共写同一个 RotatingFileHandler", "在循环里打 INFO、把密钥或身份证写进日志，既压垮磁盘又制造合规事故"]' summary='日志是给机器检索的数据，不是给人看的散文；结构化字段加 trace_id 才能把一次请求跨服务串起来' />
 

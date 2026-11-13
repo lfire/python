@@ -14,11 +14,11 @@ description: 建立不会自欺的建模与评估流程
 
 ## 在测试集上反复调参，0.93 上线只剩 0.7
 
-一个欺诈检测模型离线报告准确率 99.4%，评审一片叫好，上线后一周却几乎没拦住任何一笔欺诈。复盘发现数据里正样本只占 0.6%，模型把所有交易都判成「正常」就能拿到 99.4%；而真正该看的召回率其实是 0。
+一个欺诈检测模型离线报告准确率 99.4%，评审一片叫好，上线后一周却几乎没拦住任何一笔欺诈。复盘发现数据里正样本只占 0.6%，模型把所有交易都判成『正常』就能拿到 99.4%；而真正该看的召回率其实是 0。
 
-第二个坑更隐蔽：团队先在全量数据上做特征选择、算好标准化参数，再切训练集与测试集，测试分数一路虚高，因为测试集的分布信息已经渗进了预处理。还有人把类别不平衡的测试集也用 accuracy 汇报，把「全部预测多数类」当成强基线。这些都不是算法不够复杂，而是评估流程本身在自欺。
+第二个坑更隐蔽：团队先在全量数据上做特征选择、算好标准化参数，再切训练集与测试集，测试分数一路虚高，因为测试集的分布信息已经渗进了预处理。还有人把类别不平衡的测试集也用 accuracy 汇报，把『全部预测多数类』当成强基线。这些都不是算法不够复杂，而是评估流程本身在自欺。
 
-本讲把「不会自欺的建模流程」落到划分、指标与基线三件可核对的事上。
+本讲把『不会自欺的建模流程』落到划分、指标与基线三件可核对的事上。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='先在全量数据上标准化或做特征选择再划分：预处理的均值/方差/入选列也是从数据学到的参数，全量 fit 会把测试折信息泄进训练' />
 
@@ -29,11 +29,11 @@ description: 建立不会自欺的建模与评估流程
 
 数据泄漏指本该只在训练阶段获得的信息被提前用到全量或测试：先在全量上 fit 标准化器（均值、标准差）、先在全量上做特征选择、用含目标信息的特征、或把同一用户的多条记录随机分到训练与测试两侧，都会让分数虚高却无法泛化。
 
-根因是「预处理也是从数据里学到的参数」， scaler 的均值与方差、特征选择的入选列、目标编码的映射，都必须只在训练折上 fit，再 transform 到验证/测试折。
+根因是『预处理也是从数据里学到的参数』，scaler 的均值与方差、特征选择的入选列、目标编码的映射，都必须只在训练折上 fit，再 transform 到验证/测试折。
 
-scikit-learn 的 Pipeline 把这一切固化：`make_pipeline(StandardScaler()`, `SelectKBest(...)`, `LogisticRegression()`) 配合 cross_val_score 或 GridSearchCV，保证每一次交叉验证都只在对应训练折内 fit 预处理，测试折永远只是被动 transform。
+scikit-learn 的 Pipeline 把这一切固化：`make_pipeline(StandardScaler(),SelectKBest(...),LogisticRegression())` 配合 `cross_val_score` 或 `GridSearchCV`，保证每一次交叉验证都只在对应训练折内 fit 预处理，测试折永远只是被动 transform。
 
-把「先划分、后 fit、预处理进 Pipeline」写成铁律，是评估可信的前提。
+把『先划分、后 fit、预处理进 Pipeline』写成铁律，是评估可信的前提。
 
 **本讲定位**
 
@@ -51,13 +51,13 @@ scikit-learn 的 Pipeline 把这一切固化：`make_pipeline(StandardScaler()`,
 
 二分类的全部指标都能从混淆矩阵四个数推出：TP 真正例、FP 假正例、FN 假反例、TN 真反例。
 
-准确率 accuracy = (TP+TN)/总数，精确率 `precision = TP`/(TP+FP) 衡量「报出来的有多少是真的」，召回率 `recall = TP`/(TP+FN) 衡量「真的里抓到了多少」，F1 是二者的调和平均 2·P·R/(P+R)。
+准确率 `accuracy=(TP+TN)/N`（N 为样本总数），精确率 `precision=TP/(TP+FP)` 衡量『报出来的有多少是真的』，召回率 `recall=TP/(TP+FN)` 衡量『真的里抓到了多少』，F1 是二者的调和平均 `2*P*R/(P+R)`。
 
 极不平衡数据里，全预测负类可让 accuracy 高达 0.99 却 `recall=0`，所以不能用 accuracy 单指标；要按业务代价选：欺诈、疾病筛查漏报代价高，优先 recall 或 PR-AUC；垃圾邮件误拦代价高，优先 precision。
 
 ROC-AUC 衡量把正样本排在负样本前的概率，对类别不平衡相对稳健，但正样本极少时 PR-AUC 更敏感。阈值不是固定的 0.5：降低阈值会提高 recall、牺牲 precision，要按代价画 PR 曲线选工作点。
 
-多分类要说明 macro（各类等权）/ micro（按样本数加权）/ weighted 平均的区别，macro 在小类上更诚实。回归指标则是 MAE（对离群点稳健）、MSE/RMSE（对大误差惩罚更重）、R²（相对基线的解释方差），选择同样取决于业务对大误差的容忍度。
+多分类要说明 macro（各类等权）、micro（按样本数加权）、weighted 平均的区别，macro 在小类上更诚实。回归指标则是 MAE（对离群点稳健）、MSE/`RMSE`（对大误差惩罚更重）、R²（相对基线的解释方差），选择同样取决于业务对大误差的容忍度。
 
 ```python
 def metrics(tp, fp, fn, tn):
@@ -112,11 +112,15 @@ print('clean', zscore(test, mean(train), pstd(train)))
 
 ## 分类指标：从混淆矩阵推导出该看哪一个
 
-单次划分的分数受随机性影响大，k 折交叉验证把数据均分成 k 份，轮流用 k-1 份训练、1 份验证，得到 k 个分数取均值与标准差，既更稳又给出波动范围；分类用 StratifiedKFold 保持比例，时间序列用 TimeSeriesSplit 禁止未来折训练过去。
+单次划分的分数受随机性影响大，k 折交叉验证把数据均分成 k 份，轮流用 k-1 份训练、1 份验证，得到 k 个分数取均值与标准差，既更稳又给出波动范围；
 
-嵌套交叉验证把「选超参」与「评估」再分两层：外层评估、内层网格搜索，避免在测试集上反复调参把它退化成验证集。任何复杂模型之前必须先做可解释的基线：分类用 DummyClassifier(strategy='most_frequent') 或先验概率，回归用 DummyRegressor(strategy='mean')。
+分类用 `StratifiedKFold` 保持比例，时间序列用 `TimeSeriesSplit` 禁止未来折训练过去。
 
-基线的意义是给出「不看特征也能达到的地板」，如果复杂模型只比基线好一点，就要怀疑特征、泄漏或指标口径。还要固定随机种子、记录数据快照与版本，让评估可复现。最典型的失效信号是「离线分数远高于线上」：优先查泄漏（预处理是否只在训练折 fit）、分布漂移、以及指标是否匹配业务代价，而不是急着换更大的模型。
+嵌套交叉验证把『选超参』与『评估』再分两层：外层评估、内层网格搜索，避免在测试集上反复调参把它退化成验证集。
+
+任何复杂模型之前必须先做可解释的基线：分类用 `DummyClassifier(strategy='most_frequent')` 或先验概率，回归用 `DummyRegressor(strategy='mean')`。
+
+基线的意义是给出『不看特征也能达到的地板』，如果复杂模型只比基线好一点，就要怀疑特征、泄漏或指标口径。还要固定随机种子、记录数据快照与版本，让评估可复现。最典型的失效信号是『离线分数远高于线上』：优先查泄漏（预处理是否只在训练折 fit）、分布漂移、以及指标是否匹配业务代价，而不是急着换更大的模型。
 
 ```python
 def kfold(n, k):
@@ -167,13 +171,13 @@ print('each sample validated once?', sorted(cover) == list(range(10)))
 
 ## 一次划分如何决定评估的无偏性
 
-评估可信度的核心是「信息隔离」：任何从数据里估计出来的量——scaler 的均值方差、特征选择的得分、目标编码的映射、甚至阈值——一旦在全量上计算，就把测试折的统计信息编码进了训练过程，模型相当于偷看了答案。
+评估可信度的核心是『信息隔离』：任何从数据里估计出来的量——scaler 的均值方差、特征选择的得分、目标编码的映射、甚至阈值——一旦在全量上计算，就把测试折的统计信息编码进了训练过程，模型相当于偷看了答案。
 
 交叉验证把这种隔离写成机制：k 折轮流留一份验证，预处理必须放进 Pipeline，使 fit 只发生在当前训练折，验证折仅调用 transform。
 
-指标层面，混淆矩阵是充分统计量，accuracy 在类别先验极偏时由多数类主导：当正例比例 p 很小，全预测负类的 accuracy 就是 1-p，仍可逼近 1，而 recall 恒为 0，所以指标必须由业务代价（漏报损失 vs 误报损失）决定，而非默认 0.5 阈值或默认 accuracy。
+指标层面，混淆矩阵是充分统计量，accuracy 在类别先验极偏时由多数类主导：当正例比例 p 很小，全预测负类的 accuracy 就是 1-p，仍可逼近 1，而 recall 恒为 0，所以指标必须由业务代价（漏报损失对误报损失）决定，而非默认 0.5 阈值或默认 accuracy。
 
-F1 用调和平均而非算术平均，是因为调和平均对较小项敏感，能防止「precision 很高但 recall 极低」被平均成好看的分数。基线模型给出贝叶斯式地板：不利用任何特征的先验预测，是判断复杂模型是否真有增益的参照。
+F1 用调和平均而非算术平均，是因为调和平均对较小项敏感，能防止『precision 很高但 recall 极低』被平均成好看的分数。基线模型给出贝叶斯式地板：不利用任何特征的先验预测，是判断复杂模型是否真有增益的参照。
 
 **错因速查**
 
@@ -190,7 +194,11 @@ F1 用调和平均而非算术平均，是因为调和平均对较小项敏感�
 
 一个二分类任务要给出可信的离线结论，最少需要四件事：划分时保持类别比例、预处理参数只在训练折估计、同时汇报多个指标、以及一个多数类基线作地板。下面用纯标准库把这条流程写成可复跑的函数：它把样本按分层思路切成训练与测试两段，标准化参数只从训练段计算，再对测试段应用；
 
-随后用一个「全预测多数类」的基线和一个「按阈值打分」的简易模型分别算混淆矩阵，打印各自的 accuracy 与 recall。真实工程把 scaler 与模型换成 sklearn 的 Pipeline， StratifiedKFold 负责分层，指标口径不变；关键是别让任何 fit 越过训练折边界。
+随后用一个『全预测多数类』的基线和一个『按阈值打分』的简易模型分别算混淆矩阵，打印各自的 accuracy 与 recall。
+
+真实工程把 scaler 与模型换成 sklearn 的 `Pipeline`、`StratifiedKFold` 负责分层，指标口径不变；
+
+关键是别让任何 fit 越过训练折边界。
 
 ```python
 def split_stratified(rows, frac=0.7):
@@ -231,15 +239,25 @@ print('model', evaluate(tr, te, 1.5))
 
 ## ROC-AUC 就是 Mann-Whitney U 统计量
 
-二分类排序分数 `s(x)` 下，ROC-AUC 的定义是「随机取一个正样本与一个负样本，正样本分数高于负样本的概率」，即 `AUC = P`(s 正 大于 s 负)，平局记 0.5。
+二分类排序分数 `s(x)` 下，ROC-AUC 的定义是『随机取一个正样本与一个负样本，正样本分数高于负样本的概率』，平局记 0.5。把全部正负样本对枚举一遍，满足『正样本分数更高』的对数记为 U（Mann-Whitney U 统计量），则 AUC 等于 U 除以正样本数乘负样本数，含平局时每个平局给 U 加 0.5。
 
-把 n 正 乘 n 负 个正负对全部枚举，满足 s 正 大于 s 负 的对数记为 U（Mann-Whitney U 统计量），则 `AUC = U` 除以 (n 正 乘 n 负)，含平局时 U 每个平局加 0.5。
+这也解释了为什么 ROC 曲线下梯形面积恰好等于这个概率：按分数从高到低扫描，每遇到一个正样本 TPR 上升 1 除以正样本数、每遇到一个负样本 FPR 前进 1 除以负样本数，累加的小矩形正是 U 除以正负样本数之积。推导带来三个判据：AUC 与阈值无关、只依赖排序；
 
-这也解释了为什么 ROC 曲线下梯形面积恰好等于这个概率：按分数从高到低扫描，每遇到一个正样本 TPR 上升 1 除以 n 正、每遇到一个负样本 FPR 前进 1 除以 n 负，累加的小矩形正是 U 除以 n 正 n 负。推导带来三个判据：AUC 与阈值无关、只依赖排序；
+它对类别先验不敏感，正样本占比从 1% 变到 10% 只要排序不变 AUC 不动；但正样本极少时负样本对数量巨大，AUC 会被大量『容易的负样本』稀释，PR-AUC 才对少数类敏感。
 
-它对类别先验不敏感，正样本占比从 1% 变到 10% 只要排序不变 AUC 不动；但正样本极少时 n 正 n 负 里负样本对数量巨大，AUC 会被大量「容易的负样本」稀释，PR-AUC 才对少数类敏感。
+源码上 `sklearn/metrics/_ranking.py` 的 `roc_auc_score` 先由 `roc_curve` 生成 (fpr, tpr) 再走梯形积分的 `auc()`，而 `average_precision_score` 走 `_binary_uninterpolated_average_precision` 的阶梯求和，两者故意用不同插值口径，数值不能直接互相比较大小。
 
-源码上 sklearn/metrics/`_ranking.py` 的 roc_auc_score 先由 roc_curve 生成 (fpr, tpr) 再走梯形积分的 `auc()`，而 average_precision_score 走 _binary_uninterpolated_average_precision 的阶梯求和，两者故意用不同插值口径，数值不能直接互相比较大小。
+Bengio 与 Grandvalet 在 2004 年证明：k 折交叉验证估计的方差不存在无偏估计量，根因是 k 个训练集两两重叠。`k=10` 时任意两折训练集共享 (k-2)/(k-1)=8/9 的样本，k 个验证分数高度正相关。
+
+数学上设每折误差为 e_i，均值的方差等于 1 除以 k 的平方，再乘上各折方差之和与所有两两协方差之和；重叠让协方差项为正且很大，而样本方差只估计了各折相对均值偏差平方之和再除以 k-1、又除以 k，相当于假装协方差全为零，系统性偏小。
+
+工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；
+
+嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
+
+一个团队在 40 条样本的验证集上网格搜索 50 组超参，报告最佳 AUC 0.975 并据此上线，线上只有 0.80 左右。这不是数据泄漏，而是赢家诅咒：当每组超参真实效果相同、只是验证集采样带来噪声时，取 50 个带噪估计的最大值，期望上必然高于真值，搜索空间越大、验证集越小，乐观偏差越大。
+
+下例用 0.80 的真实分数造 50 组无关超参，每组在 40 个伯努利样本上估一次，最佳值冲到 0.975、高估 0.175，而全网格均值仍贴近 0.807。修复不是换更大的模型，而是把『选超参』放进内层 CV、用从未参与决策的外层测试集报告最终分数，或直接报告多次重复划分的分布而不是单点最大值。
 
 ```python
 import random
@@ -294,7 +312,7 @@ print('bootstrap 95% CI', bootstrap_auc(pos, neg))
 
 <OutputBox title='扩展示例运行结果' output='Mann-Whitney AUC 0.96\ntrapezoid AUC 0.96\nbootstrap 95% CI (0.84, 1.0)' />
 
-<LineByLine code='import random\n\nrandom.seed(3)\n\ndef auc_u(pos, neg):\n    u = 0.0\n    for p in pos:\n        for q in neg:\n            u += 1.0 if p &gt; q else 0.5 if p == q else 0.0\n    return u / (len(pos) * len(neg))\n\ndef auc_trapezoid(scores, labels):\n    pairs = sorted(zip(scores, labels), key=lambda t: -t[0])\n    npos = sum(labels)\n    nneg = len(labels) - npos\n    fpr = [0.0]\n    tpr = [0.0]\n    tp = fp = 0\n    for s, y in pairs:\n        if y == 1:\n            tp += 1\n        else:\n            fp += 1\n        fpr.append(fp / nneg)\n        tpr.append(tp / npos)\n    area = 0.0\n    for i in range(1, len(fpr)):\n        area += (fpr[i] - fpr[i - 1]) * (tpr[i] + tpr[i - 1]) / 2\n    return area\n\npos = [0.9, 0.8, 0.7, 0.6, 0.4]\nneg = [0.5, 0.3, 0.2, 0.1, 0.05]\nscores = pos + neg\nlabels = [1] * len(pos) + [0] * len(neg)\nprint(&#39;Mann-Whitney AUC&#39;, auc_u(pos, neg))\nprint(&#39;trapezoid AUC&#39;, round(auc_trapezoid(scores, labels), 4))\n\ndef bootstrap_auc(pos, neg, b=400):\n    vals = []\n    for _ in range(b):\n        p = [random.choice(pos) for _ in pos]\n        q = [random.choice(neg) for _ in neg]\n        vals.append(auc_u(p, q))\n    vals.sort()\n    return round(vals[int(b * 0.025)], 4), round(vals[int(b * 0.975)], 4)\n\nprint(&#39;bootstrap 95% CI&#39;, bootstrap_auc(pos, neg))\n' :notes='["固定随机种子，让 bootstrap 区间可复现", "auc_u 枚举全部正负对，统计量 U 除以 n 正 n 负", "平局记 0.5，对应 ROC 定义里的半分", "auc_trapezoid 按分数降序构造 FPR 与 TPR 序列", "逐段用梯形公式累加面积", "5 个正样本与 5 个负样本，只有 0.4 输给 0.5", "25 个正负对里 24 个正分更高，AUC 为 0.96", "梯形积分给出同一数值，印证两种定义等价", "bootstrap_auc 有放回重采样正负样本各 b 次", "排序后取 2.5% 与 97.5% 分位得经验置信区间", "小样本下区间宽到 (0.84, 1.0)，单点 AUC 不足以判优劣", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征", "训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征", "训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征", "训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征", "训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征", "训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\nrandom.seed(3)\n\ndef auc_u(pos, neg):\n    u = 0.0\n    for p in pos:\n        for q in neg:\n            u += 1.0 if p &gt; q else 0.5 if p == q else 0.0\n    return u / (len(pos) * len(neg))\n\ndef auc_trapezoid(scores, labels):\n    pairs = sorted(zip(scores, labels), key=lambda t: -t[0])\n    npos = sum(labels)\n    nneg = len(labels) - npos\n    fpr = [0.0]\n    tpr = [0.0]\n    tp = fp = 0\n    for s, y in pairs:\n        if y == 1:\n            tp += 1\n        else:\n            fp += 1\n        fpr.append(fp / nneg)\n        tpr.append(tp / npos)\n    area = 0.0\n    for i in range(1, len(fpr)):\n        area += (fpr[i] - fpr[i - 1]) * (tpr[i] + tpr[i - 1]) / 2\n    return area\n\npos = [0.9, 0.8, 0.7, 0.6, 0.4]\nneg = [0.5, 0.3, 0.2, 0.1, 0.05]\nscores = pos + neg\nlabels = [1] * len(pos) + [0] * len(neg)\nprint(&#39;Mann-Whitney AUC&#39;, auc_u(pos, neg))\nprint(&#39;trapezoid AUC&#39;, round(auc_trapezoid(scores, labels), 4))\n\ndef bootstrap_auc(pos, neg, b=400):\n    vals = []\n    for _ in range(b):\n        p = [random.choice(pos) for _ in pos]\n        q = [random.choice(neg) for _ in neg]\n        vals.append(auc_u(p, q))\n    vals.sort()\n    return round(vals[int(b * 0.025)], 4), round(vals[int(b * 0.975)], 4)\n\nprint(&#39;bootstrap 95% CI&#39;, bootstrap_auc(pos, neg))\n' :notes='["固定随机种子，让 bootstrap 区间可复现", "auc_u 枚举全部正负对，统计量 U 除以 n 正 n 负", "平局记 0.5，对应 ROC 定义里的半分", "auc_trapezoid 按分数降序构造 FPR 与 TPR 序列", "逐段用梯形公式累加面积", "5 个正样本与 5 个负样本，只有 0.4 输给 0.5", "25 个正负对里 24 个正分更高，AUC 为 0.96", "梯形积分给出同一数值，印证两种定义等价", "bootstrap_auc 有放回重采样正负样本各 b 次", "排序后取 2.5% 与 97.5% 分位得经验置信区间", "小样本下区间宽到 (0.84, 1.0)，单点 AUC 不足以判优劣", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移", "训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移", "训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移", "训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移", "训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移", "训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层"]' title='扩展示例逐行讲解' />
 
 
 ### PR 曲线阶梯插值与 average precision 的面积口径
@@ -312,22 +330,20 @@ print('bootstrap 95% CI', bootstrap_auc(pos, neg))
 
 ### k 折交叉验证方差被低估的结构原因
 
-Bengio 与 Grandvalet 在 2004 年证明：k 折交叉验证估计的方差不存在无偏估计量，根因是 k 个训练集两两重叠。`k = 10` 时任意两折训练集共享 (k-2)/(k-1) = 8/9 的样本，k 个验证分数高度正相关。
+Bengio 与 Grandvalet 在 2004 年证明：k 折交叉验证估计的方差不存在无偏估计量，根因是 k 个训练集两两重叠。`k=10` 时任意两折训练集共享 (k-2)/(k-1)=8/9 的样本，k 个验证分数高度正相关。
 
-数学上设每折误差为 e_i，`Var(均值)` = (1 除以 k 的平方) 乘 (求和 `Var(e_i)` 加求和 i 不等于 j 的 `Cov(e_i, e_j)`)，重叠让协方差项为正且很大；而样本方差只估计了求和 (e_i 减均值) 的平方 除以 (k-1)，再除以 k 相当于假装协方差全为零，系统性偏小。
+数学上设每折误差为 e_i，均值的方差等于 1 除以 k 的平方，再乘上各折方差之和与所有两两协方差之和；重叠让协方差项为正且很大，而样本方差只估计了各折相对均值偏差平方之和再除以 k-1、又除以 k，相当于假装协方差全为零，系统性偏小。
 
-工程后果很直接：用 5 折 CV 报出「正负 0.3%」的误差棒并据此宣称模型 A 优于 B，往往是假显著。正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；
+工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；
 
-嵌套 CV 的成本是 `O(k 外 乘 k 内 乘网格大小)` 次训练，网格一大就爆炸，这是「评估无偏」与「算力预算」之间真实的架构权衡。
-
-正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
+嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
 
 
 ## 嵌套交叉验证的成本与超参搜索的赢家诅咒
 
 一个团队在 40 条样本的验证集上网格搜索 50 组超参，报告最佳 AUC 0.975 并据此上线，线上只有 0.80 左右。这不是数据泄漏，而是赢家诅咒：当每组超参真实效果相同、只是验证集采样带来噪声时，取 50 个带噪估计的最大值，期望上必然高于真值，搜索空间越大、验证集越小，乐观偏差越大。
 
-下例用 0.80 的真实分数造 50 组无关超参，每组在 40 个伯努利样本上估一次，最佳值冲到 0.975、高估 0.175，而全网格均值仍贴近 0.807。修复不是换更大的模型，而是把「选超参」放进内层 CV、用从未参与决策的外层测试集报告最终分数，或直接报告多次重复划分的分布而不是单点最大值。
+下例用 0.80 的真实分数造 50 组无关超参，每组在 40 个伯努利样本上估一次，最佳值冲到 0.975、高估 0.175，而全网格均值仍贴近 0.807。修复不是换更大的模型，而是把『选超参』放进内层 CV、用从未参与决策的外层测试集报告最终分数，或直接报告多次重复划分的分布而不是单点最大值。
 
 ```python
 import random
@@ -352,7 +368,7 @@ print('mean grid score', round(sum(s for _, s in scores) / len(scores), 3))
 
 ```
 
-<Quiz no='097-X' q='关于 k 折交叉验证分数的误差棒，下面哪项准确？' :options='["各折训练集大量重叠、分数正相关，把样本标准差除以根号 k 会系统性低估真实方差，且不存在无偏估计量", "k 折分数相互独立，s 除以根号 k 就是无偏标准误", "折数越多方差估计越准，k 等于 n 时误差棒最可信", "只要改用 StratifiedKFold，各折就统计独立"]' answer="0" explain='Bengio 与 Grandvalet 2004 证明 k 折 CV 估计的方差没有无偏估计量：k = 10 时任意两折训练集共享 8/9 样本，验证分数的协方差为正且很大，naive 的 s 除以根号 k 假装协方差为零而偏小。分层只保证类别比例，不消除训练集重叠。比较模型应改用同一划分的配对检验或嵌套交叉验证。' />
+<Quiz no='097-1' q='关于 k 折交叉验证分数的误差棒，下面哪项准确？' :options='["各折训练集大量重叠、分数正相关，把样本标准差除以根号 k 会系统性低估真实方差，且不存在无偏估计量", "k 折分数相互独立，s 除以根号 k 就是无偏标准误", "折数越多方差估计越准，k 等于 n 时误差棒最可信", "只要改用 StratifiedKFold，各折就统计独立"]' answer="0" explain='Bengio 与 Grandvalet 2004 证明 k 折 CV 估计的方差没有无偏估计量：k = 10 时任意两折训练集共享 8/9 样本，验证分数的协方差为正且很大，naive 的 s 除以根号 k 假装协方差为零而偏小。分层只保证类别比例，不消除训练集重叠。比较模型应改用同一划分的配对检验或嵌套交叉验证。' />
 
 
 ### bootstrap 与 Wilson 区间的指标不确定性
@@ -368,33 +384,33 @@ print('mean grid score', round(sum(s for _, s in scores) / len(scores), 3))
 
 <Exercise title='进阶：用数值实验证明泄漏' task='对训练段 [1,2,3,4,5] 与测试段 [20,21,22]，分别用「全量均值方差」与「仅训练均值方差」标准化测试段，打印两组结果并说明为何前者是泄漏。' solution='train=[1,2,3,4,5]; test=[20,21,22]; all_=train+test\ndef mean(a): return sum(a)/len(a)\ndef pstd(a):\n    m=mean(a); return (sum((x-m)**2 for x in a)/len(a))**0.5\ndef z(xs,m,s): return [round((x-m)/s,2) for x in xs]\nprint(&#39;leak&#39;, z(test, mean(all_), pstd(all_)))\nprint(&#39;clean&#39;, z(test, mean(train), pstd(train)))' explain='全量 fit 把测试段三个大值纳入均值与方差，标准化结果被压到 1.3 附近；仅用训练参数时测试段明显偏离（9 以上）。前者让模型提前感知了测试分布，属于泄漏。' />
 
-<Quiz no='097-1' q='正样本占 0.6% 的欺诈检测，全预测「正常」的准确率和召回率约为？' :options='["准确率约 99.4%，召回率 0", "准确率 0，召回率 0", "两者都约 50%", "准确率 99.4%，召回率 99.4%"]' answer="0" explain='全预测多数类时真负例占比 1-0.006=0.994，accuracy 约 99.4%；但一个正例都没抓到，TP=0，recall=0。这说明 accuracy 在极不平衡数据上会骗人。' />
+<Quiz no='097-2' q='正样本占 0.6% 的欺诈检测，全预测「正常」的准确率和召回率约为？' :options='["准确率约 99.4%，召回率 0", "准确率 0，召回率 0", "两者都约 50%", "准确率 99.4%，召回率 99.4%"]' answer="0" explain='全预测多数类时真负例占比 1-0.006=0.994，accuracy 约 99.4%；但一个正例都没抓到，TP=0，recall=0。这说明 accuracy 在极不平衡数据上会骗人。' />
 
-<Quiz no='097-2' q='防止标准化过程数据泄漏，正确做法是？' :options='["把 StandardScaler 放进 Pipeline，只在训练折 fit，验证/测试折只 transform", "先对全量 fit 再划分，省事且等价", "只对测试集做标准化", "标准化不涉及学习参数，无所谓顺序"]' answer="0" explain='scaler 的均值与方差是从数据估计出来的参数，全量 fit 会把测试折分布泄进训练；Pipeline 保证每次交叉验证只在对应训练折 fit。' />
+<Quiz no='097-3' q='防止标准化过程数据泄漏，正确做法是？' :options='["把 StandardScaler 放进 Pipeline，只在训练折 fit，验证/测试折只 transform", "先对全量 fit 再划分，省事且等价", "只对测试集做标准化", "标准化不涉及学习参数，无所谓顺序"]' answer="0" explain='scaler 的均值与方差是从数据估计出来的参数，全量 fit 会把测试折分布泄进训练；Pipeline 保证每次交叉验证只在对应训练折 fit。' />
 
-<Quiz no='097-3' q='在测试集上反复调参直到分数满意，后果是？' :options='["测试集退化为验证集，最终报告分数不再无偏", "分数更可信", "只是稍微乐观一点，无伤大雅", "让模型自动泛化更好"]' answer="0" explain='测试集一旦参与任何决策就失去「从未见过」的性质，等于把评估集当验证集用，报告的分数系统性偏高。应改用嵌套交叉验证并保留一份只用一次的测试集。' />
+<Quiz no='097-4' q='在测试集上反复调参直到分数满意，后果是？' :options='["测试集退化为验证集，最终报告分数不再无偏", "分数更可信", "只是稍微乐观一点，无伤大雅", "让模型自动泛化更好"]' answer="0" explain='测试集一旦参与任何决策就失去「从未见过」的性质，等于把评估集当验证集用，报告的分数系统性偏高。应改用嵌套交叉验证并保留一份只用一次的测试集。' />
 
-<Predict no='097-P' q='前面 code 里 metrics(0, 0, 10, 990) 的 recall 是多少？' :options='["0.0", "0.99", "0.5"]' answer='0' output='0.0' explain='recall = TP/(TP+FN) = 0/(0+10) = 0.0。模型全预测负例，虽然 accuracy 高达 0.99，却一个正例都没抓到，正是 accuracy 在不平衡数据上失效的证据。' />
+<Predict no='097-5' q='前面 code 里 metrics(0, 0, 10, 990) 的 recall 是多少？' :options='["0.0", "0.99", "0.5"]' answer='0' output='0.0' explain='recall = TP/(TP+FN) = 0/(0+10) = 0.0。模型全预测负例，虽然 accuracy 高达 0.99，却一个正例都没抓到，正是 accuracy 在不平衡数据上失效的证据。' />
 
-<FillBlank no='097-F' tpl='___ metrics(tp, fp, fn, tn):' :answers='["def"]' hint='回想本讲关于 训练集 / 验证集 / 测试集 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 划分、数据泄漏与 Pipeline 的落点。' />
+<FillBlank no='097-6' tpl='___ metrics(tp, fp, fn, tn):' :answers='["def"]' hint='回想本讲关于 训练集 / 验证集 / 测试集 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 划分、数据泄漏与 Pipeline 的落点。' />
 
-<KnowledgeCard :points='["训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切", "数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折", "accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡", "阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点", "k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离", "先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征"]' :pitfalls='["先在全量数据上标准化或做特征选择再划分", "用 accuracy 评价极不平衡的欺诈数据", "在测试集上反复调参直到满意", "只用准确率评价极不平衡的数据集，全预测多数类就能拿到 99 分"]' summary='评估的可信度取决于划分：先在全量数据上做特征选择或标准化再划分，就是典型的数据泄漏，分数虚高' />
+<KnowledgeCard :points='["训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱", "数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline", "混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均", "极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC", "k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层", "复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移"]' :pitfalls='["先在全量数据上标准化或做特征选择再划分", "用 accuracy 评价极不平衡的欺诈数据", "在测试集上反复调参直到满意", "只用准确率评价极不平衡的数据集，全预测多数类就能拿到 99 分"]' summary='评估的可信度取决于划分：先在全量数据上做特征选择或标准化再划分，就是典型的数据泄漏，分数虚高' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| 训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切 | 建立直觉 |
-| 数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折 | 跑通示例 |
-| accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡 | 深入边界 |
-| 阈值不必是 0.5：降阈值提 recall 牺牲 precision，按业务代价选工作点 | 工程落地 |
-| k 折交叉验证给均值与标准差；选超参与评估要用嵌套交叉验证隔离 | 随堂检测 |
-| 先跑 DummyClassifier/Regressor 基线，复杂模型只比基线好一点就要查泄漏与特征 | 复盘 |
+| 训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱 | 建立直觉 |
+| 数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline | 跑通示例 |
+| 混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均 | 深入边界 |
+| 极不平衡下 accuracy 由多数类主导、recall 可为 0；按业务代价选 recall、precision、PR-AUC 或 ROC-AUC | 工程落地 |
+| k 折 CV 取均值与波动，StratifiedKFold/TimeSeriesSplit 各管一类；嵌套 CV 把选超参与评估分层 | 随堂检测 |
+| 复杂模型前先立 DummyClassifier/DummyRegressor 基线作地板；离线远高于线上先查泄漏与漂移 | 复盘 |
 
-1. 训练/验证/测试三分：测试集只在最终评估用一次，分类要 stratify，时序按时间切
+1. 训练/验证/测试三份：测试集只在最终用一次；分类用 stratify，时间序列按时间切不能打乱
 
-2. 数据泄漏的根因是预处理参数（均值/方差/入选列）在全量上 fit；一律放进 Pipeline 只 fit 训练折
+2. 数据泄漏根因是预处理也是学到的参数：scaler/特征选择/目标编码只在训练折 fit，放进 Pipeline
 
-3. accuracy=(TP+TN)/N 会被多数类主导；漏报代价高看 recall，误报代价高看 precision，用 F1/PR-AUC 平衡
+3. 混淆矩阵四数推全部指标：precision=TP/(TP+FP)、recall=TP/(TP+FN)、F1 用调和平均
 
 [下一讲：经典算法：KNN、线性与逻辑回归](/data-ai/linear-models)

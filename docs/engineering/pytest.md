@@ -14,9 +14,9 @@ description: 写出快、稳、能定位问题的测试
 
 ## 两百个测试全红，却没一条验证「下单后库存扣减」
 
-一个订单服务的测试套件里，每个用例都把内部私有函数 mock 得一丝不差，重构时改了实现，两百个测试全红，却没有任何一条真正验证「下单后库存扣减」这个外部行为；还有人跑测试加了 -O，所有 assert 被优化掉，绿灯全是假象。
+一个订单服务的测试套件里，每个用例都把内部私有函数 mock 得一丝不差，重构时改了实现，两百个测试全红，却没有任何一条真正验证「下单后库存扣减」这个外部行为；还有人跑测试加了 `-O`，所有 assert 被优化掉，绿灯全是假象。
 
-另一类问题是用例失败时只抛一串 AssertionError: &lt;internal state object>，没人看得懂哪条契约被破坏。pytest 的价值不在「能写 assert」，而在断言重写、fixture 作用域、参数化与替身这套机制能让失败直接指出被破坏的契约。
+另一类问题是用例失败时只抛一串 AssertionError，后面跟着一个看不懂的内部状态对象，没人知道哪条契约被破坏。pytest 的价值不在「能写 assert」，而在断言重写、fixture 作用域、参数化与替身这套机制能让失败直接指出被破坏的契约。
 
 本讲把收集与重写、fixture 生命周期、参数化与覆盖率解读讲到能写出快、稳、可定位的测试。
 
@@ -36,17 +36,17 @@ description: 写出快、稳、能定位问题的测试
 
 ## 收集规则：pytest 怎么找到测试
 
-pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 assert a + b == c 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；
+pytest 通过 `import hook`（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；
 
-裸 Python 的 assert 失败只抛 AssertionError，没有任何中间值。
+裸 Python 的 assert 失败只抛 `AssertionError`，没有任何中间值。
 
-代价是断言必须在 pytest 收集到的模块里才被重写，且不能用 python -O 跑测试——compile(src, '&lt;s>', 'exec', `optimize=1`) 会把所有 `ast.Assert` 节点从字节码里删掉，`x=-1` 时 `optimize=0` 抛 AssertionError、`optimize=1` 却照常执行（可验证）。
+代价是断言必须在 pytest 收集到的模块里才被重写，且不能用 `python -O` 跑测试——`compile` 在 `optimize=1` 下会把所有 `ast.Assert` 节点从字节码里删掉，`x=-1` 时 `optimize=0` 抛 AssertionError、`optimize=1` 却照常执行。
 
-辅助断言有 `pytest.raises(Exc, match=...)`、`pytest.approx`、`pytest.warns`。
+辅助断言有 `pytest.raises`、`pytest.approx`、`pytest.warns`。
 
-收集约定：文件 test_*.py 或 *`_test.py`、函数 test_*、类 Test*（无 `__init__`），配置放 `pytest.ini` 或 `pyproject.toml` 的 `[tool.pytest.ini_options]`，`conftest.py` 里放跨文件共享的 fixture。
+收集约定：文件 `test_*.py` 或 `*_test.py`、函数 `test_*`、类 `Test*`（无 `__init__`），配置放 `pytest.ini` 或 `pyproject.toml` 的 `[tool.pytest.ini_options]`，`conftest.py` 里放跨文件共享的 fixture。
 
-常用命令 -x 首败即停、-k 按名筛、-m 按 mark 筛、--lf 只跑上次失败、-q 精简输出。
+常用命令 `-x` 首败即停、`-k` 按名筛、`-m` 按 mark 筛、`--lf` 只跑上次失败、`-q` 精简输出。
 
 **pytest 常用机制**
 
@@ -62,17 +62,15 @@ pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试�
 
 ## AssertionRewritingHook：sys.meta_path 上的断言重写
 
-pytest 的 AssertionRewritingHook 是 `sys.meta_path` 上的一个 finder：导入测试模块前先读源码、用 ast 解析，把每个 `ast.Assert` 节点替换成「先计算并暂存各子表达式、再比较、失败时抛出带中间值的 AssertionError」的等价语句，因此失败输出能显示 assert 1 + 2 == 4 里 1+2 的值；
+pytest 的 `AssertionRewritingHook` 是 `sys.meta_path` 上的一个 finder：导入测试模块前先读源码、用 `ast` 解析，把每个 `ast.Assert` 节点替换成「先计算并暂存各子表达式、再比较、失败时抛出带中间值的 `AssertionError`」的等价语句，因此失败输出能显示 `assert 1 + 2 == 4` 里 1+2 的值；
 
-这也是为什么测试必须由 pytest 收集而非直接 python 运行。
+这也是为什么测试必须由 pytest 收集而非直接 python 运行。`compile` 在 `optimize=1`（等价 `python -O`）下会在编译期删掉所有 `ast.Assert`，`dis` 可见 `optimize=0` 的指令数更多。
 
-compile(src, '&lt;s>', 'exec', `optimize=1`)（等价 python -O）会在编译期删掉所有 `ast.Assert`，dis 可见 `optimize=0` 的指令数更多、`x=-1` 时前者抛 AssertionError 而后者照常执行。
+`FixtureManager` 按 scope 维护缓存与 setup/finalize 栈：yield fixture 把 yield 之后的代码注册为 finalizer，逆序执行保证先拆小作用域。
 
-FixtureManager 按 scope 维护缓存与 setup/finalize 栈：yield fixture 把 yield 之后的代码注册为 finalizer，逆序执行保证先拆小作用域。
+`coverage.py` 借助 `sys.settrace`（3.12 起可切到 `sys.monitoring`）记录被执行的行与弧，分支覆盖进一步记录跳转是否两边都走到。
 
-`coverage.py` 借助 `sys.settrace`（3.12+ 可切到 `sys.monitoring`）记录被执行的行与弧，分支覆盖进一步记录跳转是否两边都走到。
-
-<Callout type="tip" title='核心心智模型' text='pytest 通过 import hook（pytest.register_assert_rewrite）在导入测试模块时改写 assert 节点，把 assert a + b == c 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛' />
+<Callout type="tip" title='核心心智模型' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert ' />
 
 <ConceptDiagram type='flow3' title='第 075 讲 · 断言重写与收集规则' labels='断言重写与收集规则|fixture 作用域、yield 清理与内|参数化、mark、测试金字塔与覆盖率' caption='写出快、稳、能定位问题的测试' />
 
@@ -171,11 +169,11 @@ print('optimize=1', run(-1, code1))
 
 ## fixture 作用域、yield 清理与依赖注入
 
-@`pytest.fixture`(scope='function'|'class'|'module'|'package'|'session') 定义依赖，作用域越大复用越久：function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。
+`@pytest.fixture` 用 `scope` 指定作用域，取值有 function、class、module、package、session：作用域越大复用越久，function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。
 
 yield fixture 在 yield 前 setup、之后 teardown，保证失败也清理；`autouse=True` 对本作用域内所有用例自动生效；params 让一个 fixture 产出多组值。
 
-内置替身：tmp_path 是 function 级的 `pathlib.Path` 临时目录、tmp_path_factory 是 session 级工厂、monkeypatch 提供 setattr/delattr/setenv/delenv/setitem/delitem/chdir 且在用例结束自动还原。
+内置替身：`tmp_path` 是 function 级的 `pathlib.Path` 临时目录、`tmp_path_factory` 是 session 级工厂、`monkeypatch` 提供 setattr/delattr/setenv/delenv/setitem/delitem/chdir 且在用例结束自动还原。
 
 fixture 只准备必要状态，慢 IO 用替身隔离；过度 mock 会把测试写成实现的镜像，重构时全部重写却没验证任何外部行为，应优先测公开行为与边界条件。
 
@@ -190,9 +188,9 @@ fixture 只准备必要状态，慢 IO 用替身隔离；过度 mock 会把测�
 | session | 整轮测试共享 | tmp_path_factory、启动一次的服务 |
 | yield fixture | yield 前 setup、之后 teardown | 保证失败也执行清理 |
 
-<Term word='断言重写' text='pytest 通过 import hook（pytest.register_assert_rewrite）在导入测试模块时改写 assert 节点，把 assert a + b == c 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛 Assertion' />
+<Term word='断言重写' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛 `Asse' />
 
-<Term word='fixture 作用域' text='@pytest.fixture(scope=&#39;function&#39;|&#39;class&#39;|&#39;module&#39;|&#39;package&#39;|&#39;session&#39;) 定义依赖，作用域越大复用越久：function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。yield fixture 在 yield' />
+<Term word='fixture 作用域' text='`@pytest.fixture` 用 `scope` 指定作用域，取值有 function、class、module、package、session：作用域越大复用越久，function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。yield fixture 在 yield' />
 
 
 ## 参数化、mark 与内置替身 tmp_path / monkeypatch
@@ -201,20 +199,20 @@ fixture 只准备必要状态，慢 IO 用替身隔离；过度 mock 会把测�
 python -m pytest -q --disable-warnings
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **断言重写** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 断言重写 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 <CheckList id='P075a' title='学完你应当能' :items='["能讲清 断言重写与收集规则", "能讲清 fixture 作用域、yield 清理与内置替身", "能讲清 参数化、mark、测试金字塔与覆盖率", "能在工程里处理 覆盖率解读"]' />
 
 
 ## 测试金字塔与覆盖率怎么读
 
-@`pytest.mark.parametrize`('a,b,expected', [(1,2,3),(0,0,0)], ids=[...]) 把一条断言展开成多个独立用例，失败能定位到具体参数组；
+`@pytest.mark.parametrize` 把一组参数展开成多个独立用例，失败能定位到具体参数组；
 
-`pytest.param(value, marks=pytest.mark.skip / xfail)` 给单组打标记，自定义 mark 要在配置里注册避免 PytestUnknownMarkWarning。
+`pytest.param` 给单组打标记（如 skip、xfail），自定义 mark 要在配置里注册，避免 `PytestUnknownMarkWarning`。
 
 测试金字塔：底层大量快而稳的单元测、中层少量集成测、顶层极少量端到端测；越往上越慢越脆，比例倒置会让 CI 变成瓶颈。
 
-覆盖率用 pytest-cov 的 --`cov=pkg` --`cov-report=term-missing`，看行覆盖与分支覆盖（--cov-branch），`coverage.py` 通过 `sys.settrace`（3.12+ 可用 `sys.monitoring`）记录执行行。
+覆盖率用 `pytest-cov` 的 `--cov=pkg` 与 `--cov-report=term-missing`，看行覆盖与分支覆盖（`--cov-branch`），`coverage.py` 通过 `sys.settrace`（3.12 起可切到 `sys.monitoring`）记录执行行。
 
 覆盖率是发现盲区的线索，不是 KPI：100% 行覆盖不代表断言有效，未覆盖的分支、异常路径与边界值才是优先补的地方。把慢 IO 隔离、参数化覆盖边界、失败信息可读，三者合起来才是「快、稳、能定位」的测试。
 
@@ -235,7 +233,7 @@ python -m pytest -q --disable-warnings
 
 这样能看清「参数化是收集期展开」「fixture 按作用域缓存」「断言失败自带哪组参数」这三件事，而不必先记住全部 pytest API。下面片段注册一个 session 级 db fixture、参数化三组加法用例并打印结果，演示这套机制的最小可运行形态。
 
-真实项目把装饰器换成 @`pytest.fixture` / @`pytest.mark.parametrize` 即可。
+真实项目把装饰器换成 `@pytest.fixture` / `@pytest.mark.parametrize` 即可。
 
 ```python
 FIXTURES = {}
@@ -295,9 +293,9 @@ print('param results', test_add())
 
 <Quiz no='075-3' q='关于覆盖率，正确的态度是？' :options='["作为发现未覆盖分支与异常路径的线索，而非要求 100% 的 KPI", "行覆盖 100% 即代表断言有效", "覆盖率越高测试越稳", "只需统计集成测试覆盖"]' answer="0" explain='coverage.py 记录执行行/弧，100% 行覆盖不保证断言质量；应优先补未覆盖的分支、异常路径与边界值，并把慢 IO 隔离保持套件快速稳定。' />
 
-<Predict no='075-P' q='对 &#39;assert x &gt; 0&#39; 用 compile(..., optimize=1) 后以 x=-1 执行，结果是？' :options='["不报错，断言被编译期删除", "抛 AssertionError", "抛 SyntaxError"]' answer='0' output='不报错，断言被编译期删除' explain='optimize=1（等价 python -O）在编译期删掉所有 ast.Assert，optimize=0 时 x=-1 才抛 AssertionError；这正是测试必须避免 -O 的证据。' />
+<Predict no='075-4' q='对 &#39;assert x &gt; 0&#39; 用 compile(..., optimize=1) 后以 x=-1 执行，结果是？' :options='["不报错，断言被编译期删除", "抛 AssertionError", "抛 SyntaxError"]' answer='0' output='不报错，断言被编译期删除' explain='optimize=1（等价 python -O）在编译期删掉所有 ast.Assert，optimize=0 时 x=-1 才抛 AssertionError；这正是测试必须避免 -O 的证据。' />
 
-<FillBlank no='075-F' tpl='___ tempfile, os' :answers='["import"]' hint='回想本讲关于 断言重写 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 断言重写与收集规则 的落点。' />
+<FillBlank no='075-5' tpl='___ tempfile, os' :answers='["import"]' hint='回想本讲关于 断言重写 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 断言重写与收集规则 的落点。' />
 
 <KnowledgeCard :points='["pytest 断言重写 hook 把 ast.Assert 拆成子表达式暂存，失败输出带中间值；裸 assert 无此能力", "compile(optimize=1) / python -O 删除所有 assert，测试绿灯会失真，绝不能开 -O", "fixture 作用域 function→session 复用递增，yield fixture 保证失败也 teardown，finalize 逆序", "tmp_path（function）、tmp_path_factory（session）、monkeypatch（自动还原）是内置替身", "@pytest.mark.parametrize 在收集期展开用例，pytest.param 可给单组打 skip/xfail", "测试金字塔单元多快稳、端到端少慢脆；覆盖率找盲区不是 KPI，优先补未覆盖分支"]' :pitfalls='["过度 mock，把测试写成实现的镜像", "用 python -O 跑测试或依赖裸 assert 的报错文本", "把覆盖率 100% 当 KPI、fixture 准备过多共享状态", "过度 mock 会把测试写成实现的镜像，重构时全部重写，却没验证任何外部行为"]' summary='好的测试失败时能直接指出哪条契约被破坏，而不是抛出一串看不懂的内部状态' />
 

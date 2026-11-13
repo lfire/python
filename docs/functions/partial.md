@@ -7,20 +7,26 @@ description: 用标准库工具削减重复参数
 
 # 第 034 讲 · 偏函数、可调用对象与函数式工具
 
-装饰器把包一层玩熟后，会碰到另一类重复：好几个调用总带着同一串固定参数。这一讲收拢标准库里替我们省事的函数式工具，把先固定一部分变成可传递的数据。回调接口往往只收一个可调用对象，手头的函数却要几个入参，每次临时包一层 lambda 并不好读。
+装饰器把「包一层」玩熟之后，会碰到另一类重复：好几个调用总是带着同一串固定参数。这一讲收拢标准库里帮我们省事的函数式工具，把「先固定一部分参数」做成可以四处传递的数据。回调接口往往只收一个可调用对象，手头的函数却有好几个入参，每次临时写一个 `lambda` 去凑签名，既不好读也难复用。
 
-先看 functools.partial 怎样固定一部分参数；再看 lru_cache 的键、容量与命中统计，以及它只适合纯函数的原因；最后捎带 singledispatch 与可调用协议，让工具函数按类型分派。要用到参数、闭包和装饰器的经验；学完你能少写不少样板参数，也知道缓存该何时清掉。
+先看 `functools.partial` 怎样冻结参数；再看 `lru_cache` 的键怎么构造、容量与命中统计怎么看，以及它为什么只适合纯函数；最后捎带 `singledispatch` 与可调用协议，让工具函数能按类型分派。这一讲要用到参数、闭包和装饰器的经验；学完你能少写不少样板参数，也清楚缓存该在什么时候清掉。
 
 
 ## 回调接口只收一个可调用对象，参数却对不上
 
-一个回调接口只接受单参数函数，手上却是 `power(base, exp)` 需要固定 `exp=2`；
+一个回调接口只接收单参数函数，手头却是 `power(base, exp)`，需要固定 `exp=2`；
 
-朴素解法是写一堆 lambda 或包一层 def，改一次参数要动多处，而且这些匿名函数没法 pickle、日志里全叫 &lt;lambda>。另一个坑更严重：给查询函数加了 @lru_cache 想提速，传入 list 参数时抛 TypeError: unhashable type: 'list'；
+最省事的写法是堆一堆 `lambda` 或再包一层 `def`，可参数一改就要动好几处，这些匿名函数既没法 `pickle`，日志里又全叫 `<lambda>`。
 
-给一个会写日志、读当前时间的函数加了缓存，后续调用全拿到第一次的旧值，甚至把可变返回值交给调用方修改后污染了缓存。
+另一类坑更隐蔽：给查询函数套上 `@lru_cache` 想提速，传入 `list` 参数时直接抛 `TypeError: unhas…`；
 
-本讲把 functools 里几件工具讲透：partial 如何冻结参数、lru_cache 的键与边界、singledispatch 按类型分派、cached_property 与 `__dict__` 的关系，以及可调用协议，把函数式工具从会用变成用对。
+```text
+TypeError: unhashable type: 'list'
+```
+
+给一个会写日志、读当前时间的函数加缓存，后续调用全拿到第一次的旧值；把可变返回值交给调用方原地修改，还会污染缓存里那同一份引用。
+
+本讲把 `functools` 里几件工具讲透：`partial` 如何冻结参数、`lru_cache` 的键与边界、`singledispatch` 按类型分派、`cached_property` 与 `__dict__` 的关系，以及可调用协议，把函数式工具从会用变成用对。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='给含可变参数的函数加 lru_cache 报 TypeError: unhashable type: &#39;list&#39;：缓存键由 args + kwargs 组成，要求每个元素可哈希，list / dict / set 都不行' />
 
@@ -53,17 +59,23 @@ description: 用标准库工具削减重复参数
 
 ## functools.partial：把固定参数变成数据
 
-`functools.partial(func, /, *args, **keywords)` 返回一个 partial 对象，冻结一部分位置参数与关键字参数；
+`functools.partial` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；
 
-再次调用时新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial`(f, `a=1`) 后 `p(a=2)` 用的是 2。partial 对象暴露三个属性 .func、.args、.keywords，可以直接核对到底冻结了什么；
+```python
+functools.partial(func, /, *args, **keywords)
+```
 
-它默认没有 `__name__`，需要时可用 `functools.update_wrapper` 补齐。
+再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` 后再 `p(a=2)`，真正用的是 2。
 
-与 lambda 相比，partial 保留的是原函数引用、可以 pickle（前提是 func 与 args 可 pickle）、可读且可被内省，而 lambda 每次新建、`__name__` 恒为 &lt;lambda>。
+partial 对象把冻结内容摊在 `.func`、`.args`、`.keywords` 三个属性上，可以直接核对；
 
-它最典型的用途就是适配签名：回调接口、sorted / max 的 key、线程池 submit 带固定配置的函数，都要求一个可调用对象而参数个数对不上时，partial 一行就能补齐。
+它默认没有 `__name__`，需要时用 `functools.update_wrapper` 补齐即可。
 
-类里要冻结方法参数时用 `functools.partialmethod`，它是描述符版本，能正确处理 self 绑定。
+与 `lambda` 相比，partial 保存的是原函数引用，只要 `func` 与 `args` 可 pickle 它就能 pickle，读起来清楚、也能被内省；而 `lambda` 每次新建，`__name__` 恒为 `<lambda>`。
+
+它最典型的用途是适配签名：回调接口、`sorted` / `max` 的 `key`、线程池 `submit` 里带固定配置的函数，都只收一个可调用对象却和参数个数对不上，这时 partial 一行就能补齐。
+
+类里要冻结方法参数，改用 `functools.partialmethod`，它是描述符版本，能正确处理 `self` 绑定。
 
 ```python
 from functools import partial, lru_cache
@@ -114,20 +126,31 @@ except TypeError as e:
 | cache_info() | CacheInfo(hits, misses, maxsize, currsize) | 具名元组，用于观测命中率 |
 | cache_clear / __wrapped__ / cache_parameters | 3.9+ 提供参数字典 | 清空缓存 / 取原函数 / 读 maxsize 与 typed |
 
-<Callout type="tip" title='核心心智模型' text='functools.partial(func, /, *args, **keywords) 返回一个 partial 对象，冻结一部分位置参数与关键字参数；再次调用时新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 p = partial(f, a=1) 后 p(a=2)' />
+<Callout type="tip" title='核心心智模型' text='`functools.partial(func, /, *args, **keywords)` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` ' />
 
 
 ## lru_cache：键、边界与统计
 
-@`functools.lru_cache(maxsize=128, typed=False)` 也可写成 `lru_cache(maxsize)`(fn)；
+`functools.lru_cache` 的默认配置是 `maxsize=128`、`typed=False`，既可以写成带参数的 `@lru_cache(maxsize=128)`，也可以先 `@lru_cache(maxsize)` 再作用于 `fn`（即 `lru_cache(maxsize)(fn)` 两步走）。
 
-maxsize 默认 128，设为 None 表示无界、不做淘汰，取 2 的幂时淘汰效率最好；typed 默认 False，置 True 会把 1 与 1.0 当作不同的键。
+`maxsize` 默认 128，设为 `None` 表示无界、不做淘汰，取 2 的幂时淘汰效率最好；`typed` 默认 `False`，置 `True` 会把 `1` 与 `1.0` 当成不同的键。
 
-缓存键由位置参数与关键字参数共同构造，要求每个元素可哈希，传入 list、dict、set 会抛 TypeError: unhashable type: 'list'；关键字参数的书写顺序也会影响键，同一组键值用不同顺序传入可能被当成两个键。
+缓存键由位置参数与关键字参数共同构造，要求每个元素可哈希，传入 `list`、`dict`、`set` 会抛 `TypeError: unhas…`；
 
-`cache_info()` 返回具名元组 `CacheInfo(hits, misses, maxsize, currsize)`，`cache_clear()` 清空缓存，`__wrapped__` 能拿到未缓存的原函数，`cache_parameters()`（3.9+）返回 &#123;'maxsize': ..., 'typed': ...&#125;。
+```text
+TypeError: unhashable type: 'list'
+```
 
-内部用哈希表加双向链表实现 LRU，命中 `O(1)`，并用锁保证结构一致，但同一键并发未命中时函数仍可能被重复计算。最重要的一条边界：只对纯函数使用，依赖时间、随机、外部状态或带副作用的函数被缓存后会串数据甚至有安全问题；返回值若是可变对象，调用方原地修改会污染缓存里的同一份引用。
+关键字参数的书写顺序也会影响键，同一组键值用不同顺序传入可能被当成两个键。
+
+`cache_info()` 返回具名元组 `CacheInfo`，`cache_clear()` 清空缓存，`__wrapped__` 能取到未缓存的原函数，`cache_parameters()`（3.9+）返回 `{'maxsize': ...…`。
+
+```python
+CacheInfo(hits, misses, maxsize, currsize)
+{'maxsize': ..., 'typed': ...}
+```
+
+内部用哈希表加双向链表实现 LRU，命中 `O(1)`，并用一把锁保证结构一致，但同一键并发未命中时函数仍可能被重复计算。最要紧的一条边界是只对纯函数使用：依赖时间、随机、外部状态或带副作用的函数被缓存后会串数据甚至带来安全问题；返回值若是可变对象，调用方原地修改会污染缓存里的同一份引用。
 
 ```python
 from functools import singledispatch, cached_property
@@ -179,41 +202,49 @@ print(callable(f), callable(functools.partial(int, base=2)))
 
 <OutputBox title='原理验证' output='3 3.0\n0 2 {&#39;maxsize&#39;: 8, &#39;typed&#39;: True}\nTrue 9\n{&#39;base&#39;: 2}\nTrue True' />
 
-<Predict no='034-P' q='@lru_cache(maxsize=8, typed=True) 装饰 def f(x): return x 后，print(f(1), f(1.0), f.cache_info().misses) 输出什么？' :options='["1 1.0 2", "1 1.0 1", "1 1 2"]' answer='0' output='1 1.0 2' explain='typed=True 把 1（int）与 1.0（float）当成两个不同的键，两次调用都是未命中，因此 misses 为 2，返回值分别是 1 与 1.0。' />
+<Predict no='034-1' q='@lru_cache(maxsize=8, typed=True) 装饰 def f(x): return x 后，print(f(1), f(1.0), f.cache_info().misses) 输出什么？' :options='["1 1.0 2", "1 1.0 1", "1 1 2"]' answer='0' output='1 1.0 2' explain='typed=True 把 1（int）与 1.0（float）当成两个不同的键，两次调用都是未命中，因此 misses 为 2，返回值分别是 1 与 1.0。' />
 
 
 ## singledispatch、cached_property 与可调用协议
 
-`functools.singledispatch` 按第一个参数的类型分派：@singledispatch 定义默认实现，再用 @`fun.register(int)` 或 @`fun.register` 加类型注解（3.7+ 支持注解推断）注册各类型实现，`dispatch(type)` 可查具体走哪个函数，registry 是类型到实现的映射；
+`functools.singledispatch` 按第一个参数的类型分派：用 `@singledispatch` 定义默认实现，再用 `@fun.register(int)` 或带类型注解的 `@fun.register`（3.7+ 支持从注解推断）注册各类型实现，`dispatch(type)` 能查到具体会走哪个函数，`registry` 就是类型到实现的映射；
 
-查找沿类型的 `__mro__` 进行，子类会回退到最近的已注册父类，注册到 ABC 也生效，3.8+ 还有方法版 singledispatchmethod。cached_property（3.8+）把首次计算的结果以同名键写进实例 `__dict__`，之后实例属性查找直接命中、不再调用计算函数；
+查找沿类型的 `__mro__` 进行，子类会回退到最近的已注册父类，注册到 `ABC` 同样生效，3.8+ 还提供方法版 `singledispatchmethod`。
 
-它是只实现 `__get__` 的非数据描述符，正因没有 `__set__` 才会被实例字典覆盖，也因此要求实例有 `__dict__`，与去掉字典的 `__slots__` 冲突。与 property 的区别是 property 每次访问都重新计算、cached_property 只算一次。
+`cached_property`（3.8+）把首次计算的结果以同名键写进实例 `__dict__`，之后实例属性查找直接命中、不再调用计算函数；
 
-可调用协议更通用：任何实现 `__call__` 的对象都满足 `callable(obj)`，函数、类、partial、lru_cache 包装后的对象、带 `__call__` 的实例都在此列，函数组合可以据此把多个工具函数拼成流水线。
+它是只实现 `__get__` 的非数据描述符，正因没有 `__set__` 才会被实例字典覆盖，也因此要求实例有 `__dict__`，与去掉字典的 `__slots__` 冲突。
 
-lru_cache 在 C 层用一张哈希表加一条双向循环链表实现 LRU：命中时把节点移到链表头并直接返回结果，未命中时调用 `__wrapped__` 计算、用 args 与 kwargs 生成键（每个元素必须可哈希）后插入；
+和 `property` 相比，`property` 每次访问都重新计算，`cached_property` 只算一次。
 
-超过 maxsize 时从链表尾淘汰最久未用的条目，整个过程用一把锁保护缓存结构，因此并发下结构一致，但同一键并发未命中时函数仍可能被重复计算。`typed=True` 会把键元素的类型也纳入键，于是 1 与 1.0 分开。
+可调用协议更通用：任何实现 `__call__` 的对象都满足 `callable(obj)`，函数、类、`partial`、`lru_cache` 包装后的对象、带 `__call__` 的实例都在此列，函数组合正是据此把多个工具函数拼成一条流水线。
 
-partial 是纯 Python 的可调用对象，内部只存 func、args、keywords，`__call__` 时把它们与本次实参合并再调用 func，因此没有额外的闭包作用域且可 pickle。
+从实现层看，`lru_cache` 在 C 层用一张哈希表加一条双向循环链表维护 LRU：命中时把节点移到链表头并直接返回结果，未命中时调用 `__wrapped__` 计算、用 `args` 与 `kwargs` 生成键（每个元素必须可哈希）后插入；超过 `maxsize` 就从链表尾淘汰最久未用的条目。
 
-cached_property 是只实现 `__get__` 的非数据描述符：首次访问时计算并把结果以同名键写进实例 `__dict__`，之后实例字典优先于它，计算便只发生一次；没有 `__set__` 正是它能被实例字典覆盖的原因，也决定了 `__slots__` 去掉 `__dict__` 后无法使用。
+整段操作由一把锁保护缓存结构，所以并发下结构一致，但同一键并发未命中时函数仍可能被重复计算；`typed=True` 会把键元素的类型也纳入键，于是 `1` 与 `1.0` 分开存放。
 
-singledispatch 用 registry 字典把类型映射到实现，dispatch 沿类型的 `__mro__` 找第一个注册命中的类。
+`partial` 是纯 Python 的可调用对象，内部只存 `func`、`args`、`keywords`，`__call__` 时把它们与本次实参合并再调用 `func`，因此没有额外的闭包作用域，也就能 pickle。
 
-<Term word='functools.partial' text='functools.partial(func, /, *args, **keywords) 返回一个 partial 对象，冻结一部分位置参数与关键字参数；再次调用时新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 p = partial(f, a=1) 后 p(a=2) 用的是 2。par' />
+`cached_property` 是只实现 `__get__` 的非数据描述符：首次访问时计算并把结果以同名键写进实例 `__dict__`，之后实例字典优先于它，计算便只发生一次；
 
-<Term word='lru_cache 与缓存策略' text='@functools.lru_cache(maxsize=128, typed=False) 也可写成 lru_cache(maxsize)(fn)；maxsize 默认 128，设为 None 表示无界、不做淘汰，取 2 的幂时淘汰效率最好；typed 默认 False，置 True 会把 1 与 1.0 当作不同的' />
+没有 `__set__` 既是它能被实例字典覆盖的原因，也决定了 `__slots__` 去掉 `__dict__` 后无法使用。`singledispatch` 则用 `registry` 字典把类型映射到实现，`dispatch` 沿类型的 `__mro__` 找到第一个注册命中的类。
+
+<Term word='functools.partial' text='`functools.partial(func, /, *args, **keywords)` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` 后再 `p(a=2)' />
+
+<Term word='lru_cache 与缓存策略' text='`functools.lru_cache` 的默认配置是 `maxsize=128`、`typed=False`，既可以写成带参数的 `@lru_cache(maxsize=128)`，也可以先 `@lru_cache(maxsize)` 再作用于 `fn`（即 `lru_cache(maxsize)(fn)` 两步走' />
 
 
 ## 用 partial 适配回调，并给纯解析函数加可清理的缓存
 
-一个任务队列的回调只允许传单参数函数，但底层 `fetch(url, timeout, retries)` 有三个参数；
+一个任务队列的回调只接受单参数函数，底层 `fetch` 却有三个参数；
 
-用 partial 冻结 timeout 与 retries 就能得到符合接口的可调用对象，且调用时仍可按名覆盖个别配置。另一处是版本号字符串解析：它是纯函数、输入量有限、又会被反复调用，适合加 lru_cache，但必须给出 cache_clear 便于配置热更新与单元测试隔离。
+```python
+fetch(url, timeout, retries)
+```
 
-下面把这两件事写成一个可直接运行的片段：打印 partial 适配后的调用、关键字覆盖效果、解析结果的重复命中，以及清空缓存后 currsize 归零。真实项目还应把 cache_info 的命中率上报，低命中时及时关掉缓存。
+用 `partial` 冻结 `timeout` 与 `retries`，就得到一个符合接口的可调用对象，调用时还能按名覆盖个别配置。另一处是版本号字符串解析：它是纯函数、输入量有限、又会被反复调用，适合加 `lru_cache`，但必须留出 `cache_clear`，方便配置热更新与单元测试之间做隔离。
+
+下面把这两件事写成一个可直接运行的片段：打印 `partial` 适配后的调用、关键字覆盖的效果、解析结果的重复命中，以及清空缓存后 `currsize` 归零。真实项目还应把 `cache_info` 的命中率上报，命中率偏低时及时把缓存关掉。
 
 ```python
 from functools import partial, lru_cache
@@ -242,7 +273,7 @@ print(parse_key.cache_info().currsize)
 python -c "import inspect; print(inspect.signature(print))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **functools.partial** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `functools.partial` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 <CheckList id='P034b' title='上线前自检' :items='["能复现并解释「给含可变参数的函数加 lru_cache 报 TypeErr」", "能复现并解释「给读当前时间或写日志的函数加 lru_cache，结果一直是」", "能复现并解释「cached_property 在定义了 __slots__」", "能用一条命令验证 functools.partial", "关键路径有自动化测试与失败分支"]' />
 
@@ -277,13 +308,13 @@ python -c "import inspect; print(inspect.signature(print))"
 
 <Exercise title='进阶：typed 缓存与 cache_clear' task='给函数加 lru_cache(maxsize=16, typed=True)，分别传 1 与 1.0，打印 misses，再 cache_clear 后打印 currsize。' solution='from functools import lru_cache\n\n@lru_cache(maxsize=16, typed=True)\ndef f(x):\n    return x\n\nprint(f(1), f(1.0))\nprint(f.cache_info().misses)\nf.cache_clear()\nprint(f.cache_info().currsize)' explain='typed=True 把 int 与 float 视为不同键，1 与 1.0 各产生一次未命中，misses 为 2；cache_clear 后 currsize 归零。' />
 
-<Quiz no='034-1' q='lru_cache 的 maxsize 与 typed 默认值分别是？' :options='["128 与 False", "None 与 True", "32 与 False", "256 与 True"]' answer="0" explain='签名是 lru_cache(maxsize=128, typed=False)；maxsize=None 表示无界，typed=True 才把 1 与 1.0 分开缓存。' />
+<Quiz no='034-2' q='lru_cache 的 maxsize 与 typed 默认值分别是？' :options='["128 与 False", "None 与 True", "32 与 False", "256 与 True"]' answer="0" explain='签名是 lru_cache(maxsize=128, typed=False)；maxsize=None 表示无界，typed=True 才把 1 与 1.0 分开缓存。' />
 
-<Quiz no='034-2' q='给 lru_cache 包装的函数传入 list 参数会怎样？' :options='["抛 TypeError: unhashable type: &#39;list&#39;", "正常缓存", "自动把 list 转成 tuple 再缓存", "静默地不缓存这次调用"]' answer="0" explain='缓存键由 args + kwargs 构成，要求每个元素可哈希；list / dict / set 不可哈希，构造键时即抛 TypeError。' />
+<Quiz no='034-3' q='给 lru_cache 包装的函数传入 list 参数会怎样？' :options='["抛 TypeError: unhashable type: &#39;list&#39;", "正常缓存", "自动把 list 转成 tuple 再缓存", "静默地不缓存这次调用"]' answer="0" explain='缓存键由 args + kwargs 构成，要求每个元素可哈希；list / dict / set 不可哈希，构造键时即抛 TypeError。' />
 
-<Quiz no='034-3' q='cached_property 与 property 最关键的区别是？' :options='["cached_property 首次计算后写入实例 __dict__，之后不再调用", "property 会自动缓存结果", "cached_property 每次访问都重新计算", "两者行为完全相同"]' answer="0" explain='cached_property 是非数据描述符，首次计算后把结果写进实例字典，后续由实例字典优先命中；property 每次都会调用 fget。' />
+<Quiz no='034-4' q='cached_property 与 property 最关键的区别是？' :options='["cached_property 首次计算后写入实例 __dict__，之后不再调用", "property 会自动缓存结果", "cached_property 每次访问都重新计算", "两者行为完全相同"]' answer="0" explain='cached_property 是非数据描述符，首次计算后把结果写进实例字典，后续由实例字典优先命中；property 每次都会调用 fget。' />
 
-<FillBlank no='034-F' tpl='from functools  ___ partial, lru_cache' :answers='["import"]' hint='回想本讲关于 functools.partial 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 functools.partial：把固定参数变成数据 的落点。' />
+<FillBlank no='034-5' tpl='from functools  ___ partial, lru_cache' :answers='["import"]' hint='回想本讲关于 functools.partial 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 functools.partial：把固定参数变成数据 的落点。' />
 
 <KnowledgeCard :points='["functools.partial(func, /, *args, **keywords) 冻结参数、返回可 pickle 的 partial 对象，.func/.args/.keywords 可读，关键字可被覆盖", "lru_cache 默认 maxsize=128、typed=False；键由 args + kwargs 组成且须全可哈希，否则 TypeError: unhashable type: &#39;list&#39;", "cache_info() 返回 CacheInfo(hits, misses, maxsize, currsize)；cache_clear() 清空；__wrapped__ 取原函数；cache_parameters()（3.9+）读配置", "typed=True 把 1 与 1.0 分开缓存；maxsize=None 无界不淘汰，取 2 的幂淘汰最高效", "singledispatch 按第一个参数沿 MRO 分派（3.7+ 支持注解注册，3.8+ 有 singledispatchmethod）；cached_property（3.8+）写入实例 __dict__ 且要求实例有字典", "callable(obj) 判断 __call__；只对纯函数缓存，返回可变对象要给副本，并提供 cache_clear 供测试与热更新"]' :pitfalls='["给含可变参数的函数加 lru_cache 报 TypeError: unhashable type: &#39;list&#39;", "给读当前时间或写日志的函数加 lru_cache，结果一直是第一次的旧值", "cached_property 在定义了 __slots__ 的类上不可用", "给含可变参数或带副作用的函数加 lru_cache，会得到跨调用串数据甚至安全问题"]' summary='偏函数把「固定一部分参数」变成数据，回调接口只要一个可调用对象时特别好用；lru_cache 则把纯函数变成带边界的记忆化' />
 

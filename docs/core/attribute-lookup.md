@@ -7,43 +7,53 @@ description: 解释所有属性相关现象的统一模型
 
 # 第 056 讲 · 属性访问链路与 __getattribute__
 
-把导入这条查找链走通之后，代码里最常做的其实是 obj.x：从对象身上取一份状态。此刻仍只有一条执行流，正好把「取值」也拆成固定次序，免得日后多线程一起来连谁改了什么都分不清。你大概遇到过：给对象挂了缓存或懒加载，有时取到实例字典里的旧值，有时却落到类上的方法，几次结果对不上。
+把导入这条查找链走通之后，代码里最常做的其实是 `obj.x`：从对象身上取一份状态。此刻仍只有一条执行流，正好把「取值」也拆成固定次序，免得日后多线程一起来连谁改了什么都分不清。你大概遇到过：给对象挂了缓存或懒加载，有时取到实例字典里的旧值，有时却落到类上的方法，几次结果对不上。
 
-先从 __getattribute__ 这个总入口说起，顺着数据描述符、实例字典、非数据描述符走到 __getattr__ 兜底，最后看递归陷阱和它处在热路径上的开销。需要你理解类、实例字典与 MRO 上的描述符；学完能用这条链统一解释属性相关的怪现象，也能稳妥写出懒加载代理。
+先从 `__getattribute__` 这个总入口说起，顺着数据描述符、实例字典、非数据描述符走到 `__getattr__` 兜底，最后看递归陷阱和它处在热路径上的开销。需要你理解类、实例字典与 MRO 上的描述符；学完能用这条链统一解释属性相关的怪现象，也能稳妥写出懒加载代理。
 
 
 ## 一个懒加载字段引发的 RecursionError
 
-给 ORM 模型加一个「懒加载」字段：第一次访问 `obj.profile` 时去数据库查，之后复用缓存。
+给 ORM 模型加一个「懒加载」字段：第一次读 `obj.profile` 时去查库，之后复用缓存。
 
-有人写了 def `__getattribute__(self, name)`: if name == 'profile': return `load(self)`，结果进程直接 RecursionError。
+有人把这段逻辑直接写进 `__getattribute__`，写成下面这段代码，一跑就抛 RecursionError。
 
-原因是 `load(self)` 内部又要读 `self.id`，而任何 `self.xxx` 都会再次进入这个 `__getattribute__`。
+```python
+def __getattribute__(self, name):
+    if name == 'profile':
+        return load(self)
+```
 
-改成在 `__getattr__` 里兜底就「看起来」能跑，却又发现给实例赋值 `obj.profile = x` 后，缓存字段被实例的 `__dict__` 抢先命中，property 的校验逻辑被绕过。
+原因不复杂：`load(self)` 内部要读 `self.id`，而任何 `self.xxx` 都会重新进入同一个 `__getattribute__`，递归没有出口。
 
-还有人把 @property 和同名实例属性一起用，期望实例值优先，实际永远读到描述符。
+退一步改用 `__getattr__` 兜底，表面能跑，可一旦给实例赋值 `obj.profile = x`，缓存值就落在实例的 `__dict__` 里，把 property 的校验绕了过去。
 
-这些现象不是各自独立的坑，而是同一条查找链在不同位置的结果：数据描述符、实例字典、非数据描述符、`__getattr__` 各有固定优先级，中间还夹着 `__getattribute__` 这个总入口。
+还有人把 `@property` 与同名实例属性一起用，以为实例值会优先，结果永远读到描述符。
 
-不把这条链拆开，就只能靠试错改代码。
+这几件事不是各自独立的坑，而是同一条查找链在不同位置的结果：数据描述符、实例字典、非数据描述符、`__getattr__` 各有固定优先级，中间还夹着 `__getattribute__` 这个总入口。
+
+不把链拆开，就只能靠试错改代码。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='在 __getattribute__ 里用 self.xxx 取别的属性：任何 self.xxx 都会再次进入 __getattribute__，形成无限递归并抛 RecursionError' />
 
 
 ## obj.x 的六步查找链
 
-任何 `obj.x` 都先调用 `type(obj)`.`__getattribute__`(obj, 'x')，object 的默认实现按固定次序解析：第一步在 `type(obj)` 的 MRO 上查找名字 x，得到 cls_attr（找不到记为 None）；
+任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, 'x')`，object 的默认实现按固定次序解析。
 
-第二步若 cls_attr 是数据描述符——即类型定义了 `__set__` 或 `__delete__`——则无条件调用 `cls_attr.__get__(obj, type(obj)`) 并返回，实例 `__dict__` 里同名键完全不参与；
+第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；
 
-第三步查 `obj.__dict__`，命中即返回；第四步若 cls_attr 是非数据描述符（只定义 `__get__`），调用它的 `__get__`；第五步 cls_attr 非 None 就直接返回类属性；
+第二步若 `cls_attr` 是数据描述符，也就是类型定义了 `__set__` 或 `__delete__`，就无条件调用它的 `__get__(obj, type(obj))` 并返回，实例 `__dict__` 里的同名键完全不参与；
 
-第六步以上都没结果才抛 AttributeError，此时若类定义了 `__getattr__(self, name)`，解释器通过 slot_tp_getattr_hook 再调用它兜底。
+第三步查 `obj.__dict__`，命中即返回；第四步若 `cls_attr` 是非数据描述符（只定义 `__get__`），调用它的 `__get__`；第五步 `cls_attr` 非 `None` 就直接返回类属性；
 
-所以 property 是数据描述符（property 类型带会抛 AttributeError 的 `__set__`），实例字典盖不住它；函数对象是非数据描述符（只有 `__get__`），因此实例属性可以遮蔽同名方法；staticmethod / classmethod 同样是非数据描述符。
+第六步以上都没结果才抛 `AttributeError`，此时若类定义了 `__getattr__(self, name)`，解释器通过 `slot_tp_getattr_hook` 再调用它兜底。
 
-`__slots__` 声明的属性是类上的 member_descriptor，也属于数据描述符，且实例不再有 `__dict__`。
+由此能解释几种常见现象：`property` 是数据描述符（property 类型带一个会抛 `AttributeError` 的 `__set__`），实例字典盖不住它；函数对象是非数据描述符（只有 `__get__`），因此实例属性可以遮蔽同名方法；
+
+`staticmethod` 与 `classmethod` 同样是非数据描述符。
+
+`__slots__` 声明的属性是类上的 `member_descriptor`，也属于数据描述符，且实例通常不再有 `__dict__`。
 
 **obj.x 六步查找链的命中条件**
 
@@ -60,24 +70,24 @@ description: 解释所有属性相关现象的统一模型
 
 这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='任何 obj.x 都先调用 type(obj).__getattribute__(obj, &#39;x&#39;)，object 的默认实现按固定次序解析：第一步在 type(obj) 的 MRO 上查找名字 x，得到 cls_attr（找不到记为 None）；第二步若 cls_attr 是数据描述符——即类型定' />
+<Callout type="tip" title='核心心智模型' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` ' />
 
 
 ## __getattribute__ 的递归与 __setattr__ 对称性
 
-覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__` 都会再次触发 `__getattribute__`，形成无限递归并抛 RecursionError: maximum recursion depth exceeded。
+覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__`，都会再次触发 `__getattribute__`，形成无限递归，最终抛 `RecursionError`（报错文字是 maximum recursion depth exceeded）。
 
-唯一安全的底座是 `object.__getattribute__(self, name)`，它执行上一段那六步而不回调你的覆盖；
+唯一安全的底座是 `object.__getattribute__`，它执行上一段那六步而不回调你的覆盖；
 
 需要拦截的分支单独判断，其余一律委托给它。因为它在每次属性访问的热路径上，拦截逻辑应尽量薄：只判断少量名字，重计算放到函数或缓存里。
 
-赋值侧对称地有 `__setattr__(self, name, value)`，所有 `self.x = v` 都经过它，内部必须用 `object.__setattr__(self, name, value)` 否则同样递归；
+赋值侧对称地有 `__setattr__`，所有 `self.x = v` 都经过它，内部必须用 `object.__setattr__` 委托，否则同样递归；
 
-数据描述符的 `__set__` 也由 `object.__setattr__` 负责分派，所以给 property 赋值会走 setter 而不是实例字典。
+数据描述符的 `__set__` 也由 `object.__setattr__` 负责分派，所以给 property 赋值会走 setter 而不是写实例字典。
 
-del `obj.x` 对应 `__delattr__` 与描述符的 `__delete__`。
+`del obj.x` 对应 `__delattr__` 与描述符的 `__delete__`。
 
-`inspect.getattr_static(obj, name)`（3.2+）能绕过整条动态链拿到类上原始对象，是调试「值到底从哪来」的关键工具，它不会触发 `__get__`。
+`inspect.getattr_static`（3.2+）能绕过整条动态链拿到类上的原始对象，是调试「值到底从哪来」的关键工具，它不会触发 `__get__`。
 
 ```python
 class DataDesc:
@@ -110,9 +120,9 @@ print(type(Demo.__dict__['a']).__name__, hasattr(DataDesc, '__set__'))
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Term word='__getattribute__ 总入口' text='任何 obj.x 都先调用 type(obj).__getattribute__(obj, &#39;x&#39;)，object 的默认实现按固定次序解析：第一步在 type(obj) 的 MRO 上查找名字 x，得到 cls_attr（找不到记为 None）；第二步若 cls_attr 是数据描述符——即类型定义了 __set__' />
+<Term word='__getattribute__ 总入口' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` 是数据描述符，也就是' />
 
-<Term word='数据描述符优先' text='覆盖 __getattribute__ 时，方法体内任何 self.xxx、getattr(self, ...)、甚至访问 self.__dict__ 都会再次触发 __getattribute__，形成无限递归并抛 RecursionError: maximum recursion depth exceeded。唯一' />
+<Term word='数据描述符优先' text='覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__`，都会再次触发 `__getattribute__`，形成无限递归，最终抛 `RecursionError`（报错文字是 maximum recursio' />
 
 
 ## 对照：__getattr__ 兜底为何绕过校验
@@ -164,17 +174,13 @@ print('opnames', [i.opname for i in dis.get_instructions(read)])
 
 ## 描述符协议与数据描述符的优先级
 
-描述符是实现了 `__get__(self, instance, owner)`、`__set__(self, instance, value)` 或 `__delete__` 任一的类属性；
+描述符是类属性里实现了 `__get__`、`__set__` 或 `__delete__` 任一方法的对象；`__set_name__`（3.6+）在类创建时由 `type.__new__` 自动调用，可省去手写字段名。区分数据与非数据只看有没有 `__set__` 或 `__delete__`，与 `__get__` 无关。
 
-`__set_name__(self, owner, name)`（3.6+）在类创建时由 `type.__new__` 自动调用，可省去手写字段名。
+`functools.cached_property`（3.8+）刻意做成非数据描述符：首次访问计算后把结果写进实例的 `__dict__`，此后实例字典优先命中，描述符不再执行，等价于「一次性懒加载且可被覆盖」；
 
-区分数据/非数据只看有没有 `__set__` 或 `__delete__`，与 `__get__` 无关。
+代价是实例必须有 `__dict__`（与 `__slots__` 冲突），而且它不是线程安全的。远程属性、ORM 懒加载、代理对象应优先用 `__getattr__` 实现：只在正常查找彻底失败时被调用，不拖慢已有属性的访问。
 
-`functools.cached_property`（3.8+）刻意做成非数据描述符：首次访问计算后把结果写进实例的 `__dict__`['name']，此后实例字典优先命中，描述符不再执行，等价于「一次性懒加载且可被覆盖」；
-
-代价是实例必须有 `__dict__`（与 `__slots__` 冲突），且它不是线程安全的。远程属性、ORM 懒加载、代理对象应优先用 `__getattr__` 实现：只在正常查找彻底失败时被调用，不拖慢已有属性的访问。
-
-若确实要拦截所有访问（审计、透明代理），用 `__getattribute__` 并全程委托 `object.__getattribute__`，同时用 getattr_static 和 dis 验证分派路径。
+若确实要拦截所有访问（审计、透明代理），用 `__getattribute__` 并全程委托 `object.__getattribute__`，同时用 `inspect.getattr_static` 和 `dis` 验证分派路径。
 
 **常见描述符类型与优先级归类**
 
@@ -198,13 +204,13 @@ print('opnames', [i.opname for i in dis.get_instructions(read)])
 
 ## _PyObject_GenericGetAttrWithDict 的执行路径
 
-在 CPython 里，实例属性解析由 Objects/`object.c` 的 _PyObject_GenericGetAttrWithDict 完成：它先在类型的 MRO 上做 _PyType_Lookup 得到 descr，再检查 PyDescr_IsData（即 descr 类型带 tp_descr_set），成立就调 `descr.__get__`；
+在 CPython 里，实例属性解析由 `Objects/object.c` 的 `_PyObject_GenericGetAttrWithDict` 完成：它先在类型的 MRO 上做 `_PyType_Lookup` 得到 descr，再用 `PyDescr_IsData` 判断 descr 类型是否带 `tp_descr_set`，成立就调 `descr.__get__`；
 
-否则查实例字典，再处理非数据 descr 的 `__get__`，最后返回 descr 或抛 AttributeError。类型对象创建时 `type.__new__` 会扫描命名空间里带 `__set_name__` 的描述符并回调，让描述符知道自己的属性名。
+否则查实例字典，再处理非数据 descr 的 `__get__`，最后返回 descr 或抛 `AttributeError`。类型对象创建时 `type.__new__` 会扫描命名空间里带 `__set_name__` 的描述符并回调，让描述符知道自己的属性名。
 
-`__getattribute__` 的插槽是 tp_getattro：用户类覆盖它后，slot_tp_getattr_hook 还会在 AttributeError 时转去 tp_getattr（`__getattr__`），这一层包装正是「`__getattr__` 只作兜底」的实现来源。
+`__getattribute__` 的插槽是 `tp_getattro`：用户类覆盖它后，`slot_tp_getattr_hook` 还会在 `AttributeError` 时转去 `tp_getattr`（也就是 `__getattr__`），这一层包装正是「`__getattr__` 只作兜底」的实现来源。
 
-LOAD_ATTR 字节码在 3.11+ 有自适应特化缓存，命中稳定类型时会内联查字典，但语义仍等价于上述六步。property 用 C 实现且带会报错的 `__set__`，因此恒为数据描述符；函数对象的 `__get__` 负责把函数绑定成 bound method，它没有 `__set__`，所以是典型的非数据描述符。
+`LOAD_ATTR` 字节码在 3.11+ 有自适应特化缓存，命中稳定类型时会内联查字典，但语义仍等价于上述六步。property 用 C 实现且带会报错的 `__set__`，因此恒为数据描述符；函数对象的 `__get__` 负责把函数绑定成 bound method，它没有 `__set__`，所以是典型的非数据描述符。
 
 
 ## ORM 懒加载字段与属性错因速查
@@ -213,7 +219,7 @@ LOAD_ATTR 字节码在 3.11+ 有自适应特化缓存，命中稳定类型时会
 
 若把逻辑写进 `__getattribute__`，读取 `self.id` 也会递归；
 
-若用普通实例属性缓存，又会被后续赋值绕过校验。正确分工是：校验部分交给 property（数据描述符，保证 setter 生效），懒加载与未知字段交给 `__getattr__`（只在正常链失败时触发），缓存写进实例的 `__dict__` 里由 property 的读路径读取。
+若用普通实例属性缓存，又会被后续赋值绕过校验。正确的分工是：校验交给 `property`（数据描述符，保证 setter 生效），懒加载与未知字段交给 `__getattr__`（只在正常链失败时触发），缓存写进实例的 `__dict__`，由 property 的读路径读取。
 
 下面的片段把这三种机制组合成一个可运行的最小模型，并用 `__getattribute__` 只做一层薄薄的访问计数，所有真实取属性都委托给 `object.__getattribute__`，避免递归。
 
@@ -282,28 +288,28 @@ if __name__ == '__main__':
 
 <Quiz no='056-3' q='关于 __getattr__ 与 inspect.getattr_static，正确的是？' :options='["__getattr__ 仅在正常查找抛 AttributeError 后被调；getattr_static 不触发描述符 __get__", "__getattr__ 比实例字典优先", "getattr_static 会执行 property 的 fget", "定义 __getattr__ 后 hasattr 恒为 True 且无法改"]' answer="0" explain='slot_tp_getattr_hook 只在 AttributeError 时转 __getattr__；getattr_static 直接读 MRO 与 __dict__，绕过 __get__，适合定位「值到底从哪来」。' />
 
-<Predict no='056-P' q='类上有 @property def x(self): return 1，实例执行 obj.__dict__[&#39;x&#39;] = 9 后读 obj.x，结果是？' :options='["1，property 是数据描述符，实例字典被跳过", "9，实例字典优先", "抛 AttributeError", "取决于 Python 版本"]' answer='0' output='1' explain='property 类型定义了 __set__，属于数据_descriptor，查找链第 2 步就调用它的 __get__，第 3 步的实例字典根本不会被执行；赋值也会走 setter 而非写字典。' />
+<Predict no='056-4' q='类上有 @property def x(self): return 1，实例执行 obj.__dict__[&#39;x&#39;] = 9 后读 obj.x，结果是？' :options='["1，property 是数据描述符，实例字典被跳过", "9，实例字典优先", "抛 AttributeError", "取决于 Python 版本"]' answer='0' output='1' explain='property 类型定义了 __set__，属于数据_descriptor，查找链第 2 步就调用它的 __get__，第 3 步的实例字典根本不会被执行；赋值也会走 setter 而非写字典。' />
 
-<FillBlank no='056-F' tpl='___ __get__(self, obj, owner):' :answers='["def"]' hint='回想本讲关于 __getattribute__ 总入口 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 obj.x 的完整优先级链 的落点。' />
+<FillBlank no='056-5' tpl='___ __get__(self, obj, owner):' :answers='["def"]' hint='回想本讲关于 __getattribute__ 总入口 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 obj.x 的完整优先级链 的落点。' />
 
-<KnowledgeCard :points='["obj.x 统一入口是 type(obj).__getattribute__；六步顺序：数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__", "数据描述符 = 类型带 __set__ 或 __delete__；property、__slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是", "__getattribute__ 内任何 self.xxx 都递归，唯一底座是 object.__getattribute__；__setattr__ 对称地用 object.__setattr__", "__getattr__ 只在 AttributeError 后兜底，适合懒加载与代理；getattr_static (3.2+) 绕过 __get__ 可定位原始属性", "cached_property (3.8+) 是非数据描述符，首次算完写实例 __dict__ 自我遮蔽，与 __slots__ 冲突且非线程安全", "LOAD_ATTR 有自适应特化缓存，但语义仍等价于 _PyObject_GenericGetAttrWithDict 的六步"]' :pitfalls='["在 __getattribute__ 里用 self.xxx 取别的属性", "给实例塞同名属性想覆盖 property 的校验", "用 hasattr / getattr 判断属性是否存在就万事大吉", "在 __getattribute__ 里用 self.x 取属性会无限递归，必须用 object.__getattribute__"]' summary='一次 obj.x 要依次问：类及其 MRO 上的数据描述符、实例 __dict__、非数据描述符、最后才是 __getattr__，所有属性现象都由这条链解释' />
+<KnowledgeCard :points='["obj.x 的统一入口是 type(obj).__getattribute__；六步顺序为数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__", "数据描述符指类型带 __set__ 或 __delete__；property 与 __slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是", "__getattribute__ 内任何 self.xxx 都会递归，唯一底座是 object.__getattribute__；__setattr__ 对称地委托 object.__setattr__", "__getattr__ 只在 AttributeError 后兜底，适合懒加载与代理；inspect.getattr_static 绕过 __get__ 可定位原始属性", "cached_property (3.8+) 是非数据描述符，首次算完写实例 __dict__ 自我遮蔽，与 __slots__ 冲突且非线程安全", "LOAD_ATTR 在 3.11+ 有自适应特化缓存，语义仍等价于 _PyObject_GenericGetAttrWithDict 的六步"]' :pitfalls='["在 __getattribute__ 里用 self.xxx 取别的属性", "给实例塞同名属性想覆盖 property 的校验", "用 hasattr / getattr 判断属性是否存在就万事大吉", "在 __getattribute__ 里用 self.x 取属性会无限递归，必须用 object.__getattribute__"]' summary='一次 obj.x 要依次问：类及其 MRO 上的数据描述符、实例 __dict__、非数据描述符、最后才是 __getattr__，所有属性现象都由这条链解释' />
 
 **速记索引**
 
 | 要记住的结论 | 用在哪一步 |
 | --- | --- |
-| obj.x 统一入口是 type(obj).__getattribute__；六步顺序：数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__ | 建立直觉 |
-| 数据描述符 = 类型带 __set__ 或 __delete__；property、__slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是 | 跑通示例 |
-| __getattribute__ 内任何 self.xxx 都递归，唯一底座是 object.__getattribute__；__setattr__ 对称地用 object.__setattr__ | 深入边界 |
-| __getattr__ 只在 AttributeError 后兜底，适合懒加载与代理；getattr_static (3.2+) 绕过 __get__ 可定位原始属性 | 工程落地 |
+| obj.x 的统一入口是 type(obj).__getattribute__；六步顺序为数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__ | 建立直觉 |
+| 数据描述符指类型带 __set__ 或 __delete__；property 与 __slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是 | 跑通示例 |
+| __getattribute__ 内任何 self.xxx 都会递归，唯一底座是 object.__getattribute__；__setattr__ 对称地委托 object.__setattr__ | 深入边界 |
+| __getattr__ 只在 AttributeError 后兜底，适合懒加载与代理；inspect.getattr_static 绕过 __get__ 可定位原始属性 | 工程落地 |
 | cached_property (3.8+) 是非数据描述符，首次算完写实例 __dict__ 自我遮蔽，与 __slots__ 冲突且非线程安全 | 随堂检测 |
-| LOAD_ATTR 有自适应特化缓存，但语义仍等价于 _PyObject_GenericGetAttrWithDict 的六步 | 复盘 |
+| LOAD_ATTR 在 3.11+ 有自适应特化缓存，语义仍等价于 _PyObject_GenericGetAttrWithDict 的六步 | 复盘 |
 
-1. obj.x 统一入口是 type(obj).__getattribute__；六步顺序：数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__
+1. obj.x 的统一入口是 type(obj).__getattribute__；六步顺序为数据描述符 → 实例 __dict__ → 非数据描述符 → 类属性 → __getattr__
 
-2. 数据描述符 = 类型带 __set__ 或 __delete__；property、__slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是
+2. 数据描述符指类型带 __set__ 或 __delete__；property 与 __slots__ 成员是数据描述符，函数、staticmethod、cached_property 不是
 
-3. __getattribute__ 内任何 self.xxx 都递归，唯一底座是 object.__getattribute__；__setattr__ 对称地用 object.__setattr__
+3. __getattribute__ 内任何 self.xxx 都会递归，唯一底座是 object.__getattribute__；__setattr__ 对称地委托 object.__setattr__
 
 [下一讲：可变性、深浅拷贝与共享状态](/core/copy)
 
@@ -311,4 +317,4 @@ if __name__ == '__main__':
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **__getattribute__ 总入口** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 `__getattribute__` 总入口 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

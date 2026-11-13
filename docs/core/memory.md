@@ -9,16 +9,16 @@ description: 能估算对象开销并定位内存问题
 
 上一讲看执行上下文，这一讲把镜头对准对象内存布局：整数、列表、实例占多少内存，又凭什么被及时回收。这是第 6 讲「一切皆对象」轻轻带过、现在该补的一笔。
 
-一个图服务用 sys.getsizeof 乘节点数做容量规划，结果比线上小了近一半。本讲先从 PyObject 头与引用计数归零即释放讲起，再看小整数池与字符串驻留怎样让身份比较不稳，最后说 getsizeof 与 tracemalloc 的观测边界。需要第 6 讲的对象模型、id 与 is 及第 43 讲的 __slots__；学完你能估算对象开销，也为下一讲埋好线索。
+一个图服务用 `sys.getsizeof` 乘节点数做容量规划，结果比线上小了近一半。本讲先从 `PyObject` 头与引用计数归零即释放讲起，再看小整数池与字符串驻留怎样让身份比较不稳，最后说 `sys.getsizeof` 与 `tracemalloc` 的观测边界。需要第 6 讲的对象模型、`id` 与 `is` 及第 43 讲的 `__slots__`；学完你能估算对象开销，也为下一讲埋好线索。
 
 
 ## 一个 getsizeof 加起来和监控对不上的内存报告
 
-一个图服务把节点存成普通 dict，容量规划时用 `sys.getsizeof(dict)` 乘节点数，估算结果比线上实际占用小了近一半，扩容方案直接做错——getsizeof 只看对象结构体本身，算不到字典里字符串键、值对象与哈希表的真实分配。
+一个图服务把节点存成普通 `dict`，容量规划时用 `sys.getsizeof(dict)` 乘节点数，估算结果比线上实际占用小了近一半，扩容方案直接做错——`getsizeof` 只看对象结构体本身，算不到字典里字符串键、值对象与哈希表的真实分配。
 
-另一处 bug 更典型：代码里用 is 判断两个运行时计算出的整数是否相等，测试环境偶尔通过、上线后某些数据分支判等失败，因为小整数被缓存复用、大整数每次新建，身份比较结果随创建方式变化。还有人给缓存做优化，把字符串键用 `sys.intern` 驻留，却说不清它到底省了什么。
+另一处 bug 更典型：代码里用 `is` 判断两个运行时计算出的整数是否相等，测试环境偶尔通过、上线后某些数据分支判等失败，因为小整数被缓存复用、大整数每次新建，身份比较结果随创建方式变化。还有人给缓存做优化，把字符串键用 `sys.intern` 驻留，却说不清它到底省了什么。
 
-CPython 的对象内存布局、引用计数与小对象池决定了这些行为。本讲把 PyObject 头、引用计数增减时机、小整数池与字符串驻留、pymalloc 分级分配，以及 getsizeof 与 tracemalloc 的观测边界逐条对齐，让内存结论能被算出来也能被测出来。
+CPython 的对象内存布局、引用计数与小对象池决定了这些行为。本讲把 `PyObject` 头、引用计数增减时机、小整数池与字符串驻留、pymalloc 分级分配，以及 `getsizeof` 与 `tracemalloc` 的观测边界逐条对齐，让内存结论能被算出来也能被测出来。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 sys.getsizeof 估算容器加全部元素的总内存：getsizeof 只返回浅层对象大小加 GC 头，算不到列表/字典里引用的元素对象与 pymalloc 碎片' />
 
@@ -36,11 +36,11 @@ CPython 的对象内存布局、引用计数与小对象池决定了这些行为
 
 ## PyObject 头、引用计数与归零即释放
 
-CPython 里每个对象都以 PyObject 开头：ob_refcnt（Py_ssize_t，64 位下 8 字节）记录引用数，ob_type 指针（8 字节）指向类型对象；变长对象（PyVarObject）再加 ob_size。
+CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。
 
-被 GC 跟踪的容器对象前面还有 PyGC_Head（双向链表指针加状态，通常 16 字节），`sys.getsizeof` 会把它算进去。
+被 GC 跟踪的容器对象前面还有 `PyGC_Head`（双向链表指针加状态，通常 16 字节），`sys.getsizeof` 会把它算进去。
 
-引用计数是最主要的回收机制：Py_INCREF / Py_DECREF 在赋值、传参、容器存取、属性绑定、名字离开作用域、del 时被大量调用，计数归零立刻触发 tp_dealloc 释放对象，并可能级联释放它引用的其它对象。好处是回收时机可预测、无长时间停顿；
+引用计数是最主要的回收机制：`Py_INCREF` / `Py_DECREF` 在赋值、传参、容器存取、属性绑定、名字离开作用域、`del` 时被大量调用，计数归零立刻触发 `tp_dealloc` 释放对象，并可能级联释放它引用的其它对象。好处是回收时机可预测、无长时间停顿；
 
 代价是每次绑定都要改计数，为使这些操作不加细粒度锁，解释器用一把 GIL 保护整个执行状态（第 54 讲），且纯引用计数无法回收循环引用（第 53 讲由分代 GC 兜底）。
 
@@ -70,7 +70,7 @@ print('sizeof empty list', sys.getsizeof([]) > 0)
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 里每个对象都以 PyObject 开头：ob_refcnt（Py_ssize_t，64 位下 8 字节）记录引用数，ob_type 指针（8 字节）指向类型对象；变长对象（PyVarObject）再加 ob_size。被 GC 跟踪的容器对象前面还有 PyGC_Head（双向链表指针' />
+<Callout type="tip" title='核心心智模型' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有 `PyG' />
 
 **PyObject 头与常见浅层大小来源（64 位 CPython）**
 
@@ -83,15 +83,15 @@ print('sizeof empty list', sys.getsizeof([]) > 0)
 | 容器元素 | 列表/字典里引用的其它对象 | 不计入，需另算 |
 | pymalloc 碎片 | arena/pool 中未归还的空闲 block | 完全不计入 |
 
-CPython 把每个值表示为堆上的 PyObject：头部 ob_refcnt 与 ob_type 分别承担引用计数与类型分派，变长对象再加 ob_size，被 GC 跟踪的容器还带 PyGC_Head。
+CPython 把每个值表示为堆上的 `PyObject`：头部 `ob_refcnt` 与 `ob_type` 分别承担引用计数与类型分派，变长对象再加 `ob_size`，被 GC 跟踪的容器还带 `PyGC_Head`。
 
-引用计数通过 Py_INCREF/Py_DECREF 在赋值、传参、容器存取与作用域退出时增减，归零立即调用 tp_dealloc，行为可预测但挡不住循环引用，且这些计数操作需要 GIL 保护。
+引用计数通过 `Py_INCREF` / `Py_DECREF` 在赋值、传参、容器存取与作用域退出时增减，归零立即调用 `tp_dealloc`，行为可预测但挡不住循环引用，且这些计数操作需要 GIL 保护。
 
 为降低小对象分配成本，pymalloc 把 ≤512 字节请求按 size class 从 arena（256KB）→ pool（4KB）→ block 三级结构分配并复用，释放后内存常留在 pool 里不立刻归还系统。
 
 小整数池（-5..256）与字符串驻留都是这套对象模型上的复用优化：前者启动时预分配，后者把常量与标识符放进全局表以加速字典键比较。`sys.getsizeof` 走 `__sizeof__` 加 GC 头，只反映浅层结构；
 
-tracemalloc 在 PyMem 分配器层记账，能测到容器元素、字符串内容与真实增量，因此「估算内存」必须区分这两层。
+`tracemalloc` 在 PyMem 分配器层记账，能测到容器元素、字符串内容与真实增量，因此「估算内存」必须区分这两层。
 
 <ConceptDiagram type='layers3' title='第 052 讲 · PyObject 头、引用计数与归零即释放' labels='PyObject 头、引用计数与归零即释放|小整数池、字符串驻留与 is 的正确用法|pymalloc、getsizeof 的局限' caption='能估算对象开销并定位内存问题' />
 
@@ -100,13 +100,13 @@ tracemalloc 在 PyMem 分配器层记账，能测到容器元素、字符串内�
 
 ## 小整数池、字符串驻留与 is 的正确用法
 
-CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256`; `b = 256` 时 a is b 为 True；这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 co_consts 槽，进一步让字面量复用。
+CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；
 
-运行时通过 int('257') 之类创建的大整数不在池里，两次调用得到不同对象，is 比较为 False。字符串驻留（intern）把标识符样式的字符串与编译期常量放进全局驻留表，字典键比较时可先比指针再比内容，省掉逐字符比较；`sys.intern(s)` 手动驻留，适合大量重复的键（如日志字段名、枚举值）。
+这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int('257')` 之类创建的大整数不在池里，两次调用得到不同对象，`is` 比较为 `False`。
 
-但驻留表本身持有强引用，滥驻留用户输入的任意字符串会让它们一直存活，反而造成内存问题。由此得出明确规则：值相等一律用 ==，只有判断 None / True / False 这类单例，或确实要验证「是不是同一个对象」时才用 is。
+字符串驻留（intern）把标识符样式的字符串与编译期常量放进全局驻留表，字典键比较时可先比指针再比内容，省掉逐字符比较；`sys.intern(s)` 手动驻留，适合大量重复的键（如日志字段名、枚举值）。但驻留表本身持有强引用，滥驻留用户输入的任意字符串会让它们一直存活，反而造成内存问题。
 
-把 is 用在整数或运行时字符串上，结果会随池化、驻留、常量合并与创建方式飘移，是典型的偶发 bug。
+由此得出明确规则：值相等一律用 `==`，只有判断 `None` / `True` / `False` 这类单例，或确实要验证「是不是同一个对象」时才用 `is`。把 `is` 用在整数或运行时字符串上，结果会随池化、驻留、常量合并与创建方式飘移，是典型的偶发 bug。
 
 ```python
 import sys, tracemalloc
@@ -144,17 +144,15 @@ print('back to base', after == before)
 
 ## pymalloc、getsizeof 的局限与 tracemalloc 的正确观测
 
-pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的请求不走通用 malloc，而是按 size class 从 arena（256KB）→ pool（4KB）→ block 三级结构里取，减少系统调用与内存碎片，同规格对象还能复用刚释放的 block。
+pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的请求不走通用 `malloc`，而是按 size class 从 arena（256KB）→ pool（4KB）→ block 三级结构里取，减少系统调用与内存碎片，同规格对象还能复用刚释放的 block。
 
-这意味着「释放一个对象」不一定把内存立刻还给操作系统，resident 内存短期不降并不等于泄漏。
+这意味着「释放一个对象」不一定把内存立刻还给操作系统，resident 内存短期不降并不等于泄漏。`sys.getsizeof` 调用对象的 `__sizeof__` 并加上 GC 头，返回的是浅层大小：列表只算列表结构体与其指针数组，不含列表里引用的元素对象；字符串因为字符数据内联，这一项会含字符内容。
 
-`sys.getsizeof(obj[, default])` 调用对象的 `__sizeof__` 并加上 GC 头，返回的是浅层大小：列表只算列表结构体与其指针数组，不含列表里引用的元素对象；
+用它估算「容器加全部元素」几乎一定偏小。
 
-字符串因为字符数据内联，getsizeof 会含字符内容。用它估算「容器加全部元素」几乎一定偏小。
+`tracemalloc` 挂钩到 PyMem 分配器层，`start()` 后用 `get_traced_memory()` 取当前净分配与峰值两个量，用 `take_snapshot()` 与 `compare_to()` 按文件名、行号看增量，才是可核对的真实分配。
 
-tracemalloc 挂钩到 PyMem 分配器层，`start()` 后用 `get_traced_memory()` 取 (当前净分配, 峰值)，用 `take_snapshot()` 与 `compare_to()` 按文件名、行号看增量，才是可核对的真实分配。
-
-工程结论：容量规划与泄漏排查用 tracemalloc 或进程常驻内存，getsizeof 只用于说明单个对象的结构开销；海量小对象用 `__slots__`、array 或列式存储换布局（第 43 讲）。
+工程结论：容量规划与泄漏排查用 `tracemalloc` 或进程常驻内存，`getsizeof` 只用于说明单个对象的结构开销；海量小对象用 `__slots__`、`array` 或列式存储换布局（第 43 讲）。
 
 <Compare :panels='[{"label": "主示例", "code": "import sys\n\na = 256\nb = 256\nprint(&#39;small int pooled&#39;, a is b)\nx = int(&#39;257&#39;)\ny = int(&#39;257&#39;)\nprint(&#39;runtime int distinct&#39;, x is y)\nprint(&#39;getrefcount extra&#39;, sys.getrefcount(x) &gt; 0)\ns1 = sys.intern(&#39;cache_key_12345&#39;)\ns2 = sys.intern(&#39;cache_key_12345&#39;)\nprint(&#39;interned same&#39;, s1 is s2)\nprint(&#39;sizeof empty list&#39;, sys.getsizeof([]) &gt; 0)", "note": "PyObject 头、引用计数与归零即释放"}, {"label": "对照 / 进阶", "code": "import sys, tracemalloc\n\nitems = [str(i) for i in range(1000)]\nprint(&#39;list header&#39;, sys.getsizeof(items) &gt; 0)\nprint(&#39;element size&#39;, sys.getsizeof(items[0]) &gt; 0)\ntracemalloc.start()\nbefore = tracemalloc.take_snapshot()\nmore = [str(i) for i in range(1000)]\nafter = tracemalloc.take_snapshot()\ndiff = sum(s.size_diff for s in after.compare_to(before, &#39;filename&#39;) if s.size_diff &gt; 0)\nprint(&#39;tracemalloc sees growth&#39;, diff &gt; 0)\ntracemalloc.stop()", "note": "小整数池、字符串驻留与 is 的正确用法"}]' title='两种写法对照' note='差异集中在 PyObject 头与 ob_refcnt；先看输出，再找背后的规则。' />
 
@@ -180,18 +178,20 @@ tracemalloc 挂钩到 PyMem 分配器层，`start()` 后用 `get_traced_memory()
 | pymalloc | ≤512 字节走 arena/pool/block | 释放后内存可能暂不归还 OS |
 | __slots__ / array | 改布局省掉字典或对象开销 | 海量小对象优先 |
 
-<Term word='PyObject 头与 ob_refcnt' text='CPython 里每个对象都以 PyObject 开头：ob_refcnt（Py_ssize_t，64 位下 8 字节）记录引用数，ob_type 指针（8 字节）指向类型对象；变长对象（PyVarObject）再加 ob_size。被 GC 跟踪的容器对象前面还有 PyGC_Head（双向链表指针加状态，通常 16 ' />
+<Term word='PyObject 头与 ob_refcnt' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有 `PyGC_Head`（双向' />
 
-<Term word='引用计数增减时机' text='CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 a = 256; b = 256 时 a is b 为 True；这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 co_consts 槽，进一步让字面量复用。运行时通过 int(&#39;257&#39;) 之类创建的大整数不' />
+<Term word='引用计数增减时机' text='CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int(&#39;257&#39;)`' />
 
 
 ## 用 tracemalloc 量化 list-of-dict 与 NamedTuple 的真实占用
 
-事件流水常有两种建模：每条记录一个字典，或用 NamedTuple / slots 类做固定字段。字典灵活但每个元素都带一张哈希表与字符串键，NamedTuple 是紧凑元组，字段共享一份名字。用 `sys.getsizeof` 只能看到列表头，看不出元素差异；
+事件流水常有两种建模：每条记录一个字典，或用 `NamedTuple` / slots 类做固定字段。字典灵活但每个元素都带一张哈希表与字符串键，`NamedTuple` 是紧凑元组，字段共享一份名字。用 `sys.getsizeof` 只能看到列表头，看不出元素差异；
 
-用 tracemalloc 分别构造两万条记录并比较净分配字节，才能得出可核对的结论。下面用标准库跑通：构造 dict 版与 NamedTuple 版，比较两次 get_traced_memory 的当前值，并打印 `Point._fields` 确认字段定义。
+用 `tracemalloc` 分别构造两万条记录并比较净分配字节，才能得出可核对的结论。
 
-要点是观测工具要落在分配器层，且结论用相对比较而非写死随版本变化的字节数。真实系统还可进一步换成 array 或列式存储。
+下面用标准库跑通：构造 `dict` 版与 `NamedTuple` 版，比较两次 `get_traced_memory` 的当前值，并打印 `Point._fields` 确认字段定义。
+
+要点是观测工具要落在分配器层，且结论用相对比较而非写死随版本变化的字节数。真实系统还可进一步换成 `array` 或列式存储。
 
 ```python
 import tracemalloc
@@ -223,7 +223,7 @@ tracemalloc.stop()
 python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **PyObject 头与 ob_refcnt** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 PyObject 头与 ob_refcnt 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -237,7 +237,7 @@ python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 sys.getsizeof 估算容器加全", "body": "getsizeof 只返回浅层对象大小加 GC 头，算不到列表/字典里引用的元素对象与 pymalloc 碎片", "tip": "用 tracemalloc.start() 后 get_traced_memory() 或 take_snapshot().compare_to() 看真实分配与增量"}, {"title": "第 2 步：用 is 比较大整数或运行时字符串", "body": "小整数池、常量合并与字符串驻留会让身份随创建方式变化，结果不稳定", "tip": "值相等一律用 ==；只有判断 None / True / False 单例，或确实要验证对象身份时才用 is"}, {"title": "第 3 步：以为引用计数能回收循环引用", "body": "互相引用的对象 ob_refcnt 至少为 1，归零条件永不满足", "tip": "用 weakref 断开环或由分代 GC 兜底（第 53 讲）；缓存不要长期持有强引用"}]' />
 
-<FlowTimeline :steps='[{"title": "PyObject 头、引用计数与归零即释放", "desc": "CPython 里每个对象都以 PyObject 开头：ob_refcnt（Py_s…", "tone": "blue"}, {"title": "小整数池、字符串驻留与 is 的正确用法", "desc": "CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 a = …", "tone": "purple"}, {"title": "pymalloc、getsizeof 的局限与 tracemalloc 的正确观测", "desc": "pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的…", "tone": "orange"}, {"title": "工程落地", "desc": "用 tracemalloc 量化 list-of-dict 与 Na", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "PyObject 头、引用计数与归零即释放", "desc": "CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（…", "tone": "blue"}, {"title": "小整数池、字符串驻留与 is 的正确用法", "desc": "CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a =…", "tone": "purple"}, {"title": "pymalloc、getsizeof 的局限与 tracemalloc 的正确观测", "desc": "pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的…", "tone": "orange"}, {"title": "工程落地", "desc": "用 tracemalloc 量化 list-of-dict 与 Na", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## Include/object.h 与 PEP 683 的 immortal 对象
@@ -297,7 +297,7 @@ print('mortal 1000', sys.getrefcount(1000) < 100)
 
 ## obmalloc.c 的 size class 与 freelist 双层缓存
 
-Objects/`obmalloc.c` 把不超过 SMALL_REQUEST_THRESHOLD（512 字节）的请求按 ALIGNMENT 向上取整成 size class，从 arena（256 KiB）切成 pool（4 KiB）再切成 block：闲置 pool 挂在 usable_pools 链表，全空的 arena 可以被单独 free 归还操作系统（3.8 起）。
+Objects/`obmalloc.c` 把不超过 `SMALL_REQUEST_THRESHOLD`（512 字节）的请求按 `ALIGNMENT` 向上取整成 size class，从 arena（256 KiB）切成 pool（4 KiB）再切成 block：闲置 pool 挂在 usable_pools 链表，全空的 arena 可以被单独 free 归还操作系统（3.8 起）。
 
 所以释放了对象往往只是把 block 还给 pool，进程 RSS 短期不降是常态而非泄漏。
 
@@ -350,9 +350,9 @@ tracemalloc.stop()
 
 <Quiz no='052-3' q='对象引用计数归零时会发生什么？' :options='["立即调用 tp_dealloc 释放，并可能级联释放其引用的对象", "等待下一次分代 GC 统一回收", "只把对象标记为可回收，内存不释放", "总是立刻把内存还给操作系统"]' answer="0" explain='引用计数归零立即触发 tp_dealloc，行为可预测、可能级联；但 pymalloc 释放的 block 常留在 pool 里不立刻归还 OS，且循环引用需分代 GC 兜底。' />
 
-<Predict no='052-P' q='x = int(&#39;257&#39;); y = int(&#39;257&#39;); x is y 的结果最可能是？' :options='["False，两次运行时创建得到不同大整数对象", "True，所有整数都池化", "抛 TypeError"]' answer='0' output='False' explain='小整数池只覆盖 -5..256，int(&#39;257&#39;) 在运行时新建对象且不做池化，两次调用得到不同对象。is 比的是身份，故为 False；比较值应写 x == y。' />
+<Predict no='052-4' q='x = int(&#39;257&#39;); y = int(&#39;257&#39;); x is y 的结果最可能是？' :options='["False，两次运行时创建得到不同大整数对象", "True，所有整数都池化", "抛 TypeError"]' answer='0' output='False' explain='小整数池只覆盖 -5..256，int(&#39;257&#39;) 在运行时新建对象且不做池化，两次调用得到不同对象。is 比的是身份，故为 False；比较值应写 x == y。' />
 
-<FillBlank no='052-F' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 PyObject 头与 ob_refcnt 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 PyObject 头、引用计数与归零即释放 的落点。' />
+<FillBlank no='052-5' tpl='___ sys' :answers='["import"]' hint='回想本讲关于 PyObject 头与 ob_refcnt 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 PyObject 头、引用计数与归零即释放 的落点。' />
 
 <KnowledgeCard :points='["PyObject 头含 ob_refcnt 与 ob_type；变长对象加 ob_size，GC 对象加 PyGC_Head", "引用计数在赋值、传参、容器存取、作用域退出时增减，归零立即释放；getrefcount 多算一个参数引用", "小整数池 -5..256 与字符串驻留是复用优化；值相等用 ==，单例才用 is", "pymalloc 对 ≤512 字节对象走 arena(256KB)/pool(4KB)/block 三级分配，释放后内存可能暂不归还", "getsizeof 是浅层大小，算不到容器元素；tracemalloc 在分配器层看真实净分配与快照增量", "纯引用计数无法回收循环引用，由分代 GC 兜底；海量小对象用 slots/array 换布局"]' :pitfalls='["用 sys.getsizeof 估算容器加全部元素的总内存", "用 is 比较大整数或运行时字符串", "以为引用计数能回收循环引用", "用 sys.getsizeof 只看对象本身，容器里元素、字符串内容、字典哈希表的开销都算不到"]' summary='引用计数让对象在失去最后一个引用时立刻回收，行为可预测；代价是需要 GC 兜底循环引用，也是 GIL 存在的历史原因之一' />
 

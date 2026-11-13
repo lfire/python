@@ -7,18 +7,18 @@ description: 读懂取消、超时与回调的真实路径
 
 # 第 117 讲 · asyncio 事件循环与 Task 源码
 
-导入、执行、内存都摸过一遍，接着看那条「用会了却讲不清」的 async 路径。超时设了不生效，取消后清理没跑干净，一段没有 await 的循环又卡住整条链路。会写 await 是一回事，知道它把控制权交给谁，是另一回事。
+导入、执行、内存都摸过一遍，接着看那条「用会了却讲不清」的 async 路径。超时设了不生效，取消后清理没跑干净，一段没有 `await` 的循环又卡住整条链路。会写 `await` 是一回事，知道它把控制权交给谁，是另一回事。
 
-本讲从事件循环的 selector 讲起，看 Handle 排队；再看 Task.__step 只推进到下一个 await、Future 回调与取消怎样串起；最后把 shield 与 TaskGroup 放一起，说清 finally 收尾。需要协程与异常处理；学完你能读懂取消的真实路径，把 asyncio 与 Task 的清理写对。
+本讲从事件循环的 selector 讲起，看 Handle 排队；再看 `Task.__step` 只推进到下一个 await、Future 回调与取消怎样串起；最后把 shield 与 TaskGroup 放一起，说清 finally 收尾。需要协程与异常处理；学完你能读懂取消的真实路径，把 asyncio 与 Task 的清理写对。
 
 
 ## async 里一段无 await 的循环，让所有超时失效
 
 一个 asyncio 服务给每个请求加了 `asyncio.wait_for(timeout=0.5)`，但某次上游变慢后超时完全没生效，心跳与超时一起失效，请求全卡住。
 
-排查发现有人把一段 CPU 密集的纯 Python 循环直接放进了 async 函数，中间没有任何 await，事件循环被这个协程独占，定时器回调根本没机会运行。另一个 bug 出现在清理逻辑：开发者在 finally 里 await 一段关闭连接的代码，取消时这个 await 又被同一次取消打断，连接没关干净；
+排查发现有人把一段 CPU 密集的纯 Python 循环直接放进了 async 函数，中间没有任何 `await`，事件循环被这个协程独占，定时器回调根本没机会运行。另一个 bug 出现在清理逻辑：开发者在 finally 里 `await` 一段关闭连接的代码，取消时这个 `await` 又被同一次取消打断，连接没关干净；
 
-改用 shield 却又忘了限超时，结果清理段自己挂死。还有人捕获 CancelledError 后没重新抛出，让本该取消的 Task 变成了正常完成。Task 每次恢复只推进到下一个 await，取消是在这之后注入异常，理解这条路径才能写对超时、finally 与 shield。
+改用 shield 却又忘了限超时，结果清理段自己挂死。还有人捕获 `CancelledError` 后没重新抛出，让本该取消的 Task 变成了正常完成。Task 每次恢复只推进到下一个 await，取消是在这之后注入异常；理解这条路径，才能写对超时、finally 与 shield。
 
 本讲沿 BaseEventLoop 与 Task 源码把取消与回调链拆开。
 
@@ -29,15 +29,17 @@ description: 读懂取消、超时与回调的真实路径
 
 ## 事件循环 _run_once、selector 与 Handle / TimerHandle
 
-asyncio 的事件循环基类在 Lib/asyncio/`base_events.py`，Unix 上默认实现是 _UnixSelectorEventLoop（用 selectors 封装 epoll/kqueue）。
+asyncio 的事件循环基类在 `Lib/asyncio/base_events.py`，Unix 上默认实现是 `_UnixSelectorEventLoop`（用 selectors 封装 epoll、kqueue）。
 
-核心是 `BaseEventLoop._run_once`：先算出最近定时器的到期时间作为 `selector.select` 的 timeout，把到期 TimerHandle 从 _scheduled 堆移到 _ready 队列，再处理 selector 返回的就绪 IO 事件，最后按 FIFO 执行 _ready 里的 Handle。
+核心是 `BaseEventLoop._run_once`：先算出最近定时器的到期时间，作为 `selector.select` 的 timeout；
 
-`loop.call_soon(callback, *args)` 把回调包成 Handle 追加到 _ready，`loop.call_later(delay, ...)` 包成 TimerHandle 放进按时间排序的 _scheduled（heapq）。
+把到期的 `TimerHandle` 从 `_scheduled` 堆移到 `_ready` 队列；再处理 selector 返回的就绪 IO 事件；最后按 `FIFO` 执行 `_ready` 里的 `Handle`。
 
-`loop.time()` 返回单调时钟 `time.monotonic`，避免系统时间回拨影响定时器。关键推论：任何一个不含 await 或 await 到一个立即完成对象的协程，会在一次 _ready 回调里一路跑到结束，期间 _run_once 无法回到 selector，所有定时器、IO 与心跳一起饿死。
+`loop.call_soon` 把回调包成 Handle 追加到 `_ready`，`loop.call_later` 包成 TimerHandle 放进按时间排序的 `_scheduled`（`heapq`）。
 
-CPU 密集循环必须放进程池或用 `asyncio.to_thread`，debug 模式下 slow_callback_duration（默认 0.1 秒）会把超过该时长的回调打进日志。
+`loop.time()` 返回单调时钟 `time.monotonic`，避免系统时间回拨影响定时器。关键推论：任何一个不含 `await`、或 `await` 到一个立即完成对象的协程，会在一次 `_ready` 回调里一路跑到结束，期间 `_run_once` 回不到 selector，所有定时器、IO 与心跳一起饿死。
+
+CPU 密集循环必须放进进程池或用 `asyncio.to_thread`，debug 模式下 `slow_callback_duration`（默认 0.1 秒）会把超过该时长的回调打进日志。
 
 **事件循环核心对象与职责**
 
@@ -76,15 +78,17 @@ asyncio.run(main())
 
 ## Task.__step、Future 回调链与取消语义
 
-Task 是 Future 的子类（Lib/asyncio/`tasks.py`），create_task 把协程包成 Task 并 call_soon 调度它的 __step。
+Task 是 Future 的子类（`Lib/asyncio/tasks.py`），`create_task` 把协程包成 Task 并用 call_soon 调度它的 `__step`。
 
-__step 每次只把协程推进到下一个 await：若 await 的 Future 未完成，Task 把自己通过 add_done_callback 注册为唤醒回调；Future 完成时调用 __wakeup，再 call_soon 重新排入 __step，如此往复。
+`__step` 每次只把协程推进到下一个 `await`：若 `await` 的 Future 未完成，Task 把自己通过 `add_done_callback` 注册为唤醒回调；
 
-取消不是抢占：`Task.cancel()` 设置 _must_cancel 并递增 cancelling 计数，若 Task 正挂在某个 Future 上，就改为取消那个 Future，使 __wakeup 收到 CancelledError；下一次 __step 在协程内抛出该异常。
+Future 完成时调用 `__wakeup`，再 call_soon 重新排入 `__step`，如此往复。
 
-3.11 起 `Task.cancelling()` 返回被请求取消的次数、`Task.uncancel()` 递减它，用于区分「被外部取消」与「协程自己吞掉取消」。
+取消不是抢占：`Task.cancel()` 设置 `_must_cancel` 并递增 cancelling 计数，若 Task 正挂在某个 Future 上，就改为取消那个 Future，使 `__wakeup` 收到 `CancelledError`；下一次 `__step` 在协程内抛出该异常。
 
-若协程捕获 CancelledError 后不重新抛出，Task 会以正常结果完成，`cancelled()` 为 False——这是很多超时逻辑悄悄失效的根因。取消会触发 finally，但 finally 里的 await 本身也可能被同一次取消链打断，因此清理段要用 shield 保护并再套一层超时。
+3.11 起 `Task.cancelling()` 返回被请求取消的次数、`Task.uncancel()` 递减它，用来区分「被外部取消」与「协程自己吞掉取消」。
+
+若协程捕获 `CancelledError` 后不重新抛出，Task 会以正常结果完成，`cancelled()` 为 False——这是很多超时逻辑悄悄失效的根因。取消会触发 finally，但 finally 里的 `await` 本身也可能被同一次取消链打断，因此清理段要用 shield 保护并再套一层超时。
 
 ```python
 import asyncio
@@ -156,15 +160,15 @@ asyncio.run(main())
 
 `asyncio.shield(inner)` 包一层外层 Future：取消外层只影响 shield 本身，被保护的 inner Task 继续运行，适用于「撤销等待但保留后台工作」或保护清理段。
 
-注意 shield 若无人再 await inner，inner 的异常可能无人接收，因此要保留对 inner 的引用并最终 await 或加 done callback。
+要注意 shield 若无人再 `await` inner，inner 的异常可能没人接收，因此得保留对 inner 的引用，最终 await 它或加 done callback。
 
-`asyncio.timeout`（3.11+）用上下文管理器在超时时向其作用域内的当前 Task 注入取消，配合 uncancel 可把「超时」与「外部取消」区分开；
+`asyncio.timeout`（3.11 起）用上下文管理器在超时时向其作用域内的当前 Task 注入取消，配合 `Task.uncancel()` 可把「超时」与「外部取消」区分开；
 
 `asyncio.wait_for` 内部同样基于取消实现，超时后默认会等待被取消协程真正结束。
 
-TaskGroup（3.11+，与 PEP 654 ExceptionGroup 配套）把一组子任务的生命周期绑在一起：任一子任务抛异常会取消其余子任务，并以 ExceptionGroup 汇总，退出 async with 时保证所有任务已结束，避免遗留游离 Task。
+TaskGroup（3.11 起，与 PEP 654 的 `ExceptionGroup` 配套）把一组子任务的生命周期绑在一起：任一子任务抛异常就取消其余子任务，并以 `ExceptionGroup` 汇总，退出 async with 时保证所有任务已结束，避免遗留游离 Task。
 
-取消路径的正确写法是：清理段用 shield 包裹并限定超时，捕获 CancelledError 后做完清理再 raise 让取消语义向上传播，同时开 debug 模式查慢回调与「Task was destroyed but it is pending」这类泄漏信号。
+取消路径的正确写法是：清理段用 shield 包裹并限定超时，捕获 `CancelledError` 后做完清理再 raise 让取消语义向上传播，同时开 debug 模式查慢回调与「Task was destroyed but it is pending」这类泄漏信号。
 
 **取消相关 API 与版本**
 
@@ -177,15 +181,17 @@ TaskGroup（3.11+，与 PEP 654 ExceptionGroup 配套）把一组子任务的生
 | asyncio.timeout | 3.11+ | 上下文管理器超时注入取消 |
 | TaskGroup | 3.11+ 与 PEP 654 | 异常取消其余子任务并以 ExceptionGroup 汇总 |
 
-asyncio 是单线程协作式调度：_run_once 一次循环先把到期 TimerHandle 从 _scheduled 堆移到 _ready，处理 selector 返回的就绪 IO，再按 FIFO 执行 _ready 里的 Handle。每个 Handle 必须尽快返回，否则整轮循环停摆。
+asyncio 是单线程协作式调度：`_run_once` 一次循环先把到期 `TimerHandle` 从 `_scheduled` 堆移到 `_ready`，处理 selector 返回的就绪 IO，再按 `FIFO` 执行 `_ready` 里的 `Handle`。每个 Handle 都必须尽快返回，否则整轮循环停摆。
 
-`Task.__step` 让协程每次只推进到下一个 await：若等待的 Future 未完成，Task 通过 add_done_callback 把 __wakeup 挂到该 Future 上，Future 完成时再 call_soon 重新排入 __step，于是取消不是抢占线程，而是设置 _must_cancel 并在下一次 __step 或经 __wakeup 向协程注入 CancelledError。
+`Task.__step` 让协程每次只推进到下一个 `await`：若等待的 Future 未完成，Task 通过 `add_done_callback` 把 `__wakeup` 挂到该 Future 上，Future 完成时再 call_soon 重新排入 `__step`；
 
-这解释了三个结论：无 await 的循环让定时器永远等不到 _run_once 的下一次迭代；捕获 CancelledError 不 re-raise 会让 Task 以正常结果结束，`cancelled()` 变 False；finally 里的 await 仍处在同一个取消链上，可能被再次打断。
+于是取消不是抢占线程，而是设置 `_must_cancel` 并在下一次 `__step`、或经 `__wakeup` 向协程注入 `CancelledError`。这解释了三个结论：无 `await` 的循环让定时器永远等不到 `_run_once` 的下一次迭代；
 
-shield 通过包一层外层 Future 把取消隔离在外层，inner 继续运行；
+捕获 `CancelledError` 不重新抛出会让 Task 以正常结果结束、`cancelled()` 变 False；finally 里的 `await` 仍处在同一个取消链上，可能被再次打断。shield 通过包一层外层 Future 把取消隔离在外层，inner 继续运行；
 
-TaskGroup 用结构化并发保证退出时无游离任务，异常以 ExceptionGroup 汇总，3.11 的 cancelling/uncancel 让 `asyncio.timeout` 能把自己的取消与外部取消区分开。
+TaskGroup 用结构化并发保证退出时无游离任务，异常以 `ExceptionGroup` 汇总；
+
+3.11 的 `cancelling` 与 `uncancel` 让 `asyncio.timeout` 能把自己的取消与外部取消区分开。
 
 
 ## 取消路径的失效信号
@@ -204,7 +210,7 @@ TaskGroup 用结构化并发保证退出时无游离任务，异常以 Exception
 
 把一个外部调用封装成有边界的异步操作：用 `asyncio.timeout` 限定总时长，取消时保护清理段不被同一次取消打断，清理本身再套超时，并保留对后台任务的引用避免游离 Task。
 
-真实服务里还要开 debug 模式、记录慢回调与取消次数指标。下面这段用标准库把取消路径写成可核对的流程，重点观察清理如何被 shield 保护、取消如何向上传播、以及每个 await 都有明确边界。
+真实服务里还要开 debug 模式、记录慢回调与取消次数指标。下面这段用标准库把取消路径写成可核对的流程，重点观察清理如何被 shield 保护、取消如何向上传播，以及每个 `await` 都有明确边界。
 
 ```python
 import asyncio
@@ -244,7 +250,7 @@ asyncio.run(main())
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **BaseEventLoop 与 selector** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 BaseEventLoop 与 selector 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -267,9 +273,9 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 
 <Quiz no='117-3' q='关于 finally 里的清理 await，最稳妥的写法是？' :options='["用 shield 包裹并再套一层 timeout 限定上限", "直接 await，取消不会影响 finally", "用 time.sleep 替代 await", "把清理放到另一个线程即可"]' answer="0" explain='finally 中的 await 仍可能被同一次取消链打断；shield 隔离取消、外层 timeout 防止清理自身挂死，并保留 inner 引用最终 await。' />
 
-<Predict no='117-P' q='work() 捕获 CancelledError 并返回 &#39;cancelled&#39;，被 cancel 后 t.cancelled() 是多少？' :options='["False，因为异常被吞掉，Task 正常完成", "True，只要调用过 cancel 就成立", "抛 InvalidStateError"]' answer='0' output='cancelled_flag False done True' explain='Task.cancel 注入 CancelledError，但 work 捕获后返回字符串未重新抛出，__step 以正常结果结束；cancelling() 虽为 1，cancelled() 仍为 False。' />
+<Predict no='117-4' q='work() 捕获 CancelledError 并返回 &#39;cancelled&#39;，被 cancel 后 t.cancelled() 是多少？' :options='["False，因为异常被吞掉，Task 正常完成", "True，只要调用过 cancel 就成立", "抛 InvalidStateError"]' answer='0' output='cancelled_flag False done True' explain='Task.cancel 注入 CancelledError，但 work 捕获后返回字符串未重新抛出，__step 以正常结果结束；cancelling() 虽为 1，cancelled() 仍为 False。' />
 
-<FillBlank no='117-F' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 BaseEventLoop 与 selector 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 事件循环 _run_once、selector 与 Handle / TimerHandle 的落点。' />
+<FillBlank no='117-5' tpl='import  ___ io' :answers='["async"]' hint='回想本讲关于 BaseEventLoop 与 selector 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 事件循环 _run_once、selector 与 Handle / TimerHandle 的落点。' />
 
 <KnowledgeCard :points='["BaseEventLoop._run_once 处理定时器、selector 就绪 IO 与 _ready 回调；无 await 的循环会独占 loop", "call_soon 生成 Handle 进 _ready，call_later 生成 TimerHandle 进 _scheduled 堆，loop.time 用单调时钟", "Task.__step 每次只推进到下一个 await，Future 完成经 add_done_callback/__wakeup 重新调度", "取消是注入 CancelledError 而非抢占；吞掉异常会让 cancelled() 变 False", "3.11+ 的 cancelling/uncancel 配合 asyncio.timeout 区分超时与外部取消；TaskGroup 用 ExceptionGroup 汇总", "清理段用 shield 加 timeout 保护并保留 inner 引用；debug 模式用 slow_callback_duration 查慢回调"]' :pitfalls='["在 async 函数里跑无 await 的 CPU 密集循环", "捕获 CancelledError 后不重新抛出", "finally 里直接 await 清理且不加保护", "把 CPU 密集循环放进 async 函数不加 await，事件循环会被独占，所有超时与心跳一起失效"]' summary='Task 每次恢复只推进到下一个 await，取消则是在这之后注入异常；理解这条路径才能写对 finally 与 shield' />
 

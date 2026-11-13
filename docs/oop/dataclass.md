@@ -7,20 +7,22 @@ description: 选对数据建模工具并理解校验边界
 
 # 第 047 讲 · dataclass、attrs 与 pydantic 模型
 
-能定制类、能自省之后，还有个实际的累赘：为只装数据的类，__init__、__repr__、__eq__ 要手写一大段，外部数据又未必干净。生成样板方法与在入口挡住脏数据，其实是两层不同的事。
+能定制类、能自省之后，还有个实际的累赘：为只装数据的类，`__init__`、`__repr__`、`__eq__` 要手写一大段，外部数据又未必干净。生成样板方法与在入口挡住脏数据，其实是两层不同的事。
 
-一个接口服务把外部 JSON 喂给写了类型注解的请求模型，以为能拦住格式不对的值，脏数据却一路流到扣款才暴露。本讲先拆开 dataclass 在类创建期生成了什么，再看 field、frozen 与哈希的联动，最后把边界层的运行时校验和内部对象分开摆。需要类与实例、类型注解与第 41 讲的特殊方法；学完你能选对建模工具，也明白注解只是元数据、校验该放哪一层。
+一个接口服务把外部 `JSON` 喂给写了类型注解的请求模型，以为能拦住格式不对的值，脏数据却一路流到扣款才暴露。本讲先拆开 `dataclass` 在类创建期生成了什么，再看 `field`、`frozen` 与哈希的联动，最后把边界层的运行时校验和内部对象分开摆。需要类与实例、类型注解与第 41 讲的特殊方法；学完你能选对建模工具，也明白注解只是元数据、校验该放哪一层。
 
 
 ## 一份外部配置直接塞进 dataclass 后类型全错了
 
-一个接口服务把外部 JSON 直接喂给一个 @dataclass 的请求模型，开发同学以为写了 amount: int 就会拦住脏数据，结果字符串 '12' 和负数原样进了领域层，直到扣款时才爆出类型错误，异常栈离入口已经隔了五层。
+一个接口服务把外部 `JSON` 直接喂给一个 `@dataclass` 的请求模型，开发同学以为写了 `amount: int` 就会拦住脏数据，结果字符串 `'12'` 和负数原样进了领域层，直到扣款时才爆出类型错误，异常栈离入口已经隔了五层。
 
-另一处工单来自缓存：有人给 dataclass 字段写了 tags: list = []，所有实例共享同一个列表，一个请求 append 之后，后续请求全带着别人的标签；
+另一处工单来自缓存：有人给 dataclass 字段写了 `tags: list = []`，所有实例共享同一个列表，一个请求 `append` 之后，后续请求全带着别人的标签；
 
-这个写法在类创建期就会抛 ValueError: mutable default ... use default_factory，但旧代码里绕过了装饰器所以没被拦。还有人给 dataclass 加了 `frozen=True` 就宣称对象「不可变」，字段里却装着 list，内容照样被改。
+这个写法只要 `@dataclass` 真正生效，类创建期就会抛 `ValueError`、提示可变默认值要改用 `default_factory`，是旧代码绕过了装饰器，才让这份共享状态留到线上。
 
-dataclass、attrs、pydantic 解决的是三层不同的问题：样板方法生成、可选的数据类增强、以及运行时校验。本讲把 dataclass 到底生成了什么、field 与 frozen/order 的联动、以及边界层的校验职责讲清楚，避免把注解当成校验器。
+还有人给 dataclass 加了 `frozen=True` 就宣称对象「不可变」，字段里却装着 `list`，内容照样被改。`dataclass`、`attrs`、`pydantic` 解决的是三层不同的问题：样板方法生成、可选的数据类增强、以及运行时校验。
+
+本讲把 `dataclass` 到底生成了什么、`field` 与 `frozen` / `order` 的联动、以及边界层的校验职责讲清楚，避免把注解当成校验器。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='可变默认值写成 tags: list = []：类创建期 dataclass 检测到可变默认值会抛 ValueError: mutable default ... use default_factory；绕过装饰器时则所有实例共享同一个列表' />
 
@@ -53,24 +55,24 @@ dataclass、attrs、pydantic 解决的是三层不同的问题：样板方法生
 | slots | False | 重建类并加 __slots__ | 3.10 |
 | weakref_slot | False | 给 slots 类加 __weakref__ | 3.11 |
 
-<Callout type="tip" title='核心心智模型' text='@dataclass 是类装饰器，在类创建之后读取 __annotations__ 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。默认参数 init=True、repr=True、eq=True、order=False、unsafe_hash=False、frozen=False、matc' />
+<Callout type="tip" title='核心心智模型' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、' />
 
 
 ## dataclass 在类创建期生成了什么，不生成什么
 
-@dataclass 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。
+`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。
 
-默认参数 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、`frozen=False`、`match_args=True`、`kw_only=False`、`slots=False`、`weakref_slot=False`。
+它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、`frozen=False`、`match_args=True`、`kw_only=False`、`slots=False`、`weakref_slot=False`。
 
-它默认生成 `__init__`、`__repr__`、`__eq__`；`order=True` 时额外生成 `__lt__`/`__le__`/`__gt__`/`__ge__`（要求 `eq=True`，否则抛 ValueError），按字段定义顺序组装元组比较；
+默认生成 `__init__`、`__repr__`、`__eq__`；`order=True` 时额外生成 `__lt__` / `__le__` / `__gt__` / `__ge__`（要求 `eq=True`，否则抛 `ValueError`），按字段定义顺序组装元组比较；
 
 `unsafe_hash=True` 在 `eq=True` 且未冻结时强制生成一个 `__hash__`（之所以叫 unsafe，是因为字段可变会破坏哈希契约）。
 
-它不生成任何运行时类型校验：注解只是元数据，构造时把 '12' 赋给 amount: int 完全合法。它也不做事后赋值拦截，普通实例可随时改字段。`__post_init__` 在 `__init__` 末尾被调用，是放显式校验或派生字段的钩子。
+它不生成任何运行时类型校验：注解只是元数据，构造时把 `'12'` 赋给 `amount: int` 完全合法；也不做事后赋值拦截，普通实例可随时改字段。`__post_init__` 在 `__init__` 末尾被调用，是放显式校验或派生字段的钩子。
 
-`dataclasses.asdict` / astuple / replace / fields / is_dataclass 提供转换与内省；
+`dataclasses.asdict` / `astuple` / `replace` / `fields` / `is_dataclass` 提供转换与内省，`asdict` 会递归把嵌套 dataclass 转成字典。
 
-asdict 会递归把嵌套 dataclass 转成字典。`slots=True`（3.10+）因 `__slots__` 必须在类创建期确定，会重新创建一个类对象返回，类装饰器与注册表里引用的旧类需重新绑定。
+`slots=True`（3.10+）因 `__slots__` 必须在类创建期确定，会重新创建一个类对象返回，类装饰器与注册表里引用的旧类需重新绑定。
 
 ```python
 from dataclasses import dataclass, field, FrozenInstanceError
@@ -102,15 +104,15 @@ except FrozenInstanceError as e:
 
 ### _process_class 如何拼出 __init__ 与 __repr__
 
-dataclass 装饰器在类创建完成后运行：它读 `__annotations__` 与类属性，按字段顺序用 exec 生成 `__init__` 等方法的源码，再 setattr 到类上，因此注解从头到尾都只是元数据，不参与任何赋值检查。
+`dataclass` 装饰器在类创建完成后运行：它读 `__annotations__` 与类属性，按字段顺序用 `exec` 生成 `__init__` 等方法的源码，再 `setattr` 到类上，因此注解从头到尾都只是元数据，不参与任何赋值检查。
 
-`frozen=True` 时生成的方法把 `__setattr__`/`__delattr__` 替换成抛 FrozenInstanceError 的版本，而生成 `__init__` 内部改用 `object.__setattr__` 绕过限制完成初始赋值；
+`frozen=True` 时生成的方法把 `__setattr__` / `__delattr__` 替换成抛 `FrozenInstanceError` 的版本，而生成的 `__init__` 内部改用 `object.__setattr__` 绕过限制完成初始赋值；
 
-它只冻结字段绑定，不改字段值对象本身。哈希联动直接复用第 41 讲的规则：`eq=True` 且未冻结时把 `__hash__` 设 None，`frozen=True` 时按参与 compare 的字段生成哈希，这正是值对象可直接进 set 的原因。
+它只冻结字段绑定，不改字段值对象本身。哈希联动直接复用第 41 讲的规则：`eq=True` 且未冻结时把 `__hash__` 设为 `None`，`frozen=True` 时按参与 `compare` 的字段生成哈希，这正是值对象可直接进 `set` 的原因。
 
 `slots=True` 之所以要重建类，是因为 `__slots__` 必须由 `type.__new__` 在类创建期处理，装饰器介入太晚，只能新建一个类对象返回。
 
-pydantic 则完全不同：它在 `__init__` 里按字段类型做解析与强制转换，把字符串 '12' 变成 int，逐字段收集错误后抛 ValidationError，属于运行时校验层而非代码生成层。
+`pydantic` 则完全不同：它在 `__init__` 里按字段类型做解析与强制转换，把字符串 `'12'` 变成 `int`，逐字段收集错误后抛 `ValidationError`，属于运行时校验层而非代码生成层。
 
 <ConceptDiagram type='layers3' title='第 047 讲 · dataclass 在类创建期生成了什么，不生成什么' labels='dataclass 在类创建期生成了什么，不|field、frozen、order 与哈希|校验边界：dataclass、attrs、p' caption='选对数据建模工具并理解校验边界' />
 
@@ -119,17 +121,27 @@ pydantic 则完全不同：它在 `__init__` 里按字段类型做解析与强�
 
 ## field、frozen、order 与哈希联动的具体规则
 
-`field()` 控制单个字段：default 给默认值，default_factory 给可变默认值的工厂（list、dict、set 都必须用它，否则类创建期抛 ValueError: mutable default &lt;class 'list'> for field x is not allowed: use default_factory）；
+`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；
 
-init 决定是否进 `__init__` 参数，repr / compare / hash 分别控制是否进 repr、是否参与比较与哈希，metadata 挂自定义元信息。默认值之后不能再放无默认值字段，否则 `__init__` 签名非法；
+`init` 决定是否进 `__init__` 参数，`repr` / `compare` / `hash` 分别控制是否进 repr、是否参与比较与哈希，`metadata` 挂自定义元信息。默认值之后不能再放无默认值字段，否则 `__init__` 签名非法；
 
-3.10 起可用 KW_ONLY 哨兵或 `kw_only=True` 把后续字段改成仅关键字参数。
+3.10 起可用 `KW_ONLY` 哨兵或 `kw_only=True` 把后续字段改成仅关键字参数。
 
-`frozen=True` 把 `__setattr__`/`__delattr__` 换成抛 `dataclasses.FrozenInstanceError` 的版本（它是 AttributeError 的子类），生成 `__init__` 时内部用 `object.__setattr__` 绕过这个限制；
+这和普通函数避开可变默认参数是同一个道理，通常写成下面这段代码，用 `None` 作哨兵、把建列表推迟到每次调用；
 
-它冻结的是「字段绑定」，字段值本身若是 list/dict 仍可被原地修改，真正不可变要把字段换成 tuple 或 frozenset。哈希联动与第 41 讲一致：`eq=True` 且 `frozen=False` 时 `__hash__` 被设为 None；
+```python
+def f(x, acc=None):
+    if acc is None:
+        acc = []
+```
 
-`eq=True` 且 `frozen=True` 时按参与 compare 的字段自动生成 `__hash__`；
+`default_factory` 只是把这件事交给 `dataclass` 在每个实例上各做一次。
+
+`frozen=True` 把 `__setattr__` / `__delattr__` 换成抛 `dataclasses.FrozenInstanceError` 的版本（它是 `AttributeError` 的子类），生成 `__init__` 时内部用 `object.__setattr__` 绕过这个限制；
+
+它冻结的是「字段绑定」，字段值本身若是 `list` / `dict` 仍可被原地修改，真正不可变要把字段换成 `tuple` 或 `frozenset`。哈希联动与第 41 讲一致：`eq=True` 且 `frozen=False` 时 `__hash__` 被设为 `None`；
+
+`eq=True` 且 `frozen=True` 时按参与 `compare` 的字段自动生成 `__hash__`；
 
 `eq=False` 则保留 `object.__hash__`。
 
@@ -169,20 +181,20 @@ except ValueError as e:
 | eq=True, frozen=False, unsafe_hash=True | 强制生成 | 能，但字段可变会破坏契约 |
 | 显式自定义 __hash__ | 保留自定义函数 | 能 |
 
-<Term word='dataclass 生成了什么' text='@dataclass 是类装饰器，在类创建之后读取 __annotations__ 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。默认参数 init=True、repr=True、eq=True、order=False、unsafe_hash=False、frozen=False、match_args=Tru' />
+<Term word='dataclass 生成了什么' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、`frozen=Fa' />
 
-<Term word='field 与 default_factory' text='field() 控制单个字段：default 给默认值，default_factory 给可变默认值的工厂（list、dict、set 都必须用它，否则类创建期抛 ValueError: mutable default &lt;class &#39;list&#39;&gt; for field x is not allowed: use def' />
+<Term word='field 与 default_factory' text='`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；`init` 决定是否进 `__init__` 参数，`repr` / `compare` / `hash' />
 
 
 ## 校验边界：dataclass、attrs、pydantic 分层使用
 
-三者不在同一层竞争。dataclass 是标准库，只在类创建期生成样板方法，零运行时校验、零第三方依赖，适合内部领域对象与配置快照。attrs 是第三方库，功能与 dataclass 相近但提供更细的转换器（converter）与校验器（validator），可在赋值时跑校验，适合需要更丰富声明式能力的老项目。
+三者不在同一层竞争。`dataclass` 是标准库，只在类创建期生成样板方法，零运行时校验、零第三方依赖，适合内部领域对象与配置快照。`attrs` 是第三方库，功能与 `dataclass` 相近但提供更细的转换器 `converter` 与校验器 `validator`，可在赋值时跑校验，适合需要更丰富声明式能力的老项目。
 
-pydantic（v2 用 Rust 核心重写）在实例化时按字段类型做解析、强制转换与验证：字符串 '12' 会被转成 int 12，缺失必填字段或类型完全不符会抛 ValidationError 并附带逐字段错误位置，它是边界层（HTTP 请求体、消息队列、配置文件）的正确工具。
+`pydantic`（v2 用 Rust 核心重写）在实例化时按字段类型做解析、强制转换与验证：字符串 `'12'` 会被转成 `int` 12，缺失必填字段或类型完全不符会抛 `ValidationError` 并附带逐字段错误位置，它是边界层（接口请求体、消息队列、配置文件）的正确工具。
 
-工程上的分层是：外部输入先经 pydantic 校验并转成干净值，再构造 frozen dataclass 作为内部领域对象在业务层流转，ORM 映射与数据库校验又是另一层。把脏数据直接交给 dataclass，错误会推迟到业务深处才暴露；反过来给所有内部对象套 pydantic，则把校验开销带进了不需要它的热路径。
+工程上的分层是：外部输入先经 `pydantic` 校验并转成干净值，再构造 `frozen` 的 `dataclass` 作为内部领域对象在业务层流转，ORM 映射与数据库校验又是另一层。把脏数据直接交给 `dataclass`，错误会推迟到业务深处才暴露；
 
-认清「生成样板 / 赋值校验 / 实例化解析」三条职责，选型就不会摇摆。
+反过来给所有内部对象套 `pydantic`，则把校验开销带进了不需要它的热路径。认清「生成样板 / 赋值校验 / 实例化解析」三条职责，选型就不会摇摆。
 
 ```python
 from dataclasses import dataclass, fields
@@ -218,16 +230,18 @@ print('params:', [p for p in inspect.signature(dataclass).parameters if p in ('i
 | pydantic v2 | 实例化时按类型解析、转换、验证 | 第三方（Rust 核心） | HTTP / MQ / 配置等边界层 |
 | ORM 层 | 持久化时按列约束校验 | 取决于框架 | 数据库写入前 |
 
-<FlowTimeline :steps='[{"title": "dataclass 在类创建期生成了什么，不生成什么", "desc": "@dataclass 是类装饰器，在类创建之后读取 __annotations__ …", "tone": "blue"}, {"title": "field、frozen、order 与哈希联动的具体规则", "desc": "field() 控制单个字段：default 给默认值，default_factor…", "tone": "purple"}, {"title": "校验边界：dataclass、attrs、pydantic 分层使用", "desc": "三者不在同一层竞争。dataclass 是标准库，只在类创建期生成样板方法，零运行时…", "tone": "orange"}, {"title": "工程落地", "desc": "配置边界层：显式校验后再构造 frozen 领域对象", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "dataclass 在类创建期生成了什么，不生成什么", "desc": "`@dataclass` 是类装饰器，在类创建之后读取 `__annotations…", "tone": "blue"}, {"title": "field、frozen、order 与哈希联动的具体规则", "desc": "`field()` 控制单个字段：`default` 给默认值，`default_f…", "tone": "purple"}, {"title": "校验边界：dataclass、attrs、pydantic 分层使用", "desc": "三者不在同一层竞争。`dataclass` 是标准库，只在类创建期生成样板方法，零运…", "tone": "orange"}, {"title": "工程落地", "desc": "配置边界层：显式校验后再构造 frozen 领域对象", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 配置边界层：显式校验后再构造 frozen 领域对象
 
-服务启动时读一份配置字典，端口可能是字符串、越界数字，主机可能为空。直接把这些值塞进 dataclass，注解 int 不会拦任何东西，错误会推迟到建立连接时才暴露。
+服务启动时读一份配置字典，端口可能是字符串、越界数字，主机可能为空。直接把这些值塞进 `dataclass`，注解 `int` 不会拦任何东西，错误会推迟到建立连接时才暴露。
 
-正确的分层是：边界层用标准库显式做类型与范围校验并把多个问题聚合成一条错误（这正是 pydantic 的职责，本例为可运行用标准库实现），校验通过后才构造 frozen dataclass 作为内部不可变配置在业务层流转。下面跑通合法配置、空主机、越界端口、字符串端口四种输入，打印被拒绝的原因与成功构造的对象。
+正确的分层是：边界层用标准库显式做类型与范围校验，并把多个问题聚合成一条错误（这正是 `pydantic` 的职责，本例为可运行用标准库实现），校验通过后才构造 `frozen` 的 `dataclass` 作为内部不可变配置在业务层流转。下面跑通合法配置、空主机、越界端口、字符串端口四种输入，打印被拒绝的原因与成功构造的对象。
 
-要点：校验发生在构造之前、领域对象冻结之后不再被改、错误聚合一次返回全部问题。真实项目把 validate 换成 pydantic 的 BaseModel 即可，分层保持不变。
+要点：校验发生在构造之前、领域对象冻结之后不再被改动、错误聚合一次返回全部问题。
+
+真实项目把 `validate` 换成 `pydantic.BaseModel` 即可，分层保持不变。
 
 ```python
 from dataclasses import dataclass
@@ -267,7 +281,7 @@ print('frozen value:', validate({'host': 'h', 'port': 80}).port)
 python -c "print(type('Demo', (), {}).__mro__)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **dataclass 生成了什么** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 dataclass 生成了什么 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -294,9 +308,9 @@ python -c "print(type('Demo', (), {}).__mro__)"
 
 <Quiz no='047-3' q='外部 HTTP 请求体的类型校验应放在哪一层？' :options='["边界层用 pydantic 解析校验，再转内部 frozen dataclass", "直接交给 dataclass 让注解拦", "全部用 object 类型跳过校验", "只在数据库写入时校验"]' answer="0" explain='dataclass 注解不产生运行时校验，脏数据会流进业务深处；pydantic 在实例化时解析、转换并聚合逐字段错误，适合 HTTP/MQ/配置等边界，内部领域对象再用 frozen dataclass。' />
 
-<Predict no='047-P' q='frozen dataclass 的字段里放一个 list，调用 a.labels.append(&#39;x&#39;) 会怎样？' :options='["成功修改，frozen 只冻结字段绑定不冻结值对象", "抛 FrozenInstanceError", "抛 AttributeError"]' answer='0' output='成功修改，a.labels 仍是那个 list' explain='frozen=True 替换的是 __setattr__，拦的是 a.labels = ... 这种重新绑定；对已有 list 的原地 append 不经过 __setattr__，因此内容可变。要真正不可变得把字段换成 tuple。' />
+<Predict no='047-4' q='frozen dataclass 的字段里放一个 list，调用 a.labels.append(&#39;x&#39;) 会怎样？' :options='["成功修改，frozen 只冻结字段绑定不冻结值对象", "抛 FrozenInstanceError", "抛 AttributeError"]' answer='0' output='成功修改，a.labels 仍是那个 list' explain='frozen=True 替换的是 __setattr__，拦的是 a.labels = ... 这种重新绑定；对已有 list 的原地 append 不经过 __setattr__，因此内容可变。要真正不可变得把字段换成 tuple。' />
 
-<FillBlank no='047-F' tpl='from dataclasses  ___ dataclass, field, FrozenInstanceError' :answers='["import"]' hint='回想本讲关于 dataclass 生成了什么 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 dataclass 在类创建期生成了什么，不生成什么 的落点。' />
+<FillBlank no='047-5' tpl='from dataclasses  ___ dataclass, field, FrozenInstanceError' :answers='["import"]' hint='回想本讲关于 dataclass 生成了什么 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 dataclass 在类创建期生成了什么，不生成什么 的落点。' />
 
 <KnowledgeCard :points='["dataclass 只在类创建期生成 __init__/__repr__/__eq__ 等样板，注解不产生运行时校验", "可变默认值必须 field(default_factory=list)，否则 ValueError: mutable default", "order=True 要求 eq=True；unsafe_hash 是给可变类强行开哈希的逃生口", "frozen=True 只冻结字段绑定（抛 FrozenInstanceError），字段值若是 list/dict 仍可变", "eq+frozen 自动生成按 compare 字段的 __hash__；eq 且未冻结则 __hash__ = None", "边界层用 pydantic 解析校验，内部用 frozen dataclass；@dataclass(slots=True) 3.10+ 会重建类"]' :pitfalls='["可变默认值写成 tags: list = []", "把外部输入直接交给 dataclass 以为注解会校验", "以为 frozen=True 让对象彻底不可变", "把外部输入直接交给 dataclass，类型注解不会拦住任何脏数据，错误会推迟到业务深处才爆"]' summary='dataclass 只在类创建时生成样板方法，不做事后校验；pydantic 在实例化时按类型强制转换与验证，两者解决的是不同层的问题' />
 

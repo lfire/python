@@ -7,14 +7,12 @@ description: 掌握日常开发的高频命令与验证手段
 
 # 第 004 讲 · 工具链全景：写代码、查问题、验质量
 
-能跑通一行代码，和能放心地反复改它，是两回事。文本怎样变成结果已清楚，可每改一处就手动重跑、靠 print 盯输出，改完心里还是没底。这一讲不添语法，只把『写完』到『确认没问题』这段路收拾利落。
-
-调好一段逻辑，若每次靠眼睛和手感确认它够不够快、格式合不合规范，反馈太慢也容易漏。先说 python -m 这个入口为何比直接敲命令可靠；再把 ruff 格式化、pytest 单测、timeit 计时摆开；最后把 print 换成带级别的 logging 与 pdb。能运行脚本、装依赖就够；学完你有一套可重复命令，本地能过的交到 CI 也踏实。
+能跑通一行代码，和能放心地反复改它，是两回事。文本怎样变成结果已清楚，可每改一处就手动重跑、靠 print 盯输出，改完心里还是没底。这一讲不添语法，只把『写完』到『确认没问题』这段路收拾利落。调好一段逻辑，若每次靠眼睛和手感确认它够不够快、格式合不合规范，反馈太慢也容易漏。先说 `python -m` 这个入口为何比直接敲命令可靠；再把 ruff 格式化、pytest 单测、timeit 计时摆开；最后把 print 换成带级别的 logging 与 pdb。能运行脚本、装依赖就够；学完你有一套可重复命令，本地能过的交到 CI 也踏实。
 
 
 ## 本地能过、线上却挂：反馈循环断在哪
 
-一个脚本本地跑得好好的，push 到 CI 却在第一步就挂：格式化检查报 E501 行太长，紧接着类型检查报某个返回值不匹配，最后两条用例因为本地多装了一个包而假通过。团队成员各自在编辑器里点 run，谁也说不清上线前到底该跑哪几条命令、用哪个解释器跑。
+一个脚本本地跑得好好的，push 到 CI 却在第一步就挂：格式化检查报 `E501` 行太长，紧接着类型检查报某个返回值不匹配，最后两条用例因为本地多装了一个包而假通过。团队成员各自在编辑器里点 run，谁也说不清上线前到底该跑哪几条命令、用哪个解释器跑。
 
 更隐蔽的是排查线上问题：有人习惯一路 print，遇到生成器被消费到一半抛异常、或异步任务在回调里失败时，print 输出的顺序和真实执行顺序对不上，日志里只剩一串没有上下文的数字。
 
@@ -23,19 +21,25 @@ description: 掌握日常开发的高频命令与验证手段
 
 ## python -m 与工具入口：为什么 -m 比直接敲命令更可靠
 
-python -m module 的语义不是「运行一个叫 module 的文件」，而是让当前解释器在 `sys.path` 里找到该模块并把它当作 `__main__` 执行；
+`python -m` 后面跟上模块名，语义不是「运行一个叫 module 的文件」，而是让当前解释器在 `sys.path` 里找到该模块并把它当作 `__main__` 执行；
 
 `runpy.run_module` 正是 -m 的底层实现，`runpy.run_path` 则对应直接跑路径。
 
-这一字之差决定了用的是哪个解释器与哪套依赖：python -m pip 保证 pip 模块由 `sys.executable` 对应的解释器加载、装进它的 site-packages，而裸 pip 是 PATH 上一个 shebang 固定的脚本，可能属于另一个 python。
+这一字之差决定了用的是哪个解释器与哪套依赖：`python -m` 保证 pip 模块由 `sys.executable` 对应的解释器加载、装进它的 site-packages，而裸 pip 是 `PATH` 上一个 shebang 固定的脚本，可能属于另一个 python。
 
-同理 python -m pytest、python -m compileall、python -m `http.server` 都应带 -m。
+```bash
+python -m pip
+```
 
-标准库里一批可直接当工具用的模块就是靠 -m 暴露：python -m timeit 做微基准、python -m doctest `mod.py` 跑文档测试、python -`m trace --count 统计覆盖`、python -m pdb `script.py` 进调试器、python -m `json.tool` 格式化 JSON。
+同理，跑测试、批量编译、起静态文件服务都该带 `python -m`：`python -m pytest`、`python -m compileall`、`python -m http.server`。
 
-版本细节：3.4 起 -I 隔离模式可叠加，让这些命令忽略 PYTHONPATH 与用户站点；3.11 起 python -m 对包内 `__main__.py` 的处理更严格。
+标准库里一批可直接当工具用的模块也靠 -m 暴露，如做微基准的 timeit、跑文档测试的 doctest、统计覆盖的 trace、进调试器的 pdb、格式化 `JSON` 的 `json.tool`；
 
-判断命令是否真的绑定当前环境，用 python -c 打印 `sys.executable` 的路径，再和 which python 对照，两者不一致就是隐患。
+带上 `python -m` 前缀就是 `python -m timeit` 这类命令。
+
+版本细节：3.4 起 `-I` 隔离模式可叠加，让这些命令忽略 `PYTHONPATH` 与用户站点；包内若带 `__main__.py`，`python -m` 会以包上下文执行它，相对导入仍成立。
+
+判断命令是否真的绑定当前环境，用 `python -c` 打印 `sys.executable` 的路径，再和 which python 对照，两者不一致就是隐患。
 
 ```python
 import timeit
@@ -75,30 +79,38 @@ print('repeat_len', len(timeit.repeat(builtin_stmt, setup=setup, number=200, rep
 
 ## 把反馈循环压到几秒：四类验证工具各管一段
 
-四类工具解决四类不同的问题，混着用或漏一段都会让 bug 溜到线上。
-
-timeit 负责量化：`timeit.timeit(stmt, setup, number)` 返回 number 次执行的秒数，`timeit.repeat(..., repeat=3)` 给三个样本，工程上取最小值以抵消系统调度抖动；
+四类工具解决四类不同的问题，混着用或漏一段都会让 bug 溜到线上。timeit 负责量化：`timeit.timeit` 返回 number 次执行的秒数，`timeit.repeat` 给三个样本，工程上取最小值以抵消系统调度抖动；
 
 把热点写成纯 Python 循环与内置函数对照，能立刻看出循环下沉到 C 层带来的差距，这比凭感觉说「这里慢」可靠。
 
-ruff（Rust 实现，可覆盖 flake8 与 isort 的一部分）做静态 lint，black 做不妥协的格式化，两者都可用 python -m ruff check . 与 python -`m black --check .` 在提交前跑，--check 只报告不改写，适合 CI。
+ruff（Rust 实现，可覆盖 flake8 与 isort 的一部分）做静态 lint，black 做不妥协的格式化，两者都可借 `python -m` 在提交前跑：`python -m ruff check .`、`python -m black --check .`，`--check` 只报告不改写，适合 CI。
 
-mypy 或 pyright 读类型注解做静态检查，默认不改动运行时行为；pytest 用 assert 重写让失败信息更可读，python -m pytest -q 是统一入口。关键工程约束：本地与 CI 必须跑同一组命令、同一个解释器、同一份锁文件，否则「本地能过」毫无意义。
+mypy 或 pyright 读类型注解做静态检查，默认不改动运行时行为；
 
-把这些命令写进 Makefile 的 check 目标或 justfile，任何人 make check 得到一致结果；CI 里再加 python -I 隔离，避免开发机上的 PYTHONPATH 把某些导入悄悄兜住。
+pytest 用 assert 重写让失败信息更可读，`python -m` 是统一入口。
+
+```bash
+python -m pytest -q
+```
+
+关键工程约束：本地与 CI 必须跑同一组命令、同一个解释器、同一份锁文件，否则「本地能过」毫无意义。把这些命令写进 Makefile 的 check 目标或 justfile，任何人 `make check` 得到一致结果；CI 里再加 `python -I` 隔离，避免开发机上的 `PYTHONPATH` 把某些导入悄悄兜住。
 
 
 ## 从 print 到 logging 与 pdb：可复用的调试手段
 
 print 的问题不是不能用，而是它没有级别、没有时间戳、没有输出目标，且异步与生成器场景里输出顺序会失真。
 
-logging 把记录抽象成 Logger、Handler、Formatter 三级：`logging.getLogger(name)` 取具名 logger，setLevel 设门槛（`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`），StreamHandler 可指向 `io.StringIO` 或 `sys.stderr`，格式串支持 %d 与 %s 惰性插值——`log.info`('rows=%d', n) 只有真正输出时才格式化，比提前拼好字符串省开销。
+logging 把记录抽象成 Logger、Handler、Formatter 三级：`logging.getLogger(name)` 取具名 logger，setLevel 设门槛（`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`），StreamHandler 可指向 `io.StringIO` 或 `sys.stderr`，格式串支持 %d 与 %s 惰性插值——`log.info('rows=%d', n)` 只有真正输出时才格式化，比提前拼好字符串省开销。
 
 用 `contextlib.redirect_stdout(buf)` 还能把第三方库的 print 临时收进缓冲区做断言，是给旧代码补测试的常用手段。
 
-pdb 提供断点与栈内省：python -m pdb `script.py` 启动即停，b 行号下断点、p 表达式打印、n 单步、c 继续、pp 美化打印；
+pdb 提供断点与栈内省：`python -m` 启动即停，b 行号下断点、p 表达式打印、n 单步、c 继续、pp 美化打印；
 
-代码里也能 import pdb 后调用 `pdb.set_trace()`，3.7 起更推荐内置 `breakpoint()`，它由 PYTHONBREAKPOINT 环境变量决定调到哪个调试器。
+```bash
+python -m pdb script.py
+```
+
+代码里也能 `import pdb` 后调用 `pdb.set_trace()`，3.7 起更推荐内置 `breakpoint()`，它由 `PYTHONBREAKPOINT` 环境变量决定调到哪个调试器。
 
 生成器、协程、闭包这类状态跨帧的问题，靠一次性 print 很难看清变量在每一帧的值，pdb 的 up 与 down 切帧、logging 的名字上下文才能定位。生产环境务必给 logger 配 Handler 与级别，别让调试 print 混进 stdout 污染管道下游。
 
@@ -134,7 +146,7 @@ logging 之所以比 print 适合工程，是因为它把「是否记录」的�
 
 ## 可复现的性能与日志闭环：把排障动作固化成脚本
 
-一个数据处理脚本上线后偶发变慢，用户只说「有时候卡一下」。可复现的排障不是加 print，而是把性能量测、结构化日志与最小回归断言固化成脚本随代码提交：用 `timeit.repeat` 对两种实现各取三组样本比较最小值，用 logging 把行数与级别写进 StringIO 便于断言，最后核对聚合结果与基线一致。
+一个数据处理脚本上线后偶发变慢，用户只说「有时候卡一下」。可复现的排障不是加 print，而是把性能量测、结构化日志与最小回归断言固化成脚本随代码提交：用 `timeit.repeat` 对两种实现各取三组样本比较最小值，用 logging 把行数与级别写进 `io.StringIO` 便于断言，最后核对聚合结果与基线一致。
 
 下面这段只用标准库完成整个闭环：timeit 负责量化，logging 负责留痕，`io.StringIO` 让日志可被测，明确的布尔输出给出通过或失败信号。真实项目把断言换成 pytest 用例、把 handler 换成文件或日志系统即可，命令入口仍保持一致，这样本地与 CI 跑的是同一套动作。
 
@@ -175,6 +187,36 @@ print('level', logging.INFO)
 
 ## 排障动作固化前：错因速查
 
+固化进 Makefile 前，先确认命令绑对环境：`python -c` 打印 `sys.executable` 与 which python 对照，不一致说明 -m 没指向当前解释器；
+
+再跑 `python -m` 核对。
+
+```bash
+python -m pytest -q
+```
+
+`make -n` 预览命令，比提交后才发现 CI 用错依赖划算。
+
+```bash
+make -n check
+```
+
+调试侧核对 `breakpoint()` 的 `PYTHONBREAKPOINT`、logging 的 Handler 与级别，CI 补 `python -I`。
+
+下表按现象、根因、写法列成速查。
+
+**错因速查**
+
+| 现象 | 根因 | 正确写法 |
+| --- | --- | --- |
+| 直接用 pip install 或 pytest 而不是 python -m pip / python -m pytest | PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试 | 统一用 python -m pip、python -m pytest，并用 python -c 打印 sys.executable 核对 |
+| 靠 print 排查生成器或异步问题 | print 无级别、无时间戳、无帧上下文，输出顺序在惰性求值与回调里与执行顺序不一致 | 用 logging 配名字与级别，或 python -m pdb 用 up/down 切帧查看变量 |
+| CI 与本地跑不同命令或不同解释器 | 本地装了额外包、PYTHONPATH 兜住导入、解释器版本不同，导致本地通过而线上失败 | 把 ruff、black、mypy、pytest 写进同一个 Makefile 目标，CI 用 python -I 与同一份锁文件 |
+
+<Callout type="warn" title='本讲最容易踩的坑' text='直接用 pip install 或 pytest 而不是 python -m pip / python -m pytest：PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试' />
+
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接用 pip install 或 pyte", "body": "PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试", "tip": "统一用 python -m pip、python -m pytest，并用 python -c 打印 sys.executable 核对"}, {"title": "第 2 步：靠 print 排查生成器或异步问题", "body": "print 无级别、无时间戳、无帧上下文，输出顺序在惰性求值与回调里与执行顺序不一致", "tip": "用 logging 配名字与级别，或 python -m pdb 用 up/down 切帧查看变量"}, {"title": "第 3 步：CI 与本地跑不同命令或不同解释器", "body": "本地装了额外包、PYTHONPATH 兜住导入、解释器版本不同，导致本地通过而线上失败", "tip": "把 ruff、black、mypy、pytest 写进同一个 Makefile 目标，CI 用 python -I 与同一份锁文件"}]' />
+
 
 ## 把命令写进 Makefile：练习、自测与速记
 
@@ -188,9 +230,9 @@ print('level', logging.INFO)
 
 <Quiz no='004-3' q='timeit.repeat 为什么常取最小值而不是平均值？' :options='["偶发的系统调度只会让样本变慢，最小值最接近真实计算耗时", "平均值计算更慢", "最小值更符合正态分布", "timeit 规定必须取最小"]' answer="0" explain='调度抖动、缓存失效只会抬高单次耗时，取多次样本的最小值能滤掉这些正向噪声；平均值会把噪声算进来。' />
 
-<Predict no='004-P' q='主示例里 print(&#39;repeat_len&#39;, len(timeit.repeat(..., repeat=3))) 输出什么？' :options='["repeat_len 3", "repeat_len 1", "repeat_len 2000"]' answer='0' output='repeat_len 3' explain='repeat 参数指定重复测量的组数，返回长度为 3 的耗时列表，len 即 3；number 才是每组内执行的次数，两者不要混淆。' />
+<Predict no='004-4' q='主示例里 print(&#39;repeat_len&#39;, len(timeit.repeat(..., repeat=3))) 输出什么？' :options='["repeat_len 3", "repeat_len 1", "repeat_len 2000"]' answer='0' output='repeat_len 3' explain='repeat 参数指定重复测量的组数，返回长度为 3 的耗时列表，len 即 3；number 才是每组内执行的次数，两者不要混淆。' />
 
-<FillBlank no='004-F' tpl='___ timeit' :answers='["import"]' hint='回想本讲关于 python -m 的正确用法 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 python -m 与工具入口：为什么 -m 比直接敲命令更可靠 的落点。' />
+<FillBlank no='004-5' tpl='___ timeit' :answers='["import"]' hint='回想本讲关于 python -m 的正确用法 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 python -m 与工具入口：为什么 -m 比直接敲命令更可靠 的落点。' />
 
 <KnowledgeCard :points='["python -m module 由 runpy.run_module 把模块当 __main__ 执行，绑定当前解释器；裸命令可能用错环境", "timeit.timeit / repeat 用 perf_counter、关 GC，取多次最小值抵消调度抖动", "logging 三级：Logger 级别（DEBUG=10 到 CRITICAL=50）、Handler 目标、Formatter 格式；%d/%s 惰性插值", "contextlib.redirect_stdout 临时替换 sys.stdout，能把第三方 print 收进 StringIO 做断言", "breakpoint()（3.7 起）由 PYTHONBREAKPOINT 决定调哪个调试器，优于硬编码 pdb.set_trace()", "把 ruff、black、mypy、pytest 写进同一 Makefile 目标，CI 用 python -I 加同一份锁文件闭环"]' :pitfalls='["直接用 pip install 或 pytest 而不是 python -m pip / python -m pytest", "靠 print 排查生成器或异步问题", "CI 与本地跑不同命令或不同解释器", "只靠 print 调试，遇到异步或生成器问题会失去上下文；pdb 与 logging 才是可复用的手段"]' summary='工具链的价值是把反馈循环压到几秒：格式化、静态检查、单测、反汇编、性能计时都能在命令行里闭环' />
 

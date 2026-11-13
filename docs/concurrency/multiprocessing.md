@@ -9,14 +9,16 @@ description: 绕过 GIL 处理 CPU 密集任务
 
 线程池把 IO 等待用得很顺，可一遇上吃 CPU 的活，GIL 还是把吞吐按在单个核上。换个思路：让多个进程各自持一份状态，绕开这把锁。一批图像逐张变换，线程开满 CPU 也上不去，内存倒先被复制的对象占满，该换条路了。
 
-先看 fork、spawn、forkserver 三种启动方式，再讲清进程间不共享内存、数据都要 pickle 序列化，再用 Pool 配 chunksize 调平粒度、用 shared_memory 传大数组，末了算算进程启动开销。需有线程、GIL、pickle 基础；读完能把 CPU 密集任务分给进程，也知道何时收益会被传输吃掉。
+先看 `fork`、`spawn`、`forkserver` 三种启动方式，再讲清进程间不共享内存、数据都要 pickle 序列化，再用 `Pool` 配 `chunksize` 调平粒度、用 `shared_memory` 传大数组，末了算算进程启动开销。需有线程、GIL、pickle 基础；读完能把 CPU 密集任务分给进程，也知道何时收益会被传输吃掉。
 
 
 ## 从 threads 改成多进程，却没吃满 12 核
 
-团队把一段纯 Python 的图像卷积从 threads 改成 multiprocessing，期望吃满 12 核，结果只快了一点点；profiling 发现每个任务都要把一个 200MB 的列表 pickle 给子进程，序列化时间盖过了并行收益。
+团队把一段纯 Python 的图像卷积从 threads 改成 multiprocessing，指望吃满 12 核，结果只快了一点点；profiling 发现每个任务都要把一份 200MB 的列表 pickle 给子进程，序列化时间盖过了并行收益。
 
-换 spawn 平台后又冒出更怪的错误：把 lambda 或打开的数据库连承当参数传进去，子进程启动时报 Can't pickle local object；还有人忘了 if __name__ == '`__main__`': 守卫，子进程递归地重新导入主模块，创建出一串进程。
+换到 spawn 平台后又冒出更怪的错：把 `lambda` 或打开的数据库连接当参数传进去，子进程启动时报 Can't pickle local object；
+
+还有人忘了 `if __name__ == '`__main__`':` 守卫，子进程递归地重新导入主模块，创建出一串进程。
 
 另一次在多线程程序里用 fork，子进程继承了别的线程持有的锁，直接卡死。这四件事分别对应四个机制：进程地址空间隔离、序列化成本、启动方法差异、fork 与线程不安全。不先把这些摆清楚，「上多进程」只会把问题从一个层搬到另一个层。
 
@@ -27,13 +29,13 @@ description: 绕过 GIL 处理 CPU 密集任务
 
 `multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 ['spawn', 'fork', 'forkserver']，`get_start_method()` 默认 'spawn'；
 
-Windows 只有 spawn，POSIX Linux 传统默认 fork。macOS 自 3.8 起把默认改为 spawn，因为 Apple 的fork 在带线程/某些系统框架时不稳定；Linux 预计在 3.14 把默认改为 forkserver。
+Windows 只有 spawn，而 `POSIX` 上的 Linux 传统默认 fork。macOS 自 3.8 起把默认改成 spawn，因为 Apple 平台上的 fork 在带线程或某些系统框架时并不稳定；Linux 则在 3.14 起把默认改为 forkserver，同样是为了躲开多线程进程里 fork 的隐患。
 
-fork 用 `fork(2)` 复制地址空间，写时复制、启动最快，但只保留调用线程，其它线程持有的锁在子进程里永远解不开——3.12 起在多线程进程里 fork 会发 DeprecationWarning。
+fork 用 `fork(2)` 复制地址空间，写时复制、启动最快，但只保留调用线程，其它线程持有的锁在子进程里永远解不开——3.12 起在多线程进程里 fork 会发 `DeprecationWarning`。
 
-spawn 起一个全新解释器并重新导入 `__main__`，因此所有传给子进程的对象必须可 pickle、入口必须有 if `__name__` == '__main__': 守卫，启动最慢但最安全。
+spawn 起一个全新解释器并重新导入 `__main__`，因此所有传给子进程的对象都必须可 pickle、入口必须有 `if __name__ == '__main__':` 守卫，启动最慢却最安全。
 
-forkserver 是 Unix 专属：先起一个单线程服务进程，之后由它 fork 出子进程，避开「在多线程进程里 fork」的风险又不像 spawn 那样重导入全部模块。
+forkserver 是 Unix 专属：先起一个单线程服务进程，之后由它 fork 出子进程，既避开「在多线程进程里 fork」的风险，又不像 spawn 那样重新导入全部模块。
 
 用 `get_context(method)` 显式选方法，便于跨平台复现。
 
@@ -45,7 +47,7 @@ forkserver 是 Unix 专属：先起一个单线程服务进程，之后由它 fo
 | spawn | 全新解释器、重导入 __main__ | Windows 与 macOS 3.8+ 默认 | 对象必须可 pickle，入口要有 __main__ 守卫，启动最慢 |
 | forkserver | 单线程服务进程按需 fork | Unix 专属，可显式 get_context 选择 | 需要额外服务进程，Windows 不可用 |
 
-<Callout type="tip" title='核心心智模型' text='multiprocessing.get_all_start_methods() 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，get_start_method() 默认 &#39;spawn&#39;；Windows 只有 spawn，POSIX Linux 传统默' />
+<Callout type="tip" title='核心心智模型' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上' />
 
 <ConceptDiagram type='compare2' title='第 064 讲 · 三种启动方法与平台默认值' labels='三种启动方法与平台默认值|进程间不共享、pickle 成本与 Pool|共享内存、进程开销与选型阈值' caption='绕过 GIL 处理 CPU 密集任务' />
 
@@ -54,19 +56,15 @@ forkserver 是 Unix 专属：先起一个单线程服务进程，之后由它 fo
 
 ## 进程间不共享：pickle 边界与 Pool 参数
 
-进程地址空间隔离，父子各自有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程参数与返回值都要 pickle 序列化再经管道传输，成本与字节数成正比。
+进程地址空间隔离，父子各有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程的参数与返回值都要 pickle 序列化、再经管道传输，成本与字节数成正比。
 
-只有模块顶层、可 import 的函数能被 pickle：lambda、闭包、局部函数、打开的连接、线程锁都会报 PicklingError / AttributeError: Can't pickle local object。
+只有模块顶层、可 import 的函数能被 pickle：`lambda`、闭包、局部函数、打开的连接、线程锁都会报 `PicklingError` 或 `AttributeError`（Can't pickle local object）。
 
-`Pool(processes=None, initializer=None, initargs=()`, `maxtasksperchild=None`, `context=None`) 提供 map / imap / imap_unordered / apply_async / starmap；
+`Pool` 提供 map、imap、imap_unordered、apply_async、starmap 等接口，map 与 imap 的 `chunksize` 把多个任务打成一包传输以减少 IPC 次数，太细则往返多、太粗则负载不均。
 
-map 与 imap 的 chunksize 把多个任务打成一包传输，减少 IPC 次数，太细则往返多、太粗则负载不均。
+`Process` 有 start、join、pid、exitcode、is_alive、terminate、kill（3.7+）等成员，join 之后 exitcode 为 0 表示正常退出。
 
-`Process(target=, args=()`, kwargs=&#123;&#125;, name=, daemon=) 有 start/join/pid/exitcode/is_alive/terminate/kill（3.7+）；
-
-join 后 exitcode 为 0 表示正常退出。
-
-大数据优先用 `multiprocessing.shared_memory.SharedMemory`（3.8+，.buf 是 memoryview，用完要 `close()` 与 `unlink()`，否则 resource_tracker 会告警）或内存映射，而不是反复 pickle。
+大数据优先用 `multiprocessing.shared_memory.SharedMemory`（3.8+，其 .buf 是 memoryview，用完要 `close()` 与 `unlink()`，否则 resource_tracker 会告警）或内存映射，而不是反复 pickle。
 
 **跨进程数据方案与成本**
 
@@ -149,34 +147,32 @@ print('start method', mp.get_start_method())
 
 ## fork 的写时复制快照与多线程弃用
 
-multiprocessing 在 Unix 上默认用 fork：子进程获得父进程地址空间的写时复制快照，因此启动极快但只保留调用线程，其它线程持有的用户态锁在子进程里无人释放，这是 3.12 起多线程 fork 被标记弃用的直接原因。
+把启动方式落到实现上看：fork 让子进程获得父进程地址空间的写时复制快照，启动极快，却只保留调用线程，其它线程持有的用户态锁在子进程里无人释放，这正是 3.12 起多线程 fork 被标记弃用的直接原因。
 
-spawn 走 _posixsubprocess 起一个干净解释器，通过 preparation data 把 `sys.path`、`__main__` 路径与 cwd 传过去，再导入主模块拿到可 pickle 的目标函数；参数与结果用 ForkingPickler 序列化后经 Pipe 传输，所以只有顶层可引用对象能过界。
+spawn 走 `_posixsubprocess` 起一个干净解释器，通过 preparation data 把 `sys.path`、`__main__` 的路径与 cwd 传过去，再导入主模块拿到可 pickle 的目标函数；
 
-Pool 把可迭代对象切成 chunksize 大小的批次，每批一次 IPC，worker 完成后把结果放回结果队列；chunksize 越小往返越多、越大负载越不均。
+参数与结果用 `ForkingPickler` 序列化后经 Pipe 传输，所以只有顶层可引用的对象能过界。`Pool` 把可迭代对象切成 `chunksize` 大小的批次，每批一次 IPC，worker 完成后把结果放回结果队列；`chunksize` 越小往返越多、越大负载越不均。
 
-SharedMemory 用 shm_open 创建命名段并 mmap 到各进程地址空间，buf 是内存视图，读写不再 pickle，但生命周期要显式 close + unlink，由 resource_tracker 兜底检测泄漏。
+`SharedMemory` 用 `shm_open` 创建命名段并 mmap 到各进程地址空间，buf 是内存视图，读写不再 pickle，但生命周期要显式 close 加 unlink，由 `resource_tracker` 兜底检测泄漏。
 
-每个进程有独立 GIL 与独立堆，这才是 CPU 密集任务能随核数伸缩的根本，代价是内存副本与序列化。
+每个进程有独立 GIL 与独立堆，这才是 CPU 密集任务能随核数伸缩的根本，代价则是内存副本与序列化。
 
-<Term word='fork / spawn / forkserver' text='multiprocessing.get_all_start_methods() 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，get_start_method() 默认 &#39;spawn&#39;；Windows 只有 spawn，POSIX Linux 传统默认 fork。mac' />
+<Term word='fork / spawn / forkserver' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上的 Linux 传统' />
 
-<Term word='进程间不共享内存' text='进程地址空间隔离，父子各自有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程参数与返回值都要 pickle 序列化再经管道传输，成本与字节数成正比。只有模块顶层、可 import 的函数能被 pickle：lambda、闭包、局部函数、打开的连接、线程锁都会报 PicklingEr' />
+<Term word='进程间不共享内存' text='进程地址空间隔离，父子各有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程的参数与返回值都要 pickle 序列化、再经管道传输，成本与字节数成正比。只有模块顶层、可 import 的函数能被 pickle：`lambda`、闭包、局部函数、打开的连接、线程锁都会报 `Pickli' />
 
 
 ## 共享内存、进程开销与选型阈值
 
-`shared_memory.SharedMemory(name=None, create=False, size=0)` 在 POSIX 上用 POSIX 共享内存段，buf 可直接当 memoryview 读写；
+`SharedMemory` 在 `POSIX` 平台上用 `POSIX` 共享内存段，buf 可以直接当 memoryview 读写；`ShareableList`（3.8+）在其上封装定长列表。`Value` 与 `Array` 基于 ctypes，带一把默认锁，适合小标量或定长数组；
 
-ShareableList（3.8+）在其上封装定长列表。
+`Manager()` 起一个服务进程，返回 `DictProxy` / `ListProxy` 等代理，任何一次访问都是一次 IPC，比共享 ctypes 慢一两个量级，但支持任意可 pickle 对象，且代理本身还能继续传给别的进程。
 
-`Value(typecode_or_type, *args, lock=True)` 与 Array 基于 ctypes，带一把默认锁，适合小标量或定长数组；
+进程启动有固定开销（spawn 要重新导入依赖，常是几十到数百毫秒），所以任务粒度必须够大，可以用 `chunksize` 和 `max_tasks_per_child` 调平。
 
-`Manager()` 起一个服务进程返回 DictProxy / ListProxy 等代理，任何一次访问都是一次 IPC，比共享 ctypes 慢一两个量级，但支持任意可 pickle 对象且代理可继续传给别的进程。进程启动本身有固定开销（spawn 要重新导入依赖，常是几十到数百毫秒），所以任务粒度必须够大；
+选型阈值不是固定数字：先量「单任务 CPU 时间」与「序列化加启动时间」的比值，只有前者显著大才划算；数据量大时先问能不能用 `SharedMemory` 消除拷贝，而不是直接加进程数。
 
-用 chunksize 和 max_tasks_per_child 调平。选型阈值不是固定数字：先量「单任务 CPU 时间」与「序列化 + 启动时间」的比值，只有前者显著大才划算；数据量大时先问能不能用 shared_memory 消除拷贝，而不是直接加进程数。
-
-还有一个平台细节：macOS 上 `SharedMemory.size` 会向上取整到页大小，请求 16 字节得到的 `sh.size` 是 16384、请求 32000 得到 32768，因此应把业务长度单独存进参数、只断言 `sh.size` >= 需求，别把 `sh.size` 当逻辑长度用。
+还有一个平台细节：macOS 上 `SharedMemory.size` 会向上取整到页大小，请求 16 字节得到的 `sh.size` 是 16384、请求 32000 得到 32768，因此应把业务长度单独存进参数，只断言 `sh.size` 不小于需求，别把 `sh.size` 当逻辑长度用。
 
 **常见错误与定位**
 
@@ -190,11 +186,11 @@ ShareableList（3.8+）在其上封装定长列表。
 
 ## 用共享内存做并行数组求和，绕开 pickle 拷贝
 
-要对一个 400 万元素的数组分块求和，若把整块列表作为 Pool 参数传，每个子进程都会收到一份 pickle 副本，内存与序列化先爆。
+要对一个 400 万元素的数组分块求和，若把整块列表作为 `Pool` 的参数传，每个子进程都会收到一份 pickle 副本，内存与序列化先爆。
 
-正确做法是把数据放进 SharedMemory，只把 (名字, 起止下标) 这种极小的元组传给 worker，子进程按名字 attach 到同一段内存、在 buf 上切片计算，返回各块的标量和。主进程汇总后再 close + unlink 释放。
+正确做法是把数据放进 `SharedMemory`，只把 (名字, 起止下标) 这种极小的元组传给 worker，子进程按名字 attach 到同一段内存、在 buf 上切片计算，返回各块的标量和。主进程汇总后再 close 加 unlink 释放。
 
-下面用标准库跑通这条路径：用 array 把字节视图还原成定长整数，worker 只做切片 sum。真实数值计算会换 NumPy 并配 dtype，但「共享段只传句柄、结果只回标量」这一结构不变。
+下面用标准库跑通这条路径：用 `array` 把字节视图还原成定长整数，worker 只做切片 sum。真实数值计算会换 NumPy 并配 dtype，但「共享段只传句柄、结果只回标量」这一结构不变。
 
 ```python
 import array
@@ -244,7 +240,7 @@ if __name__ == '__main__':
 
 ## Pool._map_async 的 chunksize 推导公式
 
-chunksize 不是拍脑袋的默认值，Lib/multiprocessing/`pool.py` 的 `Pool._map_async` 里有一段可复现的推导：chunksize, `extra = divmod`(`len(iterable)`, `len(self._pool)` * 4)，extra 非零则加一，iterable 为空时置 0。
+chunksize 不是拍脑袋的默认值，`Lib/multiprocessing/pool.py` 的 `Pool._map_async` 里有一段可复现的推导：chunksize, `extra = divmod`(`len(iterable)`, `len(self._pool)` * 4)，extra 非零则加一，iterable 为空时置 0。
 
 目标是把任务切成大约进程数 4 倍的包，让负载不均时仍有足够的包做动态均衡，又不至于让 IPC 往返次数失控；向上取整保证余数里的任务不会被丢掉。12 个进程、1000 个任务算出 21，实际切成 48 包；4 个进程、100 个任务算出 7。
 
@@ -274,16 +270,16 @@ print('formula in pool.py', 'divmod' in inspect.getsource(pool_mod.Pool._map_asy
 
 <OutputBox title='扩展示例运行结果' output='12 workers 1000 21\n12 workers 10 1\n4 workers 100 7\nempty 0\nformula in pool.py True' />
 
-<LineByLine code='import multiprocessing.pool as pool_mod\nimport inspect\n\ndef chunksize(n, nproc):\n    if n == 0:\n        return 0\n    size, extra = divmod(n, nproc * 4)\n    return size + 1 if extra else size\n\nprint(&#39;12 workers 1000&#39;, chunksize(1000, 12))\nprint(&#39;12 workers 10&#39;, chunksize(10, 12))\nprint(&#39;4 workers 100&#39;, chunksize(100, 4))\nprint(&#39;empty&#39;, chunksize(0, 4))\nprint(&#39;formula in pool.py&#39;, &#39;divmod&#39; in inspect.getsource(pool_mod.Pool._map_async))\n' :notes='["导入 pool 模块，用来核对源码里的公式", "inspect.getsource 可以直接读回 _map_async 的源码文本", "复现 Pool._map_async 里的 chunksize 推导", "空的可迭代对象按源码置 0", "divmod 把任务数除以进程数的 4 倍", "余数非零就向上取整，保证任务不丢", "12 进程 1000 任务：1000 除 48 余 40，得 21", "任务数小于进程数 4 倍时，chunksize 退化为 1", "4 进程 100 任务：100 除 16 余 4，得 7", "空输入不产生任何任务包", "在真实源码里确认 divmod 确实存在，而不是凭记忆", "先量单任务 CPU 时间与序列化+启动时间之比；任务粒度太小或对象太大，加进程只会更慢"]' title='扩展示例逐行讲解' />
+<LineByLine code='import multiprocessing.pool as pool_mod\nimport inspect\n\ndef chunksize(n, nproc):\n    if n == 0:\n        return 0\n    size, extra = divmod(n, nproc * 4)\n    return size + 1 if extra else size\n\nprint(&#39;12 workers 1000&#39;, chunksize(1000, 12))\nprint(&#39;12 workers 10&#39;, chunksize(10, 12))\nprint(&#39;4 workers 100&#39;, chunksize(100, 4))\nprint(&#39;empty&#39;, chunksize(0, 4))\nprint(&#39;formula in pool.py&#39;, &#39;divmod&#39; in inspect.getsource(pool_mod.Pool._map_async))\n' :notes='["导入 pool 模块，用来核对源码里的公式", "inspect.getsource 可以直接读回 _map_async 的源码文本", "复现 Pool._map_async 里的 chunksize 推导", "空的可迭代对象按源码置 0", "divmod 把任务数除以进程数的 4 倍", "余数非零就向上取整，保证任务不丢", "12 进程 1000 任务：1000 除 48 余 40，得 21", "任务数小于进程数 4 倍时，chunksize 退化为 1", "4 进程 100 任务：100 除 16 余 4，得 7", "空输入不产生任何任务包", "在真实源码里确认 divmod 确实存在，而不是凭记忆", "先量单任务 CPU 时间与序列化加启动时间之比；任务粒度太小或对象太大，加进程只会更慢"]' title='扩展示例逐行讲解' />
 
 
 ## ForkingPickler 与 reduction.py 的跨进程对象注册
 
-跨进程传对象不走普通 `pickle.Pickler`，而是 Lib/multiprocessing/`reduction.py` 里的 ForkingPickler：它是 `pickle.Pickler` 的子类，类方法 register 维护一张 _extra_reducers 表，给 socket、Connection、文件描述符、同步原语等注册专用的 `__reduce__` 实现。
+跨进程传对象不走普通 `pickle.Pickler`，而是 `Lib/multiprocessing/reduction.py` 里的 ForkingPickler：它是 `pickle.Pickler` 的子类，类方法 register 维护一张 _extra_reducers 表，给 socket、Connection、文件描述符、同步原语等注册专用的 `__reduce__` 实现。
 
 核心数据结构是 DupFd：父进程把待传的 fd 交给后台的 resource_sharer 服务进程登记，pickle 时只序列化一个取回句柄的 reducer；
 
-子进程 unpickle 时 `DupFd.detach()` 通过 Unix socket 的 SCM_RIGHTS 把 fd 副本接收回来，于是子进程拿到的是指向同一资源的独立描述符，而不是一个被复制的对象。
+子进程 unpickle 时 `DupFd.detach()` 通过 Unix socket 的 `SCM_RIGHTS` 把 fd 副本接收回来，于是子进程拿到的是指向同一资源的独立描述符，而不是一个被复制的对象。
 
 Queue 的 _FeederThread 因此很关键：put 时先在调用线程里 `ForkingPickler.dumps` 成字节 buffer，再由管道 send_bytes 发出，序列化成本全部记在提交侧而非子进程；
 
@@ -346,11 +342,11 @@ except Exception as e:
 
 <Quiz no='064-3' q='多进程处理 200MB 数组却几乎没加速，最该先查什么？' :options='["pickle 序列化与内存拷贝是否吃掉了并行收益", "是否用了 RLock", "线程名是否重复", "sys.getswitchinterval 是否太大"]' answer="0" explain='进程间不共享内存，大对象要 pickle；先量「单任务 CPU 时间」与「序列化 + 启动时间」之比，再考虑 SharedMemory 或加大 chunksize。' />
 
-<Predict no='064-P' q='在 spawn 平台把 list(range(10000)) 交给 Pool.map，每个 worker 会收到什么？' :options='["一份经 pickle 序列化后再反序列化的独立副本", "父进程列表的共享引用", "同一块共享内存视图", "空列表"]' answer='0' output='独立副本（pickle 约 29778 字节）' explain='参数经 ForkingPickler 序列化、通过 Pipe 传给子进程再还原，父子各有独立堆；这也是大对象让并行收益被序列化吃光的原因，应改用 SharedMemory。' />
+<Predict no='064-4' q='在 spawn 平台把 list(range(10000)) 交给 Pool.map，每个 worker 会收到什么？' :options='["一份经 pickle 序列化后再反序列化的独立副本", "父进程列表的共享引用", "同一块共享内存视图", "空列表"]' answer='0' output='独立副本（pickle 约 29778 字节）' explain='参数经 ForkingPickler 序列化、通过 Pipe 传给子进程再还原，父子各有独立堆；这也是大对象让并行收益被序列化吃光的原因，应改用 SharedMemory。' />
 
-<FillBlank no='064-F' tpl='___ multiprocessing as mp' :answers='["import"]' hint='回想本讲关于 fork / spawn / forkserver 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三种启动方法与平台默认值 的落点。' />
+<FillBlank no='064-5' tpl='___ multiprocessing as mp' :answers='["import"]' hint='回想本讲关于 fork / spawn / forkserver 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 三种启动方法与平台默认值 的落点。' />
 
-<KnowledgeCard :points='["进程各有独立 GIL 与堆，CPU 密集才能真正并行；代价是地址空间隔离与 pickle 序列化", "启动方法：fork 快但多线程不安全（3.12 起告警）、spawn 安全但需 __main__ 守卫且参数可 pickle、forkserver 折中且仅 Unix", "macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 拟改 forkserver", "Pool 的 chunksize 把任务打包减少 IPC；map 按序、imap/imap_unordered 可流式", "大数组用 SharedMemory（3.8+）传名字句柄，用完 close + unlink；Value/Array 带 ctypes 锁，Manager 代理每次访问一次 IPC", "先量单任务 CPU 时间与序列化+启动时间之比；任务粒度太小或对象太大，加进程只会更慢"]' :pitfalls='["spawn 平台把 lambda 或打开的连接传给子进程", "忘了 if __name__ == &#39;__main__&#39;: 守卫", "多进程传 200MB 列表却埋怨没加速", "在 spawn 平台把不可 pickle 的对象（lambda、打开的连接）传给子进程，会在启动时报莫名其妙的错误"]' summary='进程之间地址空间隔离，所有跨进程数据都要序列化；数据量大时，序列化成本可能超过并行收益' />
+<KnowledgeCard :points='["进程各有独立 GIL 与堆，CPU 密集才能真正并行；代价是地址空间隔离与 pickle 序列化", "启动方法：fork 快但多线程不安全（3.12 起告警）、spawn 安全但需 __main__ 守卫且参数可 pickle、forkserver 折中且仅 Unix", "macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 起改为 forkserver", "Pool 的 chunksize 把任务打包减少 IPC；map 按序、imap/imap_unordered 可流式", "大数组用 SharedMemory（3.8+）传名字句柄，用完 close + unlink；Value/Array 带 ctypes 锁，Manager 代理每次访问一次 IPC", "先量单任务 CPU 时间与序列化加启动时间之比；任务粒度太小或对象太大，加进程只会更慢"]' :pitfalls='["spawn 平台把 lambda 或打开的连接传给子进程", "忘了 if __name__ == &#39;__main__&#39;: 守卫", "多进程传 200MB 列表却埋怨没加速", "在 spawn 平台把不可 pickle 的对象（lambda、打开的连接）传给子进程，会在启动时报莫名其妙的错误"]' summary='进程之间地址空间隔离，所有跨进程数据都要序列化；数据量大时，序列化成本可能超过并行收益' />
 
 **速记索引**
 
@@ -358,16 +354,16 @@ except Exception as e:
 | --- | --- |
 | 进程各有独立 GIL 与堆，CPU 密集才能真正并行；代价是地址空间隔离与 pickle 序列化 | 建立直觉 |
 | 启动方法：fork 快但多线程不安全（3.12 起告警）、spawn 安全但需 __main__ 守卫且参数可 pickle、forkserver 折中且仅 Unix | 跑通示例 |
-| macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 拟改 forkserver | 深入边界 |
+| macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 起改为 forkserver | 深入边界 |
 | Pool 的 chunksize 把任务打包减少 IPC；map 按序、imap/imap_unordered 可流式 | 工程落地 |
 | 大数组用 SharedMemory（3.8+）传名字句柄，用完 close + unlink；Value/Array 带 ctypes 锁，Manager 代理每次访问一次 IPC | 随堂检测 |
-| 先量单任务 CPU 时间与序列化+启动时间之比；任务粒度太小或对象太大，加进程只会更慢 | 复盘 |
+| 先量单任务 CPU 时间与序列化加启动时间之比；任务粒度太小或对象太大，加进程只会更慢 | 复盘 |
 
 1. 进程各有独立 GIL 与堆，CPU 密集才能真正并行；代价是地址空间隔离与 pickle 序列化
 
 2. 启动方法：fork 快但多线程不安全（3.12 起告警）、spawn 安全但需 __main__ 守卫且参数可 pickle、forkserver 折中且仅 Unix
 
-3. macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 拟改 forkserver
+3. macOS 3.8+ / Windows 默认 spawn；Linux 传统默认 fork，3.14 起改为 forkserver
 
 [下一讲：进程间通信：Queue、Pipe 与信号](/concurrency/ipc)
 
@@ -375,4 +371,4 @@ except Exception as e:
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **fork / spawn / forkserver** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 fork / spawn / forkserver 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。

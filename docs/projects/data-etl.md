@@ -7,29 +7,29 @@ description: 构建可回溯、可重跑的数据管道
 
 # 第 127 讲 · 实战 06 · 日志 ETL 与 CSV / SQL 查询工具
 
-上一讲的请求即时来、即时走；这一讲面对攒了一天、动辄几个 G 的日志，关心的事从「响应够快」变成「隔天重跑，结果还得一样」。本讲构建可重跑的数据管道，把可靠性摆在速度前面。
+上一讲的请求即时来、即时走；这一讲面对攒了一天、动辄几个 G 的日志，关心的事从「响应够快」变成「隔天重跑，结果还得一样」。一条可重跑的数据管道，得把可靠性摆在速度前面。
 
-一个脚本把文件读进内存再处理，单文件涨到几个 G 时进程被掐掉；它没有水位，失败后从头再跑，同一批事件进了两次聚合表，报表金额翻倍；几行缺列又能把整批带停。我们先用生成器管道让内存不随输入长，再把脏数据隔离进死信、按窗口聚合，最后用批量写入配 upsert 与水位保证重放幂等。需要你熟悉生成器、csv 与 sqlite3 事务；学完能搭一条重放结果不变、脏行不拖垮整批的流水线。
+一个脚本把文件读进内存再处理，单文件涨到几个 G 时进程被掐掉；它没有水位，失败后从头再跑，同一批事件进了两次聚合表，报表金额翻倍；几行缺列又能把整批带停。我们先用生成器管道让内存不随输入长，再把脏数据隔离进死信、按窗口聚合，最后用批量写入配 upsert 与水位保证重放幂等。需要你熟悉生成器、`csv` 与 `sqlite3` 事务；学完能搭一条重放结果不变、脏行不拖垮整批的流水线。
 
 
 ## 文件稍大就 OOM，失败重跑又让聚合值翻倍
 
-一个日志 ETL 脚本用 `read()` 把整个文件读进内存再 splitlines，平时跑得好好的，某天上游把日志切分策略改了、单文件涨到 3GB，进程直接 OOM 被杀。更糟的是它没有水位：失败后运维从头重跑一次，同一批事件被重复写入聚合表，报表金额翻倍，谁也说不清哪次是准的。
+一个日志 ETL 脚本用 `read()` 把整个文件读进内存再 `splitlines`，平时跑得好好的，某天上游把日志切分策略改了、单文件涨到 3GB，进程直接 OOM 被杀。更糟的是它没有水位：失败后运维从头重跑一次，同一批事件被重复写入聚合表，报表金额翻倍，谁也说不清哪次是准的。
 
 还有几行字段缺列或金额写成非数字，脚本一遇到就整体崩掉，把已经处理好的批次也带没了。朴素解法「全量读入 + 逐行 insert + 出错就停」失败在三处：内存随输入线性增长、写入不幂等导致重放结果不一致、脏数据没有隔离。ETL 的可靠性来自「可重跑」：任何一段失败后重放，结果必须一致。
 
-本讲用 csv 生成器、sqlite3 的 upsert、增量水位与死信队列做一条可回溯的流式管道。
+这一讲用 `csv` 生成器、`sqlite3` 的 upsert、增量水位与死信队列做一条可回溯的流式管道。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 read() 全量载入日志，文件稍大就 OOM：一次性构造 N 个字符串对象，内存与输入线性增长' />
 
 
 ## 生成器管道与背压：内存不随输入增长
 
-生成器是惰性求值：每次 next 只推进到下一个 yield，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度 `O(1)` 而非 `O(N)`。
+生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。
 
-`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组合就能把「解析 → 清洗 → 聚合 → 写入」串成一条 yield 管道：下游不拉动，上游就不生产，这就是背压——天然防止快生产者压垮慢消费者。
+`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组合就能把「解析 → 清洗 → 聚合 → 写入」串成一条 `yield` 管道：下游不拉动，上游就不生产，这就是背压——天然防止快生产者压垮慢消费者。
 
-`read()` 加 splitlines 会一次性构造出 N 个字符串对象，内存与输入线性相关，是大文件 OOM 的直接原因。还要注意三个边界：生成器只能消费一次，重跑必须重建管道；for 循环里不要顺手 `list()` 把惰性又变回全量；异常要放在生成阶段就地捕获，否则一条脏数据会让整条管道终止。
+`read()` 加 `splitlines` 会一次性构造出 N 个字符串对象，内存与输入线性相关，是大文件 OOM 的直接原因。还要注意三个边界：生成器只能消费一次，重跑必须重建管道；`for` 循环里不要顺手 `list()` 把惰性又变回全量；异常要放在生成阶段就地捕获，否则一条脏数据会让整条管道终止。
 
 失效信号是常驻内存随输入规模线性上升、以及处理速度被上游写得过快拖垮。
 
@@ -97,7 +97,7 @@ print('rows', con.execute('SELECT count(*) FROM agg').fetchone()[0])
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='生成器是惰性求值：每次 next 只推进到下一个 yield，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度 O(1) 而非 O(N)。csv.DictReader 本身就是迭代器，io.StringIO 让字符串像文件一样被逐行读，两者组合就能把「解析 → 清洗 ' />
+<Callout type="tip" title='核心心智模型' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组' />
 
 <ConceptDiagram type='layers3' title='第 127 讲 · 生成器管道与背压：内存不随输入增长' labels='生成器管道与背压：内存不随输入增长|脏数据隔离、窗口聚合与幂等写入|增量水位、质量校验与可回溯' caption='构建可回溯、可重跑的数据管道' />
 
@@ -106,15 +106,21 @@ print('rows', con.execute('SELECT count(*) FROM agg').fetchone()[0])
 
 ## 脏数据隔离、窗口聚合与幂等写入
 
-DictReader 把每行转成 dict，但值全是字符串，int(row['amount']) 遇到非数字或缺失列会抛 ValueError / KeyError；正确做法是在解析生成器里 try/except 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告。
+`DictReader` 把每行转成 dict，但值全是字符串，`int(row['amount'])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；
 
-窗口聚合用 `defaultdict(int)` 累加：tumbling window 的键是 ts // width * width，把同一时间桶的记录并到一起；
+正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告。
 
-滑动窗口则需要维护队列与过期边界。写入侧用事务包住整批（`con.commit()` 一次提交），减少每行的 fsync；
+窗口聚合用 `defaultdict(int)` 累加：tumbling window 的键是 `ts // width * width`，把同一时间桶的记录并到一起；
 
-幂等靠主键加 SQLite 的 INSERT ... ON `CONFLICT(key)` DO UPDATE SET `col = excluded.col`（3.24 起支持，excluded 是冲突行的伪表），或 MySQL 的 ON DUPLICATE KEY UPDATE、PostgreSQL 的 ON CONFLICT。
+滑动窗口则需要维护队列与过期边界。写入侧用事务包住整批（`con.commit()` 一次提交），减少每行的 `fsync`；
 
-盲目 INSERT 在重跑时会重复入库或撞主键报错，只有「按键 upsert」才能保证同一批数据重放后聚合值不翻倍。参数一律用 ? 占位符绑定，禁止字符串拼 SQL。
+幂等靠主键加 SQLite 的 `INSERT`（3.24 起支持，`excluded` 是冲突行的伪表），或 MySQL 的 `ON DUPLICATE KEY UPDATE`、PostgreSQL 的 `ON CONFLICT`。
+
+```sql
+INSERT ... ON CONFLICT(key) DO UPDATE SET col = excluded.col
+```
+
+盲目 `INSERT` 在重跑时会重复入库或撞主键报错，只有「按键 upsert」才能保证同一批数据重放后聚合值不翻倍。参数一律用 `?` 占位符绑定，禁止字符串拼 SQL。
 
 ```python
 import sqlite3
@@ -162,11 +168,15 @@ print('wm', con.execute('SELECT v FROM meta WHERE k=?', ('wm',)).fetchone()[0])
 
 ## 增量水位、质量校验与可回溯
 
-水位（high water mark）记在独立的 meta 表，按分区（日期、来源、租户）分别记录而不是全局单值，否则某个落后分区会拖住其它分区的推进。写入水位用 ON `CONFLICT(k)` DO UPDATE SET `v = max`(v, `excluded.v`)，保证只前进不回退；
+水位（high water mark）记在独立的 meta 表，按分区（日期、来源、租户）分别记录而不是全局单值，否则某个落后分区会拖住其它分区的推进。
 
-配合「只处理 offset 大于水位的记录」，at-least-once 投递加幂等写入就近似等价于 effectively-once。质量校验至少覆盖：总行数、死信数与占比、空值率、金额范围、主键唯一性、聚合总量与源数据对账；把 good / dead / total / 水位写成质量报告随批次落盘，出问题时能定位到具体分区。
+写入水位用 `ON CONFLICT(k) DO UPDATE` 配合 `max(v, excluded.v)`，保证只前进不回退；
 
-CSV 与 SQL 双数据源适配靠同一批 dict 记录：既能 `csv.DictWriter` 落文件，也能 `con.execute` 入库。schema 演进（新增列）要保证旧批次仍可读。三个失效信号：重跑后行数翻倍、水位回退、死信数突增却没有告警。
+再配上「只处理 offset 大于水位的记录」，at-least-once 投递加幂等写入就近似等价于 effectively-once。质量校验至少覆盖：总行数、死信数与占比、空值率、金额范围、主键唯一性、聚合总量与源数据对账；
+
+把 good / dead / total / 水位写成质量报告随批次落盘，出问题时能定位到具体分区。CSV 与 SQL 双数据源适配靠同一批 dict 记录：既能用 `csv.DictWriter` 落文件，也能用 `con.execute` 入库。schema 演进（新增列）要保证旧批次仍可读。
+
+三个失效信号：重跑后行数翻倍、水位回退、死信数突增却没有告警。
 
 **ETL 失败模式与防线**
 
@@ -183,13 +193,15 @@ CSV 与 SQL 双数据源适配靠同一批 dict 记录：既能 `csv.DictWriter`
 
 ## gi_frame 与生成器挂起：O(1) 内存的底层
 
-生成器把函数帧保存在堆上（gi_frame 持有局部变量与指令指针），每次 next 恢复执行到下一个 yield 再挂起，因此同时驻留的只有当前一条记录，这就是 `O(1)` 内存与天然背压的来源；下游不 next，上游就不计算。
+生成器把函数帧保存在堆上（`gi_frame` 持有局部变量与指令指针），每次 `next` 恢复执行到下一个 `yield` 再挂起，因此同时驻留的只有当前一条记录，这就是 `O(1)` 内存与天然背压的来源；下游不 `next`，上游就不计算。
 
-`csv.DictReader` 本身是迭代器，配合 `io.StringIO` 把字符串包装成文件对象，整条管道无需物化中间列表。SQLite 的事务由 journal 或 WAL 保证原子性，一次 commit 把整批改动落盘，比逐行提交少很多 fsync；
+`csv.DictReader` 本身是迭代器，配合 `io.StringIO` 把字符串包装成文件对象，整条管道无需物化中间列表。SQLite 的事务由 journal 或 WAL 保证原子性，一次 `commit` 把整批改动落盘，比逐行提交少很多 `fsync`；
 
-ON CONFLICT 子句用 excluded 伪表引用「本想插入但因冲突失败的那一行」，因此 SET `total=excluded.total` 是覆盖而非累加，重跑同一批必然得到相同值。
+`ON CONFLICT` 子句用 `excluded` 伪表引用「本想插入但因冲突失败的那一行」，因此 `SET total=excluded.total` 是覆盖而非累加，重跑同一批必然得到相同值。
 
-水位只增不减（max）保证消费进度单调，配合「只处理大于水位的记录」，at-least-once 投递加幂等写入即可逼近 effectively-once。tumbling window 的键 ts // width * width 依赖整数整除，边界处（width 的整数倍）会开启新桶。
+水位只增不减（`max`）保证消费进度单调，配合「只处理大于水位的记录」，at-least-once 投递加幂等写入即可逼近 effectively-once。
+
+tumbling window 的键 `ts // width * width` 依赖整数整除，边界处（width 的整数倍）会开启新桶。
 
 ```python
 import io, sys
@@ -205,9 +217,9 @@ print('first', next(lazy))
 
 <OutputBox title='原理验证' output='eager type list 1000\nlazy type generator\nlist heavier True\nfirst r0' />
 
-<Term word='生成器管道与背压' text='生成器是惰性求值：每次 next 只推进到下一个 yield，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度 O(1) 而非 O(N)。csv.DictReader 本身就是迭代器，io.StringIO 让字符串像文件一样被逐行读，两者组合就能把「解析 → 清洗 → 聚合 → 写入」' />
+<Term word='生成器管道与背压' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组合就能把「解析 → ' />
 
-<Term word='解析与脏数据隔离' text='DictReader 把每行转成 dict，但值全是字符串，int(row[&#39;amount&#39;]) 遇到非数字或缺失列会抛 ValueError / KeyError；正确做法是在解析生成器里 try/except 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告。窗口聚合用 def' />
+<Term word='解析与脏数据隔离' text='`DictReader` 把每行转成 dict，但值全是字符串，`int(row[&#39;amount&#39;])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告' />
 
 
 ## ETL 失败模式与防线
@@ -227,9 +239,11 @@ print('first', next(lazy))
 
 ## 可重跑的日志聚合管道与质量报告
 
-一条线上 ETL 要求「任何一段失败后重放，结果一致」。下面把四层收进一个可运行脚本：read_rows 用 `csv.DictReader` 逐行读并把转换失败的行放进死信；聚合按 ts 累加；写入用 ON CONFLICT 做覆盖式 upsert；水位写进 meta 表并用 max 保证单调；
+一条线上 ETL 要求「任何一段失败后重放，结果一致」。下面把四层收进一个可运行脚本：`read_rows` 用 `csv.DictReader` 逐行读并把转换失败的行放进死信；聚合按 `ts` 累加；写入用 `ON CONFLICT` 做覆盖式 upsert；水位写进 meta 表并用 `max` 保证单调；
 
-report 汇总行数、死信数、水位与聚合总量，作为批次质量报告落盘。run1 与 run2 传入同一份源数据，输出必须逐字段一致——这正是可重跑的验收标准。真实项目把 :memory: 换成文件库并开 WAL、按日期分区记录水位、把质量报告写进监控系统、给死信配独立重放入口。片段可直接运行，重点看两次运行的报告完全相同。
+`report` 汇总行数、死信数、水位与聚合总量，作为批次质量报告落盘。`run1` 与 `run2` 传入同一份源数据，输出必须逐字段一致——这正是可重跑的验收标准。真实项目把 `:memory:` 换成文件库并开 WAL、按日期分区记录水位、把质量报告写进监控系统、给死信配独立重放入口。
+
+片段可直接运行，重点看两次运行的报告完全相同。
 
 ```python
 import csv, io, sqlite3
@@ -274,7 +288,7 @@ print('run2', run(SOURCE))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **生成器管道与背压** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 生成器管道与背压 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 
 ## 练习、自测与一页纸速记
@@ -310,6 +324,6 @@ python -m compileall -q . && python -m pytest -q
 
 [下一讲：实战 07 · 并发爬虫与分布式调度](/projects/concurrent-crawler)
 
-<Predict no='127-P' q='同一批数据用 ON CONFLICT DO UPDATE 连续重跑两次，agg 表的行数最可能是？' :options='["与单次运行相同（本例 2 行）", "翻倍（4 行）", "抛 sqlite3.IntegrityError"]' answer='0' output='rows 2' explain='聚合以 bucket 为主键，第二次运行的 INSERT 触发冲突分支改为覆盖更新，不会新增行；这正是可重跑的验收点，盲目 INSERT 才会翻倍或报错。' />
+<Predict no='127-4' q='同一批数据用 ON CONFLICT DO UPDATE 连续重跑两次，agg 表的行数最可能是？' :options='["与单次运行相同（本例 2 行）", "翻倍（4 行）", "抛 sqlite3.IntegrityError"]' answer='0' output='rows 2' explain='聚合以 bucket 为主键，第二次运行的 INSERT 触发冲突分支改为覆盖更新，不会新增行；这正是可重跑的验收点，盲目 INSERT 才会翻倍或报错。' />
 
-<FillBlank no='127-F' tpl='___ csv, io, sqlite3' :answers='["import"]' hint='回想本讲关于 生成器管道与背压 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 生成器管道与背压：内存不随输入增长 的落点。' />
+<FillBlank no='127-5' tpl='___ csv, io, sqlite3' :answers='["import"]' hint='回想本讲关于 生成器管道与背压 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 生成器管道与背压：内存不随输入增长 的落点。' />

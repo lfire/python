@@ -14,24 +14,24 @@ description: 理解一致性组件替你承担了什么
 
 ## Raft 集群做成四节点，为什么只容忍一台故障
 
-一个团队把服务发现当作万能注册中心：实例启动时写一条记录，之后既不续约也不下线，配置中心被用来高频读写业务开关，每次请求都去查一次。某次网络抖动，半数实例与注册中心短暂失联，健康检查还没来得及剔除，流量继续打到已不可用的实例，错误率飙升；
+一个团队把服务发现当作万能注册中心：实例启动时写一条记录，之后既不续约也不下线；配置中心被用来高频读写业务开关，每次请求都去查一次。某次网络抖动，半数实例与注册中心短暂失联，健康检查还没来得及剔除，流量继续打到已不可用的实例，错误率飙升；
 
 更糟的是配置中心被当成数据库扛读写，Raft 组因为频繁写入和 leader 切换出现延迟，依赖它的服务集体超时。根因是把共识组件承担的职责理解反了：Raft 解决的是多台机器对同一序列达成一致，它昂贵，只该承载少量关键元数据，不该承载业务数据或高频读。本讲把选举、日志复制、租约、健康检查、配置推送这几层各自的边界拆清楚。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把配置中心当业务数据库每次请求都读写：每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时' />
 
-<Callout type="tip" title='核心心智模型' text='Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 term 单调递增；follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数）内' />
+<Callout type="tip" title='核心心智模型' text='Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数' />
 
 
 ## Raft 的多数派与任期：Leader 选举、日志复制
 
-Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 term 单调递增；
+Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；
 
-follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数）内没收到心跳就自增 term 转为 candidate 拉票，获得多数派选票才成为 leader。多数派是 `floor(N/2)`+1：5 节点集群 quorum 为 3，能容忍 2 节点故障；
+follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数）内没收到心跳就自增 term 转为 candidate 拉票，获得多数派选票才成为 leader。多数派是 `floor(N/2)+1`：5 节点集群 quorum 为 3，能容忍 2 节点故障；
 
-4 节点 quorum 仍是 3，只容忍 1 节点故障，所以生产集群一律用奇数节点。日志复制时 leader 把条目追加到本地并并行发给 follower，收到多数派确认后才推进 commitIndex 并应用状态机；commitIndex 等于把各节点 matchIndex 降序排列后第 quorum 个值。
+4 节点 quorum 仍是 3，只容忍 1 节点故障，所以生产集群一律用奇数节点。日志复制时 leader 把条目追加到本地并并行发给 follower，收到多数派确认后才推进 `commitIndex` 并应用状态机；`commitIndex` 等于把各节点 `matchIndex` 降序排列后第 quorum 个值。
 
-只有已提交条目对客户端可见，未提交条目在新 leader 上任后可能被覆盖。任期保证旧 leader 的过期请求被拒绝：任何 RPC 携带小于当前 term 的任期都会让接收方返回失败并促使对方退位。
+只有已提交条目对客户端可见，未提交条目在新 leader 上任后可能被覆盖。任期保证旧 leader 的过期请求被拒绝：任何 RPC 携带小于当前 term 的任期，都会让接收方返回失败并促使对方退位。
 
 **Raft 集群规模与容错**
 
@@ -51,9 +51,11 @@ follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat inter
 
 Raft 的安全性由两条机制保证：选举限制要求 candidate 的日志至少与多数派一样新才能当选，避免已提交条目被覆盖；提交规则要求 leader 只推进被多数派复制的当前任期条目，间接提交旧任期条目。
 
-多数派 `quorum = floor`(N/2)+1 让任意两个多数派必然相交，从而新旧 leader 不可能就同一日志索引提交冲突值，这是共识成立的组合结构。代价是每次写都要 leader 追加日志、并行复制到多数派、落盘后再响应，吞吐受限于最慢的多数派成员与磁盘 fsync，所以 Raft 只适合少量关键元数据。
+多数派 `quorum = floor(N/2)+1` 让任意两个多数派必然相交，从而新旧 leader 不可能就同一日志索引提交冲突值，这是共识成立的组合结构。
 
-租约把存活判断转成时间：实例周期性续约，停止续约后 TTL 到期由中心删除键，这比依赖崩溃时主动注销可靠，因为进程可能被 SIGKILL 或整机掉电。但租约依赖各节点时钟推进速度大致一致，跨机房时钟偏差过大时会提前或延后失效，因此 lease TTL 要远大于续约间隔并留足网络抖动的余量。
+代价是每次写都要 leader 追加日志、并行复制到多数派、落盘后再响应，吞吐受限于最慢的多数派成员与磁盘 fsync，所以 Raft 只适合少量关键元数据。租约把存活判断转成时间：实例周期性续约，停止续约后 TTL 到期由中心删除键，这比依赖崩溃时主动注销可靠，因为进程可能被 `SIGKILL` 或整机掉电。
+
+但租约依赖各节点时钟推进速度大致一致，跨机房时钟偏差过大时会提前或延后失效，因此 lease TTL 要远大于续约间隔并留足网络抖动的余量。
 
 
 ### matchIndex 如何决定一条日志能否提交
@@ -79,11 +81,13 @@ print('term', r.current)
 
 ## 成员变更、etcd 定位与租约维持的注册
 
-成员变更不能一步从旧配置切到新配置，否则可能出现两个不相交的多数派同时选出两个 leader；Raft 用联合共识（joint consensus）或单节点逐步变更过渡，etcd 的 ConfChange 走的就是受控的成员变更流程。
+成员变更不能一步从旧配置切到新配置，否则可能出现两个不相交的多数派同时选出两个 leader；Raft 用联合共识（joint consensus）或单节点逐步变更过渡，etcd 的 `ConfChange` 走的就是受控的成员变更流程。
 
-etcd 基于 Raft 存键值，提供 Watch、Lease、Txn：服务注册通常不是写一条永久记录，而是申请一个带 TTL 的租约并周期性 KeepAlive，实例崩溃后停止续约，租约到期键自动删除，这比依赖主动注销可靠。Consul 用 Raft 存服务目录、用 gossip 协议做成员与故障探测，定位类似但实现不同。
+etcd 基于 Raft 存键值，提供 `Watch`、`Lease`、`Txn`：服务注册通常不是写一条永久记录，而是申请一个带 TTL 的租约并周期性 `KeepAlive`，实例崩溃后停止续约，租约到期键自动删除，这比依赖主动注销可靠。
 
-关键边界是共识组件只存少量需要强一致的元数据（成员、租约、配置版本、leader 归属），业务数据留在各自存储；把配置中心当数据库高频读写，会让每次写都走一次 Raft 日志复制与落盘，吞吐上不去，还会放大 leader 切换的影响。
+Consul 用 Raft 存服务目录、用 gossip 协议做成员与故障探测，定位类似但实现不同。关键边界是共识组件只存少量需要强一致的元数据（成员、租约、配置版本、leader 归属），业务数据留在各自存储；
+
+把配置中心当数据库高频读写，会让每次写都走一次 Raft 日志复制与落盘，吞吐上不去，还会放大 leader 切换的影响。
 
 ```python
 class Cluster:
@@ -141,9 +145,9 @@ print('valid_after_renew', l.valid(t0 + 12))
 
 ## 健康检查、配置推送与灰度回滚
 
-服务发现的健康检查分两层：注册中心侧（租约到期、TTL、主动 HTTP/TCP 探活）与客户端侧（调用失败率、熔断、本地缓存）。不能把健康判断全压给注册中心：网络分区时中心看到的可用与调用方实际能连通未必一致，因此调用方要保留本地缓存与失败摘除，并在注册中心不可用时用上次快照降级。配置推送用 Watch 监听键变更，避免轮询；
+服务发现的健康检查分两层：注册中心侧（租约到期、TTL、主动 `HTTP` / TCP 探活）与客户端侧（调用失败率、熔断、本地缓存）。不能把健康判断全压给注册中心：网络分区时中心看到的可用，与调用方实际能连通未必一致，因此调用方要保留本地缓存与失败摘除，并在注册中心不可用时用上次快照降级。
 
-变更要可灰度、可回滚、可审计：给配置带版本号，先对少量实例下发，观察核心指标后再全量，出问题直接切回上一版本，同时记录谁在何时改了哪个键。配置读取要有本地缓存与解析失败的兜底（保留上一个有效值），否则一次格式错误的推送会让所有实例同时崩掉。
+配置推送用 `Watch` 监听键变更，避免轮询；变更要可灰度、可回滚、可审计：给配置带版本号，先对少量实例下发，观察核心指标后再全量，出问题直接切回上一版本，同时记录谁在何时改了哪个键。配置读取要有本地缓存与解析失败的兜底（保留上一个有效值），否则一次格式错误的推送会让所有实例同时崩掉。
 
 监控要看 Raft 的 commit 延迟、leader 切换次数、租约续约失败率与 Watch 断连重连次数，而不是只看注册中心进程是否存活。
 
@@ -176,9 +180,9 @@ print('valid_after_renew', l.valid(t0 + 12))
 
 把共识组件该承担的和该下沉的拆开：中心侧只维护带 TTL 的租约与一个多数派写入门禁，调用方保留本地缓存与失败摘除。
 
-下面这段用标准库模拟最小注册表：register 绑定租约，renew 续约，expire 清理过期实例，write_config 先检查存活节点是否构成多数派再接受变更，客户端 list_alive 同时参考中心列表与本地失败计数。
+下面这段用标准库模拟最小注册表：`register` 绑定租约，`renew` 续约，`expire` 清理过期实例，`write_config` 先检查存活节点是否构成多数派再接受变更，客户端 `list_alive` 同时参考中心列表与本地失败计数。
 
-真实实现里租约由 etcd 的 Lease 提供，多数派由 Raft 保证，本例用字典与计数把两个约束显式化，便于断言行为。重点是任何一次配置写入都有 quorum 校验，任何一次读取都有本地降级路径。
+真实实现里租约由 etcd 的 `Lease` 提供，多数派由 Raft 保证，本例用字典与计数把两个约束显式化，便于断言行为。重点是任何一次配置写入都有 quorum 校验，任何一次读取都有本地降级路径。
 
 ```python
 import time
@@ -223,7 +227,7 @@ print('expired', r.expire(t + 31))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **Leader 选举与日志复制** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 Leader 选举与日志复制 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -261,7 +265,7 @@ etcd 的 raft/`raft.go` 里对应函数先比 term、再比 index，返回 false
 
 其二，日志截断只发生在 follower 与 leader 冲突时：AppendEntries 带 prevLogIndex 与 prevLogTerm，不匹配就返回失败，leader 递减 nextIndex 重试直到找到一致前缀再删冲突条目——所以「已提交」与「已复制」必须严格区分，未提交条目被覆盖是预期行为。
 
-参数上论文要求 broadcastTime 远小于 electionTimeout，后者远小于 MTBF；
+参数上论文要求 broadcastTime 远小于 electionTimeout，后者远小于 `MTBF`；
 
 etcd 默认 `heartbeat-interval=100ms`、`election-timeout=1000ms`，并把超时随机化到[election-timeout, 2·election-timeout)。
 
@@ -300,9 +304,9 @@ print('jitter_300ms', first_round_success(5, 2000, 300))
 
 <OutputBox title='扩展示例运行结果' output='no_jitter 0.0\njitter_100ms 0.59\njitter_300ms 0.845' />
 
-<LineByLine code='import random\n\ndef first_round_success(n, trials, jitter_ms, seed=5):\n    rng = random.Random(seed)\n    wins = 0\n    for _ in range(trials):\n        timeouts = [150 + (rng.uniform(0, jitter_ms) if jitter_ms else 0) for _ in range(n)]\n        t1, t2 = sorted(timeouts)[:2]\n        if t2 - t1 &gt; 10:\n            wins += 1\n    return round(wins / trials, 3)\n\nprint(&#39;no_jitter&#39;, first_round_success(5, 2000, 0))\nprint(&#39;jitter_100ms&#39;, first_round_success(5, 2000, 100))\nprint(&#39;jitter_300ms&#39;, first_round_success(5, 2000, 300))' :notes='["固定种子保证分裂投票概率可复现", "jitter=0 表示所有节点选举超时相同，必然同时发起投票", "取最早与次早超时之差，差值超过 10ms 广播延迟才算唯一 candidate 拿到多数票", "成员变更走 joint consensus 或单节点逐步变更，避免两个不相交多数派", "etcd/Consul 只放少量强一致元数据；服务注册用带 TTL 的租约 + KeepAlive", "配置用 Watch 推送、本地缓存、版本化灰度与回滚兜底；监控 commit 延迟与 leader 切换次数", "Raft 拆成选举、日志复制、安全性；term 单调递增，过期 term 的 RPC 被拒绝", "quorum = floor(N/2)+1，任意两多数派必相交；生产用奇数节点，5 节点容忍 2 故障", "commitIndex 是多数派 matchIndex 能达到的最大索引，未提交条目可能被新 leader 覆盖", "成员变更走 joint consensus 或单节点逐步变更，避免两个不相交多数派", "etcd/Consul 只放少量强一致元数据；服务注册用带 TTL 的租约 + KeepAlive", "配置用 Watch 推送、本地缓存、版本化灰度与回滚兜底；监控 commit 延迟与 leader 切换次数", "Raft 拆成选举、日志复制、安全性；term 单调递增，过期 term 的 RPC 被拒绝"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\ndef first_round_success(n, trials, jitter_ms, seed=5):\n    rng = random.Random(seed)\n    wins = 0\n    for _ in range(trials):\n        timeouts = [150 + (rng.uniform(0, jitter_ms) if jitter_ms else 0) for _ in range(n)]\n        t1, t2 = sorted(timeouts)[:2]\n        if t2 - t1 &gt; 10:\n            wins += 1\n    return round(wins / trials, 3)\n\nprint(&#39;no_jitter&#39;, first_round_success(5, 2000, 0))\nprint(&#39;jitter_100ms&#39;, first_round_success(5, 2000, 100))\nprint(&#39;jitter_300ms&#39;, first_round_success(5, 2000, 300))' :notes='["固定种子保证分裂投票概率可复现", "jitter=0 表示所有节点选举超时相同，必然同时发起投票", "取最早与次早超时之差，差值超过 10ms 广播延迟才算唯一 candidate 拿到多数票", "成员变更走 joint consensus / 单节点逐步过渡，etcd 用 `ConfChange`；每次写都要复制落盘，Raft 只适合少量元数据", "服务注册用 `Lease` + `KeepAlive` 而非永久记录，崩溃即停续约、TTL 到期删键，比主动注销可靠", "健康检查分中心侧与客户端侧两层；配置用 `Watch` 推送、带版本可灰度可回滚，读取保留本地缓存与旧值兜底", "Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派", "5 节点容忍 2 故障、4 节点只容忍 1，生产用奇数节点；收到多数派确认才推进 `commitIndex`", "选举限制保证新 leader 含全部已提交条目；只提交当前任期条目，前任期条目被间接提交", "成员变更走 joint consensus / 单节点逐步过渡，etcd 用 `ConfChange`；每次写都要复制落盘，Raft 只适合少量元数据", "服务注册用 `Lease` + `KeepAlive` 而非永久记录，崩溃即停续约、TTL 到期删键，比主动注销可靠", "健康检查分中心侧与客户端侧两层；配置用 `Watch` 推送、带版本可灰度可回滚，读取保留本地缓存与旧值兜底", "Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派"]' title='扩展示例逐行讲解' />
 
-<Quiz no='109-X' q='5 节点 Raft 集群里，为什么两个不同任期产生的多数派一定包含同一条已提交日志？' :options='["两个多数派必有交集，共享节点持有已提交条目，且 isUpToDate 保证它只投给日志不比自己旧的 candidate", "因为所有节点使用完全相同的 election timeout", "因为 leader 会把日志广播给全部 5 个节点之后才提交", "因为 term 单调递增会自动回滚掉旧任期的日志"]' answer="0" explain='多数派交集给出共享节点，选举限制给出「新 leader 日志不旧于投票者」，两者合起来才是 Leader Completeness；单靠 term 或全副本广播都不够，提交只需多数派确认。' />
+<Quiz no='109-1' q='5 节点 Raft 集群里，为什么两个不同任期产生的多数派一定包含同一条已提交日志？' :options='["两个多数派必有交集，共享节点持有已提交条目，且 isUpToDate 保证它只投给日志不比自己旧的 candidate", "因为所有节点使用完全相同的 election timeout", "因为 leader 会把日志广播给全部 5 个节点之后才提交", "因为 term 单调递增会自动回滚掉旧任期的日志"]' answer="0" explain='多数派交集给出共享节点，选举限制给出「新 leader 日志不旧于投票者」，两者合起来才是 Leader Completeness；单靠 term 或全副本广播都不够，提交只需多数派确认。' />
 
 
 ## 线性一致读：ReadIndex 与租约读的边界
@@ -345,22 +349,22 @@ print('old_leader_read_index', old.read_index(False))
 
 <Exercise title='进阶：实现任期单调递增与过期写入拒绝' task='给一个 Term 状态机加 step(t)，要求拒绝小于当前任期的写入并打印被拒次数，用序列 2,5,3,6 验证旧任期请求被隔离。' solution='class Term:\n    def __init__(self):\n        self.current = 0\n        self.rejected = 0\n    def step(self, t):\n        if t &lt; self.current:\n            self.rejected += 1\n            return False\n        self.current = t\n        return True\nr = Term()\nfor t in (2, 5, 3, 6):\n    r.step(t)\nprint(r.current, r.rejected)' explain='任期只增不减，序列里 3 小于当前 5 被拒绝，final term 为 6、rejected 为 1。旧 leader 携带过期 term 的请求会被接收方拒绝并促其退位。' />
 
-<Quiz no='109-1' q='5 节点 Raft 集群的 quorum 与可容忍故障数分别是？' :options='["quorum 3，容忍 2 节点故障", "quorum 5，容忍 0 节点故障", "quorum 2，容忍 3 节点故障", "quorum 3，容忍 3 节点故障"]' answer="0" explain='quorum = 5//2+1 = 3，只要存活达到 3 就能提交；可容忍故障为 N - quorum = 2。' />
+<Quiz no='109-2' q='5 节点 Raft 集群的 quorum 与可容忍故障数分别是？' :options='["quorum 3，容忍 2 节点故障", "quorum 5，容忍 0 节点故障", "quorum 2，容忍 3 节点故障", "quorum 3，容忍 3 节点故障"]' answer="0" explain='quorum = 5//2+1 = 3，只要存活达到 3 就能提交；可容忍故障为 N - quorum = 2。' />
 
-<Quiz no='109-2' q='关于 etcd 中的服务注册，最稳妥的做法是？' :options='["申请带 TTL 的租约并周期 KeepAlive，崩溃后自动过期删除", "写一条永久键， shutdown 时主动删除", "每次请求都重写一次键刷新存活", "把实例列表存进配置中心由业务轮询更新"]' answer="0" explain='进程可能被 SIGKILL 或掉电，来不及主动注销；租约到期由中心删除键，比主动注销可靠，也不需要每次请求都写 Raft。' />
+<Quiz no='109-3' q='关于 etcd 中的服务注册，最稳妥的做法是？' :options='["申请带 TTL 的租约并周期 KeepAlive，崩溃后自动过期删除", "写一条永久键， shutdown 时主动删除", "每次请求都重写一次键刷新存活", "把实例列表存进配置中心由业务轮询更新"]' answer="0" explain='进程可能被 SIGKILL 或掉电，来不及主动注销；租约到期由中心删除键，比主动注销可靠，也不需要每次请求都写 Raft。' />
 
-<Quiz no='109-3' q='网络分区时，为什么不能把健康判断全交给注册中心？' :options='["中心看到的可用与调用方实际能连通未必一致，调用方需本地缓存与失败摘除", "注册中心在任何分区下都能精确判断", "调用方本地缓存会破坏强一致，必须禁用", "健康检查只能由 leader 执行"]' answer="0" explain='分区时中心与调用方视角可能相反，因此调用侧要保留快照降级与失败摘除；把全部责任压给中心会放大故障影响面。' />
+<Quiz no='109-4' q='网络分区时，为什么不能把健康判断全交给注册中心？' :options='["中心看到的可用与调用方实际能连通未必一致，调用方需本地缓存与失败摘除", "注册中心在任何分区下都能精确判断", "调用方本地缓存会破坏强一致，必须禁用", "健康检查只能由 leader 执行"]' answer="0" explain='分区时中心与调用方视角可能相反，因此调用侧要保留快照降级与失败摘除；把全部责任压给中心会放大故障影响面。' />
 
-<FillBlank no='109-F' tpl='___ __init__(self, n):' :answers='["def"]' hint='回想本讲关于 Leader 选举与日志复制 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Leader 选举、任期与日志复制的多数派 的落点。' />
+<FillBlank no='109-5' tpl='___ __init__(self, n):' :answers='["def"]' hint='回想本讲关于 Leader 选举与日志复制 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 Leader 选举、任期与日志复制的多数派 的落点。' />
 
-<Predict no='109-P' q='matchIndex 为 [5,4,3,0,0] 的 5 节点集群，commitIndex 是多少？' :options='["3，即多数派都达到的最大索引", "5，leader 的最大索引", "0，存在落后节点就不能提交"]' answer='0' output='3' explain='把 matchIndex 降序得 [5,4,3,0,0]，第 quorum 个（索引 2）是 3，表示至少 3 台复制到了索引 3，只有这部分日志可提交；两节点落后不影响多数派决策。' />
+<Predict no='109-6' q='matchIndex 为 [5,4,3,0,0] 的 5 节点集群，commitIndex 是多少？' :options='["3，即多数派都达到的最大索引", "5，leader 的最大索引", "0，存在落后节点就不能提交"]' answer='0' output='3' explain='把 matchIndex 降序得 [5,4,3,0,0]，第 quorum 个（索引 2）是 3，表示至少 3 台复制到了索引 3，只有这部分日志可提交；两节点落后不影响多数派决策。' />
 
-<KnowledgeCard :points='["Raft 拆成选举、日志复制、安全性；term 单调递增，过期 term 的 RPC 被拒绝", "quorum = floor(N/2)+1，任意两多数派必相交；生产用奇数节点，5 节点容忍 2 故障", "commitIndex 是多数派 matchIndex 能达到的最大索引，未提交条目可能被新 leader 覆盖", "成员变更走 joint consensus 或单节点逐步变更，避免两个不相交多数派", "etcd/Consul 只放少量强一致元数据；服务注册用带 TTL 的租约 + KeepAlive", "配置用 Watch 推送、本地缓存、版本化灰度与回滚兜底；监控 commit 延迟与 leader 切换次数"]' :pitfalls='["把配置中心当业务数据库每次请求都读写", "服务注册写一条永久记录，不续约也不下线", "4 节点 Raft 集群期望能容忍 2 节点故障", "把配置中心当数据库频繁读写，或让服务发现承担健康判断的全部责任，都会在故障时放大影响"]' summary='共识算法解决的是「多台机器对同一序列达成一致」，因此它昂贵且只在少量关键状态上使用，不用来承载业务数据' />
+<KnowledgeCard :points='["Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派", "5 节点容忍 2 故障、4 节点只容忍 1，生产用奇数节点；收到多数派确认才推进 `commitIndex`", "选举限制保证新 leader 含全部已提交条目；只提交当前任期条目，前任期条目被间接提交", "成员变更走 joint consensus / 单节点逐步过渡，etcd 用 `ConfChange`；每次写都要复制落盘，Raft 只适合少量元数据", "服务注册用 `Lease` + `KeepAlive` 而非永久记录，崩溃即停续约、TTL 到期删键，比主动注销可靠", "健康检查分中心侧与客户端侧两层；配置用 `Watch` 推送、带版本可灰度可回滚，读取保留本地缓存与旧值兜底"]' :pitfalls='["把配置中心当业务数据库每次请求都读写", "服务注册写一条永久记录，不续约也不下线", "4 节点 Raft 集群期望能容忍 2 节点故障", "把配置中心当数据库频繁读写，或让服务发现承担健康判断的全部责任，都会在故障时放大影响"]' summary='共识算法解决的是「多台机器对同一序列达成一致」，因此它昂贵且只在少量关键状态上使用，不用来承载业务数据' />
 
-1. Raft 拆成选举、日志复制、安全性；term 单调递增，过期 term 的 RPC 被拒绝
+1. Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派
 
-2. quorum = floor(N/2)+1，任意两多数派必相交；生产用奇数节点，5 节点容忍 2 故障
+2. 5 节点容忍 2 故障、4 节点只容忍 1，生产用奇数节点；收到多数派确认才推进 `commitIndex`
 
-3. commitIndex 是多数派 matchIndex 能达到的最大索引，未提交条目可能被新 leader 覆盖
+3. 选举限制保证新 leader 含全部已提交条目；只提交当前任期条目，前任期条目被间接提交
 
 [下一讲：容器化与 Kubernetes 部署](/distributed/docker-k8s)

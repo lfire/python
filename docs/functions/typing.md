@@ -7,20 +7,20 @@ description: 为大型代码库建立可检查的接口契约
 
 # 第 036 讲 · 类型注解、typing 与渐进式类型
 
-模块拆清楚后，跨服务的接口靠什么说明这里该传什么，就绕不开了。类型注解给的是一份能被工具读到的契约，补上动态语言在大型代码库里最缺的那层提示。文档写着某字段是整数，上游真传成字符串，服务一路没吭声，直到写库才露出来；有人以为注解加齐就安全，其实运行时并不替你检查。
+模块拆清楚之后，跨服务的接口靠什么说明「这里该传什么」就绕不开了。类型注解给出的是一份能被工具读到的契约，补上动态语言在大型代码库里最缺的那层提示：文档写着某字段是整数，上游真传成字符串，服务一路没吭声，直到写库才露馅；也有人以为注解加齐就安全，其实运行时并不替你检查。
 
-先弄清注解存在哪、为何默认只是元数据，约束来自静态检查器；再看联合、泛型、Protocol 与 Literal 能把契约说到多细；最后谈渐进式落地——先在公共接口加，再往里铺，以及注解和运行时校验各管哪一段。会用到函数定义与模块导入；读完后你能给关键路径配上让 mypy 生效的接口说明。
+先弄清注解存在哪、为何默认只是元数据，真正的约束来自静态检查器；再看联合、泛型、`Protocol` 与 `Literal` 能把契约描述到多细；最后谈渐进式落地——先在公共接口加，再往里铺，以及注解和运行时校验各管哪一段。这一讲会用到函数定义与模块导入；读完后你能给关键路径配上让 `mypy` 生效的接口说明。
 
 
 ## 加了类型注解，传错类型照样跑
 
-一个跨服务的数据结构，接口文档里写着 user 是 dict、含 `id(int)` 与 `tags(list[str])`，结果上游某次把 id 传成字符串，服务一直没报错，直到写库时才失败，排查了半天。
+一个跨服务的数据结构，接口文档写着 `user` 是 `dict`，字段是 `id: int` 和 `tags: list[str]`，结果上游某次把 `id` 传成字符串，服务一直没报错，直到写库才失败，排查了半天。
 
-团队给所有函数加了类型注解，以为从此类型安全，线上依旧跑出同样的错——因为注解默认只是 `__annotations__` 里的元数据，CPython 运行时根本不检查。
+团队给所有函数都加了类型注解，以为从此类型安全，线上依旧跑出同样的错——注解默认只是 `__annotations__` 里的元数据，CPython 运行时根本不检查。
 
-另一个极端是有人为了过 mypy，到处写 Any，检查器被关掉却浑然不觉。
+另一个极端是为了过 `mypy` 到处写 `Any`，检查器被悄悄关掉却浑然不觉。
 
-本讲讲清注解与静态检查的分工：注解存在哪、get_type_hints 做什么、Union / Optional / Protocol / TypedDict / Literal 各解决什么问题、渐进式类型怎么落地，以及为什么注解替代不了 pydantic 这类运行时校验。
+本讲讲清注解与静态检查的分工：注解存在哪、`get_type_hints` 做什么、`Union` / `Optional` / `Protocol` / `TypedDict` / `Literal` 各解决什么问题、渐进式类型怎么落地，以及注解为什么替代不了 `pydantic` 这类运行时校验。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='以为加了类型注解运行时就会校验，传错类型照样跑：注解只是 __annotations__ 元数据，CPython 不生成检查字节码' />
 
@@ -29,11 +29,21 @@ description: 为大型代码库建立可检查的接口契约
 
 函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；
 
-变量注解 x: int 只登记注解、并不会创建名字绑定，随后读 x 会抛 NameError: name 'x' is not defined。注解默认在定义时求值并存为对象，CPython 3.13 仍是这个行为；
+变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name…`。
 
-from `__future__` import annotations（PEP 563，3.7+）会把所有注解变成字符串延迟求值，用来解决前向引用与循环类型依赖，代价是运行时读到的不再是类型对象，需要 `typing.get_type_hints` 按 globalns / localns 解析回真实类型（它还会合并基类注解）。
+```text
+NameError: name 'x' is not defined
+```
 
-最关键的结论是：CPython 的字节码里没有任何基于注解的类型检查指令，传错类型照样执行，直到具体操作失败才报错，注解也不影响运行速度。真正的约束力来自 mypy、pyright 这类静态检查器，它们在 CI 或编辑器里读注解构建类型图、做推断与控制流收窄。因此加注解不等于运行时安全，这是最容易误判的一层。
+注解默认在定义时求值并存为对象，这一行为到 3.13 一直如此。
+
+`from __future__…`（PEP 563，3.7+）把所有注解变成字符串、延迟求值，用来解决前向引用与循环类型依赖，代价是运行时读到的不再是类型对象，需要 `typing.get_type_hints` 按 `globalns` / `localns` 解析回真实类型（它还会合并基类注解）。
+
+```python
+from __future__ import annotations
+```
+
+最要紧的结论是：CPython 的字节码里没有任何基于注解的类型检查指令，传错类型照样执行，直到具体操作失败才报错，注解也不影响运行速度。真正的约束力来自 `mypy`、`pyright` 这类静态检查器，它们在 CI 或编辑器里读注解构建类型图、做推断与控制流收窄。所以加注解不等于运行时安全，这是最容易误判的一层。
 
 ```python
 import typing
@@ -91,19 +101,25 @@ print([i.opname for i in dis.get_instructions(f) if i.opname == 'RETURN_VALUE'])
 
 ## 联合、泛型与结构化子类型
 
-Optional`[X]` 等价于 X | None，PEP 604 在 3.10 引入 X | Y 后 Union[X, Y] 也能直接写成联合；
+`Optional[X]` 等价于 `X | None`，PEP 604 在 3.10 引入 `X | Y` 之后，`Union[X, Y]` 也能直接写成联合；
 
-内建泛型 list`[int]`、dict[str, int]、tuple[int, ...] 由 PEP 585 在 3.9 落地，3.8 及以前要用 `typing.List` / Dict / Tuple。
+内建泛型 `list[int]`、`dict[str, int]`、`tuple[int, ...]` 由 PEP 585 在 3.9 落地，3.8 及以前要用 `typing.List` / `Dict` / `Tuple`。
 
-泛型方面，3.12 的 PEP 695 允许 def first`[T]`(xs: list`[T]`) -> T 与 type 别名语句，之前要写 `T = TypeVar`('T') 再配合 Generic`[T]`。
+泛型方面，3.12 的 PEP 695 允许 `def first[T](xs…` 这种把类型参数写在函数名后的写法，并新增 `type` 别名语句；
 
-Protocol（PEP 544，3.8+）是结构化子类型：只要对象实现了协议要求的方法与属性就算满足，不需要显式继承；
+```python
+def first[T](xs: list[T]) -> T
+```
 
-加 @runtime_checkable 才能用 `isinstance(obj, Proto)`，且它只检查成员是否存在、不校验签名，含非方法成员的协议在运行时做 isinstance 还会受限。
+在此之前要写 `T = TypeVar('T')` 再配合 `Generic[T]`。
 
-TypedDict 给 dict 的键与值类型建模，字段类型存在 `__annotations__`，可用 `__required_keys__` / `__optional_keys__` 查必填与可选键；
+`Protocol`（PEP 544，3.8+）是结构化子类型：对象只要实现了协议要求的方法与属性就算满足，不需要显式继承；
 
-Literal（3.8+）把取值限定成几个字面量，适合状态码与模式开关。这些构造让注解能表达远比 int / str 丰富的契约。
+加上 `@runtime_checkable` 才能用 `isinstance(obj, Proto)`，而它只检查成员是否存在、不校验签名，含非方法成员的协议在运行时做 `isinstance` 还会受限。
+
+`TypedDict` 给 `dict` 的键与值类型建模，字段类型存在 `__annotations__`，可用 `__required_keys__` / `__optional_keys__` 查必填与可选键；
+
+`Literal`（3.8+）把取值限定成几个字面量，适合状态码与模式开关。这些构造让注解能表达远比 `int` / `str` 丰富的契约。
 
 ```python
 from typing import Protocol, runtime_checkable, TypedDict, Literal, TYPE_CHECKING
@@ -154,34 +170,40 @@ print(TYPE_CHECKING)
 | 联合类型（PEP 604） | 3.10 | X \| None / X \| Y | Optional[X] 等价于 X \| None |
 | 类型参数语法（PEP 695） | 3.12 | def f[T](x: T) -> T / type A = ... | 之前用 TypeVar('T') 与 Generic[T] |
 
-<Term word='注解不强制运行时检查' text='函数注解存在 fn.__annotations__ 这个字典里，类与模块级的注解写在各自的 __annotations__；变量注解 x: int 只登记注解、并不会创建名字绑定，随后读 x 会抛 NameError: name &#39;x&#39; is not defined。注解默认在定义时求值并存为对象，CPython 3.' />
+<Term word='注解不强制运行时检查' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义时求值并存为对象，这' />
 
-<Term word='泛型与 TypeVar' text='Optional[X] 等价于 X | None，PEP 604 在 3.10 引入 X | Y 后 Union[X, Y] 也能直接写成联合；内建泛型 list[int]、dict[str, int]、tuple[int, ...] 由 PEP 585 在 3.9 落地，3.8 及以前要用 typing.List /' />
+<Term word='泛型与 TypeVar' text='`Optional[X]` 等价于 `X | None`，PEP 604 在 3.10 引入 `X | Y` 之后，`Union[X, Y]` 也能直接写成联合；内建泛型 `list[int]`、`dict[str, int]`、`tuple[int, ...]` 由 PEP 585 在 3.9 落地，3.8 及以前要' />
 
-<FlowTimeline :steps='[{"title": "注解只是元数据：存储与求值", "desc": "函数注解存在 fn.__annotations__ 这个字典里，类与模块级的注解写在…", "tone": "blue"}, {"title": "联合、泛型与结构化子类型", "desc": "Optional[X] 等价于 X | None，PEP 604 在 3.10 引入…", "tone": "purple"}, {"title": "渐进式类型落地与运行时校验的分界", "desc": "渐进式类型的做法是先在收益最大的地方加注解：公共 API、跨服务数据结构、配置模型，…", "tone": "orange"}, {"title": "工程落地", "desc": "跨服务 payload：注解给静态检查，运行时校验另写一层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "注解只是元数据：存储与求值", "desc": "函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解…", "tone": "blue"}, {"title": "联合、泛型与结构化子类型", "desc": "`Optional[X]` 等价于 `X | None`，PEP 604 在 3.1…", "tone": "purple"}, {"title": "渐进式类型落地与运行时校验的分界", "desc": "渐进式类型的做法，是先在收益最大的地方加注解——公共 API、跨服务数据结构、配置模…", "tone": "orange"}, {"title": "工程落地", "desc": "跨服务 payload：注解给静态检查，运行时校验另写一层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 渐进式类型落地与运行时校验的分界
 
-渐进式类型的做法是先在收益最大的地方加注解：公共 API、跨服务数据结构、配置模型，再逐步铺开，未注解部分检查器按 Any 处理而不阻断。
+渐进式类型的做法，是先在收益最大的地方加注解——公共 API、跨服务数据结构、配置模型，再逐步铺开，未注解的部分检查器按 `Any` 处理而不阻断。
 
-Any 是逃生舱也是陷阱：它会让静态检查器在该处停止推断与报错，等于局部关掉检查，宁可用 object 加显式 isinstance 收窄、具体联合或 TypeVar，把 Any 控制在真正的动态边界。
+`Any` 既是逃生舱也是陷阱：它让静态检查器在该处停止推断与报错，等于局部关掉检查，所以宁可用 `object` 加显式 `isinstance` 收窄、具体联合或 `TypeVar`，把 `Any` 控制在真正的动态边界。
 
-注解与运行时校验是两件事：注解服务静态检查器与 IDE 的补全跳转，pydantic、attrs、marshmallow 则在运行时按模型解析、转换并拒绝外部输入；跨服务边界、用户表单、配置加载必须做运行时校验，不能指望注解。
+注解与运行时校验是两件事：注解服务于静态检查器与 IDE 的补全跳转，`pydantic`、`attrs`、`marshmallow` 则在运行时按模型解析、转换并拒绝外部输入；跨服务边界、用户表单、配置加载都必须做运行时校验，不能指望注解。
 
-工具链上把 mypy / pyright 放进 CI，逐步收紧配置（如 disallow_untyped_defs），让契约自动生效。
+工具链上把 `mypy` / `pyright` 放进 CI，逐步收紧配置（如 `disallow_untyped_defs`），让契约自动生效。
 
-循环导入时仅类型注解需要的导入可放进 `typing.TYPE_CHECKING`（运行时为 False），配合延迟注解打破真实导入环，这与第 035 讲的诊断直接呼应。
+循环导入时，仅类型注解需要的导入可以放进 `typing.TYPE_CHECKING`（运行时为 `False`），配合延迟注解打破真实的导入环——回过头看，这正是第 035 讲诊断循环导入时留的一条出路。
 
-注解在 CPython 里就是元数据：编译 def 时把参数与返回值注解表达式求值后的对象收进一个字典，执行 MAKE_FUNCTION 时挂到 `function.__annotations__`；
+注解在 CPython 里就是元数据：编译 `def` 时把参数与返回值注解表达式求值后的对象收进一个字典，执行 `MAKE_FUNCTION` 时挂到 `function.__annotations__`；
 
-模块级与类级变量注解则写进各自的 `__annotations__` 字典，且不会为名字创建绑定，所以 x: int 之后读 x 会 NameError。
+模块级与类级变量注解则写进各自的 `__annotations__` 字典，且不会为名字创建绑定，所以 `x: int` 之后读 `x` 会 `NameError`。
 
-加 from `__future__` import annotations 后编译器把注解当作字符串常量存进去（PEP 563），避免前向引用与循环类型依赖在定义时求值失败，`typing.get_type_hints` 再按 globalns / localns 把字符串 eval 回类型对象。
+加上 `from __future__…` 后，编译器把注解当作字符串常量存进去（PEP 563），前向引用与循环类型依赖便不会在定义时求值失败，`typing.get_type_hints` 再按 `globalns` / `localns` 把字符串 `eval` 回类型对象。
 
-关键是 CPython 的字节码里没有任何基于注解的类型检查指令：传错类型照样执行，直到具体操作失败才报错。真正的约束力来自静态检查器，它们读注解构建类型图、做推断与控制流收窄，Any 会让检查器在该处停止报错。
+```python
+from __future__ import annotations
+```
 
-Protocol 走结构化子类型，检查的是对象是否具备协议成员而非继承关系，因此 isinstance 需要 @runtime_checkable 且只验证成员存在。注解与运行时校验因此是两个不同层次的契约。
+关键在于 CPython 的字节码里没有任何基于注解的类型检查指令：传错类型照样执行，直到具体操作失败才报错。真正的约束力来自静态检查器，它们读注解构建类型图、做推断与控制流收窄，而 `Any` 会让检查器在该处停止报错。
+
+`Protocol` 走结构化子类型，检查的是对象是否具备协议成员而非继承关系，因此 `isinstance` 需要 `@runtime_checkable` 且只验证成员存在。
+
+由此可见，注解与运行时校验是两个不同层次的契约。
 
 **注解与运行时校验的分工**
 
@@ -195,16 +217,18 @@ Protocol 走结构化子类型，检查的是对象是否具备协议成员而�
 
 <Compare :panels='[{"label": "主示例", "code": "import typing\nfrom typing import get_type_hints\n\ndef distance(a: int, b: int = 0) -&gt; float:\n    return float(a - b)\n\nh = get_type_hints(distance)\nprint(sorted(h))\nprint([h[k].__name__ for k in (&#39;a&#39;, &#39;b&#39;, &#39;return&#39;)])\nprint(distance.__annotations__[&#39;a&#39;] is int)\nprint(str(int | None))\nprint(get_type_hints(distance) == distance.__annotations__)", "note": "注解只是元数据：存储与求值"}, {"label": "对照 / 进阶", "code": "from typing import Protocol, runtime_checkable, TypedDict, Literal, TYPE_CHECKING\n\n@runtime_checkable\nclass Closeable(Protocol):\n    def close(self) -&gt; None: ...\n\nclass Config(TypedDict):\n    host: str\n    port: int\n\nMode = Literal[&#39;r&#39;, &#39;w&#39;]\n\nclass File:\n    def close(self) -&gt; None:\n        pass\n\nprint(isinstance(File(), Closeable))\nprint(Config.__annotations__)\nprint(sorted(Config.__required_keys__))\nprint(Mode)\nprint(TYPE_CHECKING)", "note": "联合、泛型与结构化子类型"}]' title='两种写法对照' note='差异集中在 注解不强制运行时检查；先看输出，再找背后的规则。' />
 
-<Callout type="tip" title='核心心智模型' text='函数注解存在 fn.__annotations__ 这个字典里，类与模块级的注解写在各自的 __annotations__；变量注解 x: int 只登记注解、并不会创建名字绑定，随后读 x 会抛 NameError: name &#39;x&#39; is not defined。注解默认在定义时求值并存为对象，' />
+<Callout type="tip" title='核心心智模型' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义' />
 
 
 ## 跨服务 payload：注解给静态检查，运行时校验另写一层
 
-一个事件接入层收到的 dict 来自外部服务，注解能告诉 IDE 与 mypy 每个键应该是什么类型，却拦不住上游真的传一个字符串 id。工程上必须分两层：用 TypedDict 加 Literal 把结构写成可被静态检查的契约，再写一个显式 validate 在入口处检查键集合、枚举取值与字段类型，拒绝不合格的输入。
+一个事件接入层收到的 `dict` 来自外部服务，注解能告诉 IDE 与 `mypy` 每个键应该是什么类型，却拦不住上游真的传一个字符串 `id`。
 
-下面用标准库实现这两层：Event 声明 kind 只能是 click 或 view、user_id 是 int、ts 是 float；validate 逐一核对并给出可读的错误原因；最后用三条不同的 payload 演示放行与两类拒绝。
+工程上必须分两层：用 `TypedDict` 加 `Literal` 把结构写成可被静态检查的契约，再写一个显式 `validate`，在入口处核对键集合、枚举取值与字段类型，拒绝不合格的输入。
 
-真实项目把 validate 换成 pydantic 模型即可，但分层思想不变：注解不替代运行时校验。
+下面用标准库实现这两层：`Event` 声明 `kind` 只能是 `click` 或 `view`、`user_id` 是 `int`、`ts` 是 `float`；`validate` 逐一核对并给出可读的错误原因；最后用三条不同的 `payload` 演示放行与两类拒绝。
+
+真实项目里把 `validate` 换成 `pydantic` 模型即可，分层思想不变：注解不替代运行时校验。
 
 ```python
 from typing import TypedDict, Literal, get_type_hints
@@ -238,7 +262,7 @@ print(sorted(get_type_hints(Event)))
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 **注解不强制运行时检查** 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+把输入换成你自己的数据，观察结果是否仍符合 注解不强制运行时检查 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
 
 **错因速查**
 
@@ -265,7 +289,7 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 <Quiz no='036-3' q='要让 Protocol 支持 isinstance 判断，需要？' :options='["加 @runtime_checkable，且它只校验方法成员存在", "让类显式继承该 Protocol", "给类加 @dataclass", "调用 get_type_hints"]' answer="0" explain='结构化子类型本不需要继承；@runtime_checkable 让 isinstance 可用，但只检查成员是否存在、不校验方法签名。' />
 
-<FillBlank no='036-F' tpl='___ typing' :answers='["import"]' hint='回想本讲关于 注解不强制运行时检查 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 注解只是元数据：存储与求值 的落点。' />
+<FillBlank no='036-4' tpl='___ typing' :answers='["import"]' hint='回想本讲关于 注解不强制运行时检查 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 注解只是元数据：存储与求值 的落点。' />
 
 <KnowledgeCard :points='["注解只是 __annotations__ 元数据，CPython 运行时不校验、不提速；约束力来自 mypy / pyright", "变量注解 x: int 只写 __annotations__、不绑定名字，随后读 x 抛 NameError: name &#39;x&#39; is not defined", "from __future__ import annotations（PEP 563, 3.7+）把注解字符串化，get_type_hints 再解析回类型对象", "PEP 585（3.9）内建泛型 list[int]；PEP 604（3.10）X | None；PEP 695（3.12）def f[T] 与 type 别名", "Protocol（3.8+）结构化子类型需 @runtime_checkable 才能 isinstance（只查方法成员）；TypedDict / Literal 约束 dict 字段与字面量", "Any 等于局部关掉检查器；注解与 pydantic 运行时校验是两件事，跨服务输入必须运行时验证；TYPE_CHECKING 打破类型导入的循环"]' :pitfalls='["以为加了类型注解运行时就会校验，传错类型照样跑", "为过检查器到处写 Any，错误被悄悄放过", "注解里引用后面才定义的类，定义时抛 NameError", "用 Any 到处灭火，等于把检查器关掉；类型注解与运行时校验（pydantic）是两件事，不要互相代替"]' summary='注解默认只是元数据，真正的约束力来自静态检查器；渐进式类型允许先给关键路径加注解，再逐步铺开' />
 
@@ -290,4 +314,4 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 [下一讲：阶段综合：缓存装饰器库与插件注册表](/functions/capstone)
 
-<Predict no='036-P' q='def f(a: int) -&gt; int: return a；print(f.__annotations__[&#39;a&#39;] is int, &#39;a&#39; in f.__code__.co_varnames) 输出什么？' :options='["True True", "True False", "False True"]' answer='0' output='True True' explain='注解在 3.13 默认求值，值就是 int 类型对象；a 同时是形参名，会登记进 code object 的 co_varnames。' />
+<Predict no='036-5' q='def f(a: int) -&gt; int: return a；print(f.__annotations__[&#39;a&#39;] is int, &#39;a&#39; in f.__code__.co_varnames) 输出什么？' :options='["True True", "True False", "False True"]' answer='0' output='True True' explain='注解在 3.13 默认求值，值就是 int 类型对象；a 同时是形参名，会登记进 code object 的 co_varnames。' />
