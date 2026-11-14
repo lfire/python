@@ -43,11 +43,11 @@ description: 建立可自我更新的技术判断框架
 | 团队熟悉度 | 加权 | 能独立排障的人数 | 低分计入培训成本 |
 | 回退难度 | 加权 | 能否双写与切回旧集群 | 高分代表回退路径短 |
 
-<Callout type="tip" title='核心心智模型' text='可复用的评估分两层。第一层是硬门槛（must-have），不满足直接淘汰、不参与打分：例如写入吞吐不低于五万条每秒、许可必须是 Apache-2.0 或 MIT、单节点运维人力不超过一人、数据保留七天可配置 TTL。第二层才是加权评分：维度取吞吐、p99 延迟、运维成本、团队熟悉度、回退难度等，每维' />
+<Callout type="tip" title='核心心智模型' text='可复用的评估分两层。第一层是硬门槛（must-have），不满足直接淘汰、不参与打分：例如写入吞吐不低于五万条每秒、许可必须是 Apache-2.0 或 MIT、单节点运维人力不超过一人、数据保留七天可配置 TTL。第二层才是加权评分：维度取吞吐、p99 延迟、运维成本、团队熟悉度、回退难度等，每维…' />
 
-<ConceptDiagram type='flow4' title='第 121 讲 · 选型评估：把主观偏好变成硬门槛加加权矩阵' labels='选型评估：把主观偏好变成硬门槛加加权矩阵|技术决策记录 ADR：带假设、代价、验证与回|复盘与能力自更新：从结论到自动化检查表' caption='建立可自我更新的技术判断框架' />
+<ConceptDiagram type='flow4' title='第 121 讲 · 选型评估：把主观偏好变成硬门槛加加权矩阵' labels='选型评估：把主观偏好变成硬门槛加加权矩阵|技术决策记录 ADR：带假设、代价、验证与回…|复盘与能力自更新：从结论到自动化检查表|持续学习路径' caption='建立可自我更新的技术判断框架' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 加权评分为什么必须先过不可补偿的约束
@@ -117,7 +117,7 @@ print('winner', max(pool, key=lambda o: score(o, w)))
 
 <OutputBox title='主示例运行结果' output='es eligible True score 3.4\nclickhouse eligible True score 4.05\nsqlite eligible False score 3.05\nwinner clickhouse' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='CRITERIA = [(&#39;write_tps&#39;, 0.30), (&#39;p99_ms&#39;, 0.25), (&#39;ops_cost&#39;, 0.20), (&#39;familiarity&#39;, 0.15), (&#39;rollback&#39;, 0.10)]\nOPTIONS = {\n    &#39;es&#39;: {&#39;write_tps&#39;: 4, &#39;p99_ms&#39;: 3, &#39;ops_cost&#39;: 2, &#39;familiarity&#39;: 5, &#39;rollback&#39;: 3},\n    &#39;clickhouse&#39;: {&#39;write_tps&#39;: 5, &#39;p99_ms&#39;: 5, &#39;ops_cost&#39;: 3, &#39;familiarity&#39;: 2, &#39;rollback&#39;: 4},\n    &#39;sqlite&#39;: {&#39;write_tps&#39;: 1, &#39;p99_ms&#39;: 2, &#39;ops_cost&#39;: 5, &#39;familiarity&#39;: 5, &#39;rollback&#39;: 5},\n}\nMUST = {&#39;write_tps&#39;: 3}\n\ndef score(opt, weights):\n    vals = OPTIONS[opt]\n    num = sum(weights[k] * vals[k] for k, _ in CRITERIA)\n    return round(num / sum(weights.values()), 3)\n\ndef eligible(opt):\n    return all(OPTIONS[opt][k] &gt;= v for k, v in MUST.items())\n\nw = dict(CRITERIA)\nfor opt in OPTIONS:\n    print(opt, &#39;eligible&#39;, eligible(opt), &#39;score&#39;, score(opt, w))\npool = [o for o in OPTIONS if eligible(o)]\nprint(&#39;winner&#39;, max(pool, key=lambda o: score(o, w)))' :notes='["定义五维评估标准，每项配显式权重，权重之和为 1.0", "备选方案表，键为方案名，值为各维 1-5 分评分", "Elasticsearch：写入 4、延迟 3、运维 2、熟悉度 5、回退 3", "ClickHouse：写入与延迟都满分，运维 3、熟悉度 2、回退 4", "SQLite：运维与熟悉度满分，但写入仅 1 分", "关闭方案表", "硬门槛：写入吞吐评分必须至少 3，不满足直接淘汰", "score 计算某方案在给定权重下的加权得分", "取出该方案各维评分", "按 CRITERIA 逐维做权重乘评分再求和，得到分子", "除以权重总和归一化，保留三位小数消除浮点尾差", "eligible 判断方案是否满足全部硬门槛", "all 要求每个 must-have 维度都不低于阈值", "把权重列表转成字典，供 score 按维度名索引", "遍历三个方案逐一打印资格与得分", "硬门槛与加权分一起输出，淘汰原因一目了然", "只在通过硬门槛的方案里形成候选池", "按加权分取候选池最大值，输出最终赢家"]' title='第 121 讲 · 资深能力图谱、技术选型与持续精进' />
+<LineByLine code='CRITERIA = [(&#39;write_tps&#39;, 0.30), (&#39;p99_ms&#39;, 0.25), (&#39;ops_cost&#39;, 0.20), (&#39;familiarity&#39;, 0.15), (&#39;rollback&#39;, 0.10)]\nOPTIONS = {\n    &#39;es&#39;: {&#39;write_tps&#39;: 4, &#39;p99_ms&#39;: 3, &#39;ops_cost&#39;: 2, &#39;familiarity&#39;: 5, &#39;rollback&#39;: 3},\n    &#39;clickhouse&#39;: {&#39;write_tps&#39;: 5, &#39;p99_ms&#39;: 5, &#39;ops_cost&#39;: 3, &#39;familiarity&#39;: 2, &#39;rollback&#39;: 4},\n    &#39;sqlite&#39;: {&#39;write_tps&#39;: 1, &#39;p99_ms&#39;: 2, &#39;ops_cost&#39;: 5, &#39;familiarity&#39;: 5, &#39;rollback&#39;: 5},\n}\nMUST = {&#39;write_tps&#39;: 3}\n\ndef score(opt, weights):\n    vals = OPTIONS[opt]\n    num = sum(weights[k] * vals[k] for k, _ in CRITERIA)\n    return round(num / sum(weights.values()), 3)\n\ndef eligible(opt):\n    return all(OPTIONS[opt][k] &gt;= v for k, v in MUST.items())\n\nw = dict(CRITERIA)\nfor opt in OPTIONS:\n    print(opt, &#39;eligible&#39;, eligible(opt), &#39;score&#39;, score(opt, w))\npool = [o for o in OPTIONS if eligible(o)]\nprint(&#39;winner&#39;, max(pool, key=lambda o: score(o, w)))' :notes='["定义五维评估标准，每项配显式权重，权重之和为 1.0", "备选方案表，键为方案名，值为各维 1-5 分评分", "Elasticsearch：写入 4、延迟 3、运维 2、熟悉度 5、回退 3", "ClickHouse：写入与延迟都满分，运维 3、熟悉度 2、回退 4", "SQLite：运维与熟悉度满分，但写入仅 1 分", "关闭方案表", "硬门槛：写入吞吐评分必须至少 3，不满足直接淘汰", "空行，只用于分隔逻辑块，不影响执行结果。", "score 计算某方案在给定权重下的加权得分", "取出该方案各维评分", "按 CRITERIA 逐维做权重乘评分再求和，得到分子", "除以权重总和归一化，保留三位小数消除浮点尾差", "空行，只用于分隔逻辑块，不影响执行结果。", "eligible 判断方案是否满足全部硬门槛", "all 要求每个 must-have 维度都不低于阈值", "空行，只用于分隔逻辑块，不影响执行结果。", "把权重列表转成字典，供 score 按维度名索引", "遍历三个方案逐一打印资格与得分", "硬门槛与加权分一起输出，淘汰原因一目了然", "只在通过硬门槛的方案里形成候选池", "按加权分取候选池最大值，输出最终赢家"]' title='第 121 讲 · 资深能力图谱、技术选型与持续精进' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -151,7 +151,7 @@ print('param count', len(sig.parameters))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把「我熟悉」「生态好」直接写成分数，评审时各说各话：主观印象没有可核对口径，权重再精确结论也不可复现' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把「我熟悉」「生态好」直接写成分数，评审时各", "body": "主观印象没有可核对口径，权重再精确结论也不可复现", "tip": "把熟悉度量化为会独立排障的人数、生态量化为客户端语言数与公开问题数，硬门槛与加权分开"}, {"title": "第 2 步：定案不做敏感性分析，上线后换个权重结论就翻转", "body": "加权解对争议权重高度敏感，却没被测量", "tip": "上下浮动争议权重看排名是否稳定，翻转就回到硬门槛或补压测，而非强行收敛"}, {"title": "第 3 步：复盘只有纪要，行动项没有 owner、验证与", "body": "结论停留在人的记忆里，同类故障反复发生", "tip": "每条行动项带 owner 与验证方式，并转成 lint / CI / 监控规则随代码提交"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把「我熟悉」「生态好」直接写成分数，评审时各…", "body": "主观印象没有可核对口径，权重再精确结论也不可复现", "tip": "把熟悉度量化为会独立排障的人数、生态量化为客户端语言数与公开问题数，硬门槛与加权分开"}, {"title": "第 2 步：定案不做敏感性分析，上线后换个权重结论就翻转", "body": "加权解对争议权重高度敏感，却没被测量", "tip": "上下浮动争议权重看排名是否稳定，翻转就回到硬门槛或补压测，而非强行收敛"}, {"title": "第 3 步：复盘只有纪要，行动项没有 owner、验证与…", "body": "结论停留在人的记忆里，同类故障反复发生", "tip": "每条行动项带 owner 与验证方式，并转成 lint / CI / 监控规则随代码提交"}]' />
 
 
 ## 把复盘结论沉淀成可检索的 ADR 与检查表
@@ -242,7 +242,7 @@ print('C_passes_gate', all(v >= lim for v, lim in zip(options['C'], (3, 3, 3))))
 
 <OutputBox title='扩展示例运行结果' output='front [&#39;A&#39;, &#39;B&#39;, &#39;C&#39;]\nD_passes_gate True\nC_passes_gate False' />
 
-<LineByLine code='def pareto_front(options):\n    front = []\n    for name, vec in options.items():\n        dominated = any(\n            all(o[j] &gt;= vec[j] for j in range(len(vec))) and\n            any(o[j] &gt; vec[j] for j in range(len(vec)))\n            for other, o in options.items() if other != name\n        )\n        if not dominated:\n            front.append(name)\n    return sorted(front)\n\noptions = {&#39;A&#39;: (5, 3, 4), &#39;B&#39;: (4, 4, 4), &#39;C&#39;: (2, 5, 5), &#39;D&#39;: (5, 3, 3)}\nprint(&#39;front&#39;, pareto_front(options))\nprint(&#39;D_passes_gate&#39;, all(v &gt;= lim for v, lim in zip(options[&#39;D&#39;], (3, 3, 3))))\nprint(&#39;C_passes_gate&#39;, all(v &gt;= lim for v, lim in zip(options[&#39;C&#39;], (3, 3, 3))))' :notes='["保留不被任何其他方案支配的候选", "存在某方案全维度不劣且至少一维更优即被支配", "非支配解进入前沿并排序保证输出稳定", "四个候选，D 被 A 在所有维度不劣且一维更优所支配", "打印前沿，D 被剪掉", "D 三个维度都过 3 分硬门槛", "C 第一维只有 2 分，被硬门槛淘汰", "score = Σ(w_i·s_i)/Σw_i；每个维度都要可核对，禁止把「熟悉/生态好」当印象分", "AHP 用一致性比率 CR &gt; 0.1 判矩阵自相矛盾；敏感性分析看解对权重扰动是否翻转", "ADR 固定八字段、编号只增不改、用 Superseded 取代旧决策，等价于 append-only 决策日志", "验证要指标加阈值、回退要可执行动作（特性开关 / 双写 / 对账），假设必须可证伪", "读结论用 inspect.signature / getsource / importlib.metadata.version / dis 落成事实；复盘结论转成 lint 与 CI 规则", "选型分两层：硬门槛（must-have）用布尔淘汰不可补偿约束，加权分只在合格池内排序", "score = Σ(w_i·s_i)/Σw_i；每个维度都要可核对，禁止把「熟悉/生态好」当印象分", "AHP 用一致性比率 CR &gt; 0.1 判矩阵自相矛盾；敏感性分析看解对权重扰动是否翻转"]' title='扩展示例逐行讲解' />
+<LineByLine code='def pareto_front(options):\n    front = []\n    for name, vec in options.items():\n        dominated = any(\n            all(o[j] &gt;= vec[j] for j in range(len(vec))) and\n            any(o[j] &gt; vec[j] for j in range(len(vec)))\n            for other, o in options.items() if other != name\n        )\n        if not dominated:\n            front.append(name)\n    return sorted(front)\n\noptions = {&#39;A&#39;: (5, 3, 4), &#39;B&#39;: (4, 4, 4), &#39;C&#39;: (2, 5, 5), &#39;D&#39;: (5, 3, 3)}\nprint(&#39;front&#39;, pareto_front(options))\nprint(&#39;D_passes_gate&#39;, all(v &gt;= lim for v, lim in zip(options[&#39;D&#39;], (3, 3, 3))))\nprint(&#39;C_passes_gate&#39;, all(v &gt;= lim for v, lim in zip(options[&#39;C&#39;], (3, 3, 3))))' :notes='["保留不被任何其他方案支配的候选", "存在某方案全维度不劣且至少一维更优即被支配", "非支配解进入前沿并排序保证输出稳定", "四个候选，D 被 A 在所有维度不劣且一维更优所支配", "打印前沿，D 被剪掉", "D 三个维度都过 3 分硬门槛", "C 第一维只有 2 分，被硬门槛淘汰", "这一行 `)` 的作用，可对照上方输出逐项核对。", "这一行 `if not dominated:` 的作用，可对照上方输出逐项核对。", "这一行 `front.append(name)` 的作用，可对照上方输出逐项核对。", "这一行 `return sorted(front)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `options = {&#39;A&#39;: (5, 3, 4), &#39;B&#39;: (4, 4, 4), &#39;C&#39;: (2, ` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;front&#39;, pareto_front(options))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;D_passes_gate&#39;, all(v &gt;= lim for v, lim in zi` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;C_passes_gate&#39;, all(v &gt;= lim for v, lim in zi` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### 把主观维度换成可观测代理量
@@ -326,8 +326,21 @@ Nygard / `MADR` 格式给每条记录固定编号与字段：status（proposed �
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 能力矩阵与短板 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 能力矩阵与短板 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 <Predict no='121-4' q='把上面评分矩阵的运维成本权重从 0.20 提到 0.60、其余相应压低，排名最可能怎样变化？' :options='["翻转：SQLite 因运维满分升到第一，ClickHouse 退到第二", "不变：ClickHouse 仍稳居第一", "报错：权重和不再等于 1"]' answer='0' output='base [&#39;clickhouse&#39;, &#39;es&#39;, &#39;sqlite&#39;] 变为 ops-heavy [&#39;sqlite&#39;, &#39;clickhouse&#39;, &#39;es&#39;]' explain='运维成本权重占主导时，SQLite 的 ops_cost=5 抵消了写入低分，排名翻转说明该结论对权重高度敏感；这时应回到「写入五万每秒」硬门槛淘汰 SQLite，而不是接受翻转后的排序。' />
 
 <FillBlank no='121-5' tpl='___ score(opt, weights):' :answers='["def"]' hint='回想本讲关于 能力矩阵与短板 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 选型评估：把主观偏好变成硬门槛加加权矩阵 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/121-senior-path.py`
+
+```bash
+python3 examples/lessons/121-senior-path.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/121-senior-path.py) · [全部示例代码索引](/examples/)

@@ -22,7 +22,7 @@ description: 能解释赋值语句到底做了什么
 
 Python 的赋值语句从不复制对象。`a = obj` 做的是把名字 a 写入当前名字空间（模块级是 globals 字典，函数内是 locals 快速数组），让它的值指向 obj 这个 PyObject 的指针；`a = b` 不复制 b 指向的对象，只是让 a 指向同一个对象，因此两个名字互为别名。
 
-链式赋值 `x = y = []` 从右往左求值：先创建一个空 list，再依次把 y 与 x 都绑定到它，于是 `x.append(1)` 之后 y 也是 [1]，用 `x is y` 可证。
+链式赋值 `x = y = []` 先求值右侧、创建一个空 list，再按从左到右依次绑定（字节码是 `STORE_NAME x` 后接 `STORE_NAME y`），于是 `x.append(1)` 之后 y 也是 [1]，用 `x is y` 可证。
 
 这个模型还解释了 del：del a 删除的是名字空间里的键、并把对象引用计数减一，只有当引用计数归零时对象才被回收，删掉一个名字不会影响其他别名。
 
@@ -52,7 +52,7 @@ print('int_aug', n)
 
 <OutputBox title='主示例运行结果' output='swapped 2 1\nfirst 10 middle [20, 30] last 40\nchain_alias [1]\nint_aug 6' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='a, b = 1, 2\na, b = b, a\nprint(&#39;swapped&#39;, a, b)\n\nfirst, *middle, last = [10, 20, 30, 40]\nprint(&#39;first&#39;, first, &#39;middle&#39;, middle, &#39;last&#39;, last)\n\nx = y = []\nx.append(1)\nprint(&#39;chain_alias&#39;, y)\n\nn = 5\nn += 1\nprint(&#39;int_aug&#39;, n)' :notes='["把 1 与 2 分别绑定到 a 与 b", "右侧先打包成元组 (2, 1)，再按位置赋回左侧，实现原子交换", "打印交换结果，无需临时变量", "星号解包：first 收首项、last 收末项、middle 收中间全部", "middle 得到 list 类型的 [20, 30]，不是元组", "链式赋值从右往左：先建一个空 list，再把 y 与 x 都绑到它", "对 x 原地 append，修改的是 x 与 y 共同指向的对象", "y 作为别名看到同一份内容，打印 [1]", "把 n 绑定到整数 5", "int 不可变，+= 退回 __add__ 算出 6 再重新绑定 n", "打印重新绑定后的值 6"]' title='第 007 讲 · 变量是名字绑定：赋值、引用与命名规范' />
+<LineByLine code='a, b = 1, 2\na, b = b, a\nprint(&#39;swapped&#39;, a, b)\n\nfirst, *middle, last = [10, 20, 30, 40]\nprint(&#39;first&#39;, first, &#39;middle&#39;, middle, &#39;last&#39;, last)\n\nx = y = []\nx.append(1)\nprint(&#39;chain_alias&#39;, y)\n\nn = 5\nn += 1\nprint(&#39;int_aug&#39;, n)' :notes='["把 1 与 2 分别绑定到 a 与 b", "右侧先打包成元组 (2, 1)，再按位置赋回左侧，实现原子交换", "打印交换结果，无需临时变量", "空行，只用于分隔逻辑块，不影响执行结果。", "星号解包：first 收首项、last 收末项、middle 收中间全部", "middle 得到 list 类型的 [20, 30]，不是元组", "空行，只用于分隔逻辑块，不影响执行结果。", "链式赋值从右往左：先建一个空 list，再把 y 与 x 都绑到它", "对 x 原地 append，修改的是 x 与 y 共同指向的对象", "y 作为别名看到同一份内容，打印 [1]", "空行，只用于分隔逻辑块，不影响执行结果。", "把 n 绑定到整数 5", "int 不可变，+= 退回 __add__ 算出 6 再重新绑定 n", "打印重新绑定后的值 6"]' title='第 007 讲 · 变量是名字绑定：赋值、引用与命名规范' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -135,9 +135,9 @@ def f(x, acc=None):
 
 函数对象的 `func_defaults`（即 `__defaults__`）在 `MAKE_FUNCTION` 时由栈顶元组填入，之后每次调用把缺省值直接压栈，不再求值。于是「默认值只算一次」不是约定，而是对象生命周期的必然结果。
 
-<ConceptDiagram type='layers3' title='第 007 讲 · 赋值即绑定：名字空间里的键，不是装值的盒子' labels='赋值即绑定：名字空间里的键，不是装值的盒子|解包、星号与增强赋值：三种写法的确切语义|默认值只求值一次：__defaults__ ' caption='能解释赋值语句到底做了什么' />
+<ConceptDiagram type='layers3' title='第 007 讲 · 赋值即绑定：名字空间里的键，不是装值的盒子' labels='赋值即绑定：名字空间里的键，不是装值的盒子|解包、星号与增强赋值：三种写法的确切语义|默认值只求值一次：__defaults__…|PEP 8 命名与作用域初识' caption='能解释赋值语句到底做了什么' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 报表汇总：用解包与 None 占位写出不串数据的接口
@@ -191,7 +191,7 @@ print('render', render(lines))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用可变对象作默认参数：默认值在 def 执行时求值一次并存入 __defaults__，所有调用共享，append 会跨调用累积' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用可变对象作默认参数", "body": "默认值在 def 执行时求值一次并存入 __defaults__，所有调用共享，append 会跨调用累积", "tip": "改用 acc=None 占位，进入函数后再 acc = []；需要保留调用方传入的容器时先复制"}, {"title": "第 2 步：把 a = b 当成复制、把连等号当成建两个", "body": "赋值只做名字绑定，x = y = [] 让两个名字指向同一 list，原地修改互相可见", "tip": "需要独立副本时显式用 list(y)、y.copy() 或 copy.deepcopy"}, {"title": "第 3 步：循环里复用同一个 list 累加每轮结果", "body": "上一轮 append 的内容留到下一轮，产生跨迭代的幽灵状态且不报错", "tip": "每轮新建列表，或用列表推导式一次成型，避免共享可变状态"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用可变对象作默认参数", "body": "默认值在 def 执行时求值一次并存入 __defaults__，所有调用共享，append 会跨调用累积", "tip": "改用 acc=None 占位，进入函数后再 acc = []；需要保留调用方传入的容器时先复制"}, {"title": "第 2 步：把 a = b 当成复制、把连等号当成建两个…", "body": "赋值只做名字绑定，x = y = [] 让两个名字指向同一 list，原地修改互相可见", "tip": "需要独立副本时显式用 list(y)、y.copy() 或 copy.deepcopy"}, {"title": "第 3 步：循环里复用同一个 list 累加每轮结果", "body": "上一轮 append 的内容留到下一轮，产生跨迭代的幽灵状态且不报错", "tip": "每轮新建列表，或用列表推导式一次成型，避免共享可变状态"}]' />
 
 
 ## 绑定与命名：练习、自测与速记
@@ -219,3 +219,16 @@ print('render', render(lines))
 3. += 先试 __iadd__：list 原地改、身份不变；int/str/tuple 退回 __add__ 重新绑定
 
 [下一讲：数值体系：int 任意精度、float、Decimal 与 bool](/foundation/numeric)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/007-variables.py`
+
+```bash
+python3 examples/lessons/007-variables.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/007-variables.py) · [全部示例代码索引](/examples/)

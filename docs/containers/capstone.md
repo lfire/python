@@ -100,13 +100,13 @@ print('bench ran', big.total() == 2000, cost >= 0)
 
 <OutputBox title='主示例运行结果' output='total tokens 10\nhello 2 python 3\ntop3 [(&#39;python&#39;, 3), (&#39;hello&#39;, 2), (&#39;313&#39;, 1)]\nkv state None 2 1\nbench ran True True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import re, string\nfrom collections import Counter\nfrom time import perf_counter\n\nTRANS = str.maketrans(&#39;&#39;, &#39;&#39;, string.punctuation)\n\ndef words(line):\n    cleaned = line.casefold().translate(TRANS)\n    return re.findall(r&#39;[a-z0-9]+&#39;, cleaned)\n\ndef count_lines(lines):\n    counter = Counter()\n    for line in lines:\n        counter.update(words(line))\n    return counter\n\nTEXT = [&#39;Hello, hello!&#39;, &#39;Python 3.13 and python.&#39;, &#39;Guide to the Python.&#39;]\nc = count_lines(TEXT)\nprint(&#39;total tokens&#39;, c.total())\nprint(&#39;hello&#39;, c[&#39;hello&#39;], &#39;python&#39;, c[&#39;python&#39;])\nprint(&#39;top3&#39;, c.most_common(3))\n\nclass MemoryKV:\n    def __init__(self):\n        self._data = {}\n    def get(self, key, default=None):\n        return self._data.get(key, default)\n    def set(self, key, value):\n        self._data[key] = value\n    def delete(self, key):\n        return self._data.pop(key, None) is not None\n    def __len__(self):\n        return len(self._data)\n\nkv = MemoryKV()\nfor cmd in [(&#39;set&#39;, &#39;a&#39;, 1), (&#39;set&#39;, &#39;b&#39;, 2), (&#39;delete&#39;, &#39;a&#39;)]:\n    op = cmd[0]\n    if op == &#39;set&#39;:\n        kv.set(cmd[1], cmd[2])\n    elif op == &#39;delete&#39;:\n        kv.delete(cmd[1])\nprint(&#39;kv state&#39;, kv.get(&#39;a&#39;), kv.get(&#39;b&#39;), len(kv))\n\nt0 = perf_counter()\nbig = count_lines([&#39;w&#39; + str(i) for i in range(2000)])\ncost = perf_counter() - t0\nprint(&#39;bench ran&#39;, big.total() == 2000, cost &gt;= 0)' :notes='["导入正则、标点常量与计时模块", "导入 Counter 做增量计数", "导入 perf_counter 用于基准测量", "用 maketrans 生成&#39;删除所有标点&#39;的映射表", "定义单行分词函数", "casefold 归一大小写，translate 在 C 层去掉标点", "用正则取出字母数字词，注意标点删除会把 3.13 拼成 313", "核心统计函数只接受可迭代的行", "创建空 Counter，缺键返回 0", "逐行迭代，内存里一次只有一行", "update 是累加语义，把本行的词计入总数", "返回累计结果，不物化全量词列表", "三行演示文本，含标点、大小写与数字", "对文本列表做统计，测试不必造文件", "total() 是 3.10+ 的方法，返回所有计数之和", "取出两个高频词验证规整结果", "most_common(3) 按计数降序，相等时按首次出现顺序", "定义内存版 KV，只暴露窄接口", "底层就是一个 dict", "get 允许给默认值，缺失不抛异常", "set 写入键值", "delete 用 pop 并返回是否真的删到", "实现 __len__ 便于观测条数", "创建 KV 实例", "把命令解析成 (op, key, value) 元组走分发表", "取出操作类型", "set 分支调用窄接口", "delete 分支调用窄接口", "a 被删、b 保留，长度为 1", "记录基准起点", "用 2000 个不同词测量一次统计", "计算墙钟耗时", "断言结果与耗时非负，输出可复现", "casefold()（3.3+）比 lower() 更适合 Unicode 无大小写归一；top-N 用 most_common 或 heapq.nlargest", "KV 定义 get / set / delete 窄接口，dict 内存版可无痛替换为 shelve / sqlite3 / redis", "命令分发把 (op, key, value) 映射到接口调用；基准用 perf_counter 测耗时、tracemalloc 测峰值内存", "词频管道：casefold / translate 规整、生成器分词、Counter 增量累计，统计与 IO 分离", "核心函数只接受可迭代对象，测试传 list、生产传文件或标准输入，不必造临时文件", "逐行迭代加生成器管道让内存只与不同词数量有关；read() 全量会随文件大小线性增长", "casefold()（3.3+）比 lower() 更适合 Unicode 无大小写归一；top-N 用 most_common 或 heapq.nlargest"]' title='第 027 讲 · 阶段综合：词频统计与内存版 KV' />
+<LineByLine code='import re, string\nfrom collections import Counter\nfrom time import perf_counter\n\nTRANS = str.maketrans(&#39;&#39;, &#39;&#39;, string.punctuation)\n\ndef words(line):\n    cleaned = line.casefold().translate(TRANS)\n    return re.findall(r&#39;[a-z0-9]+&#39;, cleaned)\n\ndef count_lines(lines):\n    counter = Counter()\n    for line in lines:\n        counter.update(words(line))\n    return counter\n\nTEXT = [&#39;Hello, hello!&#39;, &#39;Python 3.13 and python.&#39;, &#39;Guide to the Python.&#39;]\nc = count_lines(TEXT)\nprint(&#39;total tokens&#39;, c.total())\nprint(&#39;hello&#39;, c[&#39;hello&#39;], &#39;python&#39;, c[&#39;python&#39;])\nprint(&#39;top3&#39;, c.most_common(3))\n\nclass MemoryKV:\n    def __init__(self):\n        self._data = {}\n    def get(self, key, default=None):\n        return self._data.get(key, default)\n    def set(self, key, value):\n        self._data[key] = value\n    def delete(self, key):\n        return self._data.pop(key, None) is not None\n    def __len__(self):\n        return len(self._data)\n\nkv = MemoryKV()\nfor cmd in [(&#39;set&#39;, &#39;a&#39;, 1), (&#39;set&#39;, &#39;b&#39;, 2), (&#39;delete&#39;, &#39;a&#39;)]:\n    op = cmd[0]\n    if op == &#39;set&#39;:\n        kv.set(cmd[1], cmd[2])\n    elif op == &#39;delete&#39;:\n        kv.delete(cmd[1])\nprint(&#39;kv state&#39;, kv.get(&#39;a&#39;), kv.get(&#39;b&#39;), len(kv))\n\nt0 = perf_counter()\nbig = count_lines([&#39;w&#39; + str(i) for i in range(2000)])\ncost = perf_counter() - t0\nprint(&#39;bench ran&#39;, big.total() == 2000, cost &gt;= 0)' :notes='["导入正则、标点常量与计时模块", "导入 Counter 做增量计数", "导入 perf_counter 用于基准测量", "空行，只用于分隔逻辑块，不影响执行结果。", "用 maketrans 生成&#39;删除所有标点&#39;的映射表", "空行，只用于分隔逻辑块，不影响执行结果。", "定义单行分词函数", "casefold 归一大小写，translate 在 C 层去掉标点", "用正则取出字母数字词，注意标点删除会把 3.13 拼成 313", "空行，只用于分隔逻辑块，不影响执行结果。", "核心统计函数只接受可迭代的行", "创建空 Counter，缺键返回 0", "逐行迭代，内存里一次只有一行", "update 是累加语义，把本行的词计入总数", "返回累计结果，不物化全量词列表", "空行，只用于分隔逻辑块，不影响执行结果。", "三行演示文本，含标点、大小写与数字", "对文本列表做统计，测试不必造文件", "total() 是 3.10+ 的方法，返回所有计数之和", "取出两个高频词验证规整结果", "most_common(3) 按计数降序，相等时按首次出现顺序", "空行，只用于分隔逻辑块，不影响执行结果。", "定义内存版 KV，只暴露窄接口", "底层就是一个 dict", "get 允许给默认值，缺失不抛异常", "set 写入键值", "delete 用 pop 并返回是否真的删到", "实现 __len__ 便于观测条数", "创建 KV 实例", "把命令解析成 (op, key, value) 元组走分发表", "取出操作类型", "set 分支调用窄接口", "delete 分支调用窄接口", "空行，只用于分隔逻辑块，不影响执行结果。", "a 被删、b 保留，长度为 1", "记录基准起点", "用 2000 个不同词测量一次统计", "计算墙钟耗时", "断言结果与耗时非负，输出可复现", "casefold()（3.3+）比 lower() 更适合 Unicode 无大小写归一；top-N 用 most_common 或 heapq.nlargest", "KV 定义 get / set / delete 窄接口，dict 内存版可无痛替换为 shelve / sqlite3 / redis", "命令分发把 (op, key, value) 映射到接口调用；基准用 perf_counter 测耗时、tracemalloc 测峰值内存", "空行，只用于分隔逻辑块，不影响执行结果。", "词频管道：casefold / translate 规整、生成器分词、Counter 增量累计，统计与 IO 分离", "核心函数只接受可迭代对象，测试传 list、生产传文件或标准输入，不必造临时文件", "逐行迭代加生成器管道让内存只与不同词数量有关；read() 全量会随文件大小线性增长", "casefold()（3.3+）比 lower() 更适合 Unicode 无大小写归一；top-N 用 most_common 或 heapq.nlargest"]' title='第 027 讲 · 阶段综合：词频统计与内存版 KV' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='layers3' title='第 027 讲 · 文本规整与分词：把噪声挡在统计之前' labels='文本规整与分词：把噪声挡在统计之前|生成器管道与增量统计：内存只与不同词有关|KV 窄接口、持久化与可替换实现' caption='用容器与生成器交付一个可测的小工具' />
+<ConceptDiagram type='layers3' title='第 027 讲 · 文本规整与分词：把噪声挡在统计之前' labels='文本规整与分词：把噪声挡在统计之前|生成器管道与增量统计：内存只与不同词有关|KV 窄接口、持久化与可替换实现|基准测量' caption='用容器与生成器交付一个可测的小工具' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 文本规整与计数工具
@@ -121,7 +121,7 @@ print('bench ran', big.total() == 2000, cost >= 0)
 | 计数 | collections.Counter.update(iterable) | 累加语义，缺键返回 0 |
 | Top-N | most_common(n) / heapq.nlargest(n, d, key=d.get) | 数据量大时 nlargest 省一次全排序 |
 
-<Callout type="tip" title='核心心智模型' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。' />
+<Callout type="tip" title='核心心智模型' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。…' />
 
 
 ## 生成器管道与增量统计：内存只与不同词有关
@@ -246,9 +246,9 @@ sqlite3 提供事务与查询；redis 提供跨进程共享与过期淘汰能力
 | sqlite3 / redis | 事务、查询或跨进程共享 | 实现同一接口即可 |
 | 命令分发 (op, key, value) | 把输入解析与存储解耦 | 加新命令只改分发表 |
 
-<Term word='文本规整与分词' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。去标点用 `str.' />
+<Term word='文本规整与分词' text='词频看起来只是 split 一下，实际要先把噪声挡掉才有意义。大小写归一用 `str.casefold()`（3.3+）而不是 `lower()`：casefold 专为 Unicode 无大小写比较设计，能把德语 ß 折成 ss、把连字与带点 I 归一，lower 只做简单映射，跨语言文本会漏词。去标点用…' />
 
-<Term word='Counter 与排序' text='把「去标点 → 转小写 → 分词 → 计数」每一步写成生成器表达式或小的生成器函数，再用 `yield from` 串成惰性管道，只有最终 Counter 或聚合才真正消费。CPython 里 `for line in file` 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；生成器表达式更进一步，连' />
+<Term word='Counter 与排序' text='把「去标点 → 转小写 → 分词 → 计数」每一步写成生成器表达式或小的生成器函数，再用 `yield from` 串成惰性管道，只有最终 Counter 或聚合才真正消费。CPython 里 `for line in file` 由 TextIOWrapper 逐行缓冲，一次只在内存里放一行；生成器表达式更进一步，连…' />
 
 
 ## 可测的词频 CLI：核心纯函数、生成器管道与可替换 KV
@@ -299,13 +299,13 @@ print('total', counts.total(), 'hello', counts['hello'], 'python', counts['pytho
 
 <Callout type="idea" title='落地提示' text='为 KV 定义 get / set / delete 的窄接口，后面网络层、持久化层、分片层都可以无痛替换实现' />
 
-<CheckList id='P027b' title='上线前自检' :items='["能复现并解释「一次性把所有行 read() 进 list 做词频，文件一大」", "能复现并解释「用 lower() 做大小写归一，非 ASCII 文本统计对」", "能复现并解释「把 KV 的 dict 直接暴露给业务代码，后面加持久化要全」", "能用一条命令验证 文本规整与分词", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P027b' title='上线前自检' :items='["能复现并解释「一次性把所有行 read() 进 list 做词频，文件一大…」", "能复现并解释「用 lower() 做大小写归一，非 ASCII 文本统计对…」", "能复现并解释「把 KV 的 dict 直接暴露给业务代码，后面加持久化要全…」", "能用一条命令验证 文本规整与分词", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -m timeit -n 1000 "sum(range(100))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 文本规整与分词 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 文本规整与分词 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 失败模式、基准测量与交付自检
@@ -320,7 +320,7 @@ python -m timeit -n 1000 "sum(range(100))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='一次性把所有行 read() 进 list 做词频，文件一大就 OOM：物化整份文本与中间词列表，内存随数据量线性增长' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：一次性把所有行 read() 进 list ", "body": "物化整份文本与中间词列表，内存随数据量线性增长", "tip": "逐行迭代文件对象、用生成器管道边读边累计 Counter，只保留不同词的计数"}, {"title": "第 2 步：用 lower() 做大小写归一，非 ASC", "body": "lower() 对德语 ß、土耳其语带点 I 等 Unicode 大小写折叠不完整", "tip": "用 str.casefold()（3.3+）做无大小写比较；分词后再统一"}, {"title": "第 3 步：把 KV 的 dict 直接暴露给业务代码，", "body": "业务与具体存储耦合，缺少稳定的窄接口", "tip": "定义 get / set / delete 接口，内存版用 dict 实现，生产替换为 shelve / sqlite3 / redis"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：一次性把所有行 read() 进 list…", "body": "物化整份文本与中间词列表，内存随数据量线性增长", "tip": "逐行迭代文件对象、用生成器管道边读边累计 Counter，只保留不同词的计数"}, {"title": "第 2 步：用 lower() 做大小写归一，非 ASC…", "body": "lower() 对德语 ß、土耳其语带点 I 等 Unicode 大小写折叠不完整", "tip": "用 str.casefold()（3.3+）做无大小写比较；分词后再统一"}, {"title": "第 3 步：把 KV 的 dict 直接暴露给业务代码…", "body": "业务与具体存储耦合，缺少稳定的窄接口", "tip": "定义 get / set / delete 接口，内存版用 dict 实现，生产替换为 shelve / sqlite3 / redis"}]' />
 
 
 ## 练习题与验收
@@ -359,3 +359,16 @@ python -m timeit -n 1000 "sum(range(100))"
 3. 逐行迭代加生成器管道让内存只与不同词数量有关；read() 全量会随文件大小线性增长
 
 [下一讲：函数定义与参数形态](/functions/function-basics)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/027-capstone.py`
+
+```bash
+python3 examples/lessons/027-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/027-capstone.py) · [全部示例代码索引](/examples/)

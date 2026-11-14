@@ -53,11 +53,11 @@ description: 用正确的原语表达协作关系
 | 不可剥夺 | 已持有的锁不能被抢 | acquire(timeout=...) 超时回退 |
 | 循环等待 | A 等 B、B 等 A 成环 | 全局锁编号，严格按编号递增获取 |
 
-<Callout type="tip" title='核心心智模型' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acqu' />
+<Callout type="tip" title='核心心智模型' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acqu…' />
 
-<ConceptDiagram type='layers3' title='第 062 讲 · Lock / RLock 与死锁四个条件' labels='Lock / RLock 与死锁四个条件|Condition、Semaphore 与 |锁的粒度、超时与可观测性' caption='用正确的原语表达协作关系' />
+<ConceptDiagram type='layers3' title='第 062 讲 · Lock / RLock 与死锁四个条件' labels='Lock / RLock 与死锁四个条件|Condition、Semaphore 与…|锁的粒度、超时与可观测性|死锁四条件与规避' caption='用正确的原语表达协作关系' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 对照：持锁重入与 RLock 的输出
@@ -101,7 +101,7 @@ print('locked', counter[0])
 
 <OutputBox title='主示例运行结果' output='out [0, 1, 2]\nwait_for rechecks True\nlocked 20000' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import threading\n\ncond = threading.Condition()\nready = []\nout = []\n\ndef consumer():\n    with cond:\n        cond.wait_for(lambda: len(ready) &gt;= 3)\n        out.extend(ready)\n\ndef producer():\n    for i in range(3):\n        with cond:\n            ready.append(i)\n            cond.notify_all()\n\nc = threading.Thread(target=consumer, name=&#39;consumer&#39;)\nc.start()\nproducer()\nc.join()\nprint(&#39;out&#39;, out)\nprint(&#39;wait_for rechecks&#39;, len(out) == 3)\n\nlock = threading.Lock()\ncounter = [0]\ndef add():\n    for _ in range(5000):\n        with lock:\n            counter[0] += 1\nts = [threading.Thread(target=add) for _ in range(4)]\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;locked&#39;, counter[0])' :notes='["导入 threading 使用 Condition 与 Lock", "Condition() 默认自带一把 RLock", "共享缓冲区，生产者往里放", "消费者取走的结果", "消费者先持锁再等待条件", "进入临界区，wait 会临时释放这把锁", "内部 while 谓词循环，抵御虚假唤醒", "条件满足后一次性取走全部就绪项", "生产者分三次投递", "循环三次", "每次都在持锁状态下改共享数据", "追加一项", "唤醒所有等待者，避免只叫醒一个不够", "消费者线程先启动", "启动后会在 wait 处释放锁阻塞", "主线程跑生产者", "join 等消费者收完", "三个元素按序被消费", "谓词重查保证拿到完整三项", "Lock 演示互斥保护计数器", "用可变容器承载计数值", "四线程各执行这个函数", "每线程加 5000 次", "进入互斥临界区", "读—改—写被锁整体保护", "创建四个线程", "启动", "等待全部结束", "加锁后恒为 20000，无丢失更新"]' title='第 062 讲 · 线程同步：Lock、Condition、Semaphore、Event' />
+<LineByLine code='import threading\n\ncond = threading.Condition()\nready = []\nout = []\n\ndef consumer():\n    with cond:\n        cond.wait_for(lambda: len(ready) &gt;= 3)\n        out.extend(ready)\n\ndef producer():\n    for i in range(3):\n        with cond:\n            ready.append(i)\n            cond.notify_all()\n\nc = threading.Thread(target=consumer, name=&#39;consumer&#39;)\nc.start()\nproducer()\nc.join()\nprint(&#39;out&#39;, out)\nprint(&#39;wait_for rechecks&#39;, len(out) == 3)\n\nlock = threading.Lock()\ncounter = [0]\ndef add():\n    for _ in range(5000):\n        with lock:\n            counter[0] += 1\nts = [threading.Thread(target=add) for _ in range(4)]\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;locked&#39;, counter[0])' :notes='["导入 threading 使用 Condition 与 Lock", "空行，只用于分隔逻辑块，不影响执行结果。", "Condition() 默认自带一把 RLock", "共享缓冲区，生产者往里放", "消费者取走的结果", "空行，只用于分隔逻辑块，不影响执行结果。", "消费者先持锁再等待条件", "进入临界区，wait 会临时释放这把锁", "内部 while 谓词循环，抵御虚假唤醒", "条件满足后一次性取走全部就绪项", "空行，只用于分隔逻辑块，不影响执行结果。", "生产者分三次投递", "循环三次", "每次都在持锁状态下改共享数据", "追加一项", "唤醒所有等待者，避免只叫醒一个不够", "空行，只用于分隔逻辑块，不影响执行结果。", "消费者线程先启动", "启动后会在 wait 处释放锁阻塞", "主线程跑生产者", "join 等消费者收完", "三个元素按序被消费", "谓词重查保证拿到完整三项", "空行，只用于分隔逻辑块，不影响执行结果。", "Lock 演示互斥保护计数器", "用可变容器承载计数值", "四线程各执行这个函数", "每线程加 5000 次", "进入互斥临界区", "读—改—写被锁整体保护", "创建四个线程", "启动", "等待全部结束", "加锁后恒为 20000，无丢失更新"]' title='第 062 讲 · 线程同步：Lock、Condition、Semaphore、Event' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -186,9 +186,9 @@ wait 的语义是「释放锁 → 挂到等待队列 → 被 notify 移到锁队
 
 `Event` 用一把锁加一个布尔标志，set 把标志置真并 notify_all，clear 只是把标志清回假、不会「唤醒」任何人——这正是每请求 clear 会漏掉后来者的原因。死锁的四个条件在 CPython 里没有自动检测，只有靠统一锁顺序与超时把它变成可诊断的失败，而不是静默挂起。
 
-<Term word='Lock 与 RLock' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acquire 就会死锁，必' />
+<Term word='Lock 与 RLock' text='`threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。它是原始锁，同一线程第二次 acquire 就会死锁，必…' />
 
-<Term word='Condition 等待通知' text='`Condition(lock=None)` 默认自带一把 `RLock`，`wait(timeout=None)` 会先释放底层锁、阻塞，被唤醒后重新拿到锁才返回，所以调用 wait/notify 之前必须持锁。`notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；被唤醒之后条件可' />
+<Term word='Condition 等待通知' text='`Condition(lock=None)` 默认自带一把 `RLock`，`wait(timeout=None)` 会先释放底层锁、阻塞，被唤醒后重新拿到锁才返回，所以调用 wait/notify 之前必须持锁。`notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；被唤醒之后条件可…' />
 
 ```python
 import inspect
@@ -270,7 +270,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='锁的粒度按数据而不是按代码划分，统一获取顺序，并用超时与可观测日志兜底' />
 
-<CheckList id='P062b' title='上线前自检' :items='["能复现并解释「在 wait 后直接用数据，不重新检查条件」", "能复现并解释「持锁时调用外部回调或做网络 IO」", "能复现并解释「每个请求都 event.clear() 复用同一个 Even」", "能用一条命令验证 Lock 与 RLock", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P062b' title='上线前自检' :items='["能复现并解释「在 wait 后直接用数据，不重新检查条件」", "能复现并解释「持锁时调用外部回调或做网络 IO」", "能复现并解释「每个请求都 event.clear() 复用同一个 Even…」", "能用一条命令验证 Lock 与 RLock", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -282,7 +282,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='在 wait 后直接用数据，不重新检查条件：wait 可能被虚假唤醒，或条件已被别的等待者消费，拿到的是旧状态或空值' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 wait 后直接用数据，不重新检查条件", "body": "wait 可能被虚假唤醒，或条件已被别的等待者消费，拿到的是旧状态或空值", "tip": "一律用 cond.wait_for(predicate)，它内部是 while not predicate(): wait() 循环"}, {"title": "第 2 步：持锁时调用外部回调或做网络 IO", "body": "回调可能反向申请同一把锁形成循环等待；长临界区放大切换与竞争", "tip": "把计算与 IO 移出临界区，回调在释放锁后执行；确需重入再考虑 RLock"}, {"title": "第 3 步：每个请求都 event.clear() 复用", "body": "clear 只是清标志，已经越过 wait 的线程不会被通知，后到者在下一次 set 前永久阻塞", "tip": "一次性闸门用 Event 且只 set 不 clear；需要反复开合改用 Condition + 谓词或 Barrier"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 wait 后直接用数据，不重新检查条件", "body": "wait 可能被虚假唤醒，或条件已被别的等待者消费，拿到的是旧状态或空值", "tip": "一律用 cond.wait_for(predicate)，它内部是 while not predicate(): wait() 循环"}, {"title": "第 2 步：持锁时调用外部回调或做网络 IO", "body": "回调可能反向申请同一把锁形成循环等待；长临界区放大切换与竞争", "tip": "把计算与 IO 移出临界区，回调在释放锁后执行；确需重入再考虑 RLock"}, {"title": "第 3 步：每个请求都 event.clear() 复用…", "body": "clear 只是清标志，已经越过 wait 的线程不会被通知，后到者在下一次 set 前永久阻塞", "tip": "一次性闸门用 Event 且只 set 不 clear；需要反复开合改用 Condition + 谓词或 Barrier"}]' />
 
 
 ## 练习、自测与速记
@@ -326,4 +326,17 @@ if __name__ == '__main__':
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Lock 与 RLock 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Lock 与 RLock 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/062-sync-primitives.py`
+
+```bash
+python3 examples/lessons/062-sync-primitives.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/062-sync-primitives.py) · [全部示例代码索引](/examples/)

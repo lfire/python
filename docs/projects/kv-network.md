@@ -109,7 +109,7 @@ print('oversize', decode(encode('SET', 'k', b'x' * 1100)))
 
 <OutputBox title='主示例运行结果' output='frame sizes 16 14\ntwo in one read ([&#39;SET a 1&#39;, &#39;GET a&#39;], &#39;complete&#39;)\nhalf frame ([], &#39;partial&#39;)\nwith tail ([&#39;SET a 1&#39;], &#39;partial&#39;)\ncorrupt ([], &#39;bad checksum&#39;)\noversize ([], &#39;frame too large&#39;)' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import struct, zlib\n\nMAGIC = b&#39;KV&#39;\nVERSION = 1\nMAX_FRAME = 1024\n\ndef encode(op, key, value=b&#39;&#39;):\n    parts = [op.encode(), key.encode()]\n    if value:\n        parts.append(value)\n    body = b&#39; &#39;.join(parts)\n    frame = MAGIC + bytes([VERSION]) + struct.pack(&#39;&gt;H&#39;, len(body)) + body\n    crc = zlib.crc32(frame) &amp; 0xffffffff\n    return frame + struct.pack(&#39;&gt;I&#39;, crc)\n\ndef decode(stream):\n    out = []\n    while len(stream) &gt;= 9:\n        if stream[:2] != MAGIC:\n            return out, &#39;bad magic&#39;\n        ver = stream[2]\n        length = struct.unpack(&#39;&gt;H&#39;, stream[3:5])[0]\n        total = 5 + length + 4\n        if length &gt; MAX_FRAME:\n            return out, &#39;frame too large&#39;\n        if len(stream) &lt; total:\n            break\n        frame = stream[:5 + length]\n        got = struct.unpack(&#39;&gt;I&#39;, stream[5 + length:total])[0]\n        if (zlib.crc32(frame) &amp; 0xffffffff) != got:\n            return out, &#39;bad checksum&#39;\n        if ver != VERSION:\n            return out, &#39;version mismatch&#39;\n        out.append(frame[5:5 + length].decode())\n        stream = stream[total:]\n    return out, &#39;complete&#39; if not stream else &#39;partial&#39;\n\nf1 = encode(&#39;SET&#39;, &#39;a&#39;, b&#39;1&#39;)\nf2 = encode(&#39;GET&#39;, &#39;a&#39;)\nprint(&#39;frame sizes&#39;, len(f1), len(f2))\nprint(&#39;two in one read&#39;, decode(f1 + f2))\nprint(&#39;half frame&#39;, decode(f1[:9]))\nprint(&#39;with tail&#39;, decode(f1 + f2[:-3]))\nbad = bytearray(f1)\nbad[-1] ^= 1\nprint(&#39;corrupt&#39;, decode(bytes(bad)))\nprint(&#39;oversize&#39;, decode(encode(&#39;SET&#39;, &#39;k&#39;, b&#39;x&#39; * 1100)))' :notes='["导入 struct 处理定长头、zlib 做 CRC32 校验", "MAGIC 两字节，快速识别这是本协议的帧", "显式版本号，不兼容升级时据此拒绝老格式", "最大帧上限，防止单条超大请求打满内存", "encode 把命令编码成一条完整帧", "把 op 与 key 编成字节列表", "有值时才追加，避免尾部多余的空格", "把值字节追加进 parts", "用空格拼成 body，长度由此确定", "帧 = MAGIC + 版本 + 两字节大端长度 + body", "对帧头与 body 计算 CRC32，只检错不防篡改", "帧尾追加四字节大端校验和", "decode 从字节流里连续切出所有完整帧", "out 收集已解出的 body 文本", "stream 至少要有最小完整帧长度才进入解析", "MAGIC 不符立即返回错误，避免按错格式解析", "返回 bad magic 状态，不继续按错格式解析", "读出版本号供兼容性判断", "按两字节大端读出 body 长度", "整帧长度 = 5 字节头 + body + 4 字节校验和", "超过 MAX_FRAME 直接拒绝，不分配大缓冲", "返回 frame too large，超限帧一律拒绝", "字节不够一整帧就跳出，保留 stream 供下次续读", "break 保留剩余 stream，等下一批字节续读", "取出帧头加 body 用于校验", "读出帧尾携带的校验和", "重算 CRC 与携带值比较，不符说明损坏", "校验和错误返回明确状态", "版本不匹配也返回明确状态而非静默错解", "返回 version mismatch，交给上层做版本协商", "校验通过的 body 解码成文本加入结果", "切掉已消费的一帧，继续处理粘包的后续帧", "流被消费完返回 complete，否则返回 partial", "编码一条 SET 帧", "编码一条 GET 帧", "打印两帧字节长度，验证头部开销固定", "把两帧拼成一次 read 的字节流，验证粘包切分", "只给前半帧，验证拆包时返回 partial", "一帧加半帧，验证切出一条后仍报 partial", "把合法帧拷成可变的 bytearray", "翻转校验和最后一个字节，制造损坏", "打印损坏帧的解码结果，应为 bad checksum", "构造超过 MAX_FRAME 的帧，验证上限拦截"]' title='第 130 讲 · 实战 09 · KV 贯穿线 ② 协议帧与网络层' />
+<LineByLine code='import struct, zlib\n\nMAGIC = b&#39;KV&#39;\nVERSION = 1\nMAX_FRAME = 1024\n\ndef encode(op, key, value=b&#39;&#39;):\n    parts = [op.encode(), key.encode()]\n    if value:\n        parts.append(value)\n    body = b&#39; &#39;.join(parts)\n    frame = MAGIC + bytes([VERSION]) + struct.pack(&#39;&gt;H&#39;, len(body)) + body\n    crc = zlib.crc32(frame) &amp; 0xffffffff\n    return frame + struct.pack(&#39;&gt;I&#39;, crc)\n\ndef decode(stream):\n    out = []\n    while len(stream) &gt;= 9:\n        if stream[:2] != MAGIC:\n            return out, &#39;bad magic&#39;\n        ver = stream[2]\n        length = struct.unpack(&#39;&gt;H&#39;, stream[3:5])[0]\n        total = 5 + length + 4\n        if length &gt; MAX_FRAME:\n            return out, &#39;frame too large&#39;\n        if len(stream) &lt; total:\n            break\n        frame = stream[:5 + length]\n        got = struct.unpack(&#39;&gt;I&#39;, stream[5 + length:total])[0]\n        if (zlib.crc32(frame) &amp; 0xffffffff) != got:\n            return out, &#39;bad checksum&#39;\n        if ver != VERSION:\n            return out, &#39;version mismatch&#39;\n        out.append(frame[5:5 + length].decode())\n        stream = stream[total:]\n    return out, &#39;complete&#39; if not stream else &#39;partial&#39;\n\nf1 = encode(&#39;SET&#39;, &#39;a&#39;, b&#39;1&#39;)\nf2 = encode(&#39;GET&#39;, &#39;a&#39;)\nprint(&#39;frame sizes&#39;, len(f1), len(f2))\nprint(&#39;two in one read&#39;, decode(f1 + f2))\nprint(&#39;half frame&#39;, decode(f1[:9]))\nprint(&#39;with tail&#39;, decode(f1 + f2[:-3]))\nbad = bytearray(f1)\nbad[-1] ^= 1\nprint(&#39;corrupt&#39;, decode(bytes(bad)))\nprint(&#39;oversize&#39;, decode(encode(&#39;SET&#39;, &#39;k&#39;, b&#39;x&#39; * 1100)))' :notes='["导入 struct 处理定长头、zlib 做 CRC32 校验", "空行，只用于分隔逻辑块，不影响执行结果。", "MAGIC 两字节，快速识别这是本协议的帧", "显式版本号，不兼容升级时据此拒绝老格式", "最大帧上限，防止单条超大请求打满内存", "空行，只用于分隔逻辑块，不影响执行结果。", "encode 把命令编码成一条完整帧", "把 op 与 key 编成字节列表", "有值时才追加，避免尾部多余的空格", "把值字节追加进 parts", "用空格拼成 body，长度由此确定", "帧 = MAGIC + 版本 + 两字节大端长度 + body", "对帧头与 body 计算 CRC32，只检错不防篡改", "帧尾追加四字节大端校验和", "空行，只用于分隔逻辑块，不影响执行结果。", "decode 从字节流里连续切出所有完整帧", "out 收集已解出的 body 文本", "stream 至少要有最小完整帧长度才进入解析", "MAGIC 不符立即返回错误，避免按错格式解析", "返回 bad magic 状态，不继续按错格式解析", "读出版本号供兼容性判断", "按两字节大端读出 body 长度", "整帧长度 = 5 字节头 + body + 4 字节校验和", "超过 MAX_FRAME 直接拒绝，不分配大缓冲", "返回 frame too large，超限帧一律拒绝", "字节不够一整帧就跳出，保留 stream 供下次续读", "break 保留剩余 stream，等下一批字节续读", "取出帧头加 body 用于校验", "读出帧尾携带的校验和", "重算 CRC 与携带值比较，不符说明损坏", "校验和错误返回明确状态", "版本不匹配也返回明确状态而非静默错解", "返回 version mismatch，交给上层做版本协商", "校验通过的 body 解码成文本加入结果", "切掉已消费的一帧，继续处理粘包的后续帧", "流被消费完返回 complete，否则返回 partial", "空行，只用于分隔逻辑块，不影响执行结果。", "编码一条 SET 帧", "编码一条 GET 帧", "打印两帧字节长度，验证头部开销固定", "把两帧拼成一次 read 的字节流，验证粘包切分", "只给前半帧，验证拆包时返回 partial", "一帧加半帧，验证切出一条后仍报 partial", "把合法帧拷成可变的 bytearray", "翻转校验和最后一个字节，制造损坏", "打印损坏帧的解码结果，应为 bad checksum", "构造超过 MAX_FRAME 的帧，验证上限拦截"]' title='第 130 讲 · 实战 09 · KV 贯穿线 ② 协议帧与网络层' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -136,11 +136,11 @@ print('value with newline', cut_newline(two))
 
 ## 长度前缀与半包：decode 为什么返回 partial
 
-<Callout type="tip" title='核心心智模型' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 `' />
+<Callout type="tip" title='核心心智模型' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如…' />
 
 <ConceptDiagram type='flow3' title='第 130 讲 · TCP 字节流与长度前缀帧：消息边界要自己造' labels='TCP 字节流与长度前缀帧：消息边界要自己造|序列化选型与 asyncio 服务端|协议兼容、契约测试与失败模式' caption='用 asyncio 实现可并发的服务端' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 两帧一次到、半帧、超大帧与坏校验和
@@ -175,13 +175,13 @@ print('value with newline', cut_newline(two))
 
 ## asyncio start_server 与客户端 SDK
 
-<ConceptDiagram type='layers3' title='第 130 讲 · 分层视角' labels='TCP 字节流与长度前缀帧：消息边界要自|序列化选型与 asyncio 服务端|协议兼容、契约测试与失败模式|协议兼容与版本' caption='协议兼容、契约测试与失败模式' />
+<ConceptDiagram type='layers3' title='第 130 讲 · 分层视角' labels='TCP 字节流与长度前缀帧：消息边界要自…|序列化选型与 asyncio 服务端|协议兼容、契约测试与失败模式|协议兼容与版本' caption='协议兼容、契约测试与失败模式' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 协议兼容与版本 落在哪一层。
 
-<Term word='TCP 粘包与长度前缀' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pac' />
+<Term word='TCP 粘包与长度前缀' text='`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如…' />
 
-<Term word='序列化选型' text='文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；`pickle` 绝不能用于网络——反序列化会执行' />
+<Term word='序列化选型' text='文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；`pickle` 绝不能用于网络——反序列化会执行…' />
 
 
 ## TCP 的 send 边界在接收侧不可见
@@ -288,7 +288,7 @@ print(asyncio.run(main()))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 TCP 粘包与长度前缀 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 TCP 粘包与长度前缀 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## WAL 记录的字节布局与 CRC32 的校验边界
@@ -331,7 +331,7 @@ print('truncated', p_len > len(partial) - 8)
 
 <OutputBox title='扩展示例运行结果' output='declared_len 19\nactual_len 19\ncrc_ok True\ntamper_crc_fail True\npartial_body_avail 6\ntruncated True' />
 
-<LineByLine code='import struct, zlib\n\nMETA = struct.Struct(&#39;&lt;BHI&#39;)\n\ndef encode(op, key, value):\n    kb, vb = key.encode(), value.encode()\n    body = META.pack(op, len(kb), len(vb)) + kb + vb\n    crc = zlib.crc32(body) &amp; 0xffffffff\n    return struct.pack(&#39;&lt;II&#39;, len(body), crc) + body\n\nframe = encode(1, &#39;user:42&#39;, &#39;alice&#39;)\nlength, crc = struct.unpack(&#39;&lt;II&#39;, frame[:8])\nbody = frame[8:]\nprint(&#39;declared_len&#39;, length)\nprint(&#39;actual_len&#39;, len(body))\nprint(&#39;crc_ok&#39;, (zlib.crc32(body) &amp; 0xffffffff) == crc)\ntampered = bytearray(frame)\ntampered[9] ^= 0x80\nprint(&#39;tamper_crc_fail&#39;, (zlib.crc32(bytes(tampered[8:])) &amp; 0xffffffff) != crc)\npartial = frame[:14]\np_len = struct.unpack(&#39;&lt;II&#39;, partial[:8])[0]\nprint(&#39;partial_body_avail&#39;, len(partial) - 8)\nprint(&#39;truncated&#39;, p_len &gt; len(partial) - 8)' :notes='["META 定义 op(u8)、klen(u16)、vlen(u32) 共 7 字节小端布局", "CRC32 只覆盖 body，按 32 位无符号截断", "返回 8 字节头（长度加 CRC）拼接 body", "声明长度 19，等于 7 加 7 加 5", "重算 CRC 与头部比对确认完整", "翻转 body 首字节一位模拟位腐坏", "截取半条记录模拟断电截断", "声明长度大于剩余字节，判定为截断并停止重放", "必须设 MAX_FRAME 上限，解析出 length 先比较再分配缓冲，否则超大帧打满内存", "CRC32 只检错不防篡改（防篡改用 HMAC）；pickle 禁止用于网络，会执行任意代码", "asyncio.start_server 每连接一个 handle；readexactly 抛 IncompleteReadError 要捕获，finally 里 close 配 wait_closed", "契约测试逐字节覆盖半包、粘包、超大帧、错误 MAGIC、校验和错误、版本不匹配、连接中断", "TCP 是字节流无消息边界；长度前缀 + readexactly 解决拆包粘包，半包续读、粘包循环切分", "帧 = MAGIC + VERSION + 长度头 + body + CRC32；struct 的 &gt; 是大端网络字节序，&#39;&gt;H&#39; 2 字节、&#39;&gt;I&#39; 4 字节", "必须设 MAX_FRAME 上限，解析出 length 先比较再分配缓冲，否则超大帧打满内存", "CRC32 只检错不防篡改（防篡改用 HMAC）；pickle 禁止用于网络，会执行任意代码", "asyncio.start_server 每连接一个 handle；readexactly 抛 IncompleteReadError 要捕获，finally 里 close 配 wait_closed", "契约测试逐字节覆盖半包、粘包、超大帧、错误 MAGIC、校验和错误、版本不匹配、连接中断", "TCP 是字节流无消息边界；长度前缀 + readexactly 解决拆包粘包，半包续读、粘包循环切分", "帧 = MAGIC + VERSION + 长度头 + body + CRC32；struct 的 &gt; 是大端网络字节序，&#39;&gt;H&#39; 2 字节、&#39;&gt;I&#39; 4 字节"]' title='扩展示例逐行讲解' />
+<LineByLine code='import struct, zlib\n\nMETA = struct.Struct(&#39;&lt;BHI&#39;)\n\ndef encode(op, key, value):\n    kb, vb = key.encode(), value.encode()\n    body = META.pack(op, len(kb), len(vb)) + kb + vb\n    crc = zlib.crc32(body) &amp; 0xffffffff\n    return struct.pack(&#39;&lt;II&#39;, len(body), crc) + body\n\nframe = encode(1, &#39;user:42&#39;, &#39;alice&#39;)\nlength, crc = struct.unpack(&#39;&lt;II&#39;, frame[:8])\nbody = frame[8:]\nprint(&#39;declared_len&#39;, length)\nprint(&#39;actual_len&#39;, len(body))\nprint(&#39;crc_ok&#39;, (zlib.crc32(body) &amp; 0xffffffff) == crc)\ntampered = bytearray(frame)\ntampered[9] ^= 0x80\nprint(&#39;tamper_crc_fail&#39;, (zlib.crc32(bytes(tampered[8:])) &amp; 0xffffffff) != crc)\npartial = frame[:14]\np_len = struct.unpack(&#39;&lt;II&#39;, partial[:8])[0]\nprint(&#39;partial_body_avail&#39;, len(partial) - 8)\nprint(&#39;truncated&#39;, p_len &gt; len(partial) - 8)' :notes='["META 定义 op(u8)、klen(u16)、vlen(u32) 共 7 字节小端布局", "空行，只用于分隔逻辑块，不影响执行结果。", "CRC32 只覆盖 body，按 32 位无符号截断", "空行，只用于分隔逻辑块，不影响执行结果。", "返回 8 字节头（长度加 CRC）拼接 body", "声明长度 19，等于 7 加 7 加 5", "重算 CRC 与头部比对确认完整", "翻转 body 首字节一位模拟位腐坏", "截取半条记录模拟断电截断", "空行，只用于分隔逻辑块，不影响执行结果。", "声明长度大于剩余字节，判定为截断并停止重放", "这一行 `length, crc = struct.unpack(&#39;&lt;II&#39;, frame[:8])` 的作用，可对照上方输出逐项核对。", "这一行 `body = frame[8:]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;declared_len&#39;, length)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;actual_len&#39;, len(body))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;crc_ok&#39;, (zlib.crc32(body) &amp; 0xffffffff) == c` 的作用，可对照上方输出逐项核对。", "这一行 `tampered = bytearray(frame)` 的作用，可对照上方输出逐项核对。", "这一行 `tampered[9] ^= 0x80` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tamper_crc_fail&#39;, (zlib.crc32(bytes(tampered[` 的作用，可对照上方输出逐项核对。", "这一行 `partial = frame[:14]` 的作用，可对照上方输出逐项核对。", "这一行 `p_len = struct.unpack(&#39;&lt;II&#39;, partial[:8])[0]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;partial_body_avail&#39;, len(partial) - 8)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;truncated&#39;, p_len &gt; len(partial) - 8)` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### 检查点压缩的崩溃窗口与 CURRENT 清单
@@ -432,3 +432,16 @@ print('stopped_at_complete_boundary', len(recovered) == 1)
 3. 必须设 MAX_FRAME 上限，解析出 length 先比较再分配缓冲，否则超大帧打满内存
 
 [下一讲：实战 10 · KV 贯穿线 ③ WAL、持久化与并发控制](/projects/kv-wal)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/130-kv-network.py`
+
+```bash
+python3 examples/lessons/130-kv-network.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/130-kv-network.py) · [全部示例代码索引](/examples/)

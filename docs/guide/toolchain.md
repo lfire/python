@@ -57,7 +57,7 @@ print('repeat_len', len(timeit.repeat(builtin_stmt, setup=setup, number=200, rep
 
 <OutputBox title='主示例运行结果' output='both_positive True\nbuiltin_faster True\nrepeat_len 3' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import timeit\n\nsetup = &#39;data = list(range(200))&#39;\nloop_stmt = &#39;total = 0&#39; + chr(10) + &#39;for x in data: total += x&#39;\nbuiltin_stmt = &#39;sum(data)&#39;\n\nloop_t = timeit.timeit(loop_stmt, setup=setup, number=2000)\nbuiltin_t = timeit.timeit(builtin_stmt, setup=setup, number=2000)\nprint(&#39;both_positive&#39;, loop_t &gt; 0 and builtin_t &gt; 0)\nprint(&#39;builtin_faster&#39;, builtin_t &lt; loop_t)\nprint(&#39;repeat_len&#39;, len(timeit.repeat(builtin_stmt, setup=setup, number=200, repeat=3)))' :notes='["导入 timeit，它用 perf_counter 计时并临时关闭垃圾回收", "setup 定义被测数据，timeit 会先执行它再计时 stmt", "loop_stmt 用 chr(10) 拼成两行 Python 循环，示例里不写反斜杠转义", "builtin_stmt 是同一份数据的内置聚合写法", "测量纯 Python 循环累加 2000 次的耗时", "测量内置 sum 累加 2000 次的耗时", "两个耗时都大于 0，证明测量链路本身可运行", "内置 sum 把循环下沉到 C 层，应当明显快于 Python 层循环", "repeat=3 返回长度为 3 的样本列表，便于取最小值抵消抖动"]' title='第 004 讲 · 工具链全景：写代码、查问题、验质量' />
+<LineByLine code='import timeit\n\nsetup = &#39;data = list(range(200))&#39;\nloop_stmt = &#39;total = 0&#39; + chr(10) + &#39;for x in data: total += x&#39;\nbuiltin_stmt = &#39;sum(data)&#39;\n\nloop_t = timeit.timeit(loop_stmt, setup=setup, number=2000)\nbuiltin_t = timeit.timeit(builtin_stmt, setup=setup, number=2000)\nprint(&#39;both_positive&#39;, loop_t &gt; 0 and builtin_t &gt; 0)\nprint(&#39;builtin_faster&#39;, builtin_t &lt; loop_t)\nprint(&#39;repeat_len&#39;, len(timeit.repeat(builtin_stmt, setup=setup, number=200, repeat=3)))' :notes='["导入 timeit，它用 perf_counter 计时并临时关闭垃圾回收", "空行，只用于分隔逻辑块，不影响执行结果。", "setup 定义被测数据，timeit 会先执行它再计时 stmt", "loop_stmt 用 chr(10) 拼成两行 Python 循环，示例里不写反斜杠转义", "builtin_stmt 是同一份数据的内置聚合写法", "空行，只用于分隔逻辑块，不影响执行结果。", "测量纯 Python 循环累加 2000 次的耗时", "测量内置 sum 累加 2000 次的耗时", "两个耗时都大于 0，证明测量链路本身可运行", "内置 sum 把循环下沉到 C 层，应当明显快于 Python 层循环", "repeat=3 返回长度为 3 的样本列表，便于取最小值抵消抖动"]' title='第 004 讲 · 工具链全景：写代码、查问题、验质量' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -72,9 +72,9 @@ print('repeat_len', len(timeit.repeat(builtin_stmt, setup=setup, number=200, rep
 | python -m pdb a.py | 交互式调试 | pdb |
 | python -m json.tool | 格式化 JSON | json.tool |
 
-<ConceptDiagram type='compare2' title='第 004 讲 · python -m 与工具入口：为什么 -m 比直接敲命令更可靠' labels='python -m 与工具入口：为什么 -m|把反馈循环压到几秒：timeit、lint、|从 print 到 logging 与 pd' caption='掌握日常开发的高频命令与验证手段' />
+<ConceptDiagram type='compare2' title='第 004 讲 · python -m 与工具入口：为什么 -m 比直接敲命令更可靠' labels='python -m 与工具入口：为什么 -m…|把反馈循环压到几秒：timeit、lint…|从 print 到 logging 与 pd…|IPython / pdb 调试' caption='掌握日常开发的高频命令与验证手段' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 把反馈循环压到几秒：四类验证工具各管一段
@@ -215,7 +215,7 @@ make -n check
 
 <Callout type="warn" title='本讲最容易踩的坑' text='直接用 pip install 或 pytest 而不是 python -m pip / python -m pytest：PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接用 pip install 或 pyte", "body": "PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试", "tip": "统一用 python -m pip、python -m pytest，并用 python -c 打印 sys.executable 核对"}, {"title": "第 2 步：靠 print 排查生成器或异步问题", "body": "print 无级别、无时间戳、无帧上下文，输出顺序在惰性求值与回调里与执行顺序不一致", "tip": "用 logging 配名字与级别，或 python -m pdb 用 up/down 切帧查看变量"}, {"title": "第 3 步：CI 与本地跑不同命令或不同解释器", "body": "本地装了额外包、PYTHONPATH 兜住导入、解释器版本不同，导致本地通过而线上失败", "tip": "把 ruff、black、mypy、pytest 写进同一个 Makefile 目标，CI 用 python -I 与同一份锁文件"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接用 pip install 或 pyte…", "body": "PATH 上的可执行脚本 shebang 指向固定解释器，可能把包装进另一套 site-packages，或用错依赖跑测试", "tip": "统一用 python -m pip、python -m pytest，并用 python -c 打印 sys.executable 核对"}, {"title": "第 2 步：靠 print 排查生成器或异步问题", "body": "print 无级别、无时间戳、无帧上下文，输出顺序在惰性求值与回调里与执行顺序不一致", "tip": "用 logging 配名字与级别，或 python -m pdb 用 up/down 切帧查看变量"}, {"title": "第 3 步：CI 与本地跑不同命令或不同解释器", "body": "本地装了额外包、PYTHONPATH 兜住导入、解释器版本不同，导致本地通过而线上失败", "tip": "把 ruff、black、mypy、pytest 写进同一个 Makefile 目标，CI 用 python -I 与同一份锁文件"}]' />
 
 
 ## 把命令写进 Makefile：练习、自测与速记
@@ -243,3 +243,16 @@ make -n check
 3. logging 三级：Logger 级别（DEBUG=10 到 CRITICAL=50）、Handler 目标、Formatter 格式；%d/%s 惰性插值
 
 [下一讲：学习路线：十三个阶段如何递进](/guide/roadmap)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/004-toolchain.py`
+
+```bash
+python3 examples/lessons/004-toolchain.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/004-toolchain.py) · [全部示例代码索引](/examples/)

@@ -29,11 +29,11 @@ GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一
 
 直接后果有两条：同一时刻只有一个线程执行 Python 字节码（多核 CPU 对纯 Python 计算无效）；但业务层的读—改—写仍然跨多条字节码，切换随时可能发生，所以该加的 `Lock` 一个都不能少。
 
-<ConceptDiagram type='compare2' title='第 054 讲 · GIL 到底锁住了什么：引用计数的历史代价' labels='GIL 到底锁住了什么：引用计数的历史代价|切换机制：5 毫秒、字节码边界与 eval |三条路线的判据：先量化等待，再选模型' caption='能判断何时该用线程、进程还是异步' />
+<ConceptDiagram type='compare2' title='第 054 讲 · GIL 到底锁住了什么：引用计数的历史代价' labels='GIL 到底锁住了什么：引用计数的历史代价|切换机制：5 毫秒、字节码边界与 eval…|三条路线的判据：先量化等待，再选模型|自由线程化路线' caption='能判断何时该用线程、进程还是异步' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因' />
+<Callout type="tip" title='核心心智模型' text='GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因…' />
 
 
 ## 5 毫秒与 eval breaker：切换发生在哪
@@ -64,9 +64,9 @@ dis.dis(bump)
 
 <OutputBox title='原理验证' output='switchinterval 0.005\n  LOAD_GLOBAL 0 (counter)\n  LOAD_CONST 1 (1)\n  BINARY_OP 13 (+=)\n  STORE_GLOBAL 0 (counter)\n  RETURN_CONST 0 (None)' />
 
-<Term word='GIL 保护什么' text='GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因是引用计数：每个 `' />
+<Term word='GIL 保护什么' text='GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因是引用计数：每个…' />
 
-<Term word='切换间隔与字节码边界' text='持有 GIL 的线程不会一直跑到结束。`sys.getswitchinterval()` 默认返回 0.005（5 毫秒），表示解释器每隔这么久设置一次「请交出 GIL」的请求；真正检查请求的点在不同版本有变化：旧版在字节码计数边界检查，CPython 3.10 之后把检查收敛到 eval breaker，主要在后向跳' />
+<Term word='切换间隔与字节码边界' text='持有 GIL 的线程不会一直跑到结束。`sys.getswitchinterval()` 默认返回 0.005（5 毫秒），表示解释器每隔这么久设置一次「请交出 GIL」的请求；真正检查请求的点在不同版本有变化：旧版在字节码计数边界检查，CPython 3.10 之后把检查收敛到 eval breaker，主要在后向跳…' />
 
 
 ### 用字节码看一次自增为什么不是原子的
@@ -104,7 +104,7 @@ dis.dis(bump)
 | 海量长连接 / 推送 | asyncio 单线程事件循环 | 避免线程切换与栈内存，连接数可达数万 | 任何一个同步阻塞调用都会拖垮全loop |
 | 混合负载 | 异步接入 + 进程池分流 | 按阶段把两类任务隔离 | 架构复杂度与跨进程数据传递 |
 
-<FlowTimeline :steps='[{"title": "GIL 到底锁住了什么：引用计数的历史代价", "desc": "GIL（Global Interpreter Lock）是 CPython 里保护解…", "tone": "blue"}, {"title": "切换机制：5 毫秒、字节码边界与 eval breaker", "desc": "持有 GIL 的线程不会一直跑到结束。`sys.getswitchinterval(…", "tone": "purple"}, {"title": "三条路线的判据：先量化等待，再选模型", "desc": "选型的唯一依据是任务在等什么。用 `cProfile` 或简单的 `perf_cou…", "tone": "orange"}, {"title": "工程落地", "desc": "混合负载服务：异步接入 + 进程池分流", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "GIL 到底锁住了什么：引用计数的历史代价", "desc": "GIL（Global Interpreter Lock）是 CPython 里保护解…", "tone": "blue"}, {"title": "切换机制：5 毫秒、字节码边界与 eval br…", "desc": "持有 GIL 的线程不会一直跑到结束。…", "tone": "purple"}, {"title": "三条路线的判据：先量化等待，再选模型", "desc": "选型的唯一依据是任务在等什么。用 `cProfile` 或简单的…", "tone": "orange"}, {"title": "工程落地", "desc": "混合负载服务：异步接入 + 进程池分流", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 实测：CPU 密集下线程为什么更慢
@@ -132,7 +132,7 @@ print('switchinterval', __import__('sys').getswitchinterval())
 
 <OutputBox title='主示例运行结果' output='single 0.052 threads 0.211\nswitchinterval 0.005' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import threading, time\n\ndef cpu(n):\n    s = 0\n    for i in range(n):\n        s += i * i\n    return s\n\nN = 1_000_000\nt0 = time.perf_counter(); cpu(N); single = time.perf_counter() - t0\n\nts = [threading.Thread(target=cpu, args=(N,)) for _ in range(4)]\nt0 = time.perf_counter()\nfor t in ts: t.start()\nfor t in ts: t.join()\nmulti = time.perf_counter() - t0\nprint(&#39;single&#39;, round(single, 3), &#39;threads&#39;, round(multi, 3))\nprint(&#39;switchinterval&#39;, __import__(&#39;sys&#39;).getswitchinterval())' :notes='["导入线程与计时模块", "定义纯 Python 的 CPU 密集函数，循环内全是字节码运算", "累加器初始化为 0，每次迭代都要更新 ob_refcnt", "循环 N 次，GIL 不会在运算期间被释放", "返回累加结果，防止被优化掉", "设定单次工作量，数值越大差异越明显", "测量单线程基线耗时", "创建四个线程，每个执行同样的工作量", "记录多线程起点", "启动四个线程，它们将轮流争抢同一把 GIL", "等待全部结束", "多线程总耗时约为单线程的 4 倍，还多付切换成本", "打印两个耗时，直观看到「并行」没有发生", "读取默认切换间隔 0.005 秒", "阻塞 IO、time.sleep、释放 GIL 的 C 扩展能让线程真正重叠；纯 Python 计算不能"]' title='第 054 讲 · GIL 真相：存在原因、切换与影响边界' />
+<LineByLine code='import threading, time\n\ndef cpu(n):\n    s = 0\n    for i in range(n):\n        s += i * i\n    return s\n\nN = 1_000_000\nt0 = time.perf_counter(); cpu(N); single = time.perf_counter() - t0\n\nts = [threading.Thread(target=cpu, args=(N,)) for _ in range(4)]\nt0 = time.perf_counter()\nfor t in ts: t.start()\nfor t in ts: t.join()\nmulti = time.perf_counter() - t0\nprint(&#39;single&#39;, round(single, 3), &#39;threads&#39;, round(multi, 3))\nprint(&#39;switchinterval&#39;, __import__(&#39;sys&#39;).getswitchinterval())' :notes='["导入线程与计时模块", "空行，只用于分隔逻辑块，不影响执行结果。", "定义纯 Python 的 CPU 密集函数，循环内全是字节码运算", "累加器初始化为 0，每次迭代都要更新 ob_refcnt", "循环 N 次，GIL 不会在运算期间被释放", "返回累加结果，防止被优化掉", "设定单次工作量，数值越大差异越明显", "空行，只用于分隔逻辑块，不影响执行结果。", "测量单线程基线耗时", "创建四个线程，每个执行同样的工作量", "空行，只用于分隔逻辑块，不影响执行结果。", "记录多线程起点", "启动四个线程，它们将轮流争抢同一把 GIL", "等待全部结束", "多线程总耗时约为单线程的 4 倍，还多付切换成本", "打印两个耗时，直观看到「并行」没有发生", "读取默认切换间隔 0.005 秒", "阻塞 IO、time.sleep、释放 GIL 的 C 扩展能让线程真正重叠；纯 Python 计算不能"]' title='第 054 讲 · GIL 真相：存在原因、切换与影响边界' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -220,15 +220,15 @@ with concurrent.futures.ProcessPoolExecutor(2) as pool:
 
 <Callout type="idea" title='落地提示' text='CPU 密集用进程/原生扩展，IO 密集用 asyncio 或线程池，混合型任务拆成两级池' />
 
-<ArchBlueprint title='第 054 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "GIL 到底锁住了什么：引用计数的历史代价", "protocol": "调用 / 请求", "items": [{"label": "GIL 到底锁住了什么：", "sub": "输入与前置", "detail": "GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因", "tone": "blue"}]}, {"name": "核心规则", "note": "切换机制：5 毫秒、字节码边界与 eval breaker", "protocol": "语言 / 运行时协议", "items": [{"label": "切换机制：5 毫秒、字节", "sub": "状态与边界", "detail": "持有 GIL 的线程不会一直跑到结束。`sys.getswitchinterval()` 默认返回 0.005（5 毫秒），表示解释器每隔这么久设置一次「请交出 GIL」的请求；真正检查请求的点在不同版本有变化：旧版在字节码计数边界检查，CPython 3.10 之后把检查收敛到 eval brea", "tone": "purple"}]}, {"name": "落地与收尾", "note": "三条路线的判据：先量化等待，再选模型", "items": [{"label": "三条路线的判据：先量化等", "sub": "工程处理", "detail": "选型的唯一依据是任务在等什么。用 `cProfile` 或简单的 `perf_counter` 分段计时，算出 CPU 时间占比与等待时间占比：CPU 占比高 → `multiprocessing` / `ProcessPoolExecutor`，或把热点交给 C 扩展与 NumPy；等待占比高（网", "tone": "green"}]}]' />
+<ArchBlueprint title='第 054 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "GIL 到底锁住了什么：引用计数的历史代价", "protocol": "调用 / 请求", "items": [{"label": "GIL 到底锁住了什么…", "sub": "输入与前置", "detail": "GIL（Global Interpreter Lock）是 CPython 里保护解释器共享状态的一把互斥锁，包括对象引用计数、模块字典、类型系统等。它不是锁你的业务数据，也不是语言规范的一部分——PyPy、Jython 没有它，CPython 3.13 的自由线程构建还可以关掉它。它存在的直接原因…", "tone": "blue"}]}, {"name": "核心规则", "note": "切换机制：5 毫秒、字节码边界与 eval breaker", "protocol": "语言 / 运行时协议", "items": [{"label": "切换机制：5 毫秒、字节…", "sub": "状态与边界", "detail": "持有 GIL 的线程不会一直跑到结束。`sys.getswitchinterval()` 默认返回 0.005（5 毫秒），表示解释器每隔这么久设置一次「请交出 GIL」的请求；真正检查请求的点在不同版本有变化：旧版在字节码计数边界检查，CPython 3.10 之后把检查收敛到 eval brea…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "三条路线的判据：先量化等待，再选模型", "items": [{"label": "三条路线的判据：先量化等…", "sub": "工程处理", "detail": "选型的唯一依据是任务在等什么。用 `cProfile` 或简单的 `perf_counter` 分段计时，算出 CPU 时间占比与等待时间占比：CPU 占比高 → `multiprocessing` / `ProcessPoolExecutor`，或把热点交给 C 扩展与 NumPy；等待占比高（网…", "tone": "green"}]}]' />
 
-<CheckList id='P054b' title='上线前自检' :items='["能复现并解释「认为有 GIL 就不需要给 counter 加锁」", "能复现并解释「在 async 函数里调用 time.sleep 或同步 r」", "能复现并解释「用多进程传大 DataFrame 却埋怨没加速」", "能用一条命令验证 GIL 保护什么", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P054b' title='上线前自检' :items='["能复现并解释「认为有 GIL 就不需要给 counter 加锁」", "能复现并解释「在 async 函数里调用 time.sleep 或同步 r…」", "能复现并解释「用多进程传大 DataFrame 却埋怨没加速」", "能用一条命令验证 GIL 保护什么", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sys; print(sys.version_info[:2])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 GIL 保护什么 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 GIL 保护什么 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查与排查顺序
@@ -243,7 +243,7 @@ python -c "import sys; print(sys.version_info[:2])"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='认为有 GIL 就不需要给 counter 加锁：GIL 只保证单条字节码原子；counter += 1 编译成 LOAD_GLOBAL / BINARY_OP / STORE_GLOBAL 多条指令，中间被切换就会写回旧值' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：认为有 GIL 就不需要给 counter ", "body": "GIL 只保证单条字节码原子；counter += 1 编译成 LOAD_GLOBAL / BINARY_OP / STORE_GLOBAL 多条指令，中间被切换就会写回旧值", "tip": "用 threading.Lock 包住复合操作，或改用 queue.Queue / collections.Counter 的单次原子调用"}, {"title": "第 2 步：在 async 函数里调用 time.sle", "body": "同步阻塞不释放事件循环，整个 loop 上的所有任务一起停住，超时与心跳同时失效", "tip": "改用 asyncio.sleep / aiohttp / httpx.AsyncClient，或把阻塞调用放进 asyncio.to_thread"}, {"title": "第 3 步：用多进程传大 DataFrame 却埋怨没加", "body": "跨进程参数与返回值要 pickle，序列化与内存拷贝常常超过并行收益", "tip": "用 shared_memory / 内存映射，或把任务粒度调大、在子进程内部完成加载"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：认为有 GIL 就不需要给 counter…", "body": "GIL 只保证单条字节码原子；counter += 1 编译成 LOAD_GLOBAL / BINARY_OP / STORE_GLOBAL 多条指令，中间被切换就会写回旧值", "tip": "用 threading.Lock 包住复合操作，或改用 queue.Queue / collections.Counter 的单次原子调用"}, {"title": "第 2 步：在 async 函数里调用 time.sle…", "body": "同步阻塞不释放事件循环，整个 loop 上的所有任务一起停住，超时与心跳同时失效", "tip": "改用 asyncio.sleep / aiohttp / httpx.AsyncClient，或把阻塞调用放进 asyncio.to_thread"}, {"title": "第 3 步：用多进程传大 DataFrame 却埋怨没加…", "body": "跨进程参数与返回值要 pickle，序列化与内存拷贝常常超过并行收益", "tip": "用 shared_memory / 内存映射，或把任务粒度调大、在子进程内部完成加载"}]' />
 
 
 ## ceval_gil.c 里的 drop_gil / take_gil 握手
@@ -280,7 +280,7 @@ print('active', threading.active_count())
 
 <OutputBox title='扩展示例运行结果' output='gil_enabled True\ninterval 0.005\nimmortal refcount True\nworkers [&#39;w0&#39;, &#39;w1&#39;, &#39;w2&#39;]\nactive 1' />
 
-<LineByLine code='import sys\nimport threading\n\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\nprint(&#39;interval&#39;, sys.getswitchinterval())\nprint(&#39;immortal refcount&#39;, sys.getrefcount(None) &gt; 1000000)\nnames = []\ndef worker():\n    names.append(threading.current_thread().name)\nts = [threading.Thread(target=worker, name=&#39;w%d&#39; % i) for i in range(3)]\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;workers&#39;, sorted(names))\nprint(&#39;active&#39;, threading.active_count())\n' :notes='["3.13 新增 sys._is_gil_enabled，标准构建返回 True", "getswitchinterval 读回 _gil_runtime_state.interval，默认 5 毫秒", "immortal 单例的引用计数是固定大数，与 PEP 703 同源", "子线程各自向同一个 list 追加名字", "排序后打印，消除线程调度顺序带来的不确定性", "多进程要先算 pickle 与内存拷贝成本；asyncio 里任何同步阻塞调用都是全 loop 级故障", "GIL 保护解释器状态（含引用计数），不保护业务数据；它不是语言规范，而是 CPython 实现选择", "默认切换间隔 5ms；3.10+ 由 eval breaker 在循环回边与调用处检查让出请求", "阻塞 IO、time.sleep、释放 GIL 的 C 扩展能让线程真正重叠；纯 Python 计算不能", "counter += 1 是多条字节码，必须加锁；GIL 不等于原子性", "CPU 密集 → 进程/C 扩展；IO 密集 → 线程池/asyncio；混合 → 异步接入 + 进程池分流", "多进程要先算 pickle 与内存拷贝成本；asyncio 里任何同步阻塞调用都是全 loop 级故障", "GIL 保护解释器状态（含引用计数），不保护业务数据；它不是语言规范，而是 CPython 实现选择"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\nimport threading\n\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\nprint(&#39;interval&#39;, sys.getswitchinterval())\nprint(&#39;immortal refcount&#39;, sys.getrefcount(None) &gt; 1000000)\nnames = []\ndef worker():\n    names.append(threading.current_thread().name)\nts = [threading.Thread(target=worker, name=&#39;w%d&#39; % i) for i in range(3)]\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;workers&#39;, sorted(names))\nprint(&#39;active&#39;, threading.active_count())\n' :notes='["3.13 新增 sys._is_gil_enabled，标准构建返回 True", "getswitchinterval 读回 _gil_runtime_state.interval，默认 5 毫秒", "空行，只用于分隔逻辑块，不影响执行结果。", "immortal 单例的引用计数是固定大数，与 PEP 703 同源", "子线程各自向同一个 list 追加名字", "排序后打印，消除线程调度顺序带来的不确定性", "这一行 `names = []` 的作用，可对照上方输出逐项核对。", "这一行 `def worker():` 的作用，可对照上方输出逐项核对。", "这一行 `names.append(threading.current_thread().name)` 的作用，可对照上方输出逐项核对。", "这一行 `ts = [threading.Thread(target=worker, name=&#39;w%d&#39; % i` 的作用，可对照上方输出逐项核对。", "这一行 `for t in ts: t.start()` 的作用，可对照上方输出逐项核对。", "这一行 `for t in ts: t.join()` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;workers&#39;, sorted(names))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;active&#39;, threading.active_count())` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### gil_drop_request 与 cond 超时如何规避 convoy
@@ -393,3 +393,16 @@ print('has sleep', 'sleep' in report)
 3. 阻塞 IO、time.sleep、释放 GIL 的 C 扩展能让线程真正重叠；纯 Python 计算不能
 
 [下一讲：导入系统源码级：finder、loader 与缓存](/core/import-system)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/054-gil.py`
+
+```bash
+python3 examples/lessons/054-gil.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/054-gil.py) · [全部示例代码索引](/examples/)

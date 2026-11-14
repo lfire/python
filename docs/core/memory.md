@@ -66,11 +66,11 @@ print('sizeof empty list', sys.getsizeof([]) > 0)
 
 <OutputBox title='主示例运行结果' output='small int pooled True\nruntime int distinct False\ngetrefcount extra True\ninterned same True\nsizeof empty list True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\n\na = 256\nb = 256\nprint(&#39;small int pooled&#39;, a is b)\nx = int(&#39;257&#39;)\ny = int(&#39;257&#39;)\nprint(&#39;runtime int distinct&#39;, x is y)\nprint(&#39;getrefcount extra&#39;, sys.getrefcount(x) &gt; 0)\ns1 = sys.intern(&#39;cache_key_12345&#39;)\ns2 = sys.intern(&#39;cache_key_12345&#39;)\nprint(&#39;interned same&#39;, s1 is s2)\nprint(&#39;sizeof empty list&#39;, sys.getsizeof([]) &gt; 0)' :notes='["导入 sys，读取引用计数与对象大小", "空行分隔导入与验证代码", "256 落在 CPython 小整数池 -5..256 内", "同名常量还会在 co_consts 里复用", "池内对象被复用，身份比较为 True", "用 int() 在运行时创建大整数，绕开小整数池", "第二次调用生成另一个独立对象", "大整数不池化，is 比较为 False", "getrefcount 含参数临时引用，这里只验证可读取", "sys.intern 把字符串放进全局驻留表", "同一内容再次驻留返回同一对象", "驻留成功，身份比较为 True"]' title='第 052 讲 · 对象内存布局、引用计数与小对象池' />
+<LineByLine code='import sys\n\na = 256\nb = 256\nprint(&#39;small int pooled&#39;, a is b)\nx = int(&#39;257&#39;)\ny = int(&#39;257&#39;)\nprint(&#39;runtime int distinct&#39;, x is y)\nprint(&#39;getrefcount extra&#39;, sys.getrefcount(x) &gt; 0)\ns1 = sys.intern(&#39;cache_key_12345&#39;)\ns2 = sys.intern(&#39;cache_key_12345&#39;)\nprint(&#39;interned same&#39;, s1 is s2)\nprint(&#39;sizeof empty list&#39;, sys.getsizeof([]) &gt; 0)' :notes='["导入 sys，读取引用计数与对象大小", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与验证代码", "256 落在 CPython 小整数池 -5..256 内", "同名常量还会在 co_consts 里复用", "池内对象被复用，身份比较为 True", "用 int() 在运行时创建大整数，绕开小整数池", "第二次调用生成另一个独立对象", "大整数不池化，is 比较为 False", "getrefcount 含参数临时引用，这里只验证可读取", "sys.intern 把字符串放进全局驻留表", "同一内容再次驻留返回同一对象", "驻留成功，身份比较为 True"]' title='第 052 讲 · 对象内存布局、引用计数与小对象池' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有 `PyG' />
+<Callout type="tip" title='核心心智模型' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有…' />
 
 **PyObject 头与常见浅层大小来源（64 位 CPython）**
 
@@ -93,9 +93,9 @@ CPython 把每个值表示为堆上的 `PyObject`：头部 `ob_refcnt` 与 `ob_t
 
 `tracemalloc` 在 PyMem 分配器层记账，能测到容器元素、字符串内容与真实增量，因此「估算内存」必须区分这两层。
 
-<ConceptDiagram type='layers3' title='第 052 讲 · PyObject 头、引用计数与归零即释放' labels='PyObject 头、引用计数与归零即释放|小整数池、字符串驻留与 is 的正确用法|pymalloc、getsizeof 的局限' caption='能估算对象开销并定位内存问题' />
+<ConceptDiagram type='layers3' title='第 052 讲 · PyObject 头、引用计数与归零即释放' labels='PyObject 头、引用计数与归零即释放|小整数池、字符串驻留与 is 的正确用法|pymalloc、getsizeof 的局限…|tracemalloc' caption='能估算对象开销并定位内存问题' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 小整数池、字符串驻留与 is 的正确用法
@@ -178,9 +178,9 @@ pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的
 | pymalloc | ≤512 字节走 arena/pool/block | 释放后内存可能暂不归还 OS |
 | __slots__ / array | 改布局省掉字典或对象开销 | 海量小对象优先 |
 
-<Term word='PyObject 头与 ob_refcnt' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有 `PyGC_Head`（双向' />
+<Term word='PyObject 头与 ob_refcnt' text='CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，64 位下 8 字节）记录引用数，`ob_type` 指针（8 字节）指向类型对象；变长对象（`PyVarObject`）再加 `ob_size`。被 GC 跟踪的容器对象前面还有 `PyGC_Head`（双向…' />
 
-<Term word='引用计数增减时机' text='CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int(&#39;257&#39;)`' />
+<Term word='引用计数增减时机' text='CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int(&#39;257&#39;)`…' />
 
 
 ## 用 tracemalloc 量化 list-of-dict 与 NamedTuple 的真实占用
@@ -223,7 +223,7 @@ tracemalloc.stop()
 python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 PyObject 头与 ob_refcnt 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 PyObject 头与 ob_refcnt 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -235,9 +235,9 @@ python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 sys.getsizeof 估算容器加全部元素的总内存：getsizeof 只返回浅层对象大小加 GC 头，算不到列表/字典里引用的元素对象与 pymalloc 碎片' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 sys.getsizeof 估算容器加全", "body": "getsizeof 只返回浅层对象大小加 GC 头，算不到列表/字典里引用的元素对象与 pymalloc 碎片", "tip": "用 tracemalloc.start() 后 get_traced_memory() 或 take_snapshot().compare_to() 看真实分配与增量"}, {"title": "第 2 步：用 is 比较大整数或运行时字符串", "body": "小整数池、常量合并与字符串驻留会让身份随创建方式变化，结果不稳定", "tip": "值相等一律用 ==；只有判断 None / True / False 单例，或确实要验证对象身份时才用 is"}, {"title": "第 3 步：以为引用计数能回收循环引用", "body": "互相引用的对象 ob_refcnt 至少为 1，归零条件永不满足", "tip": "用 weakref 断开环或由分代 GC 兜底（第 53 讲）；缓存不要长期持有强引用"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 sys.getsizeof 估算容器加全…", "body": "getsizeof 只返回浅层对象大小加 GC 头，算不到列表/字典里引用的元素对象与 pymalloc 碎片", "tip": "用 tracemalloc.start() 后 get_traced_memory() 或 take_snapshot().compare_to() 看真实分配与增量"}, {"title": "第 2 步：用 is 比较大整数或运行时字符串", "body": "小整数池、常量合并与字符串驻留会让身份随创建方式变化，结果不稳定", "tip": "值相等一律用 ==；只有判断 None / True / False 单例，或确实要验证对象身份时才用 is"}, {"title": "第 3 步：以为引用计数能回收循环引用", "body": "互相引用的对象 ob_refcnt 至少为 1，归零条件永不满足", "tip": "用 weakref 断开环或由分代 GC 兜底（第 53 讲）；缓存不要长期持有强引用"}]' />
 
-<FlowTimeline :steps='[{"title": "PyObject 头、引用计数与归零即释放", "desc": "CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（…", "tone": "blue"}, {"title": "小整数池、字符串驻留与 is 的正确用法", "desc": "CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a =…", "tone": "purple"}, {"title": "pymalloc、getsizeof 的局限与 tracemalloc 的正确观测", "desc": "pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的…", "tone": "orange"}, {"title": "工程落地", "desc": "用 tracemalloc 量化 list-of-dict 与 Na", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "PyObject 头、引用计数与归零即释放", "desc": "CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`…", "tone": "blue"}, {"title": "小整数池、字符串驻留与 is 的正确用法", "desc": "CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此…", "tone": "purple"}, {"title": "pymalloc、getsizeof 的局限与…", "desc": "pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的…", "tone": "orange"}, {"title": "工程落地", "desc": "用 tracemalloc 量化 list-of-dict 与 Na…", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## Include/object.h 与 PEP 683 的 immortal 对象
@@ -281,7 +281,7 @@ print('mortal 1000', sys.getrefcount(1000) < 100)
 
 <OutputBox title='扩展示例运行结果' output='list steps [(0, 56), (1, 64), (2, 72), (3, 80), (4, 88), (5, 96)]\ndict empty 64\ndict 6 352\nimmortal None True\nmortal 1000 True' />
 
-<LineByLine code='import sys\n\nprev = None\nsteps = []\nfor n in range(0, 33):\n    size = sys.getsizeof([None] * n)\n    if size != prev:\n        steps.append((n, size))\n        prev = size\nprint(&#39;list steps&#39;, steps[:6])\nprint(&#39;dict empty&#39;, sys.getsizeof({}))\nprint(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6))))\nprint(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 1000000)\nprint(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)\n' :notes='["sys.getsizeof 读的是对象的 __sizeof__ 加 GC 头", "记录上一次尺寸，只在尺寸变化时记一个台阶", "逐个元素数构造 list，观察指针数组何时扩容", "台阶列表把 (元素数, 结构体字节数) 存成元组", "尺寸变化说明分配器换到了更大的块规格", "打印前六个台阶，3.13 上是每加一个指针多 8 字节", "空 dict 的浅层尺寸，不含任何键值对象", "六个键的 dict 尺寸，紧凑表的索引与条目数组都算在内", "immortal 单例的 getrefcount 是一个远大于真实引用的固定数", "运行时新建的大整数仍是普通引用计数，数值很小", "getsizeof 是浅层大小，算不到容器元素；tracemalloc 在分配器层看真实净分配与快照增量", "纯引用计数无法回收循环引用，由分代 GC 兜底；海量小对象用 slots/array 换布局", "PyObject 头含 ob_refcnt 与 ob_type；变长对象加 ob_size，GC 对象加 PyGC_Head"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\n\nprev = None\nsteps = []\nfor n in range(0, 33):\n    size = sys.getsizeof([None] * n)\n    if size != prev:\n        steps.append((n, size))\n        prev = size\nprint(&#39;list steps&#39;, steps[:6])\nprint(&#39;dict empty&#39;, sys.getsizeof({}))\nprint(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6))))\nprint(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 1000000)\nprint(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)\n' :notes='["sys.getsizeof 读的是对象的 __sizeof__ 加 GC 头", "空行，只用于分隔逻辑块，不影响执行结果。", "记录上一次尺寸，只在尺寸变化时记一个台阶", "逐个元素数构造 list，观察指针数组何时扩容", "台阶列表把 (元素数, 结构体字节数) 存成元组", "尺寸变化说明分配器换到了更大的块规格", "打印前六个台阶，3.13 上是每加一个指针多 8 字节", "空 dict 的浅层尺寸，不含任何键值对象", "六个键的 dict 尺寸，紧凑表的索引与条目数组都算在内", "immortal 单例的 getrefcount 是一个远大于真实引用的固定数", "运行时新建的大整数仍是普通引用计数，数值很小", "这一行 `print(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 10000` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 **getsizeof 的观测边界按对象布局分类**
 
@@ -374,3 +374,16 @@ tracemalloc.stop()
 3. 小整数池 -5..256 与字符串驻留是复用优化；值相等用 ==，单例才用 is
 
 [下一讲：分代 GC、循环引用与 weakref](/core/gc)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/052-memory.py`
+
+```bash
+python3 examples/lessons/052-memory.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/052-memory.py) · [全部示例代码索引](/examples/)

@@ -39,7 +39,7 @@ wheel（PEP 427）是已构建分发，本质是一个 ZIP，文件名遵循 `{n
 
 wheel 里含包目录与 `{name}-{version}.dist-info/`：`METADATA`、`WHEEL`、`RECORD`、`entry_points.txt`。
 
-<Callout type="tip" title='核心心智模型' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`、`' />
+<Callout type="tip" title='核心心智模型' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`…' />
 
 PEP 517 把「怎么构建」与「谁来驱动构建」解耦：`pip` 或 `build` 作为前端，先创建隔离虚拟环境、装入 `[build-system].requires` 声明的后端，再调用后端约定的 `build_wheel` / `build_sdist` 钩子。
 
@@ -53,9 +53,9 @@ wheel 产物是符合 PEP 427 的 ZIP，文件名里的 python/abi/platform 三�
 
 sdist 不含这些组织好的产物，安装时必须重跑构建钩子，这正是「只传 sdist 失败率高」的机制原因。
 
-<ConceptDiagram type='flow3' title='第 080 讲 · 构建后端与 PEP 517，sdist vs wheel' labels='构建后端与 PEP 517，sdist vs|元数据、入口点与版本|发布流水线与校验清单' caption='把项目做成别人一行命令能装的东西' />
+<ConceptDiagram type='flow3' title='第 080 讲 · 构建后端与 PEP 517，sdist vs wheel' labels='构建后端与 PEP 517，sdist vs…|元数据、入口点与版本|发布流水线与校验清单' caption='把项目做成别人一行命令能装的东西' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### build-backend 被调用时装了哪些 requires
@@ -140,7 +140,7 @@ with tempfile.TemporaryDirectory() as d:
 
 <OutputBox title='主示例运行结果' output='wheel entries 6\nhas METADATA True\nName field demo_pkg\nRequires-Dist requests&gt;=2.28\nentry point demo_pkg.cli:main' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import zipfile, os, tempfile, email\n\nname = &#39;demo_pkg&#39;\nversion = &#39;1.2.3&#39;\nwheel = name + &#39;-&#39; + version + &#39;-py3-none-any.whl&#39;\ndist_info = name + &#39;-&#39; + version + &#39;.dist-info&#39;\n\nmetadata = chr(10).join([\n    &#39;Metadata-Version: 2.1&#39;,\n    &#39;Name: &#39; + name,\n    &#39;Version: &#39; + version,\n    &#39;Requires-Python: &gt;=3.9&#39;,\n    &#39;Requires-Dist: requests&gt;=2.28&#39;,\n])\nwheel_meta = chr(10).join([\n    &#39;Wheel-Version: 1.0&#39;,\n    &#39;Generator: demo&#39;,\n    &#39;Root-Is-Purelib: true&#39;,\n    &#39;Tag: py3-none-any&#39;,\n])\nentry_points = &#39;[console_scripts]&#39; + chr(10) + &#39;demo-cli = demo_pkg.cli:main&#39; + chr(10)\n\nwith tempfile.TemporaryDirectory() as d:\n    path = os.path.join(d, wheel)\n    with zipfile.ZipFile(path, &#39;w&#39;) as z:\n        z.writestr(dist_info + &#39;/METADATA&#39;, metadata)\n        z.writestr(dist_info + &#39;/WHEEL&#39;, wheel_meta)\n        z.writestr(dist_info + &#39;/entry_points.txt&#39;, entry_points)\n        z.writestr(dist_info + &#39;/RECORD&#39;, &#39;&#39;)\n        z.writestr(name + &#39;/__init__.py&#39;, &#39;VERSION = "1.2.3"&#39; + chr(10))\n        z.writestr(name + &#39;/cli.py&#39;, &#39;def main():&#39; + chr(10) + &#39;    return 0&#39; + chr(10))\n    with zipfile.ZipFile(path) as z:\n        names = z.namelist()\n        print(&#39;wheel entries&#39;, len(names))\n        print(&#39;has METADATA&#39;, dist_info + &#39;/METADATA&#39; in names)\n        msg = email.message_from_bytes(z.read(dist_info + &#39;/METADATA&#39;))\n        print(&#39;Name field&#39;, msg[&#39;Name&#39;])\n        print(&#39;Requires-Dist&#39;, msg[&#39;Requires-Dist&#39;])\n        ep = z.read(dist_info + &#39;/entry_points.txt&#39;).decode()\n        print(&#39;entry point&#39;, ep.split(&#39;=&#39;)[1].strip())' :notes='["导入 zipfile 读写 wheel、os/tempfile 建临时文件、email 解析元数据", "包名与版本号，决定 wheel 与 dist-info 目录名", "wheel 文件名遵循 name-version-python-abi-platform.whl", "dist-info 目录名 = name + &#39;-&#39; + version + &#39;.dist-info&#39;", "用 chr(10) 拼出 METADATA 的 RFC 822 风格头", "声明元数据版本", "Name 字段是分发名", "Version 字段是 PEP 440 版本", "Requires-Python 限定解释器", "Requires-Dist 声明运行依赖", "WHEEL 文件记录 wheel 规范版本与标签", "Generator 标明生成工具", "Root-Is-Purelib: true 表示装到 purelib", "Tag: py3-none-any 表示纯 Python 通用 wheel", "entry_points.txt 里 [console_scripts] 声明 CLI 入口", "临时目录里创建这个 wheel（ZIP）文件", "以写模式打开 ZIP", "写入 METADATA", "写入 WHEEL", "写入 entry_points.txt", "写入 RECORD（此处占位为空）", "写入包 __init__.py", "写入 cli.py 的 main 函数", "以读模式重新打开校验", "列出所有条目数量", "确认 METADATA 存在", "用 email 解析 METADATA 头", "读出 Name 字段", "读出运行依赖 Requires-Dist", "读出并解析 console_scripts 的调用目标", "PEP 518 [build-system] 声明 requires 与 build-backend；PEP 517 前端 python -m build 调 build_wheel/build_sdist", "sdist 是源码、安装要重跑构建；wheel 是 PEP 427 ZIP、安装只解压，二者都要上传且优先保证 wheel", "wheel 名 {name}-{version}-{python}-{abi}-{platform}.whl；py3-none-any 通用，cp313-... 平台相关", ".dist-info 含 METADATA（PEP 621）、WHEEL（Root-Is-Purelib/Tag）、RECORD（path,sha256,size）、entry_points.txt", "[project.scripts] 声明 console_scripts 入口，importlib.metadata 读回；版本遵循 PEP 440 由流水线统一", "发布闸门：build → twine check → zipfile 查条目 → 干净 venv 装 whl 冒烟；鉴权用 Trusted Publishing(OIDC)", "PEP 518 [build-system] 声明 requires 与 build-backend；PEP 517 前端 python -m build 调 build_wheel/build_sdist"]' title='第 080 讲 · 打包与发布：pyproject、wheel 与 PyPI' />
+<LineByLine code='import zipfile, os, tempfile, email\n\nname = &#39;demo_pkg&#39;\nversion = &#39;1.2.3&#39;\nwheel = name + &#39;-&#39; + version + &#39;-py3-none-any.whl&#39;\ndist_info = name + &#39;-&#39; + version + &#39;.dist-info&#39;\n\nmetadata = chr(10).join([\n    &#39;Metadata-Version: 2.1&#39;,\n    &#39;Name: &#39; + name,\n    &#39;Version: &#39; + version,\n    &#39;Requires-Python: &gt;=3.9&#39;,\n    &#39;Requires-Dist: requests&gt;=2.28&#39;,\n])\nwheel_meta = chr(10).join([\n    &#39;Wheel-Version: 1.0&#39;,\n    &#39;Generator: demo&#39;,\n    &#39;Root-Is-Purelib: true&#39;,\n    &#39;Tag: py3-none-any&#39;,\n])\nentry_points = &#39;[console_scripts]&#39; + chr(10) + &#39;demo-cli = demo_pkg.cli:main&#39; + chr(10)\n\nwith tempfile.TemporaryDirectory() as d:\n    path = os.path.join(d, wheel)\n    with zipfile.ZipFile(path, &#39;w&#39;) as z:\n        z.writestr(dist_info + &#39;/METADATA&#39;, metadata)\n        z.writestr(dist_info + &#39;/WHEEL&#39;, wheel_meta)\n        z.writestr(dist_info + &#39;/entry_points.txt&#39;, entry_points)\n        z.writestr(dist_info + &#39;/RECORD&#39;, &#39;&#39;)\n        z.writestr(name + &#39;/__init__.py&#39;, &#39;VERSION = "1.2.3"&#39; + chr(10))\n        z.writestr(name + &#39;/cli.py&#39;, &#39;def main():&#39; + chr(10) + &#39;    return 0&#39; + chr(10))\n    with zipfile.ZipFile(path) as z:\n        names = z.namelist()\n        print(&#39;wheel entries&#39;, len(names))\n        print(&#39;has METADATA&#39;, dist_info + &#39;/METADATA&#39; in names)\n        msg = email.message_from_bytes(z.read(dist_info + &#39;/METADATA&#39;))\n        print(&#39;Name field&#39;, msg[&#39;Name&#39;])\n        print(&#39;Requires-Dist&#39;, msg[&#39;Requires-Dist&#39;])\n        ep = z.read(dist_info + &#39;/entry_points.txt&#39;).decode()\n        print(&#39;entry point&#39;, ep.split(&#39;=&#39;)[1].strip())' :notes='["导入 zipfile 读写 wheel、os/tempfile 建临时文件、email 解析元数据", "空行，只用于分隔逻辑块，不影响执行结果。", "包名与版本号，决定 wheel 与 dist-info 目录名", "wheel 文件名遵循 name-version-python-abi-platform.whl", "dist-info 目录名 = name + &#39;-&#39; + version + &#39;.dist-info&#39;", "用 chr(10) 拼出 METADATA 的 RFC 822 风格头", "空行，只用于分隔逻辑块，不影响执行结果。", "声明元数据版本", "Name 字段是分发名", "Version 字段是 PEP 440 版本", "Requires-Python 限定解释器", "Requires-Dist 声明运行依赖", "WHEEL 文件记录 wheel 规范版本与标签", "Generator 标明生成工具", "Root-Is-Purelib: true 表示装到 purelib", "Tag: py3-none-any 表示纯 Python 通用 wheel", "entry_points.txt 里 [console_scripts] 声明 CLI 入口", "临时目录里创建这个 wheel（ZIP）文件", "以写模式打开 ZIP", "写入 METADATA", "写入 WHEEL", "空行，只用于分隔逻辑块，不影响执行结果。", "写入 entry_points.txt", "写入 RECORD（此处占位为空）", "写入包 __init__.py", "写入 cli.py 的 main 函数", "以读模式重新打开校验", "列出所有条目数量", "确认 METADATA 存在", "用 email 解析 METADATA 头", "读出 Name 字段", "读出运行依赖 Requires-Dist", "读出并解析 console_scripts 的调用目标", "PEP 518 [build-system] 声明 requires 与 build-backend；PEP 517 前端 python -m build 调 build_wheel/build_sdist", "sdist 是源码、安装要重跑构建；wheel 是 PEP 427 ZIP、安装只解压，二者都要上传且优先保证 wheel", "wheel 名 {name}-{version}-{python}-{abi}-{platform}.whl；py3-none-any 通用，cp313-... 平台相关", ".dist-info 含 METADATA（PEP 621）、WHEEL（Root-Is-Purelib/Tag）、RECORD（path,sha256,size）、entry_points.txt", "[project.scripts] 声明 console_scripts 入口，importlib.metadata 读回；版本遵循 PEP 440 由流水线统一", "发布闸门：build → twine check → zipfile 查条目 → 干净 venv 装 whl 冒烟；鉴权用 Trusted Publishing(OIDC)", "PEP 518 [build-system] 声明 requires 与 build-backend；PEP 517 前端 python -m build 调 build_wheel/build_sdist"]' title='第 080 讲 · 打包与发布：pyproject、wheel 与 PyPI' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -182,9 +182,9 @@ with tempfile.TemporaryDirectory() as d:
 | RECORD | path,sha256=&lt;hash>,&lt;size> | 完整性与卸载清单 |
 | entry_points.txt | [console_scripts] mycli = pkg.cli:main | 生成命令行包装脚本 |
 
-<Term word='构建后端与 PEP 517' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`、`flit_core.' />
+<Term word='构建后端与 PEP 517' text='`pyproject.toml` 的 `[build-system]` 来自 PEP 518，用来声明 `requires`（构建依赖，如 `setuptools&gt;=68`）与 `build-backend`（如 `setuptools.build_meta`、`hatchling.build`…' />
 
-<Term word='wheel / sdist 差别' text='PEP 621 把元数据集中在 `[project]`：`name`、`version`、`description`、`readme`、`requires-python`、`license`、`authors`、`dependencies`、`optional-dependencies`、`scripts`、`entr' />
+<Term word='wheel / sdist 差别' text='PEP 621 把元数据集中在 `[project]`：`name`、`version`、`description`、`readme`、`requires-python`、`license`、`authors`、`dependencies`、`optional-dependencies`、`scripts`…' />
 
 
 ## 元数据、console_scripts 入口点与版本
@@ -205,7 +205,7 @@ PEP 621 把元数据集中在 `[project]`：`name`、`version`、`description`�
 python -m pip check
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 构建后端与 PEP 517 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 构建后端与 PEP 517 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 发布流水线步骤与校验清单
@@ -231,7 +231,7 @@ python -m pip check
 | 鉴权 | Trusted Publishing (OIDC) | 避免长期 API token |
 | 版本与回滚 | git tag + CHANGELOG，异常用 yank | 版本由流水线统一，不删已传版本 |
 
-<FlowTimeline :steps='[{"title": "构建后端与 PEP 517，sdist vs wheel", "desc": "`pyproject.toml` 的 `[build-system]` 来自 PEP…", "tone": "blue"}, {"title": "元数据、入口点与版本", "desc": "PEP 621 把元数据集中在 `[project]`：`name`、`versio…", "tone": "purple"}, {"title": "发布流水线与校验清单", "desc": "可靠发布是一条可重复的闸门：用构建前端 `build` 同时产出 wheel 与 s…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前自检：构建 wheel 并核对元数据与 RECORD", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "构建后端与 PEP 517，sdist vs w…", "desc": "`pyproject.toml` 的 `[build-system]` 来自 PEP…", "tone": "blue"}, {"title": "元数据、入口点与版本", "desc": "PEP 621 把元数据集中在 `[project]`：`name`…", "tone": "purple"}, {"title": "发布流水线与校验清单", "desc": "可靠发布是一条可重复的闸门：用构建前端 `build` 同时产出 wheel 与 s…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前自检：构建 wheel 并核对元数据与 RECORD", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 发布前自检：构建 wheel 并核对元数据与 RECORD
@@ -277,7 +277,7 @@ with tempfile.TemporaryDirectory() as d:
 
 <Callout type="idea" title='落地提示' text='用 build + twine check 做发布前校验，入口点声明 CLI，版本号与 tag 由流水线统一管理' />
 
-<CheckList id='P080b' title='上线前自检' :items='["能复现并解释「只上传 sdist 不上传 wheel」", "能复现并解释「把 tests/、本地路径、开发依赖打进 wheel」", "能复现并解释「不声明 console_scripts、版本与 tag 各改」", "能用一条命令验证 构建后端与 PEP 517", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P080b' title='上线前自检' :items='["能复现并解释「只上传 sdist 不上传 wheel」", "能复现并解释「把 tests/、本地路径、开发依赖打进 wheel」", "能复现并解释「不声明 console_scripts、版本与 tag 各改…」", "能用一条命令验证 构建后端与 PEP 517", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -289,7 +289,7 @@ with tempfile.TemporaryDirectory() as d:
 
 <Callout type="warn" title='本讲最容易踩的坑' text='只上传 sdist 不上传 wheel：用户安装时还要跑构建后端，缺编译依赖或后端就失败' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只上传 sdist 不上传 wheel", "body": "用户安装时还要跑构建后端，缺编译依赖或后端就失败", "tip": "python -m build 同时产出 wheel 与 sdist 并一起 twine upload，优先保证 wheel 可装"}, {"title": "第 2 步：把 tests/、本地路径、开发依赖打进 w", "body": "体积膨胀甚至泄漏内部文件，生产环境装上无关内容", "tip": "发布前用 zipfile 检查条目与 RECORD，配 package-data / exclude，把测试放包外"}, {"title": "第 3 步：不声明 console_scripts、版本", "body": "装完没有 CLI 入口、无法回滚、token 泄漏风险高", "tip": "[project.scripts] 声明入口，版本/CHANGELOG/tag 由流水线统一，鉴权改用 Trusted Publishing(OIDC)"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只上传 sdist 不上传 wheel", "body": "用户安装时还要跑构建后端，缺编译依赖或后端就失败", "tip": "python -m build 同时产出 wheel 与 sdist 并一起 twine upload，优先保证 wheel 可装"}, {"title": "第 2 步：把 tests/、本地路径、开发依赖打进 w…", "body": "体积膨胀甚至泄漏内部文件，生产环境装上无关内容", "tip": "发布前用 zipfile 检查条目与 RECORD，配 package-data / exclude，把测试放包外"}, {"title": "第 3 步：不声明 console_scripts、版本…", "body": "装完没有 CLI 入口、无法回滚、token 泄漏风险高", "tip": "[project.scripts] 声明入口，版本/CHANGELOG/tag 由流水线统一，鉴权改用 Trusted Publishing(OIDC)"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -328,3 +328,16 @@ with tempfile.TemporaryDirectory() as d:
 3. wheel 名 &#123;name&#125;-&#123;version&#125;-&#123;python&#125;-&#123;abi&#125;-&#123;platform&#125;.whl；py3-none-any 通用，cp313-... 平台相关
 
 [下一讲：阶段综合：把脚本重构成可发布包](/engineering/capstone)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/080-packaging.py`
+
+```bash
+python3 examples/lessons/080-packaging.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/080-packaging.py) · [全部示例代码索引](/examples/)

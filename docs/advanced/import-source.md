@@ -61,9 +61,9 @@ PathFinder 用 `sys.path_hooks` 与 `path_importer_cache` 缓存目录清单，�
 | 3 | PathFinder | sys.path 上的 .py / 包 / zip / 命名空间包 |
 | 自定义 | 插入 meta_path[0] | 注册表、加密源码、远程模块（需谨慎） |
 
-<ConceptDiagram type='flow4' title='第 116 讲 · _bootstrap 查找链与 sys.modules 缓存' labels='_bootstrap 查找链与 sys.mo|pyc 缓存、命名空间包与循环导入|import hook 的能力、代价与启动期' caption='掌握启动期扩展能力与其代价' />
+<ConceptDiagram type='flow4' title='第 116 讲 · _bootstrap 查找链与 sys.modules 缓存' labels='_bootstrap 查找链与 sys.mo…|pyc 缓存、命名空间包与循环导入|import hook 的能力、代价与启动期…|插件安全模型' caption='掌握启动期扩展能力与其代价' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## find_spec 到 exec_module 的加载时序
@@ -100,7 +100,7 @@ print('origin_is_py', fractions.__spec__.origin.endswith('.py'))
 
 <OutputBox title='主示例运行结果' output='fractions_asked True\ndecimal_asked True\ncached_not_reasked True\norigin_is_py True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, importlib.abc, importlib\n\nclass Spy(importlib.abc.MetaPathFinder):\n    def __init__(self):\n        self.seen = []\n    def find_spec(self, fullname, path=None, target=None):\n        self.seen.append(fullname)\n        return None\n\nspy = Spy()\nsys.meta_path.insert(0, spy)\nimportlib.import_module(&#39;fractions&#39;)\nprint(&#39;fractions_asked&#39;, &#39;fractions&#39; in spy.seen)\nprint(&#39;decimal_asked&#39;, &#39;decimal&#39; in spy.seen)\nimport fractions\nprint(&#39;cached_not_reasked&#39;, spy.seen.count(&#39;fractions&#39;) == 1)\nprint(&#39;origin_is_py&#39;, fractions.__spec__.origin.endswith(&#39;.py&#39;))' :notes='["导入 sys、importlib.abc 与 importlib", "定义一个只观察不接管的 MetaPathFinder", "构造器初始化记录列表", "seen 保存被询问过的模块名", "find_spec 是导入机按 meta_path 顺序调用的钩子，签名含 path 与 target", "把 fullname 记入 seen", "返回 None 表示该 finder 不接管，交给后续 finder", "创建 Spy 实例", "插到 meta_path[0]，先于内建 finder 被询问", "首次导入 fractions 及其依赖", "fractions 本身被询问过", "fractions 依赖 decimal，子导入也会触发询问", "第二次导入同名模块", "sys.modules 命中缓存，不再询问，seen 中只出现一次", "SourceFileLoader 的 spec.origin 指向 .py 文件"]' title='第 116 讲 · 导入系统源码与 import hook' />
+<LineByLine code='import sys, importlib.abc, importlib\n\nclass Spy(importlib.abc.MetaPathFinder):\n    def __init__(self):\n        self.seen = []\n    def find_spec(self, fullname, path=None, target=None):\n        self.seen.append(fullname)\n        return None\n\nspy = Spy()\nsys.meta_path.insert(0, spy)\nimportlib.import_module(&#39;fractions&#39;)\nprint(&#39;fractions_asked&#39;, &#39;fractions&#39; in spy.seen)\nprint(&#39;decimal_asked&#39;, &#39;decimal&#39; in spy.seen)\nimport fractions\nprint(&#39;cached_not_reasked&#39;, spy.seen.count(&#39;fractions&#39;) == 1)\nprint(&#39;origin_is_py&#39;, fractions.__spec__.origin.endswith(&#39;.py&#39;))' :notes='["导入 sys、importlib.abc 与 importlib", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个只观察不接管的 MetaPathFinder", "构造器初始化记录列表", "seen 保存被询问过的模块名", "find_spec 是导入机按 meta_path 顺序调用的钩子，签名含 path 与 target", "把 fullname 记入 seen", "返回 None 表示该 finder 不接管，交给后续 finder", "空行，只用于分隔逻辑块，不影响执行结果。", "创建 Spy 实例", "插到 meta_path[0]，先于内建 finder 被询问", "首次导入 fractions 及其依赖", "fractions 本身被询问过", "fractions 依赖 decimal，子导入也会触发询问", "第二次导入同名模块", "sys.modules 命中缓存，不再询问，seen 中只出现一次", "SourceFileLoader 的 spec.origin 指向 .py 文件"]' title='第 116 讲 · 导入系统源码与 import hook' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -118,9 +118,9 @@ print('origin_is_py', fractions.__spec__.origin.endswith('.py'))
 | has_location | 是否来自文件系统 | True |
 | cached | pyc 缓存路径 | __pycache__/x.cpython-313.pyc |
 
-<Term word='importlib._bootstrap' text='importlib 的启动代码在 `Lib/importlib/_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（由 FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。`import x` 编译成 `IMPORT_NAME` 字节码，运' />
+<Term word='importlib._bootstrap' text='importlib 的启动代码在 `Lib/importlib/_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（由 FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。`import x` 编译成 `IMPORT_NAME` 字节码，运…' />
 
-<Term word='find_spec / exec_module' text='字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc' />
+<Term word='find_spec / exec_module' text='字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc…' />
 
 
 ## pyc 缓存、命名空间包与循环导入
@@ -186,7 +186,7 @@ print('same_origin', spec.origin == spec2.origin)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='包 __init__.py 在顶层连网络或读大文件：导入发生在启动期且多为串行，所有命令都要先付这段代价，Serverless 冷启动被显著拖长' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：包 __init__.py 在顶层连网络或读", "body": "导入发生在启动期且多为串行，所有命令都要先付这段代价，Serverless 冷启动被显著拖长", "tip": "用 -X importtime 找热点，把重依赖延迟到函数内或用 LazyLoader，入口只保留轻量导入"}, {"title": "第 2 步：注册隐式远程 import hook 做自动", "body": "hook 处在每次导入的关键路径，拖慢冷启动，还让静态分析、打包与依赖审计无法看清真实依赖关系", "tip": "改用显式插件注册并校验来源，远程加载必须配签名、白名单、日志与降级路径"}, {"title": "第 3 步：运行时新建插件文件后 import 不到，反", "body": "PathFinder 缓存了 path_importer_cache 与目录清单，新文件不在缓存里", "tip": "新建文件后调 importlib.invalidate_caches()，再导入；循环导入用函数内导入或抽公共依赖修复"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：包 __init__.py 在顶层连网络或读…", "body": "导入发生在启动期且多为串行，所有命令都要先付这段代价，Serverless 冷启动被显著拖长", "tip": "用 -X importtime 找热点，把重依赖延迟到函数内或用 LazyLoader，入口只保留轻量导入"}, {"title": "第 2 步：注册隐式远程 import hook 做自动…", "body": "hook 处在每次导入的关键路径，拖慢冷启动，还让静态分析、打包与依赖审计无法看清真实依赖关系", "tip": "改用显式插件注册并校验来源，远程加载必须配签名、白名单、日志与降级路径"}, {"title": "第 3 步：运行时新建插件文件后 import 不到，反…", "body": "PathFinder 缓存了 path_importer_cache 与目录清单，新文件不在缓存里", "tip": "新建文件后调 importlib.invalidate_caches()，再导入；循环导入用函数内导入或抽公共依赖修复"}]' />
 
 
 ## import hook 的能力、代价与启动期剖析
@@ -237,13 +237,13 @@ sys.meta_path.remove(f)
 
 <Callout type="idea" title='落地提示' text='把重依赖延迟到函数内、用 -X importtime 找热点、插件用显式注册并校验来源' />
 
-<CheckList id='P116b' title='上线前自检' :items='["能复现并解释「包 __init__.py 在顶层连网络或读大文件」", "能复现并解释「注册隐式远程 import hook 做自动补丁」", "能复现并解释「运行时新建插件文件后 import 不到，反复改 sys.p」", "能用一条命令验证 importlib._bootstrap", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P116b' title='上线前自检' :items='["能复现并解释「包 __init__.py 在顶层连网络或读大文件」", "能复现并解释「注册隐式远程 import hook 做自动补丁」", "能复现并解释「运行时新建插件文件后 import 不到，反复改 sys.p…」", "能用一条命令验证 importlib._bootstrap", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `importlib._bootstrap` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `importlib._bootstrap` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -290,3 +290,16 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 <Predict no='116-4' q='Spy finder 下先 importlib.import_module(&#39;fractions&#39;) 再 import fractions，seen 里 fractions 出现几次？' :options='["1 次，第二次命中 sys.modules 缓存", "2 次，每次 import 都询问", "0 次，finder 没被调用"]' answer='0' output='1 次（cached_not_reasked True）' explain='首次导入按 meta_path 询问 finder，之后模块写入 sys.modules；第二次 import 直接返回缓存对象，不再走 finder 链，因此计数保持 1。' />
 
 <FillBlank no='116-5' tpl='___ sys, importlib.abc, importlib' :answers='["import"]' hint='回想本讲关于 importlib._bootstrap 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 _bootstrap 查找链与 sys.modules 缓存 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/116-import-source.py`
+
+```bash
+python3 examples/lessons/116-import-source.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/116-import-source.py) · [全部示例代码索引](/examples/)

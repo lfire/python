@@ -93,11 +93,11 @@ print('after close', log, inspect.getgeneratorstate(c))
 
 <OutputBox title='主示例运行结果' output='state created GEN_CREATED\nprime 0\nsend 10 10 send 5 15\nreturn value 15\nstate closed GEN_CLOSED\nyield from [0, 1, 2, &#39;got: source done&#39;]\nfirst working\nthrow ValueError [&#39;cleaned&#39;]\nafter close [&#39;cleaned&#39;] GEN_CLOSED' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import inspect\n\ndef accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            break\n        total += value\n    return total\n\ng = accumulator()\nprint(&#39;state created&#39;, inspect.getgeneratorstate(g))\nprint(&#39;prime&#39;, next(g))\nprint(&#39;send 10&#39;, g.send(10), &#39;send 5&#39;, g.send(5))\ntry:\n    g.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)\nprint(&#39;state closed&#39;, inspect.getgeneratorstate(g))\n\ndef source(n):\n    for i in range(n):\n        yield i\n    return &#39;source done&#39;\n\ndef wrapper():\n    result = yield from source(3)\n    yield &#39;got: &#39; + result\n\nprint(&#39;yield from&#39;, list(wrapper()))\n\ndef with_cleanup(log):\n    try:\n        yield &#39;working&#39;\n        yield &#39;more&#39;\n    finally:\n        log.append(&#39;cleaned&#39;)\n\nlog = []\nc = with_cleanup(log)\nprint(&#39;first&#39;, next(c))\nprint(&#39;throw&#39;, end=&#39; &#39;)\ntry:\n    c.throw(ValueError(&#39;stop&#39;))\nexcept ValueError as e:\n    print(type(e).__name__, log)\nc.close()\nprint(&#39;after close&#39;, log, inspect.getgeneratorstate(c))' :notes='["导入 inspect 读取生成器状态", "定义一个累加器生成器，演示双向通信", "累加值保存在局部变量里，跨 yield 保留", "循环等待调用方 send 值", "yield 是表达式，send 的值会成为 value", "收到 None 就结束循环", "跳出循环", "把新值累加进 total", "return 的值会成为 StopIteration.value", "调用生成器函数并不执行函数体，只返回 generator", "刚创建时状态是 GEN_CREATED", "next 启动并产出初始 total 0", "send 10 让 value 等于 10、total 变 10 并产出 10", "send None 触发 break，生成器执行 return 后抛 StopIteration", "捕获 StopIteration 并取出 return 值 15", "从异常的 value 属性读到生成器的返回值", "结束后状态变为 GEN_CLOSED", "子生成器产出若干值并 return 一个标记", "循环产出 0 到 n-1", "return 值会被 yield from 接收", "外层生成器用 yield from 委托给子生成器", "子生成器的 return 值成为 yield from 表达式的结果", "再产出一个拼接后的字符串", "list 消费委托链，拿到四个值", "带 finally 清理的生成器", "try 包住 yield，保证异常路径也走 finally", "第一个暂停点", "第二个暂停点", "finally 是唯一可靠的清理位置", "把清理事件写进外部列表便于观测", "构造日志列表", "创建生成器并启动到第一个 yield", "打印第一个产出", "打印 throw 前缀，稍后拼上异常信息", "在暂停处抛 ValueError", "生成器内没有 except，异常向外传播", "finally 已执行，日志里出现 cleaned", "对已结束的生成器 close 是幂等的", "日志只记录一次，状态为 GEN_CLOSED", "close() 抛 GeneratorExit（继承 BaseException）触发 finally；清理只能写进 finally，except Exception 拦不住", "3.7 起 PEP 479 把生成器内 StopIteration 转成 RuntimeError；用 return 结束而非手动 raise", "生成器是 async/await 的基座；持有资源时用 try/finally 并让调用方提前退出时显式 close()"]' title='第 026 讲 · 生成器与 yield：send / throw / close' />
+<LineByLine code='import inspect\n\ndef accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            break\n        total += value\n    return total\n\ng = accumulator()\nprint(&#39;state created&#39;, inspect.getgeneratorstate(g))\nprint(&#39;prime&#39;, next(g))\nprint(&#39;send 10&#39;, g.send(10), &#39;send 5&#39;, g.send(5))\ntry:\n    g.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)\nprint(&#39;state closed&#39;, inspect.getgeneratorstate(g))\n\ndef source(n):\n    for i in range(n):\n        yield i\n    return &#39;source done&#39;\n\ndef wrapper():\n    result = yield from source(3)\n    yield &#39;got: &#39; + result\n\nprint(&#39;yield from&#39;, list(wrapper()))\n\ndef with_cleanup(log):\n    try:\n        yield &#39;working&#39;\n        yield &#39;more&#39;\n    finally:\n        log.append(&#39;cleaned&#39;)\n\nlog = []\nc = with_cleanup(log)\nprint(&#39;first&#39;, next(c))\nprint(&#39;throw&#39;, end=&#39; &#39;)\ntry:\n    c.throw(ValueError(&#39;stop&#39;))\nexcept ValueError as e:\n    print(type(e).__name__, log)\nc.close()\nprint(&#39;after close&#39;, log, inspect.getgeneratorstate(c))' :notes='["导入 inspect 读取生成器状态", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个累加器生成器，演示双向通信", "累加值保存在局部变量里，跨 yield 保留", "循环等待调用方 send 值", "yield 是表达式，send 的值会成为 value", "收到 None 就结束循环", "跳出循环", "把新值累加进 total", "return 的值会成为 StopIteration.value", "空行，只用于分隔逻辑块，不影响执行结果。", "调用生成器函数并不执行函数体，只返回 generator", "刚创建时状态是 GEN_CREATED", "next 启动并产出初始 total 0", "send 10 让 value 等于 10、total 变 10 并产出 10", "send None 触发 break，生成器执行 return 后抛 StopIteration", "捕获 StopIteration 并取出 return 值 15", "从异常的 value 属性读到生成器的返回值", "结束后状态变为 GEN_CLOSED", "子生成器产出若干值并 return 一个标记", "空行，只用于分隔逻辑块，不影响执行结果。", "循环产出 0 到 n-1", "return 值会被 yield from 接收", "外层生成器用 yield from 委托给子生成器", "子生成器的 return 值成为 yield from 表达式的结果", "空行，只用于分隔逻辑块，不影响执行结果。", "再产出一个拼接后的字符串", "list 消费委托链，拿到四个值", "带 finally 清理的生成器", "空行，只用于分隔逻辑块，不影响执行结果。", "try 包住 yield，保证异常路径也走 finally", "空行，只用于分隔逻辑块，不影响执行结果。", "第一个暂停点", "第二个暂停点", "finally 是唯一可靠的清理位置", "把清理事件写进外部列表便于观测", "构造日志列表", "创建生成器并启动到第一个 yield", "空行，只用于分隔逻辑块，不影响执行结果。", "打印第一个产出", "打印 throw 前缀，稍后拼上异常信息", "在暂停处抛 ValueError", "生成器内没有 except，异常向外传播", "finally 已执行，日志里出现 cleaned", "对已结束的生成器 close 是幂等的", "日志只记录一次，状态为 GEN_CLOSED", "close() 抛 GeneratorExit（继承 BaseException）触发 finally；清理只能写进 finally，except Exception 拦不住", "3.7 起 PEP 479 把生成器内 StopIteration 转成 RuntimeError；用 return 结束而非手动 raise", "生成器是 async/await 的基座；持有资源时用 try/finally 并让调用方提前退出时显式 close()"]' title='第 026 讲 · 生成器与 yield：send / throw / close' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 generator 对象：此时 code object 的 `co_flags` 含 `CO_GENERATOR`，`gi_frame` 已经存在但指令指针停在最开头，`inspect.getgeneratorstate` ' />
+<Callout type="tip" title='核心心智模型' text='含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 generator 对象：此时 code object 的 `co_flags` 含 `CO_GENERATOR`，`gi_frame` 已经存在但指令指针停在最开头，`inspect.getgeneratorstate`…' />
 
 
 ## 生成器帧里留住了什么：局部变量与指令指针
@@ -116,9 +116,9 @@ ceval 执行到 `YIELD_VALUE` 时把值交给调用方、把当前帧的指令�
 
 PEP 492 的 `async/await` 正是复用这套帧暂停与恢复机制，只是换成原生协程对象。
 
-<ConceptDiagram type='flow4' title='第 026 讲 · 可暂停的状态机：帧、启动与 send 双向通信' labels='可暂停的状态机：帧、启动与 send 双向通|yield from 委托、throw / |生成器作为协程基座与工程边界' caption='掌握协程的雏形与状态机写法' />
+<ConceptDiagram type='flow4' title='第 026 讲 · 可暂停的状态机：帧、启动与 send 双向通信' labels='可暂停的状态机：帧、启动与 send 双向通…|yield from 委托、throw…|生成器作为协程基座与工程边界|生成器实现管道' caption='掌握协程的雏形与状态机写法' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 生成器对象的方法与状态
@@ -216,7 +216,7 @@ print('contextmanager log', log)
 | 3.7 PEP 479 | 生成器内 StopIteration 转成 RuntimeError | 结束用 return，不手动 raise |
 | 3.6 异步生成器 | async def 里可用 yield | 语义沿袭 send / throw / close |
 
-<FlowTimeline :steps='[{"title": "可暂停的状态机：帧、启动与 send 双向通信", "desc": "含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 gene…", "tone": "blue"}, {"title": "yield from 委托、throw / close 与清理契约", "desc": "`yield from iterable`（PEP 380，3.3+）把产出与接收全…", "tone": "purple"}, {"title": "生成器作为协程基座与工程边界", "desc": "生成器把「执行到一半暂停、保留栈帧、之后再恢复」这件事做成了语言级能力，这正是后来 …", "tone": "orange"}, {"title": "工程落地", "desc": "带清理的可暂停数据管道：send 调阈值、yield from 串联", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "可暂停的状态机：帧、启动与 send 双向通信", "desc": "含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 gene…", "tone": "blue"}, {"title": "yield from 委托、throw / cl…", "desc": "`yield from iterable`（PEP 380，3.3+）把产出与接收全…", "tone": "purple"}, {"title": "生成器作为协程基座与工程边界", "desc": "生成器把「执行到一半暂停、保留栈帧、之后再恢复」这件事做成了语言级能力，这正是后来…", "tone": "orange"}, {"title": "工程落地", "desc": "带清理的可暂停数据管道：send 调阈值、yield from 串联…", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 清理与失效信号：close 时 finally 为什么才可靠
@@ -247,9 +247,9 @@ print('contextmanager log', log)
 
 `inspect.getgeneratorstate` 能给出 `GEN_CREATED` / `GEN_RUNNING` / `GEN_SUSPENDED` / `GEN_CLOSED` 四种状态，是排查「卡在哪一步」的直接工具。
 
-<Term word='生成器函数与 yield' text='含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 generator 对象：此时 code object 的 `co_flags` 含 `CO_GENERATOR`，`gi_frame` 已经存在但指令指针停在最开头，`inspect.getgeneratorstate` 返回 `GEN_CR' />
+<Term word='生成器函数与 yield' text='含 `yield` 的函数是生成器函数，调用它并不执行函数体，而是返回一个 generator 对象：此时 code object 的 `co_flags` 含 `CO_GENERATOR`，`gi_frame` 已经存在但指令指针停在最开头，`inspect.getgeneratorstate` 返回…' />
 
-<Term word='执行暂停与恢复' text='`yield from iterable`（PEP 380，3.3+）把产出与接收全部委托给子迭代器：调用方 `send()` 的值会转发到子生成器，子生成器耗尽后的 return 值成为整个 `yield from` 表达式的结果，`throw` 与 `close` 也会沿委托链传下去，省掉手写转发样板。`g.thr' />
+<Term word='执行暂停与恢复' text='`yield from iterable`（PEP 380，3.3+）把产出与接收全部委托给子迭代器：调用方 `send()` 的值会转发到子生成器，子生成器耗尽后的 return 值成为整个 `yield from` 表达式的结果，`throw` 与 `close` 也会沿委托链传下去，省掉手写转发样板。…' />
 
 
 ## 带清理的可暂停数据管道：send 调阈值、yield from 串联、close 收尾
@@ -293,13 +293,13 @@ print('state', inspect.getgeneratorstate(g))
 
 <Callout type="idea" title='落地提示' text='用 yield from 把多个数据源串成管道，配合 itertools 可以写出声明式的 ETL 流' />
 
-<CheckList id='P026b' title='上线前自检' :items='["能复现并解释「生成器持有文件句柄迟迟不释放」", "能复现并解释「把清理逻辑写在 except Exception 里，clo」", "能复现并解释「用 g.send(5) 启动刚创建的生成器抛 TypeErr」", "能用一条命令验证 生成器函数与 yield", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P026b' title='上线前自检' :items='["能复现并解释「生成器持有文件句柄迟迟不释放」", "能复现并解释「把清理逻辑写在 except Exception 里，clo…」", "能复现并解释「用 g.send(5) 启动刚创建的生成器抛 TypeErr…」", "能用一条命令验证 生成器函数与 yield", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 生成器函数与 yield 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 生成器函数与 yield 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 生成器收尾与自测
@@ -312,7 +312,7 @@ python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))
 | 把清理逻辑写在 except Exception 里，close() 时没执行 | close() 抛的是 GeneratorExit，它继承 BaseException 而不是 Exception | 清理一律放进 finally；except Exception 只处理业务异常，不要承担资源释放 |
 | 用 g.send(5) 启动刚创建的生成器抛 TypeError | 刚创建的生成器还没有任何 yield 表达式在等待接收值 | 先 next(g) 或 g.send(None) 启动到第一个 yield，之后才 send 非 None 值 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：生成器持有文件句柄迟迟不释放", "body": "调用方提前 break 后生成器被挂起，没有 close() 就不会执行 finally", "tip": "在生成器里用 try/finally 写清理；调用方用 contextlib.closing(g) 或显式 g.close() 收尾"}, {"title": "第 2 步：把清理逻辑写在 except Excepti", "body": "close() 抛的是 GeneratorExit，它继承 BaseException 而不是 Exception", "tip": "清理一律放进 finally；except Exception 只处理业务异常，不要承担资源释放"}, {"title": "第 3 步：用 g.send(5) 启动刚创建的生成器抛", "body": "刚创建的生成器还没有任何 yield 表达式在等待接收值", "tip": "先 next(g) 或 g.send(None) 启动到第一个 yield，之后才 send 非 None 值"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：生成器持有文件句柄迟迟不释放", "body": "调用方提前 break 后生成器被挂起，没有 close() 就不会执行 finally", "tip": "在生成器里用 try/finally 写清理；调用方用 contextlib.closing(g) 或显式 g.close() 收尾"}, {"title": "第 2 步：把清理逻辑写在 except Excepti…", "body": "close() 抛的是 GeneratorExit，它继承 BaseException 而不是 Exception", "tip": "清理一律放进 finally；except Exception 只处理业务异常，不要承担资源释放"}, {"title": "第 3 步：用 g.send(5) 启动刚创建的生成器抛…", "body": "刚创建的生成器还没有任何 yield 表达式在等待接收值", "tip": "先 next(g) 或 g.send(None) 启动到第一个 yield，之后才 send 非 None 值"}]' />
 
 <Exercise title='基础：写一个双向通信的累加器生成器' task='实现 accumulator：next 启动产出当前累计值，send(x) 把 x 加进累计并产出新值，send(None) 结束并把总和作为 return 值；用 StopIteration.value 取回。' solution='def accumulator():\n    total = 0\n    while True:\n        v = yield total\n        if v is None:\n            break\n        total += v\n    return total\n\ng = accumulator()\nprint(&#39;prime&#39;, next(g))\nprint(&#39;add 7&#39;, g.send(7), &#39;add 3&#39;, g.send(3))\ntry:\n    g.send(None)\nexcept StopIteration as e:\n    print(&#39;total&#39;, e.value)' explain='yield 是表达式，send 的值成为 v；第一次必须 next 启动。生成器 return 的值写进 StopIteration.value（PEP 380），调用方用 e.value 取回总和 10。' />
 
@@ -348,3 +348,16 @@ python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))
 3. 生成器 return value 写入 StopIteration.value（3.3+），yield from 据此回传并转发 send / throw / close
 
 [下一讲：阶段综合：词频统计与内存版 KV](/containers/capstone)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/026-generator.py`
+
+```bash
+python3 examples/lessons/026-generator.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/026-generator.py) · [全部示例代码索引](/examples/)

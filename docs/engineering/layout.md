@@ -47,11 +47,11 @@ PEP 420（3.3 起）还允许没有 `__init__.py` 的命名空间包：这种包
 | 泄漏内部文件 | tests/ 易被打进 wheel | tests/ 在包外，天然隔离 |
 | 干净环境可重现 | 弱，依赖工作目录 | 强，pip install . 后任意目录可 import |
 
-<Callout type="tip" title='核心心智模型' text='扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`。从项目根运行 pytest 或 `python -m` 时，根目录进入 `sys.path`，`import mypkg` 命中本地源码，哪怕 `pyproject.toml` 里 package-dir 配错、漏' />
+<Callout type="tip" title='核心心智模型' text='扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`。从项目根运行 pytest 或 `python -m` 时，根目录进入 `sys.path`，`import mypkg` 命中本地源码，哪怕 `pyproject.toml` 里 package-dir 配错、漏…' />
 
-<ConceptDiagram type='flow4' title='第 071 讲 · src 布局 vs 扁平布局：sys.path 决定命中谁' labels='src 布局 vs 扁平布局：sys.pat|包内导入规则：显式相对、__init__ 与|配置隔离、文档入口与单仓多包' caption='设计一个不会引发导入歧义的仓库' />
+<ConceptDiagram type='flow4' title='第 071 讲 · src 布局 vs 扁平布局：sys.path 决定命中谁' labels='src 布局 vs 扁平布局：sys.pat…|包内导入规则：显式相对、__init__ 与…|配置隔离、文档入口与单仓多包|单仓多包' caption='设计一个不会引发导入歧义的仓库' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 包内导入规则：显式相对、__init__ 与 __all__
@@ -93,9 +93,9 @@ PEP 420 的命名空间包没有 `__init__.py`，`FileFinder` 返回 origin 为 
 
 src 布局通过「项目根不在 `sys.path`」把这条解析链强制导向安装产物。
 
-<Term word='src 与扁平布局对比' text='扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`。从项目根运行 pytest 或 `python -m` 时，根目录进入 `sys.path`，`import mypkg` 命中本地源码，哪怕 `pyproject.toml` 里 package-dir 配错、漏打了子模块，测试也照' />
+<Term word='src 与扁平布局对比' text='扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`。从项目根运行 pytest 或 `python -m` 时，根目录进入 `sys.path`，`import mypkg` 命中本地源码，哪怕 `pyproject.toml` 里 package-dir 配错、漏打了子模块，测试也照…' />
 
-<Term word='包与模块命名' text='Python 3 默认绝对导入（PEP 328），包内 `import a` 会去 `sys.path` 顶层找 a，而不是同包的 `a.py`；命中不到就报 ModuleNotFoundError: No module named &#39;a&#39;，想引用同包模块必须写 `from . import a` 或 `from .c' />
+<Term word='包与模块命名' text='Python 3 默认绝对导入（PEP 328），包内 `import a` 会去 `sys.path` 顶层找 a，而不是同包的 `a.py`；命中不到就报 ModuleNotFoundError: No module named &#39;a&#39;，想引用同包模块必须写 `from . import a` 或…' />
 
 
 ## 对照：从项目根跑测试与装进 site-packages 跑测试
@@ -125,7 +125,7 @@ with tempfile.TemporaryDirectory() as root:
 
 <OutputBox title='主示例运行结果' output='flat layout resolves to root True\nsrc layout resolves to src True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, os, tempfile\n\nwith tempfile.TemporaryDirectory() as root:\n    flat_pkg = os.path.join(root, &#39;myapp&#39;)\n    src_pkg = os.path.join(root, &#39;src&#39;, &#39;myapp&#39;)\n    os.makedirs(flat_pkg)\n    os.makedirs(src_pkg)\n    for p in (flat_pkg, src_pkg):\n        with open(os.path.join(p, &#39;__init__.py&#39;), &#39;w&#39;) as f:\n            f.write(&#39;ORIGIN = &#39; + repr(os.path.dirname(p)) + chr(10))\n    sys.path.insert(0, root)\n    import myapp\n    print(&#39;flat layout resolves to root&#39;, myapp.ORIGIN == root)\n    del sys.modules[&#39;myapp&#39;]\n    sys.path.remove(root)\n    sys.path.insert(0, os.path.join(root, &#39;src&#39;))\n    import myapp\n    print(&#39;src layout resolves to src&#39;, myapp.ORIGIN == os.path.join(root, &#39;src&#39;))\n    del sys.modules[&#39;myapp&#39;]\n    sys.path.remove(os.path.join(root, &#39;src&#39;))' :notes='["导入 sys 操作模块路径与缓存，os/tempfile 建临时目录", "临时根目录下建两种布局做对照", "扁平布局：包目录直接位于项目根", "src 布局：包目录位于 src/ 之下", "创建扁平包目录", "创建 src 包目录", "给两个包写同一个标记变量，记录父目录", "__init__.py 里 ORIGIN 保存当前包的父路径", "把项目根加入 sys.path，模拟从根目录跑 pytest", "import myapp 会命中根目录里的扁平包", "ORIGIN 等于 root，证明命中本地源码而非安装产物", "删掉 sys.modules 缓存以便重新解析", "移除项目根，清掉扁平布局的搜索路径", "把 src 加入 sys.path，等价于 pip install -e .", "再次 import myapp，这次命中 src 下的包", "ORIGIN 等于 src，证明只有 src 在路径上才命中", "清理模块缓存，保持环境干净", "移除 src 路径，退出临时环境", "src 布局让项目根不在 sys.path，测试跑的是安装产物，提前暴露打包与导出缺陷"]' title='第 071 讲 · 项目结构与 src 布局' />
+<LineByLine code='import sys, os, tempfile\n\nwith tempfile.TemporaryDirectory() as root:\n    flat_pkg = os.path.join(root, &#39;myapp&#39;)\n    src_pkg = os.path.join(root, &#39;src&#39;, &#39;myapp&#39;)\n    os.makedirs(flat_pkg)\n    os.makedirs(src_pkg)\n    for p in (flat_pkg, src_pkg):\n        with open(os.path.join(p, &#39;__init__.py&#39;), &#39;w&#39;) as f:\n            f.write(&#39;ORIGIN = &#39; + repr(os.path.dirname(p)) + chr(10))\n    sys.path.insert(0, root)\n    import myapp\n    print(&#39;flat layout resolves to root&#39;, myapp.ORIGIN == root)\n    del sys.modules[&#39;myapp&#39;]\n    sys.path.remove(root)\n    sys.path.insert(0, os.path.join(root, &#39;src&#39;))\n    import myapp\n    print(&#39;src layout resolves to src&#39;, myapp.ORIGIN == os.path.join(root, &#39;src&#39;))\n    del sys.modules[&#39;myapp&#39;]\n    sys.path.remove(os.path.join(root, &#39;src&#39;))' :notes='["导入 sys 操作模块路径与缓存，os/tempfile 建临时目录", "空行，只用于分隔逻辑块，不影响执行结果。", "临时根目录下建两种布局做对照", "扁平布局：包目录直接位于项目根", "src 布局：包目录位于 src/ 之下", "创建扁平包目录", "创建 src 包目录", "给两个包写同一个标记变量，记录父目录", "__init__.py 里 ORIGIN 保存当前包的父路径", "把项目根加入 sys.path，模拟从根目录跑 pytest", "import myapp 会命中根目录里的扁平包", "ORIGIN 等于 root，证明命中本地源码而非安装产物", "删掉 sys.modules 缓存以便重新解析", "移除项目根，清掉扁平布局的搜索路径", "把 src 加入 sys.path，等价于 pip install -e .", "再次 import myapp，这次命中 src 下的包", "ORIGIN 等于 src，证明只有 src 在路径上才命中", "清理模块缓存，保持环境干净", "移除 src 路径，退出临时环境", "src 布局让项目根不在 sys.path，测试跑的是安装产物，提前暴露打包与导出缺陷"]' title='第 071 讲 · 项目结构与 src 布局' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -195,7 +195,7 @@ with tempfile.TemporaryDirectory() as root:
 | PEP 735 / uv workspace | 单仓多包与依赖组 | 共享代码抽包，不靠相对路径跨包 |
 | pip install -e . | 可编辑安装把 src 映射进环境 | 本地开发与 CI 使用同一份导入路径 |
 
-<FlowTimeline :steps='[{"title": "src 布局 vs 扁平布局：sys.path 决定命中谁", "desc": "扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`…", "tone": "blue"}, {"title": "包内导入规则：显式相对、__init__ 与 __all__", "desc": "Python 3 默认绝对导入（PEP 328），包内 `import a` 会去 …", "tone": "purple"}, {"title": "配置隔离、文档入口与单仓多包", "desc": "配置与密钥必须与代码分离：`pyproject.toml` 放构建与工具配置，`.e…", "tone": "orange"}, {"title": "工程落地", "desc": "生成一个标准 src 布局骨架并验证导入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "src 布局 vs 扁平布局：sys.path…", "desc": "扁平布局把包目录直接放项目根：`project/mypkg/__init__.py`…", "tone": "blue"}, {"title": "包内导入规则：显式相对、__init__ 与 _…", "desc": "Python 3 默认绝对导入（PEP 328），包内 `import a` 会去…", "tone": "purple"}, {"title": "配置隔离、文档入口与单仓多包", "desc": "配置与密钥必须与代码分离：`pyproject.toml` 放构建与工具配置…", "tone": "orange"}, {"title": "工程落地", "desc": "生成一个标准 src 布局骨架并验证导入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 生成一个标准 src 布局骨架并验证导入
@@ -236,7 +236,7 @@ sys.path.remove(str(SRC))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 src 与扁平布局对比 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 src 与扁平布局对比 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -248,7 +248,7 @@ python -m compileall -q . && python -m pytest -q
 
 <Callout type="warn" title='本讲最容易踩的坑' text='包内写 import a 想引用同包模块：Python 3 默认绝对导入，会去 sys.path 顶层找 a，报 ModuleNotFoundError: No module named &#39;a&#39;' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：包内写 import a 想引用同包模块", "body": "Python 3 默认绝对导入，会去 sys.path 顶层找 a，报 ModuleNotFoundError: No module named &#39;a&#39;", "tip": "改 from . import a 或 from .core import add 显式相对导入"}, {"title": "第 2 步：用扁平布局且从项目根跑测试", "body": "根目录进 sys.path[0]，import 命中未打包源码，掩盖打包缺文件与 __init__ 漏导出", "tip": "改 src 布局、配 package-dir = {&#39;&#39; = &#39;src&#39;}，CI 里 pip install . 后从非仓库目录验证"}, {"title": "第 3 步：给包或模块名加连字符、或叫 json.py ", "body": "含连字符无法被 import，与标准库同名会遮蔽内置模块", "tip": "一律小写下划线，避免标准库保留名；公开 API 收敛到 __init__.py 的 __all__"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：包内写 import a 想引用同包模块", "body": "Python 3 默认绝对导入，会去 sys.path 顶层找 a，报 ModuleNotFoundError: No module named &#39;a&#39;", "tip": "改 from . import a 或 from .core import add 显式相对导入"}, {"title": "第 2 步：用扁平布局且从项目根跑测试", "body": "根目录进 sys.path[0]，import 命中未打包源码，掩盖打包缺文件与 __init__ 漏导出", "tip": "改 src 布局、配 package-dir = {&#39;&#39; = &#39;src&#39;}，CI 里 pip install . 后从非仓库目录验证"}, {"title": "第 3 步：给包或模块名加连字符、或叫 json.py…", "body": "含连字符无法被 import，与标准库同名会遮蔽内置模块", "tip": "一律小写下划线，避免标准库保留名；公开 API 收敛到 __init__.py 的 __all__"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -287,3 +287,16 @@ python -m compileall -q . && python -m pytest -q
 3. Python 3 默认绝对导入（PEP 328），包内引用必须 from . import a 显式相对
 
 [下一讲：依赖管理：venv、uv、锁文件与可复现构建](/engineering/deps)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/071-layout.py`
+
+```bash
+python3 examples/lessons/071-layout.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/071-layout.py) · [全部示例代码索引](/examples/)

@@ -29,7 +29,7 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
     <section class="hp-hero">
       <span class="hp-kicker">从零基础到资深 · 交互式中文教程</span>
       <h1>把 <em>Python</em> 学成<br />你真正会用的语言</h1>
-      <p>先别急着写代码。这里把 Python 从第一行 print 铺到解释器源码、高并发架构与生产级工程，做成一条缓坡：13 个阶段、132 讲，不假设你有编程基础，每一讲都会先说清它为什么出现在这里，再慢慢切入主题。</p>
+      <p>先别急着写代码。这里把 Python 从第一行 print 铺到解释器源码、高并发架构与生产级工程，做成一条缓坡：13 个阶段、132 讲，不假设你有编程基础，每一讲都会先说清它为什么出现在这里，再慢慢切入主题。主线之外还有专题补遗与可运行示例代码，按需取用。</p>
       <div class="hp-actions">
         <a class="hp-btn main" :href="withBase('/guide/before-you-start')">🧭 先读「开始之前」</a>
         <a class="hp-btn alt" :href="withBase('/guide/opening')">🚀 直接从第 001 讲开始</a>
@@ -52,6 +52,11 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
         <div class="hp-feature"><div class="ico">🧰</div><h4>需要准备什么</h4><p>一台能联网的电脑、Python 3.10 以上、一个顺手的编辑器。虚拟环境与工具链会在导学阶段带着装。</p></div>
         <div class="hp-feature"><div class="ico">🎛️</div><h4>站点怎么用</h4><p>逐行讲解、先猜输出、随堂检测、可放大概念图、练习与打卡怎么用，都在开篇页里逐项说明。</p></div>
       </div>
+      <p style="margin-top:1.2rem;color:var(--go-muted);font-size:14px;line-height:1.9">
+        主线之外还有两块补充：<a :href="withBase('/topics/')">专题补遗</a>收录回看参考课程后补齐的工程场景，
+        <a :href="withBase('/examples/')">示例代码</a>把每讲与专题的代码整理成仓库里可直接运行的 Python 文件；
+        两者都不占讲次编号，需要时再翻即可。
+      </p>
       <div style="margin-top:1.2rem">
         <Callout type="tip" title="不确定从哪开始？" text="就读「开始之前」。它不教你语法，只回答「这套教程是什么、写给谁、我该怎么用」——把这几件事弄清楚，后面每一讲都会好切入得多。" />
       </div>
@@ -62,7 +67,7 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
       <div class="hp-section-head">
         <div class="eyebrow">How you learn</div>
         <h2>不是把文档搬上来，而是重新设计学习过程</h2>
-        <p>同样的知识点，读一遍和「先猜、再验证、再练一遍」的留存率完全不同。整套课程把交互做成固定节奏：每一讲都按下面的闭环推进，难点另配可放大的图示和逐语句实验台。</p>
+        <p>同样的知识点，读一遍和「先猜、再验证、再练一遍」的留存率完全不同。整套课程把交互做成稳定的学习闭环；但每一讲的章节切法由主题自己决定，132 讲各不相同，不存在统一模具。难点另配可放大的图示和逐语句实验台。</p>
       </div>
       <FlowTimeline :steps="loop" title="一讲的学习闭环" direction="horizontal" />
       <div class="hp-grid" style="margin-top:1.6rem">
@@ -92,7 +97,7 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
       </div>
       <PathMap />
       <div style="margin-top:1.2rem">
-        <ConceptDiagram type="flow4" title="一次学习的完整链路" labels="建立直觉|跑通示例|验证边界|工程落地" caption="每一讲都按这条链路组织" />
+        <ConceptDiagram type="flow4" title="一次学习的完整链路" labels="建立直觉|跑通示例|验证边界|工程落地" caption="学习闭环一致，章节结构各不相同" />
       </div>
       <Callout type="tip" title="已经有经验？" text="可以先做练习与速查里的能力自评，按短板切入对应阶段；每讲顶部都标了难度与前置，侧栏按阶段分组，随时能跳回来补。" />
     </section>

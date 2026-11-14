@@ -59,11 +59,11 @@ description: 设计出稳定、可演进的接口契约
 | 409 / 429 | 状态冲突 / 限流 | 重复创建、超配额 |
 | 500 / 503 | 服务端故障 / 暂不可用 | 未捕获异常、过载 |
 
-<Callout type="tip" title='核心心智模型' text='REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词：`/v1/orders`、`/v1/orders/{id}`。`GET` 只读且安全，`POST` 创建且非幂等，`PUT` 整体替换且幂等（同一请求重复执行结果一致），`PATCH` 部分更新，`DELETE` 删' />
+<Callout type="tip" title='核心心智模型' text='REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词：`/v1/orders`、`/v1/orders/{id}`。`GET` 只读且安全，`POST` 创建且非幂等，`PUT` 整体替换且幂等（同一请求重复执行结果一致），`PATCH` 部分更新，`DELETE` 删…' />
 
-<ConceptDiagram type='flow3' title='第 085 讲 · 资源、动词与状态码语义' labels='资源、动词与状态码语义|幂等键：唯一约束去重与原子性|OpenAPI 与版本策略：让契约可生成、可' caption='设计出稳定、可演进的接口契约' />
+<ConceptDiagram type='flow3' title='第 085 讲 · 资源、动词与状态码语义' labels='资源、动词与状态码语义|幂等键：唯一约束去重与原子性|OpenAPI 与版本策略：让契约可生成、可…' caption='设计出稳定、可演进的接口契约' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 对照：先查再插为什么挡不住并发重复
@@ -91,7 +91,7 @@ print('order count', db.execute('SELECT COUNT(*) FROM orders').fetchone()[0])
 
 <OutputBox title='主示例运行结果' output='(&#39;created&#39;, 1)\n(&#39;replayed&#39;, 1)\norder count 1' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, amount INTEGER)&#39;)\ndb.execute(&#39;CREATE TABLE idempotency (key TEXT PRIMARY KEY, order_id INTEGER)&#39;)\n\ndef place_order(key, amount):\n    row = db.execute(&#39;SELECT order_id FROM idempotency WHERE key=?&#39;, (key,)).fetchone()\n    if row is not None:\n        return (&#39;replayed&#39;, row[0])\n    cur = db.execute(&#39;INSERT INTO orders (amount) VALUES (?)&#39;, (amount,))\n    oid = cur.lastrowid\n    db.execute(&#39;INSERT INTO idempotency (key, order_id) VALUES (?, ?)&#39;, (key, oid))\n    return (&#39;created&#39;, oid)\n\nprint(place_order(&#39;k-100&#39;, 50))\nprint(place_order(&#39;k-100&#39;, 50))\nprint(&#39;order count&#39;, db.execute(&#39;SELECT COUNT(*) FROM orders&#39;).fetchone()[0])' :notes='["导入 sqlite3，用内存库演示去重表，无需外部服务", "建立内存数据库连接", "业务表 orders，自增主键记录真实订单", "幂等表 idempotency，key 设为主键即带唯一约束", "定义下单函数，接收幂等键与金额", "先按幂等键查询去重表", "命中说明是重放，直接返回首次记录的订单号", "重放分支不再插入业务表，避免重复扣款", "未命中才真正插入订单", "lastrowid 取回新订单的自增主键", "把幂等键与订单号写入去重表，供下次重放", "返回创建状态与订单号", "首次请求，插入一条订单", "同一幂等键重放，走到重放分支", "统计订单总数，仍是 1 证明重复请求未产生第二笔"]' title='第 085 讲 · REST API 设计、OpenAPI 与幂等' />
+<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, amount INTEGER)&#39;)\ndb.execute(&#39;CREATE TABLE idempotency (key TEXT PRIMARY KEY, order_id INTEGER)&#39;)\n\ndef place_order(key, amount):\n    row = db.execute(&#39;SELECT order_id FROM idempotency WHERE key=?&#39;, (key,)).fetchone()\n    if row is not None:\n        return (&#39;replayed&#39;, row[0])\n    cur = db.execute(&#39;INSERT INTO orders (amount) VALUES (?)&#39;, (amount,))\n    oid = cur.lastrowid\n    db.execute(&#39;INSERT INTO idempotency (key, order_id) VALUES (?, ?)&#39;, (key, oid))\n    return (&#39;created&#39;, oid)\n\nprint(place_order(&#39;k-100&#39;, 50))\nprint(place_order(&#39;k-100&#39;, 50))\nprint(&#39;order count&#39;, db.execute(&#39;SELECT COUNT(*) FROM orders&#39;).fetchone()[0])' :notes='["导入 sqlite3，用内存库演示去重表，无需外部服务", "空行，只用于分隔逻辑块，不影响执行结果。", "建立内存数据库连接", "业务表 orders，自增主键记录真实订单", "幂等表 idempotency，key 设为主键即带唯一约束", "空行，只用于分隔逻辑块，不影响执行结果。", "定义下单函数，接收幂等键与金额", "先按幂等键查询去重表", "命中说明是重放，直接返回首次记录的订单号", "重放分支不再插入业务表，避免重复扣款", "未命中才真正插入订单", "lastrowid 取回新订单的自增主键", "把幂等键与订单号写入去重表，供下次重放", "返回创建状态与订单号", "空行，只用于分隔逻辑块，不影响执行结果。", "首次请求，插入一条订单", "同一幂等键重放，走到重放分支", "统计订单总数，仍是 1 证明重复请求未产生第二笔"]' title='第 085 讲 · REST API 设计、OpenAPI 与幂等' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -170,7 +170,7 @@ SQLite 里 `cur.rowcount` 为 `1` 表示插入成功、为 `0` 表示键已存�
 
 演进原则是只做加法（新增可选字段、新增端点），破坏性变更才升主版本，并保留旧版本一段时间与弃用头（`Deprecation`、`Sunset`）。契约要有测试守住：把示例请求与响应固定成契约测试，任何字段变更先改文档与测试，再改实现。
 
-<FlowTimeline :steps='[{"title": "资源、动词与状态码语义", "desc": "REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词：…", "tone": "blue"}, {"title": "幂等键：唯一约束去重与原子性", "desc": "所有写操作都应接受 `Idempotency-Key`（或业务流水号）请求头，服务端…", "tone": "purple"}, {"title": "OpenAPI 与版本策略：让契约可生成、可测试", "desc": "`OpenAPI 3.1`（对齐 `JSON Schema 2020-12`）把路径…", "tone": "orange"}, {"title": "工程落地", "desc": "带幂等键、分页与统一错误结构的订单资源", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "资源、动词与状态码语义", "desc": "REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词…", "tone": "blue"}, {"title": "幂等键：唯一约束去重与原子性", "desc": "所有写操作都应接受 `Idempotency-Key`（或业务流水号）请求头，服务端…", "tone": "purple"}, {"title": "OpenAPI 与版本策略：让契约可生成、可测试", "desc": "`OpenAPI 3.1`（对齐 `JSON Schema 2020-12`）把路径…", "tone": "orange"}, {"title": "工程落地", "desc": "带幂等键、分页与统一错误结构的订单资源", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 幂等的本质是把「执行了几次」与「状态改变了几次」解耦。网络超时后调用方无法区分三种情况：请求未达、处理中、响应丢失，因此重试是唯一能收敛的策略；服务端必须让同一逻辑请求无论到达一次还是多次，最终状态都等于到达一次。
 
@@ -182,9 +182,9 @@ SQLite 里 `cur.rowcount` 为 `1` 表示插入成功、为 `0` 表示键已存�
 
 `OpenAPI` 则把这套语义外化成机器可读契约，缓存键、重试策略、客户端生成都从它派生。
 
-<Term word='资源与动词' text='REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词：`/v1/orders`、`/v1/orders/{id}`。`GET` 只读且安全，`POST` 创建且非幂等，`PUT` 整体替换且幂等（同一请求重复执行结果一致），`PATCH` 部分更新，`DELETE` 删除且幂等（重复删同一' />
+<Term word='资源与动词' text='REST 把接口建模成资源 + 标准动词，而不是一堆 RPC 动作。资源用复数名词：`/v1/orders`、`/v1/orders/{id}`。`GET` 只读且安全，`POST` 创建且非幂等，`PUT` 整体替换且幂等（同一请求重复执行结果一致），`PATCH` 部分更新，`DELETE` 删除且幂等（重复删同一…' />
 
-<Term word='状态码语义' text='所有写操作都应接受 `Idempotency-Key`（或业务流水号）请求头，服务端以它为去重依据。最朴素的实现是「先 SELECT 查有没有、没有再 INSERT」，这在并发下会失效：两个请求同时查到空、都去插入，仍产生两条记录。正确做法把判定交给数据库唯一约束：为幂等键建 `PRIMARY KEY` 或 `UNIQ' />
+<Term word='状态码语义' text='所有写操作都应接受 `Idempotency-Key`（或业务流水号）请求头，服务端以它为去重依据。最朴素的实现是「先 SELECT 查有没有、没有再 INSERT」，这在并发下会失效：两个请求同时查到空、都去插入，仍产生两条记录。正确做法把判定交给数据库唯一约束：为幂等键建 `PRIMARY KEY` 或…' />
 
 
 ## 带幂等键、分页与统一错误结构的订单资源
@@ -239,13 +239,13 @@ print(list_orders(after=1, limit=2))
 
 <Callout type="idea" title='落地提示' text='所有写操作接受幂等键，错误响应统一结构，OpenAPI 作为生成客户端与契约测试的唯一来源' />
 
-<CheckList id='P085b' title='上线前自检' :items='["能复现并解释「用『先 SELECT 查幂等键、没有再 INSERT』防重复」", "能复现并解释「重放请求时重新跑了一遍业务逻辑，只是最后没写库」", "能复现并解释「写接口全部返回 200 加 ok=false，监控看不到错误」", "能用一条命令验证 资源与动词", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P085b' title='上线前自检' :items='["能复现并解释「用『先 SELECT 查幂等键、没有再 INSERT』防重复…」", "能复现并解释「重放请求时重新跑了一遍业务逻辑，只是最后没写库」", "能复现并解释「写接口全部返回 200 加 ok=false，监控看不到错误…」", "能用一条命令验证 资源与动词", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 资源与动词 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 资源与动词 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -257,7 +257,7 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用『先 SELECT 查幂等键、没有再 INSERT』防重复，并发下仍产生两笔订单：检查与使用之间有时间窗（TOCTOU），两个请求同时查到空后各自插入' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用『先 SELECT 查幂等键、没有再 IN", "body": "检查与使用之间有时间窗（TOCTOU），两个请求同时查到空后各自插入", "tip": "给幂等键建 UNIQUE/PRIMARY KEY，用 INSERT OR IGNORE 或 ON CONFLICT DO NOTHING 原子占位，再据 rowcount 判断是否首次"}, {"title": "第 2 步：重放请求时重新跑了一遍业务逻辑，只是最后没写", "body": "重放分支仍执行了扣款、发消息等副作用", "tip": "命中去重表后立即返回第一次持久化的响应快照，跳过全部业务副作用"}, {"title": "第 3 步：写接口全部返回 200 加 ok=false", "body": "状态码不参与语义表达，告警与网关重试策略失去依据", "tip": "按语义返回 201/400/401/409/422/429/500，错误响应用统一结构（code、message、request_id）"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用『先 SELECT 查幂等键、没有再 IN…", "body": "检查与使用之间有时间窗（TOCTOU），两个请求同时查到空后各自插入", "tip": "给幂等键建 UNIQUE/PRIMARY KEY，用 INSERT OR IGNORE 或 ON CONFLICT DO NOTHING 原子占位，再据 rowcount 判断是否首次"}, {"title": "第 2 步：重放请求时重新跑了一遍业务逻辑，只是最后没写…", "body": "重放分支仍执行了扣款、发消息等副作用", "tip": "命中去重表后立即返回第一次持久化的响应快照，跳过全部业务副作用"}, {"title": "第 3 步：写接口全部返回 200 加 ok=false…", "body": "状态码不参与语义表达，告警与网关重试策略失去依据", "tip": "按语义返回 201/400/401/409/422/429/500，错误响应用统一结构（code、message、request_id）"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -296,3 +296,16 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 3. 幂等判定交给数据库唯一约束：INSERT OR IGNORE / ON CONFLICT DO NOTHING，看 rowcount
 
 [下一讲：WebSocket / SSE / 长轮询与实时推送](/server/websocket)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/085-rest-api.py`
+
+```bash
+python3 examples/lessons/085-rest-api.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/085-rest-api.py) · [全部示例代码索引](/examples/)

@@ -65,18 +65,18 @@ print('reversed keys', list(reversed(d)))
 
 <OutputBox title='主示例运行结果' output='get 1 None 99\nsetdefault new 3 existing 1\norder [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;] 3\nview live [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;d&#39;] 4 True\nview set ops [&#39;a&#39;, &#39;d&#39;]\nmerge new 20 5 original b 2\nupdate returns None has g True\nunhashable TypeError\nreversed keys [&#39;g&#39;, &#39;f&#39;, &#39;d&#39;, &#39;c&#39;, &#39;b&#39;, &#39;a&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='d = {&#39;a&#39;: 1, &#39;b&#39;: 2}\nprint(&#39;get&#39;, d.get(&#39;a&#39;), d.get(&#39;z&#39;), d.get(&#39;z&#39;, 99))\nprint(&#39;setdefault new&#39;, d.setdefault(&#39;c&#39;, 3), &#39;existing&#39;, d.setdefault(&#39;a&#39;, 100))\nprint(&#39;order&#39;, list(d), d[&#39;c&#39;])\n\nkeys = d.keys()\nvalues = d.values()\nitems = d.items()\nd[&#39;d&#39;] = 4\nprint(&#39;view live&#39;, list(keys), len(values), (&#39;d&#39;, 4) in items)\nprint(&#39;view set ops&#39;, sorted(keys &amp; {&#39;a&#39;, &#39;d&#39;}))\n\nmerged = d | {&#39;b&#39;: 20, &#39;e&#39;: 5}\nprint(&#39;merge new&#39;, merged[&#39;b&#39;], merged[&#39;e&#39;], &#39;original b&#39;, d[&#39;b&#39;])\nd.update({&#39;f&#39;: 6})\nprint(&#39;update returns&#39;, d.update({&#39;g&#39;: 7}), &#39;has g&#39;, &#39;g&#39; in d)\n\nclass NoHash:\n    def __eq__(self, other):\n        return True\ntry:\n    {NoHash(): 1}\nexcept TypeError as e:\n    print(&#39;unhashable&#39;, type(e).__name__)\nprint(&#39;reversed keys&#39;, list(reversed(d)))' :notes='["构造一个按插入顺序保存的 dict", "get 对缺失键返回 None 或给定默认值，不抛 KeyError", "setdefault 对缺失键插入并返回默认值，对已有键返回现值", "list(d) 按插入顺序给出键，c 已被上一步插入", "创建 keys 动态视图，此时只有三个键", "创建 values 动态视图", "创建 items 动态视图，元素是键值对元组", "创建视图之后再插入新键 d", "三个视图立即反映新键，证明它们不是快照", "keys 视图可与 set 做交集运算，用 sorted 保证输出可复现", "用 3.9+ 的 | 生成新字典，右侧的 b 覆盖左侧", "新字典里 b 被覆盖、e 被加入，原字典的 b 仍是 2", "update 是原地方法，返回 None", "再次 update 返回 None，新键 g 已写入原字典", "定义一个只实现 __eq__ 的类", "写 __eq__ 会把 __hash__ 自动置为 None", "恒返回 True 只为演示可哈希性检查", "尝试把该实例用作 dict 键", "触发 TypeError，实例不可哈希", "捕获并打印异常类型", "3.8 起 dict 可 reversed，按键逆序（即插入顺序反过来）", "keys / values / items 是动态视图不是快照；迭代中改变大小抛 RuntimeError"]' title='第 021 讲 · dict：哈希表、视图与插入顺序' />
+<LineByLine code='d = {&#39;a&#39;: 1, &#39;b&#39;: 2}\nprint(&#39;get&#39;, d.get(&#39;a&#39;), d.get(&#39;z&#39;), d.get(&#39;z&#39;, 99))\nprint(&#39;setdefault new&#39;, d.setdefault(&#39;c&#39;, 3), &#39;existing&#39;, d.setdefault(&#39;a&#39;, 100))\nprint(&#39;order&#39;, list(d), d[&#39;c&#39;])\n\nkeys = d.keys()\nvalues = d.values()\nitems = d.items()\nd[&#39;d&#39;] = 4\nprint(&#39;view live&#39;, list(keys), len(values), (&#39;d&#39;, 4) in items)\nprint(&#39;view set ops&#39;, sorted(keys &amp; {&#39;a&#39;, &#39;d&#39;}))\n\nmerged = d | {&#39;b&#39;: 20, &#39;e&#39;: 5}\nprint(&#39;merge new&#39;, merged[&#39;b&#39;], merged[&#39;e&#39;], &#39;original b&#39;, d[&#39;b&#39;])\nd.update({&#39;f&#39;: 6})\nprint(&#39;update returns&#39;, d.update({&#39;g&#39;: 7}), &#39;has g&#39;, &#39;g&#39; in d)\n\nclass NoHash:\n    def __eq__(self, other):\n        return True\ntry:\n    {NoHash(): 1}\nexcept TypeError as e:\n    print(&#39;unhashable&#39;, type(e).__name__)\nprint(&#39;reversed keys&#39;, list(reversed(d)))' :notes='["构造一个按插入顺序保存的 dict", "get 对缺失键返回 None 或给定默认值，不抛 KeyError", "setdefault 对缺失键插入并返回默认值，对已有键返回现值", "list(d) 按插入顺序给出键，c 已被上一步插入", "空行，只用于分隔逻辑块，不影响执行结果。", "创建 keys 动态视图，此时只有三个键", "创建 values 动态视图", "创建 items 动态视图，元素是键值对元组", "创建视图之后再插入新键 d", "三个视图立即反映新键，证明它们不是快照", "keys 视图可与 set 做交集运算，用 sorted 保证输出可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "用 3.9+ 的 | 生成新字典，右侧的 b 覆盖左侧", "新字典里 b 被覆盖、e 被加入，原字典的 b 仍是 2", "update 是原地方法，返回 None", "再次 update 返回 None，新键 g 已写入原字典", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个只实现 __eq__ 的类", "写 __eq__ 会把 __hash__ 自动置为 None", "恒返回 True 只为演示可哈希性检查", "尝试把该实例用作 dict 键", "触发 TypeError，实例不可哈希", "捕获并打印异常类型", "3.8 起 dict 可 reversed，按键逆序（即插入顺序反过来）", "keys / values / items 是动态视图不是快照；迭代中改变大小抛 RuntimeError"]' title='第 021 讲 · dict：哈希表、视图与插入顺序' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。查找时对 key 求 `hash`' />
+<Callout type="tip" title='核心心智模型' text='CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 的下标，下标宽度随表规模取 1 / 2 / 4 字节。查找时对 key 求 `hash`…' />
 
 
 ## 为什么 3.7 起 dict 保证插入顺序
 
-<ConceptDiagram type='flow4' title='第 021 讲 · 紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序' labels='紧凑哈希表：平均 O(1) 从哪来，为什么 |视图、get / setdefault 与合|可哈希契约：__eq__、__hash__ ' caption='理解字典为什么快、什么时候会退化' />
+<ConceptDiagram type='flow4' title='第 021 讲 · 紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序' labels='紧凑哈希表：平均 O(1) 从哪来，为什么…|视图、get / setdefault 与合…|可哈希契约：__eq__、__hash__…|冲突与负载因子' caption='理解字典为什么快、什么时候会退化' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 CPython 3.6 起 `dict` 用紧凑哈希表：一块连续的 entries 数组按插入顺序存 `(hash, key, value)` 三元组，另一块稀疏的 indices 数组只存 entry 下标，下标宽度随表规模取 1 / 2 / 4 字节。
 
@@ -203,7 +203,7 @@ print('hash is int', isinstance(hash('k'), int))
 | dict.fromkeys(keys, []) 改一个值全变 | value 参数是同一个可变对象，被所有键共享 | 用字典推导 &#123;k: [] for k in keys&#125; |
 | 跨进程假设哈希值固定 | str / bytes 哈希带 PYTHONHASHSEED 随机盐 | 不要把 hash() 结果持久化，顺序依赖用 sorted |
 
-<FlowTimeline :steps='[{"title": "紧凑哈希表：平均 O(1) 从哪来，为什么 3.7 起保序", "desc": "CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entr…", "tone": "blue"}, {"title": "视图、get / setdefault 与合并的返回约定", "desc": "`d.keys()`、`d.values()`、`d.items()` 返回的不是 …", "tone": "purple"}, {"title": "可哈希契约：__eq__、__hash__ 与失效信号", "desc": "`dict` 的键必须可哈希：对象要同时提供 `__hash__` 与 `__eq_…", "tone": "orange"}, {"title": "工程落地", "desc": "用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "紧凑哈希表：平均 O(1) 从哪来，为什么 3.…", "desc": "CPython 3.6 起 `dict` 用紧凑哈希表，分两块：一块连续的 entr…", "tone": "blue"}, {"title": "视图、get / setdefault 与合并的…", "desc": "`d.keys()`、`d.values()`、`d.items()` 返回的不是…", "tone": "purple"}, {"title": "可哈希契约：__eq__、__hash__ 与失…", "desc": "`dict` 的键必须可哈希：对象要同时提供 `__hash__` 与…", "tone": "orange"}, {"title": "工程落地", "desc": "用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 用户画像索引：从线性扫描改造成 dict 并保留视图做增量更新
@@ -246,7 +246,7 @@ print('vip ids', [k for k in sorted(new_index) if new_index[k]['tier'] == 'vip']
 python -c "from collections import Counter; print(Counter('a b a'.split()))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 哈希与开放寻址 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 哈希与开放寻址 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 键失效信号与哈希自测
@@ -259,7 +259,7 @@ python -c "from collections import Counter; print(Counter('a b a'.split()))"
 | 把 d.keys() 当快照存起来，之后结果莫名变多 | keys / values / items 返回动态视图，字典增删后立即反映，不是独立列表 | 需要快照用 list(d.keys()) 或 list(d.items())，再传给下游 |
 | 遍历 dict 时插入新键抛 RuntimeError | 迭代过程中改变字典大小会触发 dictionary changed size during iteration | 遍历 list(d) 或 list(d.items()) 的副本，或先把要加的键收集到列表、循环结束后再写 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：自定义类定义了 __eq__ 后无法作 di", "body": "定义 __eq__ 而不定义 __hash__ 时，解释器把 __hash__ 设为 None，实例不可哈希", "tip": "同步实现 __hash__（如 return hash((self.a, self.b))），或改用不可变字段组成的 tuple 作键"}, {"title": "第 2 步：把 d.keys() 当快照存起来，之后结果", "body": "keys / values / items 返回动态视图，字典增删后立即反映，不是独立列表", "tip": "需要快照用 list(d.keys()) 或 list(d.items())，再传给下游"}, {"title": "第 3 步：遍历 dict 时插入新键抛 Runtime", "body": "迭代过程中改变字典大小会触发 dictionary changed size during iteration", "tip": "遍历 list(d) 或 list(d.items()) 的副本，或先把要加的键收集到列表、循环结束后再写"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：自定义类定义了 __eq__ 后无法作 di…", "body": "定义 __eq__ 而不定义 __hash__ 时，解释器把 __hash__ 设为 None，实例不可哈希", "tip": "同步实现 __hash__（如 return hash((self.a, self.b))），或改用不可变字段组成的 tuple 作键"}, {"title": "第 2 步：把 d.keys() 当快照存起来，之后结果…", "body": "keys / values / items 返回动态视图，字典增删后立即反映，不是独立列表", "tip": "需要快照用 list(d.keys()) 或 list(d.items())，再传给下游"}, {"title": "第 3 步：遍历 dict 时插入新键抛 Runtime…", "body": "迭代过程中改变字典大小会触发 dictionary changed size during iteration", "tip": "遍历 list(d) 或 list(d.items()) 的副本，或先把要加的键收集到列表、循环结束后再写"}]' />
 
 <Exercise title='基础：验证视图是动态的不是快照' task='创建 keys 与 items 视图后修改字典，打印视图内容变化；再演示迭代字典时新增键抛 RuntimeError，并给出安全写法。' solution='d = {&#39;a&#39;: 1}\nkeys = d.keys()\nitems = d.items()\nd[&#39;b&#39;] = 2\nprint(&#39;keys live&#39;, list(keys), &#39;items live&#39;, (&#39;b&#39;, 2) in items)\ntry:\n    for k in d:\n        d[k + &#39;x&#39;] = 0\nexcept RuntimeError as e:\n    print(&#39;resize error&#39;, type(e).__name__)\nfor k in list(d):\n    d[k + &#39;y&#39;] = 0\nprint(&#39;safe iteration&#39;, len(d))' explain='keys 与 items 是动态视图，字典变化立即反映；迭代中改变字典大小会抛 RuntimeError，因为哈希表可能已扩容。用 list(d) 或 list(d.items()) 做快照后再写是标准修复。' />
 
@@ -295,3 +295,16 @@ python -c "from collections import Counter; print(Counter('a b a'.split()))"
 3. 3.8 起 dict 与视图支持 reversed()；3.9 PEP 584 加入 | 与 |= 合并
 
 [下一讲：dict 进阶：默认字典、计数器与合并](/containers/dict-advanced)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/021-dict-basics.py`
+
+```bash
+python3 examples/lessons/021-dict-basics.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/021-dict-basics.py) · [全部示例代码索引](/examples/)

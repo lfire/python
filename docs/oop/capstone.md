@@ -51,7 +51,7 @@ description: 用描述符加元类交付一个可扩展的框架雏形
 | SQL 生成 | statement() / params() | 列名、占位符、参数同序 | 列名来自受控映射而非用户字符串 |
 | 持久化 | sqlite3.execute(sql, params) | 参数化写入 | 值与 SQL 文本分离，杜绝注入 |
 
-<Callout type="tip" title='核心心智模型' text='框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过' />
+<Callout type="tip" title='核心心智模型' text='框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过…' />
 
 
 ## 设计取舍：描述符存值、元类收集映射
@@ -66,9 +66,9 @@ description: 用描述符加元类交付一个可扩展的框架雏形
 
 错误聚合用列表收集再 join，本质是把「多个独立校验失败」从控制流异常转成一次数据返回，便于表单类调用方一次展示全部问题。
 
-<ArchBlueprint title='第 048 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "声明式到运行时：描述符与元类各管一段", "protocol": "调用 / 请求", "items": [{"label": "声明式到运行时：描述符与", "sub": "输入与前置", "detail": "框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过", "tone": "blue"}]}, {"name": "核心规则", "note": "校验与错误聚合：把校验固定在 __set__ 上", "protocol": "语言 / 运行时协议", "items": [{"label": "校验与错误聚合：把校验固", "sub": "状态与边界", "detail": "把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之后任何一次赋值都能绕过。数据描述符 `__set__` 在属性查找链里优先级高于实例 `__dict__`，因此是唯一能覆盖「构造 + 事后修改」的入口——`Field.__set__` 里先 `isinstance", "tone": "purple"}]}, {"name": "落地与收尾", "note": "SQL 参数化、可测试性与绕过元类的调试开关", "items": [{"label": "SQL 参数化、可测试性", "sub": "工程处理", "detail": "SQL 必须参数化：sqlite3 用 `?` 占位符，值通过 `execute(sql, params)` 传给 `sqlite3_bind_*` 系列 C API，作为数据与 SQL 文本分离，注入串里的引号、分号只会当成普通字符，不参与语法解析；字符串拼接则让值进入语法树，字段名或值里带一个引", "tone": "green"}]}]' />
+<ArchBlueprint title='第 048 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "声明式到运行时：描述符与元类各管一段", "protocol": "调用 / 请求", "items": [{"label": "声明式到运行时：描述符与…", "sub": "输入与前置", "detail": "框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过…", "tone": "blue"}]}, {"name": "核心规则", "note": "校验与错误聚合：把校验固定在 __set__ 上", "protocol": "语言 / 运行时协议", "items": [{"label": "校验与错误聚合：把校验固…", "sub": "状态与边界", "detail": "把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之后任何一次赋值都能绕过。数据描述符 `__set__` 在属性查找链里优先级高于实例 `__dict__`，因此是唯一能覆盖「构造 + 事后修改」的入口——`Field.__set__` 里先…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "SQL 参数化、可测试性与绕过元类的调试开关", "items": [{"label": "SQL 参数化、可测试性…", "sub": "工程处理", "detail": "SQL 必须参数化：sqlite3 用 `?` 占位符，值通过 `execute(sql, params)` 传给 `sqlite3_bind_*` 系列 C API，作为数据与 SQL 文本分离，注入串里的引号、分号只会当成普通字符，不参与语法解析；字符串拼接则让值进入语法树，字段名或值里带一个引…", "tone": "green"}]}]' />
 
-<FlowTimeline :steps='[{"title": "声明式到运行时：描述符与元类各管一段", "desc": "框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。…", "tone": "blue"}, {"title": "校验与错误聚合：把校验固定在 __set__ 上", "desc": "把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之…", "tone": "purple"}, {"title": "SQL 参数化、可测试性与绕过元类的调试开关", "desc": "SQL 必须参数化：sqlite3 用 `?` 占位符，值通过 `execute(s…", "tone": "orange"}, {"title": "工程落地", "desc": "可运行的最小 ORM：校验、聚合、参数化写入一气呵成", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "声明式到运行时：描述符与元类各管一段", "desc": "框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。…", "tone": "blue"}, {"title": "校验与错误聚合：把校验固定在 __set__ 上", "desc": "把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之…", "tone": "purple"}, {"title": "SQL 参数化、可测试性与绕过元类的调试开关", "desc": "SQL 必须参数化：sqlite3 用 `?` 占位符，值通过…", "tone": "orange"}, {"title": "工程落地", "desc": "可运行的最小 ORM：校验、聚合、参数化写入一气呵成", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 声明式到运行时：描述符与元类各管一段
@@ -124,7 +124,7 @@ except TypeError as e:
 
 <OutputBox title='主示例运行结果' output='fields [&#39;name&#39;, &#39;uid&#39;]\nvalues 1 ann\nrejected uid needs int' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n    def __set__(self, obj, value):\n        if not isinstance(value, self.typ):\n            raise TypeError(self.name + &#39; needs &#39; + self.typ.__name__)\n        obj._data[self.name] = value\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns):\n        cls = super().__new__(mcls, name, bases, ns)\n        cls._fields = tuple(k for k, v in ns.items() if isinstance(v, Field))\n        cls._table = name.lower() + &#39;s&#39;\n        return cls\n\nclass Model(metaclass=Meta):\n    def __init__(self, **kw):\n        object.__setattr__(self, &#39;_data&#39;, {})\n        for k, v in kw.items():\n            setattr(self, k, v)\n\nclass User(Model):\n    uid = Field(int)\n    name = Field(str)\n\nu = User(uid=1, name=&#39;ann&#39;)\nprint(&#39;fields&#39;, sorted(u._fields))\nprint(&#39;values&#39;, u._data[&#39;uid&#39;], u._data[&#39;name&#39;])\ntry:\n    User(uid=&#39;x&#39;, name=&#39;ann&#39;)\nexcept TypeError as e:\n    print(&#39;rejected&#39;, str(e))' :notes='["字段描述符，负责实例级校验与状态写入", "保存期望类型", "校验时按 self.typ 做 isinstance", "__set_name__ 由 type.__new__ 回调", "把属性名记到描述符上，省去重复声明", "__set__ 是数据描述符，构造与事后赋值都经过它", "类型不符时进入失败分支", "抛带字段名的 TypeError，供上层聚合", "校验通过才把值写进统一的 _data 字典", "元类负责把类声明翻译成运行时映射", "__new__ 在类创建期扫描 namespace，顺序可靠", "调用 super().__new__ 拿到真正的类对象", "收集所有 Field，生成字段顺序元组", "按类名推导表名", "必须 return 类对象", "模型基类统一放实例状态与构造逻辑", "接收关键字参数构造", "用 object.__setattr__ 初始化 _data，避开描述符", "逐个字段赋值", "setattr 触发 Field.__set__ 走校验", "声明式模型：类里只写字段", "uid 列要求 int", "name 列要求 str", "构造合法实例", "元类收集的字段名排序后打印", "值统一存在 _data，字段名作键", "尝试用字符串给 int 字段赋值", "User(...) 触发构造期校验", "捕获 __set__ 抛出的 TypeError", "打印校验失败的具体字段与期望类型"]' title='第 048 讲 · 阶段综合：最小 ORM 与校验框架' />
+<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n    def __set__(self, obj, value):\n        if not isinstance(value, self.typ):\n            raise TypeError(self.name + &#39; needs &#39; + self.typ.__name__)\n        obj._data[self.name] = value\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns):\n        cls = super().__new__(mcls, name, bases, ns)\n        cls._fields = tuple(k for k, v in ns.items() if isinstance(v, Field))\n        cls._table = name.lower() + &#39;s&#39;\n        return cls\n\nclass Model(metaclass=Meta):\n    def __init__(self, **kw):\n        object.__setattr__(self, &#39;_data&#39;, {})\n        for k, v in kw.items():\n            setattr(self, k, v)\n\nclass User(Model):\n    uid = Field(int)\n    name = Field(str)\n\nu = User(uid=1, name=&#39;ann&#39;)\nprint(&#39;fields&#39;, sorted(u._fields))\nprint(&#39;values&#39;, u._data[&#39;uid&#39;], u._data[&#39;name&#39;])\ntry:\n    User(uid=&#39;x&#39;, name=&#39;ann&#39;)\nexcept TypeError as e:\n    print(&#39;rejected&#39;, str(e))' :notes='["字段描述符，负责实例级校验与状态写入", "保存期望类型", "校验时按 self.typ 做 isinstance", "__set_name__ 由 type.__new__ 回调", "把属性名记到描述符上，省去重复声明", "__set__ 是数据描述符，构造与事后赋值都经过它", "类型不符时进入失败分支", "抛带字段名的 TypeError，供上层聚合", "校验通过才把值写进统一的 _data 字典", "空行，只用于分隔逻辑块，不影响执行结果。", "元类负责把类声明翻译成运行时映射", "__new__ 在类创建期扫描 namespace，顺序可靠", "调用 super().__new__ 拿到真正的类对象", "收集所有 Field，生成字段顺序元组", "按类名推导表名", "必须 return 类对象", "空行，只用于分隔逻辑块，不影响执行结果。", "模型基类统一放实例状态与构造逻辑", "接收关键字参数构造", "用 object.__setattr__ 初始化 _data，避开描述符", "逐个字段赋值", "setattr 触发 Field.__set__ 走校验", "空行，只用于分隔逻辑块，不影响执行结果。", "声明式模型：类里只写字段", "uid 列要求 int", "name 列要求 str", "空行，只用于分隔逻辑块，不影响执行结果。", "构造合法实例", "元类收集的字段名排序后打印", "值统一存在 _data，字段名作键", "尝试用字符串给 int 字段赋值", "User(...) 触发构造期校验", "捕获 __set__ 抛出的 TypeError", "打印校验失败的具体字段与期望类型"]' title='第 048 讲 · 阶段综合：最小 ORM 与校验框架' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -154,9 +154,9 @@ conn.close()
 
 <OutputBox title='对照写法：先自己猜，再点开' output='safe rows: 2\nunsafe SQL failed as expected' guess="true" />
 
-<Term word='字段描述符' text='框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过它，校验与状态写入可' />
+<Term word='字段描述符' text='框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过它，校验与状态写入可…' />
 
-<Term word='元类收集映射' text='把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之后任何一次赋值都能绕过。数据描述符 `__set__` 在属性查找链里优先级高于实例 `__dict__`，因此是唯一能覆盖「构造 + 事后修改」的入口——`Field.__set__` 里先 `isinstance(value, se' />
+<Term word='元类收集映射' text='把类型校验写进 `__init__` 是最常见的漏洞：它只覆盖构造时传入的值，构造之后任何一次赋值都能绕过。数据描述符 `__set__` 在属性查找链里优先级高于实例 `__dict__`，因此是唯一能覆盖「构造 + 事后修改」的入口——`Field.__set__` 里先…' />
 
 
 ## 校验与错误聚合：把校验固定在 __set__ 上
@@ -196,11 +196,11 @@ print('mro:', [c.__name__ for c in inspect.getmro(Form)])
 
 ## 再落地元类在 __new__ 里按声明顺序收集列
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用字符串拼接生成 INSERT 语句", "body": "值进入 SQL 语法文本，引号或分号会破坏语句甚至追加语句，形成注入面", "tip": "列名取自受控 _fields，值一律用 ? 占位符配 execute(sql, params) 绑定"}, {"title": "第 2 步：把类型校验只写在 __init__ 里", "body": "对象创建后 obj.uid = &#39;x&#39; 直接写进 __dict__，绕过校验，脏数据落库", "tip": "用数据描述符 Field.__set__ 做校验，构造与事后赋值共用同一入口"}, {"title": "第 3 步：在元类 __init__ 里收集字段导致列顺", "body": "__set_name__ 与 __init_subclass__ 已在 __new__ 内跑过，__init__ 拿到的是改动后的类且无法改 bases", "tip": "字段扫描放 __new__ 的 ns.items()，列名、占位符、params 都从同一个 _fields 按序生成"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用字符串拼接生成 INSERT 语句", "body": "值进入 SQL 语法文本，引号或分号会破坏语句甚至追加语句，形成注入面", "tip": "列名取自受控 _fields，值一律用 ? 占位符配 execute(sql, params) 绑定"}, {"title": "第 2 步：把类型校验只写在 __init__ 里", "body": "对象创建后 obj.uid = &#39;x&#39; 直接写进 __dict__，绕过校验，脏数据落库", "tip": "用数据描述符 Field.__set__ 做校验，构造与事后赋值共用同一入口"}, {"title": "第 3 步：在元类 __init__ 里收集字段导致列顺…", "body": "__set_name__ 与 __init_subclass__ 已在 __new__ 内跑过，__init__ 拿到的是改动后的类且无法改 bases", "tip": "字段扫描放 __new__ 的 ns.items()，列名、占位符、params 都从同一个 _fields 按序生成"}]' />
 
-<ConceptDiagram type='hub4' title='第 048 讲 · 声明式到运行时：描述符与元类各管一段' labels='声明式到运行时：描述符与元类各管一段|校验与错误聚合：把校验固定在 __set__|SQL 参数化、可测试性与绕过元类的调试开关' caption='用描述符加元类交付一个可扩展的框架雏形' />
+<ConceptDiagram type='hub4' title='第 048 讲 · 声明式到运行时：描述符与元类各管一段' labels='声明式到运行时：描述符与元类各管一段|校验与错误聚合：把校验固定在 __set__…|SQL 参数化、可测试性与绕过元类的调试开关|测试策略' caption='用描述符加元类交付一个可扩展的框架雏形' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## SQL 参数化、可测试性与绕过元类的调试开关
@@ -292,7 +292,7 @@ conn.close()
 python -c "print(type('Demo', (), {'x':1}).__mro__)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 字段描述符 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 字段描述符 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 字符串拼 INSERT、只在 __init__ 校验、列顺序错乱的故障定位
@@ -371,7 +371,7 @@ print('age type', fields['age'].typ.__name__)
 
 <OutputBox title='扩展示例运行结果' output='fields [&#39;uid&#39;, &#39;name&#39;, &#39;age&#39;]\nuid name uid\nage type int' />
 
-<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n\ndef collect(cls):\n    out = {}\n    for base in reversed(cls.__mro__):\n        for k, v in vars(base).items():\n            if isinstance(v, Field):\n                out[k] = v\n            elif k in out:\n                del out[k]\n    return out\n\nclass Base:\n    uid = Field(int)\n    name = Field(str)\n\nclass User(Base):\n    name = Field(str)\n    age = Field(int)\n\nfields = collect(User)\nprint(&#39;fields&#39;, list(fields))\nprint(&#39;uid name&#39;, fields[&#39;uid&#39;].name)\nprint(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)\n' :notes='["Field 是数据描述符，__set_name__ 让字段记住自己在类里的名字", "typ 保存字段声明的类型，供校验与列类型映射使用", "把类型挂到实例上", "type_new_set_names 会在类创建期回调这个方法", "把 owner 与属性名记下来，避免开发者重复写字段名", "沿 MRO 反向遍历，基类字段先入表、子类覆盖后入表", "用有序 dict 保住字段声明顺序，它直接决定 CREATE TABLE 的列序", "reversed(__mro__) 保证最远的祖先先被收集", "vars(base) 只读该类自身的 __dict__，不混入继承来的属性", "子类同名 Field 覆盖基类字段，保留子类的类型", "子类若用非 Field 的同名属性覆盖，应从字段表里删除", "dataclasses 的 _get_field 也用同样的删除逻辑处理字段遮蔽", "返回按声明顺序排列的字段映射", "读回字段顺序，验证 uid 与 name 来自基类、age 来自子类", "校验固定在 __set__，错误聚合用列表收集后一次抛 ValueError，别遇错即抛", "列名来自受控 _fields；占位符数、params 长度、列顺序三者必须一致", "SQL 一律 ? 占位符配 execute(sql, params)，值与语法文本分离，杜绝拼接注入", "int 字段要显式排除 bool；保持框架小而透明，每阶段可单测并留绕过元类的调试开关", "描述符管实例级：__set__ 是数据描述符，覆盖构造与事后赋值；__set_name__ 记住列名", "元类管类级：__new__ 扫描 ns 收集 Field 并生成映射，顺序在此最可靠", "校验固定在 __set__，错误聚合用列表收集后一次抛 ValueError，别遇错即抛", "列名来自受控 _fields；占位符数、params 长度、列顺序三者必须一致", "SQL 一律 ? 占位符配 execute(sql, params)，值与语法文本分离，杜绝拼接注入", "int 字段要显式排除 bool；保持框架小而透明，每阶段可单测并留绕过元类的调试开关"]' title='扩展示例逐行讲解' />
+<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n\ndef collect(cls):\n    out = {}\n    for base in reversed(cls.__mro__):\n        for k, v in vars(base).items():\n            if isinstance(v, Field):\n                out[k] = v\n            elif k in out:\n                del out[k]\n    return out\n\nclass Base:\n    uid = Field(int)\n    name = Field(str)\n\nclass User(Base):\n    name = Field(str)\n    age = Field(int)\n\nfields = collect(User)\nprint(&#39;fields&#39;, list(fields))\nprint(&#39;uid name&#39;, fields[&#39;uid&#39;].name)\nprint(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)\n' :notes='["Field 是数据描述符，__set_name__ 让字段记住自己在类里的名字", "typ 保存字段声明的类型，供校验与列类型映射使用", "把类型挂到实例上", "type_new_set_names 会在类创建期回调这个方法", "把 owner 与属性名记下来，避免开发者重复写字段名", "空行，只用于分隔逻辑块，不影响执行结果。", "沿 MRO 反向遍历，基类字段先入表、子类覆盖后入表", "用有序 dict 保住字段声明顺序，它直接决定 CREATE TABLE 的列序", "reversed(__mro__) 保证最远的祖先先被收集", "vars(base) 只读该类自身的 __dict__，不混入继承来的属性", "子类同名 Field 覆盖基类字段，保留子类的类型", "子类若用非 Field 的同名属性覆盖，应从字段表里删除", "dataclasses 的 _get_field 也用同样的删除逻辑处理字段遮蔽", "返回按声明顺序排列的字段映射", "读回字段顺序，验证 uid 与 name 来自基类、age 来自子类", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class Base:` 的作用，可对照上方输出逐项核对。", "这一行 `uid = Field(int)` 的作用，可对照上方输出逐项核对。", "这一行 `name = Field(str)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class User(Base):` 的作用，可对照上方输出逐项核对。", "这一行 `name = Field(str)` 的作用，可对照上方输出逐项核对。", "这一行 `age = Field(int)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `fields = collect(User)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;fields&#39;, list(fields))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;uid name&#39;, fields[&#39;uid&#39;].name)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 <Term word='sqlite3_stmt' text='sqlite3_prepare_v2 把 SQL 文本编译出的 SQLite 虚拟机语句对象，占位符槽位在 prepare 阶段就固定；pysqlite 用 Connection.cached_statements 这份 LRU 缓存它，因此拼接式 SQL 因文本各不相同而永远无法命中缓存，每次都要重新编译。' />
 
@@ -470,3 +470,16 @@ print('rows', con.execute('SELECT count(*) FROM users').fetchone()[0])
 3. 校验固定在 __set__，错误聚合用列表收集后一次抛 ValueError，别遇错即抛
 
 [下一讲：CPython 编译流程：AST 到字节码](/core/compile-pipeline)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/048-capstone.py`
+
+```bash
+python3 examples/lessons/048-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/048-capstone.py) · [全部示例代码索引](/examples/)

@@ -70,11 +70,11 @@ pytest 的 `AssertionRewritingHook` 是 `sys.meta_path` 上的一个 finder：�
 
 `coverage.py` 借助 `sys.settrace`（3.12 起可切到 `sys.monitoring`）记录被执行的行与弧，分支覆盖进一步记录跳转是否两边都走到。
 
-<Callout type="tip" title='核心心智模型' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert ' />
+<Callout type="tip" title='核心心智模型' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert…' />
 
-<ConceptDiagram type='flow3' title='第 075 讲 · 断言重写与收集规则' labels='断言重写与收集规则|fixture 作用域、yield 清理与内|参数化、mark、测试金字塔与覆盖率' caption='写出快、稳、能定位问题的测试' />
+<ConceptDiagram type='flow3' title='第 075 讲 · 断言重写与收集规则' labels='断言重写与收集规则|fixture 作用域、yield 清理与内…|参数化、mark、测试金字塔与覆盖率' caption='写出快、稳、能定位问题的测试' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 对照：裸 assert 与重写后的失败信息
@@ -111,7 +111,7 @@ print('cleaned up', not os.path.exists(p))
 
 <OutputBox title='主示例运行结果' output='cases 4\nall passed True\nfixture content seed\ncleaned up True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import tempfile, os\nfrom contextlib import contextmanager\n\nCASES = [(2, 3, 5), (0, 0, 0), (-1, 1, 0), (10, -3, 7)]\n\ndef add(a, b):\n    return a + b\n\nresults = []\nfor a, b, expected in CASES:\n    got = add(a, b)\n    results.append((a, b, got == expected))\nprint(&#39;cases&#39;, len(results))\nprint(&#39;all passed&#39;, all(ok for *_, ok in results))\n\n@contextmanager\ndef tmp_file():\n    with tempfile.TemporaryDirectory() as d:\n        path = os.path.join(d, &#39;data.txt&#39;)\n        with open(path, &#39;w&#39;) as f:\n            f.write(&#39;seed&#39;)\n        yield path\n\nwith tmp_file() as p:\n    with open(p) as f:\n        print(&#39;fixture content&#39;, f.read())\nprint(&#39;cleaned up&#39;, not os.path.exists(p))' :notes='["导入 tempfile/os 建临时资源，contextmanager 做 teardown", "从 contextlib 取 contextmanager 装饰生成器式 fixture", "CASES 是参数化用例：每组含两个输入与期望", "定义被测公开函数 add", "返回两数之和，行为简单可精确断言", "results 收集每个用例的通过布尔", "逐组驱动，等价于 parametrize 展开", "计算实际值", "把 (输入, 输入, 是否相等) 记入结果", "打印用例数量，确认 4 组都被跑到", "用星号解包取最后的布尔，校验全部通过", "定义 yield 式 fixture：setup 产出、退出清理", "TemporaryDirectory 在退出时自动删目录", "在临时目录里准备一个文件路径", "写入 seed 作为 fixture 状态", "yield 把路径交给用例，暂停在此", "with 块内使用 fixture 提供的资源", "读出并打印 fixture 内容", "退出 with 后目录已被清理，路径不存在", "compile(optimize=1) / python -O 删除所有 assert，测试绿灯会失真，绝不能开 -O", "fixture 作用域 function→session 复用递增，yield fixture 保证失败也 teardown，finalize 逆序", "tmp_path（function）、tmp_path_factory（session）、monkeypatch（自动还原）是内置替身"]' title='第 075 讲 · 单元测试：pytest、fixture 与参数化' />
+<LineByLine code='import tempfile, os\nfrom contextlib import contextmanager\n\nCASES = [(2, 3, 5), (0, 0, 0), (-1, 1, 0), (10, -3, 7)]\n\ndef add(a, b):\n    return a + b\n\nresults = []\nfor a, b, expected in CASES:\n    got = add(a, b)\n    results.append((a, b, got == expected))\nprint(&#39;cases&#39;, len(results))\nprint(&#39;all passed&#39;, all(ok for *_, ok in results))\n\n@contextmanager\ndef tmp_file():\n    with tempfile.TemporaryDirectory() as d:\n        path = os.path.join(d, &#39;data.txt&#39;)\n        with open(path, &#39;w&#39;) as f:\n            f.write(&#39;seed&#39;)\n        yield path\n\nwith tmp_file() as p:\n    with open(p) as f:\n        print(&#39;fixture content&#39;, f.read())\nprint(&#39;cleaned up&#39;, not os.path.exists(p))' :notes='["导入 tempfile/os 建临时资源，contextmanager 做 teardown", "从 contextlib 取 contextmanager 装饰生成器式 fixture", "空行，只用于分隔逻辑块，不影响执行结果。", "CASES 是参数化用例：每组含两个输入与期望", "空行，只用于分隔逻辑块，不影响执行结果。", "定义被测公开函数 add", "返回两数之和，行为简单可精确断言", "空行，只用于分隔逻辑块，不影响执行结果。", "results 收集每个用例的通过布尔", "逐组驱动，等价于 parametrize 展开", "计算实际值", "把 (输入, 输入, 是否相等) 记入结果", "打印用例数量，确认 4 组都被跑到", "用星号解包取最后的布尔，校验全部通过", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 yield 式 fixture：setup 产出、退出清理", "TemporaryDirectory 在退出时自动删目录", "在临时目录里准备一个文件路径", "写入 seed 作为 fixture 状态", "yield 把路径交给用例，暂停在此", "with 块内使用 fixture 提供的资源", "读出并打印 fixture 内容", "空行，只用于分隔逻辑块，不影响执行结果。", "退出 with 后目录已被清理，路径不存在", "compile(optimize=1) / python -O 删除所有 assert，测试绿灯会失真，绝不能开 -O", "fixture 作用域 function→session 复用递增，yield fixture 保证失败也 teardown，finalize 逆序", "tmp_path（function）、tmp_path_factory（session）、monkeypatch（自动还原）是内置替身"]' title='第 075 讲 · 单元测试：pytest、fixture 与参数化' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -188,9 +188,9 @@ fixture 只准备必要状态，慢 IO 用替身隔离；过度 mock 会把测�
 | session | 整轮测试共享 | tmp_path_factory、启动一次的服务 |
 | yield fixture | yield 前 setup、之后 teardown | 保证失败也执行清理 |
 
-<Term word='断言重写' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛 `Asse' />
+<Term word='断言重写' text='pytest 通过 import hook（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛…' />
 
-<Term word='fixture 作用域' text='`@pytest.fixture` 用 `scope` 指定作用域，取值有 function、class、module、package、session：作用域越大复用越久，function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。yield fixture 在 yield' />
+<Term word='fixture 作用域' text='`@pytest.fixture` 用 `scope` 指定作用域，取值有 function、class、module、package、session：作用域越大复用越久，function 每用例重建、session 整轮共享，finalize 按相反顺序执行（大作用域后拆）。yield fixture 在 yield…' />
 
 
 ## 参数化、mark 与内置替身 tmp_path / monkeypatch
@@ -199,7 +199,7 @@ fixture 只准备必要状态，慢 IO 用替身隔离；过度 mock 会把测�
 python -m pytest -q --disable-warnings
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 断言重写 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 断言重写 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 <CheckList id='P075a' title='学完你应当能' :items='["能讲清 断言重写与收集规则", "能讲清 fixture 作用域、yield 清理与内置替身", "能讲清 参数化、mark、测试金字塔与覆盖率", "能在工程里处理 覆盖率解读"]' />
 
@@ -268,7 +268,7 @@ print('param results', test_add())
 
 <Callout type="idea" title='落地提示' text='优先测公开行为与边界条件，fixture 只准备必要状态，慢 IO 用替身，覆盖率作为发现盲区的线索而非 KPI' />
 
-<CheckList id='P075b' title='上线前自检' :items='["能复现并解释「过度 mock，把测试写成实现的镜像」", "能复现并解释「用 python -O 跑测试或依赖裸 assert 的报错」", "能复现并解释「把覆盖率 100% 当 KPI、fixture 准备过多共享」", "能用一条命令验证 断言重写", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P075b' title='上线前自检' :items='["能复现并解释「过度 mock，把测试写成实现的镜像」", "能复现并解释「用 python -O 跑测试或依赖裸 assert 的报错…」", "能复现并解释「把覆盖率 100% 当 KPI、fixture 准备过多共享…」", "能用一条命令验证 断言重写", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -278,7 +278,7 @@ print('param results', test_add())
 | 用 python -O 跑测试或依赖裸 assert 的报错文本 | optimize=1 编译会删掉所有 ast.Assert，绿灯全是假象 | 测试用 pytest 收集且不开 -O；靠断言重写提供的子表达式值定位契约 |
 | 把覆盖率 100% 当 KPI、fixture 准备过多共享状态 | 行覆盖高不代表断言有效，共享状态让用例相互污染、变慢变脆 | 覆盖率用于发现盲区，优先补未覆盖分支；fixture 只备必要状态，慢 IO 用替身隔离 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：过度 mock，把测试写成实现的镜像", "body": "每个内部私有函数都被替身锁死，重构时测试全红却没验证任何外部行为", "tip": "优先测公开行为与边界条件，用 fake 替身慢 IO，少用深度 assert_called_once_with 链"}, {"title": "第 2 步：用 python -O 跑测试或依赖裸 as", "body": "optimize=1 编译会删掉所有 ast.Assert，绿灯全是假象", "tip": "测试用 pytest 收集且不开 -O；靠断言重写提供的子表达式值定位契约"}, {"title": "第 3 步：把覆盖率 100% 当 KPI、fixtur", "body": "行覆盖高不代表断言有效，共享状态让用例相互污染、变慢变脆", "tip": "覆盖率用于发现盲区，优先补未覆盖分支；fixture 只备必要状态，慢 IO 用替身隔离"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：过度 mock，把测试写成实现的镜像", "body": "每个内部私有函数都被替身锁死，重构时测试全红却没验证任何外部行为", "tip": "优先测公开行为与边界条件，用 fake 替身慢 IO，少用深度 assert_called_once_with 链"}, {"title": "第 2 步：用 python -O 跑测试或依赖裸 as…", "body": "optimize=1 编译会删掉所有 ast.Assert，绿灯全是假象", "tip": "测试用 pytest 收集且不开 -O；靠断言重写提供的子表达式值定位契约"}, {"title": "第 3 步：把覆盖率 100% 当 KPI、fixtur…", "body": "行覆盖高不代表断言有效，共享状态让用例相互污染、变慢变脆", "tip": "覆盖率用于发现盲区，优先补未覆盖分支；fixture 只备必要状态，慢 IO 用替身隔离"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -317,3 +317,16 @@ print('param results', test_add())
 3. fixture 作用域 function→session 复用递增，yield fixture 保证失败也 teardown，finalize 逆序
 
 [下一讲：Mock 与测试替身：时间、网络与随机](/engineering/mock)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/075-pytest.py`
+
+```bash
+python3 examples/lessons/075-pytest.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/075-pytest.py) · [全部示例代码索引](/examples/)

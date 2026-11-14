@@ -24,7 +24,7 @@ description: 把脏数据变成可分析的数据集
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='对布尔索引结果赋值不生效还伴随 SettingWithCopyWarning：df[df.region == &#39;华东&#39;][&#39;price&#39;] = 0 里的第一层索引可能返回临时副本，赋值落到副本上' />
 
-<Callout type="tip" title='核心心智模型' text='Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是『跳过』或『补 0』。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。举' />
+<Callout type="tip" title='核心心智模型' text='Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签计算；某个标签只在一边出现，结果里该位置就是 NaN，而不是『跳过』或『补 0』。这与 NumPy 严格按位置逐元素运算完全相反：两个长度相同但顺序不同的 Series 相加，位置对不上不会报错，而是按标签求和。举…' />
 
 
 ## 标签对齐：多数 NaN 不是缺失而是索引没对上
@@ -60,7 +60,7 @@ print('fill0', align_add(s1, s2, fill=0))
 
 <OutputBox title='主示例运行结果' output='add {&#39;北京&#39;: 11, &#39;上海&#39;: 25, &#39;广州&#39;: None, &#39;深圳&#39;: None}\nfill0 {&#39;北京&#39;: 11, &#39;上海&#39;: 25, &#39;广州&#39;: 30, &#39;深圳&#39;: 8}' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def align_add(a, b, fill=None):\n    keys = list(dict.fromkeys(list(a) + list(b)))\n    out = {}\n    for k in keys:\n        if k in a and k in b:\n            out[k] = a[k] + b[k]\n        elif fill is None:\n            out[k] = None\n        else:\n            out[k] = a.get(k, fill) + b.get(k, fill)\n    return out\n\ns1 = {&#39;北京&#39;: 10, &#39;上海&#39;: 20, &#39;广州&#39;: 30}\ns2 = {&#39;上海&#39;: 5, &#39;深圳&#39;: 8, &#39;北京&#39;: 1}\nprint(&#39;add&#39;, align_add(s1, s2))\nprint(&#39;fill0&#39;, align_add(s1, s2, fill=0))' :notes='["用字典模拟两个 Series 按标签相加，fill 对应 Pandas 的 fill_value", "取两边标签的并集，dict.fromkeys 去重且保留首次出现顺序", "out 存放逐标签的运算结果", "遍历并集里的每个标签，模拟按标签对齐而非按位置对齐", "标签两边都存在：直接相加，对应 s1+s2", "标签只在单边且未给 fill_value：结果记为 None，即 NaN", "把单边缺失写成 None，对应 Pandas 产生的 NaN", "给了 fill_value：缺失的一边按填充值补齐", "两边都用 get(缺省 fill) 取值再相加，广州补 0、深圳补 0", "返回对齐后的字典，键顺序由并集决定", "s1 索引为 北京/上海/广州，顺序与 s2 不同", "s2 索引为 上海/深圳/北京，故意打乱顺序制造错位", "不带 fill_value，等价于 s1 + s2，单边标签变 None", "带 fill_value=0，等价于 s1.add(s2, fill_value=0)", "打印带填充值的结果，验证广州得 30、深圳得 8"]' title='第 094 讲 · Pandas 清洗、分组、透视与时间序列' />
+<LineByLine code='def align_add(a, b, fill=None):\n    keys = list(dict.fromkeys(list(a) + list(b)))\n    out = {}\n    for k in keys:\n        if k in a and k in b:\n            out[k] = a[k] + b[k]\n        elif fill is None:\n            out[k] = None\n        else:\n            out[k] = a.get(k, fill) + b.get(k, fill)\n    return out\n\ns1 = {&#39;北京&#39;: 10, &#39;上海&#39;: 20, &#39;广州&#39;: 30}\ns2 = {&#39;上海&#39;: 5, &#39;深圳&#39;: 8, &#39;北京&#39;: 1}\nprint(&#39;add&#39;, align_add(s1, s2))\nprint(&#39;fill0&#39;, align_add(s1, s2, fill=0))' :notes='["用字典模拟两个 Series 按标签相加，fill 对应 Pandas 的 fill_value", "取两边标签的并集，dict.fromkeys 去重且保留首次出现顺序", "out 存放逐标签的运算结果", "遍历并集里的每个标签，模拟按标签对齐而非按位置对齐", "标签两边都存在：直接相加，对应 s1+s2", "标签只在单边且未给 fill_value：结果记为 None，即 NaN", "把单边缺失写成 None，对应 Pandas 产生的 NaN", "给了 fill_value：缺失的一边按填充值补齐", "两边都用 get(缺省 fill) 取值再相加，广州补 0、深圳补 0", "返回对齐后的字典，键顺序由并集决定", "s1 索引为 北京/上海/广州，顺序与 s2 不同", "空行，只用于分隔逻辑块，不影响执行结果。", "s2 索引为 上海/深圳/北京，故意打乱顺序制造错位", "不带 fill_value，等价于 s1 + s2，单边标签变 None", "带 fill_value=0，等价于 s1.add(s2, fill_value=0)", "打印带填充值的结果，验证广州得 30、深圳得 8"]' title='第 094 讲 · Pandas 清洗、分组、透视与时间序列' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -74,9 +74,9 @@ print('fill0', align_add(s1, s2, fill=0))
 | groupby().transform('mean') | 分组键 | 与原行等长 | 组内标准化、加回原表 |
 | merge(validate=...) | 指定键列 | 按 how 决定行数 | 校验连接基数防膨胀 |
 
-<ConceptDiagram type='compare2' title='第 094 讲 · 标签对齐：NaN 大多不是缺失，而是索引没对上' labels='标签对齐：NaN 大多不是缺失，而是索引没对|groupby / agg / transf|合并、透视、时间序列与内存' caption='把脏数据变成可分析的数据集' />
+<ConceptDiagram type='compare2' title='第 094 讲 · 标签对齐：NaN 大多不是缺失，而是索引没对上' labels='标签对齐：NaN 大多不是缺失，而是索引没对…|groupby / agg / transf…|合并、透视、时间序列与内存|类型与内存优化' caption='把脏数据变成可分析的数据集' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## groupby、agg 与 transform 的三种返回形状
@@ -181,7 +181,7 @@ groupby 先对分组键做哈希分解得到每组的行位置索引，agg 把�
 
 <Callout type="warn" title='本讲最容易踩的坑' text='对布尔索引结果赋值不生效还伴随 SettingWithCopyWarning：df[df.region == &#39;华东&#39;][&#39;price&#39;] = 0 里的第一层索引可能返回临时副本，赋值落到副本上' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对布尔索引结果赋值不生效还伴随 Settin", "body": "df[df.region == &#39;华东&#39;][&#39;price&#39;] = 0 里的第一层索引可能返回临时副本，赋值落到副本上", "tip": "合并成一次 .loc：df.loc[df.region == &#39;华东&#39;, &#39;price&#39;] = 0；需要子集先 .copy()"}, {"title": "第 2 步：两列相加凭空多出 NaN 与错配", "body": "两边 index 顺序或标签不同，运算按标签对齐，单边标签补 NaN", "tip": "先打印 .index 核对；确实要按位置相加就用 .to_numpy() 或 reset_index(drop=True)"}, {"title": "第 3 步：merge 后行数比左表还多", "body": "连接键在右表不唯一，many_to_many 连接让行膨胀", "tip": "pd.merge(..., validate=&#39;many_to_one&#39;, indicator=True) 在膨胀时直接报错并标出来源"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对布尔索引结果赋值不生效还伴随 Settin…", "body": "df[df.region == &#39;华东&#39;][&#39;price&#39;] = 0 里的第一层索引可能返回临时副本，赋值落到副本上", "tip": "合并成一次 .loc：df.loc[df.region == &#39;华东&#39;, &#39;price&#39;] = 0；需要子集先 .copy()"}, {"title": "第 2 步：两列相加凭空多出 NaN 与错配", "body": "两边 index 顺序或标签不同，运算按标签对齐，单边标签补 NaN", "tip": "先打印 .index 核对；确实要按位置相加就用 .to_numpy() 或 reset_index(drop=True)"}, {"title": "第 3 步：merge 后行数比左表还多", "body": "连接键在右表不唯一，many_to_many 连接让行膨胀", "tip": "pd.merge(..., validate=&#39;many_to_one&#39;, indicator=True) 在膨胀时直接报错并标出来源"}]' />
 
 
 ## 日报清洗：先定索引与 schema，再做聚合
@@ -238,7 +238,7 @@ print('deviation', [(o, round(d, 1)) for o, d in dev])
 | float64 数值 | 8 字节/值 | 转 float32 | 精度下降需评估 |
 | object 布尔 | 指针 + 对象 | 转 bool 或 nullable boolean | 含缺失时用 BooleanDtype |
 
-<CheckList id='P094b' title='上线前自检' :items='["能复现并解释「对布尔索引结果赋值不生效还伴随 SettingWithCop」", "能复现并解释「两列相加凭空多出 NaN 与错配」", "能复现并解释「merge 后行数比左表还多」", "能用一条命令验证 Series 与 DataFrame 索引", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P094b' title='上线前自检' :items='["能复现并解释「对布尔索引结果赋值不生效还伴随 SettingWithCop…」", "能复现并解释「两列相加凭空多出 NaN 与错配」", "能复现并解释「merge 后行数比左表还多」", "能用一条命令验证 Series 与 DataFrame 索引", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 练习与速记：把对齐规则背下来
@@ -266,3 +266,16 @@ print('deviation', [(o, round(d, 1)) for o, d in dev])
 <Predict no='094-4' q='前面 code 里 align_add(s1, s2, fill=0) 对「广州」这一标签返回什么？' :options='["30", "None", "0"]' answer='0' output='30' explain='广州只在 s1 有值 30，s2 缺失。fill=0 时走 else 分支，a.get(&#39;广州&#39;, 0) 得 30、b.get(&#39;广州&#39;, 0) 得 0，相加为 30，对应 add(fill_value=0) 用 0 补齐单边缺失。' />
 
 <FillBlank no='094-5' tpl='___ align_add(a, b, fill=None):' :answers='["def"]' hint='回想本讲关于 Series 与 DataFrame 索引 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 标签对齐：NaN 大多不是缺失，而是索引没对上 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/094-pandas.py`
+
+```bash
+python3 examples/lessons/094-pandas.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/094-pandas.py) · [全部示例代码索引](/examples/)

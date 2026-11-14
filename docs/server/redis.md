@@ -45,11 +45,11 @@ Cache-Aside（旁路缓存）读路径：先 `GET`，命中直接返回，未命
 | Set | SADD / SISMEMBER / SINTER | 去重、共同关注、抽奖 |
 | ZSet | ZADD / ZRANGEBYSCORE | 排行榜、延迟队列按 score 取 |
 
-<Callout type="tip" title='核心心智模型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH' />
+<Callout type="tip" title='核心心智模型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH`…' />
 
-<ConceptDiagram type='hub4' title='第 088 讲 · 五种数据结构与 Cache-Aside 读写流程' labels='五种数据结构与 Cache-Aside 读写|穿透、击穿、雪崩：三种失效各自的防线|分布式锁的正确实现与缓存一致性' caption='设计正确且可降级的缓存层' />
+<ConceptDiagram type='hub4' title='第 088 讲 · 五种数据结构与 Cache-Aside 读写流程' labels='五种数据结构与 Cache-Aside 读写…|穿透、击穿、雪崩：三种失效各自的防线|分布式锁的正确实现与缓存一致性|缓存一致性' caption='设计正确且可降级的缓存层' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 主示例：一次读穿透到回写的完整路径
@@ -86,7 +86,7 @@ print('ttl key1', store[1]['ttl'], 'null ttl', store[-1]['ttl'])
 
 <OutputBox title='主示例运行结果' output='{&#39;id&#39;: 1}\n{&#39;id&#39;: 1}\nNone\nNone\nhits 2 misses 2\nttl key1 354 null ttl 60' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import random\nrandom.seed(0)\n\nstore, hits, misses = {}, [0], [0]\ndef cache_get(key):\n    v = store.get(key)\n    if v is None: misses[0] += 1\n    else: hits[0] += 1\n    return v\n\ndef query(key):\n    hit = cache_get(key)\n    if hit is not None:\n        return hit[&#39;v&#39;] if hit[&#39;v&#39;] != &#39;__NULL__&#39; else None\n    value = {&#39;id&#39;: key} if key &gt;= 0 else None\n    if value is None:\n        store[key] = {&#39;v&#39;: &#39;__NULL__&#39;, &#39;ttl&#39;: 60}\n        return None\n    store[key] = {&#39;v&#39;: value, &#39;ttl&#39;: 300 + random.randint(0, 60)}\n    return value\n\nprint(query(1))\nprint(query(1))\nprint(query(-1))\nprint(query(-1))\nprint(&#39;hits&#39;, hits[0], &#39;misses&#39;, misses[0])\nprint(&#39;ttl key1&#39;, store[1][&#39;ttl&#39;], &#39;null ttl&#39;, store[-1][&#39;ttl&#39;])' :notes='["导入 random，用于给 TTL 加抖动", "固定随机种子，让示例输出可复现", "store 模拟 Redis，hits/misses 用单元素列表便于闭包累加", "定义缓存读取函数", "store.get 返回 None 表示未命中（空值缓存用哨兵对象区分）", "未命中累加 misses", "命中累加 hits", "返回缓存对象或 None", "定义业务查询，串起读缓存、回源、回写", "先读缓存", "命中且不是空值哨兵时直接返回真实值", "命中空值哨兵说明查过不存在，返回 None 不再回源", "模拟 DB：负数 id 表示不存在的记录", "DB 返回空时走防穿透分支", "把空结果用短 TTL（60 秒）缓存，挡住后续穿透请求", "返回 None", "正常值用基础 300 秒 + 0..60 秒抖动，打散过期时刻防雪崩", "返回业务值", "首次查 key=1，未命中回源", "再次查 key=1，命中缓存", "首次查不存在的 key=-1，回源并写空值", "再次查 key=-1，命中空值缓存，不再回源", "统计：两次命中、两次未命中", "打印抖动后的 TTL（354）与空值 TTL（60），两者策略不同"]' title='第 088 讲 · Redis 缓存：穿透、击穿、雪崩与分布式锁' />
+<LineByLine code='import random\nrandom.seed(0)\n\nstore, hits, misses = {}, [0], [0]\ndef cache_get(key):\n    v = store.get(key)\n    if v is None: misses[0] += 1\n    else: hits[0] += 1\n    return v\n\ndef query(key):\n    hit = cache_get(key)\n    if hit is not None:\n        return hit[&#39;v&#39;] if hit[&#39;v&#39;] != &#39;__NULL__&#39; else None\n    value = {&#39;id&#39;: key} if key &gt;= 0 else None\n    if value is None:\n        store[key] = {&#39;v&#39;: &#39;__NULL__&#39;, &#39;ttl&#39;: 60}\n        return None\n    store[key] = {&#39;v&#39;: value, &#39;ttl&#39;: 300 + random.randint(0, 60)}\n    return value\n\nprint(query(1))\nprint(query(1))\nprint(query(-1))\nprint(query(-1))\nprint(&#39;hits&#39;, hits[0], &#39;misses&#39;, misses[0])\nprint(&#39;ttl key1&#39;, store[1][&#39;ttl&#39;], &#39;null ttl&#39;, store[-1][&#39;ttl&#39;])' :notes='["导入 random，用于给 TTL 加抖动", "固定随机种子，让示例输出可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "store 模拟 Redis，hits/misses 用单元素列表便于闭包累加", "定义缓存读取函数", "store.get 返回 None 表示未命中（空值缓存用哨兵对象区分）", "未命中累加 misses", "命中累加 hits", "返回缓存对象或 None", "空行，只用于分隔逻辑块，不影响执行结果。", "定义业务查询，串起读缓存、回源、回写", "先读缓存", "命中且不是空值哨兵时直接返回真实值", "命中空值哨兵说明查过不存在，返回 None 不再回源", "模拟 DB：负数 id 表示不存在的记录", "DB 返回空时走防穿透分支", "把空结果用短 TTL（60 秒）缓存，挡住后续穿透请求", "返回 None", "正常值用基础 300 秒 + 0..60 秒抖动，打散过期时刻防雪崩", "返回业务值", "空行，只用于分隔逻辑块，不影响执行结果。", "首次查 key=1，未命中回源", "再次查 key=1，命中缓存", "首次查不存在的 key=-1，回源并写空值", "再次查 key=-1，命中空值缓存，不再回源", "统计：两次命中、两次未命中", "打印抖动后的 TTL（354）与空值 TTL（60），两者策略不同"]' title='第 088 讲 · Redis 缓存：穿透、击穿、雪崩与分布式锁' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -192,16 +192,16 @@ Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、
 
 布隆过滤器用一个位数组加多个哈希函数判「一定不存在」，以可控误判率换内存效率。释放锁的 compare-and-delete 必须用 Lua，是因为 Redis 执行 Lua 脚本期间不会被其它命令插入，从而保证比对与删除之间锁不被换主。
 
-<Term word='五种数据结构与选型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH` / `LPOP`' />
+<Term word='五种数据结构与选型' text='Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH` / `LPOP`…' />
 
-<Term word='缓存模式与失效' text='穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。防线是把空值也缓存下来（`SET key &#39;__NULL__&#39; EX 60`）与布隆过滤器（bitmap 判「一定不存在」，有误判率但绝不漏判），并在入口做参数合法性校验。击穿是某个热点 `' />
+<Term word='缓存模式与失效' text='穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落到 DB；攻击者用随机 ID 批量刷就能打满。防线是把空值也缓存下来（`SET key &#39;__NULL__&#39; EX 60`）与布隆过滤器（bitmap 判「一定不存在」，有误判率但绝不漏判），并在入口做参数合法性校验。击穿是某个热点…' />
 
 
 ### 为什么 SETNX 与 EXPIRE 必须合成一条命令
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间留下永久锁：两条命令非原子，加锁成功却没设上过期时间，持锁者崩溃后无人能再获取' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 SETNX 加锁后再单独 EXPIRE，", "body": "两条命令非原子，加锁成功却没设上过期时间，持锁者崩溃后无人能再获取", "tip": "用单条 SET key uuid NX PX 30000 原子完成加锁与过期；确需分两步时用 Lua 脚本包起来"}, {"title": "第 2 步：释放锁时直接 DEL，偶尔把别的请求的锁删掉", "body": "A 的锁超时后 B 已重新加锁，A 不比对 value 就 DEL 会删掉 B 的锁", "tip": "value 存 uuid，释放前先比对，且把『比对 + 删除』放进 Lua 脚本原子执行：if redis.call(&#39;get&#39;,KEYS[1])==ARGV[1] then return redis.call(&#39;del&#39;,KEYS[1]) end"}, {"title": "第 3 步：给所有缓存统一设 300 秒 TTL，批量预", "body": "集中过期造成雪崩，且读路径没有降级，Redis 一抖服务就 500", "tip": "TTL 用 300 + random(0,60) 抖动；加多级缓存与 Redis 高可用；读路径在缓存不可用时降级直读 DB 并限流"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 SETNX 加锁后再单独 EXPIRE…", "body": "两条命令非原子，加锁成功却没设上过期时间，持锁者崩溃后无人能再获取", "tip": "用单条 SET key uuid NX PX 30000 原子完成加锁与过期；确需分两步时用 Lua 脚本包起来"}, {"title": "第 2 步：释放锁时直接 DEL，偶尔把别的请求的锁删掉", "body": "A 的锁超时后 B 已重新加锁，A 不比对 value 就 DEL 会删掉 B 的锁", "tip": "value 存 uuid，释放前先比对，且把『比对 + 删除』放进 Lua 脚本原子执行：if redis.call(&#39;get&#39;,KEYS[1])==ARGV[1] then return redis.call(&#39;del&#39;,KEYS[1]) end"}, {"title": "第 3 步：给所有缓存统一设 300 秒 TTL，批量预…", "body": "集中过期造成雪崩，且读路径没有降级，Redis 一抖服务就 500", "tip": "TTL 用 300 + random(0,60) 抖动；加多级缓存与 Redis 高可用；读路径在缓存不可用时降级直读 DB 并限流"}]' />
 
 
 ## 带互斥重建、空值缓存与降级的多级缓存层
@@ -255,15 +255,15 @@ print('keys', sorted(store))
 
 <Callout type="idea" title='落地提示' text='空值缓存与布隆过滤防穿透、互斥重建防击穿、TTL 加抖动防雪崩；锁用 Redlock 或成熟库' />
 
-<CheckList id='P088b' title='上线前自检' :items='["能复现并解释「用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间」", "能复现并解释「释放锁时直接 DEL，偶尔把别的请求的锁删掉」", "能复现并解释「给所有缓存统一设 300 秒 TTL，批量预热后同一秒集体失」", "能用一条命令验证 五种数据结构与选型", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P088b' title='上线前自检' :items='["能复现并解释「用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间…」", "能复现并解释「释放锁时直接 DEL，偶尔把别的请求的锁删掉」", "能复现并解释「给所有缓存统一设 300 秒 TTL，批量预热后同一秒集体失…」", "能用一条命令验证 五种数据结构与选型", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 五种数据结构与选型 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 五种数据结构与选型 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<FlowTimeline :steps='[{"title": "五种数据结构与 Cache-Aside 读写流程", "desc": "Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` …", "tone": "blue"}, {"title": "穿透、击穿、雪崩：三种失效各自的防线", "desc": "穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落…", "tone": "purple"}, {"title": "分布式锁的正确实现与缓存一致性", "desc": "一把正确的锁要满足互斥、不死锁、不误删。加锁用 `SET key uuid NX P…", "tone": "orange"}, {"title": "工程落地", "desc": "带互斥重建、空值缓存与降级的多级缓存层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "五种数据结构与 Cache-Aside 读写流程", "desc": "Redis 五种基础结构各有明确分工：`String`（`GET` / `SET`…", "tone": "blue"}, {"title": "穿透、击穿、雪崩：三种失效各自的防线", "desc": "穿透是查询一个 DB 与缓存里都不存在的 `key`，由于空结果不缓存，每次请求都落…", "tone": "purple"}, {"title": "分布式锁的正确实现与缓存一致性", "desc": "一把正确的锁要满足互斥、不死锁、不误删。加锁用…", "tone": "orange"}, {"title": "工程落地", "desc": "带互斥重建、空值缓存与降级的多级缓存层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 **错因速查**
 
@@ -323,7 +323,7 @@ print('jitter', expire_pressure(jit, 300))
 
 <OutputBox title='扩展示例运行结果' output='flat (600, 31, 0)\njitter (1, 1, 599)' />
 
-<LineByLine code='import random\n\nrandom.seed(7)\n\ndef expire_pressure(ttls, now, sample=20):\n    alive = dict(ttls)\n    rounds = 0\n    removed = 0\n    while rounds &lt; 200:\n        rounds += 1\n        pick = random.sample(list(alive), min(sample, len(alive)))\n        dead = [k for k in pick if alive[k] &lt;= now]\n        for k in dead:\n            del alive[k]\n        removed += len(dead)\n        if len(dead) * 4 &lt;= len(pick):\n            break\n    return removed, rounds, len(alive)\n\nflat = {&#39;k&#39; + str(i): 300 for i in range(600)}\njit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for i in range(600)}\nprint(&#39;flat&#39;, expire_pressure(flat, 300))\nprint(&#39;jitter&#39;, expire_pressure(jit, 300))\n' :notes='["固定随机种子，让抽样实验结果可复现", "expire_pressure 复刻 activeExpireCycle 的一轮逻辑", "alive 对应 expires 字典里尚未删除的键", "每轮从存活键里随机抽 20 个，对应每轮 LOOKUPS_PER_LOOP", "dead 是本轮抽中且已到期的键", "删掉到期键并累计删除数", "过期比例不超过 25% 就停，等价于 len(dead)*4 不大于抽样数", "返回 (删除数, 轮数, 剩余键数) 三个可核对的量", "flat 模拟 600 个键统一 300 秒 TTL", "jit 模拟 300 加 0 到 60 秒抖动的 TTL", "统一 TTL 时每轮全命中，跑 31 轮把 600 个键清空", "抖动后单轮只抽到 1 个到期键就收敛，剩 599 个待后续惰性删除", "五种结构：String 单值/锁、Hash 对象、List 队列、Set 去重、ZSet 排行榜", "SET key value EX seconds NX 单命令原子完成设值+过期+仅不存在时设；PX 用毫秒", "穿透→空值缓存+布隆过滤；击穿→互斥重建/逻辑过期；雪崩→TTL 抖动+高可用+降级", "Cache-Aside 写路径是先更新 DB 再删缓存，删失败靠重试或订阅 binlog 补偿", "锁 value 用 uuid，释放必须 Lua 里『比对再删』原子执行，防止误删他人锁", "缓存挂了要能降级直读 DB 并限流；key 带业务前缀与版本，TTL 基础值加抖动", "五种结构：String 单值/锁、Hash 对象、List 队列、Set 去重、ZSet 排行榜", "SET key value EX seconds NX 单命令原子完成设值+过期+仅不存在时设；PX 用毫秒"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\nrandom.seed(7)\n\ndef expire_pressure(ttls, now, sample=20):\n    alive = dict(ttls)\n    rounds = 0\n    removed = 0\n    while rounds &lt; 200:\n        rounds += 1\n        pick = random.sample(list(alive), min(sample, len(alive)))\n        dead = [k for k in pick if alive[k] &lt;= now]\n        for k in dead:\n            del alive[k]\n        removed += len(dead)\n        if len(dead) * 4 &lt;= len(pick):\n            break\n    return removed, rounds, len(alive)\n\nflat = {&#39;k&#39; + str(i): 300 for i in range(600)}\njit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for i in range(600)}\nprint(&#39;flat&#39;, expire_pressure(flat, 300))\nprint(&#39;jitter&#39;, expire_pressure(jit, 300))\n' :notes='["固定随机种子，让抽样实验结果可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "expire_pressure 复刻 activeExpireCycle 的一轮逻辑", "空行，只用于分隔逻辑块，不影响执行结果。", "alive 对应 expires 字典里尚未删除的键", "每轮从存活键里随机抽 20 个，对应每轮 LOOKUPS_PER_LOOP", "dead 是本轮抽中且已到期的键", "删掉到期键并累计删除数", "过期比例不超过 25% 就停，等价于 len(dead)*4 不大于抽样数", "返回 (删除数, 轮数, 剩余键数) 三个可核对的量", "flat 模拟 600 个键统一 300 秒 TTL", "jit 模拟 300 加 0 到 60 秒抖动的 TTL", "统一 TTL 时每轮全命中，跑 31 轮把 600 个键清空", "抖动后单轮只抽到 1 个到期键就收敛，剩 599 个待后续惰性删除", "这一行 `removed += len(dead)` 的作用，可对照上方输出逐项核对。", "这一行 `if len(dead) * 4 &lt;= len(pick):` 的作用，可对照上方输出逐项核对。", "这一行 `break` 的作用，可对照上方输出逐项核对。", "这一行 `return removed, rounds, len(alive)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `flat = {&#39;k&#39; + str(i): 300 for i in range(600)}` 的作用，可对照上方输出逐项核对。", "这一行 `jit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;flat&#39;, expire_pressure(flat, 300))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;jitter&#39;, expire_pressure(jit, 300))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ## SDS、渐进式 rehash 与 lazyfree 的内存路径
@@ -424,3 +424,16 @@ print('background drained fields', cache.drain())
 3. 穿透→空值缓存+布隆过滤；击穿→互斥重建/逻辑过期；雪崩→TTL 抖动+高可用+降级
 
 [下一讲：消息队列：Celery / RabbitMQ / Kafka](/server/mq)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/088-redis.py`
+
+```bash
+python3 examples/lessons/088-redis.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/088-redis.py) · [全部示例代码索引](/examples/)

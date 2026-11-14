@@ -44,11 +44,11 @@ Django 是全栈框架，自带 ORM、迁移、认证、session、admin、表单
 | ORM 与迁移 | 需 SQLAlchemy + Alembic | 不内置，常配 SQLAlchemy | 内置 ORM 与 makemigrations |
 | admin / 认证 | 需扩展 | 需自行实现 | 内置 admin、auth、session |
 
-<Callout type="tip" title='核心心智模型' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、OR' />
+<Callout type="tip" title='核心心智模型' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、OR…' />
 
-<ConceptDiagram type='hub4' title='第 083 讲 · 三者定位：从内核、类型化到全栈约定' labels='三者定位：从内核、类型化到全栈约定|版本与生态：哪些结论会随版本变|选型判据：把决定项列成可评分的表' caption='按团队与场景选框架而不是按热度' />
+<ConceptDiagram type='hub4' title='第 083 讲 · 三者定位：从内核、类型化到全栈约定' labels='三者定位：从内核、类型化到全栈约定|版本与生态：哪些结论会随版本变|选型判据：把决定项列成可评分的表|团队成本' caption='按团队与场景选框架而不是按热度' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 版本与生态：哪些结论会随版本变
@@ -137,7 +137,7 @@ for pname, p in sig.parameters.items():
 
 <OutputBox title='主示例运行结果' output='name str required\nage int required\nactive bool True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import inspect\nfrom typing import get_type_hints\n\ndef create_user(name: str, age: int, active: bool = True):\n    return {&#39;name&#39;: name, &#39;age&#39;: age, &#39;active&#39;: active}\n\nsig = inspect.signature(create_user)\nhints = get_type_hints(create_user)\nfor pname, p in sig.parameters.items():\n    ann = hints.get(pname)\n    default = &#39;required&#39; if p.default is inspect.Parameter.empty else str(p.default)\n    print(pname, ann.__name__, default)' :notes='["导入 inspect，用来读取函数签名对象", "导入 get_type_hints，把注解字符串解析为真实类型对象", "定义一个带类型注解的业务函数，模拟 FastAPI 路径操作", "函数体不参与签名分析，仅示意返回结构", "inspect.signature 返回含参数名、默认值、种类的 Signature", "get_type_hints 得到 {参数名: 类型对象} 的字典", "遍历每个参数，框架在启动时正是这样生成参数模型", "取出该参数的类型对象，如 str、int、bool", "无默认值标记为 required，有默认值则转成字符串", "打印参数名、类型名与默认值，构成校验规则的最小来源"]' title='第 083 讲 · FastAPI / Flask / Django 选型' />
+<LineByLine code='import inspect\nfrom typing import get_type_hints\n\ndef create_user(name: str, age: int, active: bool = True):\n    return {&#39;name&#39;: name, &#39;age&#39;: age, &#39;active&#39;: active}\n\nsig = inspect.signature(create_user)\nhints = get_type_hints(create_user)\nfor pname, p in sig.parameters.items():\n    ann = hints.get(pname)\n    default = &#39;required&#39; if p.default is inspect.Parameter.empty else str(p.default)\n    print(pname, ann.__name__, default)' :notes='["导入 inspect，用来读取函数签名对象", "导入 get_type_hints，把注解字符串解析为真实类型对象", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个带类型注解的业务函数，模拟 FastAPI 路径操作", "函数体不参与签名分析，仅示意返回结构", "空行，只用于分隔逻辑块，不影响执行结果。", "inspect.signature 返回含参数名、默认值、种类的 Signature", "get_type_hints 得到 {参数名: 类型对象} 的字典", "遍历每个参数，框架在启动时正是这样生成参数模型", "取出该参数的类型对象，如 str、int、bool", "无默认值标记为 required，有默认值则转成字符串", "打印参数名、类型名与默认值，构成校验规则的最小来源"]' title='第 083 讲 · FastAPI / Flask / Django 选型' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -171,11 +171,11 @@ FastAPI 的自动化来自「把运行时的函数签名当作声明」：路由
 
 Django 则把约定固化在 `settings.py` 与 MTV 目录结构里，靠框架自带的反射与注册表把模型、admin、`URLconf` 串起来。三者开销的差异，本质是「反射与约定放在哪一层」的差异。
 
-<Term word='三者定位差异' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、ORM、迁移、后台都要选' />
+<Term word='三者定位差异' text='Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `Jinja2`（模板），请求上下文靠 `flask.request` 这个代理对象，视图函数通常无参数，参数从 `request.args` / `request.get_json()` 里自己取；校验、序列化、ORM、迁移、后台都要选…' />
 
-<Term word='路由与依赖注入' text='具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 `Werkzeug` / `itsdangerous` 的兼容 shim，并把部分扩展迁到 `flask` 命名空间之外；它自 2.0 起支持 `async def` 视图，但底层仍是' />
+<Term word='路由与依赖注入' text='具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要求 Python 3.8 及以上，移除了大量对旧版 `Werkzeug` / `itsdangerous` 的兼容 shim，并把部分扩展迁到 `flask` 命名空间之外；它自 2.0 起支持 `async def` 视图，但底层仍是…' />
 
-<FlowTimeline :steps='[{"title": "三者定位：从内核、类型化到全栈约定", "desc": "Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与 `…", "tone": "blue"}, {"title": "版本与生态：哪些结论会随版本变", "desc": "具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要…", "tone": "purple"}, {"title": "选型判据：把决定项列成可评分的表", "desc": "把「用哪个框架」拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admi…", "tone": "orange"}, {"title": "工程落地", "desc": "把选型写成可复算的评分脚本", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "三者定位：从内核、类型化到全栈约定", "desc": "Flask 是微框架，核心只依赖 `Werkzeug`（WSGI 工具与路由）与…", "tone": "blue"}, {"title": "版本与生态：哪些结论会随版本变", "desc": "具体版本号决定能不能用某些能力，选型时必须对齐。Flask 3.0（2023 年）要…", "tone": "purple"}, {"title": "选型判据：把决定项列成可评分的表", "desc": "把「用哪个框架」拆成六个可回答的问题，比争论热度有效：是否需要服务端渲染与 admi…", "tone": "orange"}, {"title": "工程落地", "desc": "把选型写成可复算的评分脚本", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 把选型写成可复算的评分脚本
@@ -208,13 +208,13 @@ print('different winners', best_api != best_cms)
 
 <Callout type="idea" title='落地提示' text='小工具用 Flask、类型化 API 用 FastAPI、内容型后台与快速交付用 Django；同一仓里不要混两套范式' />
 
-<CheckList id='P083b' title='上线前自检' :items='["能复现并解释「FastAPI 路径函数参数写成字符串注解或 Any，文档里」", "能复现并解释「从 Pydantic v1 升到 v2 后 obj.dict」", "能复现并解释「在 Flask 里用 async def 视图却期待并发长连」", "能用一条命令验证 三者定位差异", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P083b' title='上线前自检' :items='["能复现并解释「FastAPI 路径函数参数写成字符串注解或 Any，文档里…」", "能复现并解释「从 Pydantic v1 升到 v2 后 obj.dict…」", "能复现并解释「在 Flask 里用 async def 视图却期待并发长连…」", "能用一条命令验证 三者定位差异", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 三者定位差异 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 三者定位差异 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -226,7 +226,7 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='FastAPI 路径函数参数写成字符串注解或 Any，文档里没有校验规则：框架在启动时用 get_type_hints 解析注解，字符串或 Any 无法生成具体 JSON Schema' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：FastAPI 路径函数参数写成字符串注解或", "body": "框架在启动时用 get_type_hints 解析注解，字符串或 Any 无法生成具体 JSON Schema", "tip": "写真实类型如 uid: int、q: str = &#39;&#39;，复杂入参用 Pydantic BaseModel，并用 response_model 约束输出"}, {"title": "第 2 步：从 Pydantic v1 升到 v2 后 ", "body": "Pydantic v2 把数据转换入口改为 model_dump / model_validate，旧方法仅作兼容保留", "tip": "统一改用 model.model_dump() 与 Model.model_validate(raw)，并核对 Field 的约束写法"}, {"title": "第 3 步：在 Flask 里用 async def 视", "body": "Flask 底层是 WSGI，async 视图被丢进线程池执行，不具备 ASGI 的双工消息能力", "tip": "需要 WebSocket 或海量长连接时换 ASGI 栈（FastAPI / Starlette），不要靠 async 关键字伪装"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：FastAPI 路径函数参数写成字符串注解或…", "body": "框架在启动时用 get_type_hints 解析注解，字符串或 Any 无法生成具体 JSON Schema", "tip": "写真实类型如 uid: int、q: str = &#39;&#39;，复杂入参用 Pydantic BaseModel，并用 response_model 约束输出"}, {"title": "第 2 步：从 Pydantic v1 升到 v2 后…", "body": "Pydantic v2 把数据转换入口改为 model_dump / model_validate，旧方法仅作兼容保留", "tip": "统一改用 model.model_dump() 与 Model.model_validate(raw)，并核对 Field 的约束写法"}, {"title": "第 3 步：在 Flask 里用 async def 视…", "body": "Flask 底层是 WSGI，async 视图被丢进线程池执行，不具备 ASGI 的双工消息能力", "tip": "需要 WebSocket 或海量长连接时换 ASGI 栈（FastAPI / Starlette），不要靠 async 关键字伪装"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -265,3 +265,16 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 3. Pydantic v2 用 Rust 核心，model_validate / model_dump 取代 parse_obj / dict
 
 [下一讲：路由、依赖注入与请求校验](/server/routing)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/083-frameworks.py`
+
+```bash
+python3 examples/lessons/083-frameworks.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/083-frameworks.py) · [全部示例代码索引](/examples/)

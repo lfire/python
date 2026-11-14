@@ -43,7 +43,7 @@ A 指每个对非故障节点的请求都能在有限时间内返回（不保证
 | 单调读 | 不会读到比之前更旧的值 | 会话粘滞到同一副本 | 翻页浏览 |
 | 最终一致 | 无新写时副本终将收敛 | 异步复制 + 反熵 | 点赞、浏览量 |
 
-<Callout type="tip" title='核心心智模型' text='CAP 定理说的是：一个分布式系统无法同时保证 Consistency、Availability、Partition tolerance 三者。这里的 C 指线性一致性（linearizability，每次读都能读到最近一次已完成写的结果，等价于所有操作看起来像在单副本上按某个全局顺序原子执行），不' />
+<Callout type="tip" title='核心心智模型' text='CAP 定理说的是：一个分布式系统无法同时保证 Consistency、Availability、Partition tolerance 三者。这里的 C 指线性一致性（linearizability，每次读都能读到最近一次已完成写的结果，等价于所有操作看起来像在单副本上按某个全局顺序原子执行），不…' />
 
 
 ## 一致性谱系、BASE 与收敛窗口
@@ -154,7 +154,7 @@ print('CP choice: reject B write -> A,B stay', 2, 2)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='支付成功后列表读不到刚下的单，还称「最终一致正常」：写主读从、异步复制有延迟，且没实现读己之写，也没定义收敛窗口' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：支付成功后列表读不到刚下的单，还称「最终一致", "body": "写主读从、异步复制有延迟，且没实现读己之写，也没定义收敛窗口", "tip": "实现读己之写：写后读主库或带会话版本号回退主库；把复制延迟 P99 与补偿路径写进 SLA"}, {"title": "第 2 步：用 CAP 否决所有强一致方案，说「C 和 ", "body": "把 CAP 误读成平时二选一；它约束的是分区发生时的取舍，无分区时可同时满足 C 与 A", "tip": "按操作定义一致性等级：支付/扣款强一致、评论/点赞最终一致，分区预案分别设计"}, {"title": "第 3 步：多主冲突用 LWW 时间戳悄悄覆盖", "body": "物理时钟有漂移、NTP 跳变，Last-Write-Wins 会丢失一次真实写入且不可察觉", "tip": "用向量时钟或版本向量检测并发，按业务选择 CRDT、合并或保留兄弟值；金额类禁止 LWW 覆盖"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：支付成功后列表读不到刚下的单，还称「最终一致…", "body": "写主读从、异步复制有延迟，且没实现读己之写，也没定义收敛窗口", "tip": "实现读己之写：写后读主库或带会话版本号回退主库；把复制延迟 P99 与补偿路径写进 SLA"}, {"title": "第 2 步：用 CAP 否决所有强一致方案，说「C 和…", "body": "把 CAP 误读成平时二选一；它约束的是分区发生时的取舍，无分区时可同时满足 C 与 A", "tip": "按操作定义一致性等级：支付/扣款强一致、评论/点赞最终一致，分区预案分别设计"}, {"title": "第 3 步：多主冲突用 LWW 时间戳悄悄覆盖", "body": "物理时钟有漂移、NTP 跳变，Last-Write-Wins 会丢失一次真实写入且不可察觉", "tip": "用向量时钟或版本向量检测并发，按业务选择 CRDT、合并或保留兄弟值；金额类禁止 LWW 覆盖"}]' />
 
 
 ## 读己之写：用会话版本号兜住异步复制延迟
@@ -194,7 +194,7 @@ print('read replica(after replication)', read('replica', session_version))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 CAP 的正确表述 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 CAP 的正确表述 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习、自测与一致性速记
@@ -233,3 +233,16 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 [下一讲：幂等、分布式锁与限流](/distributed/idempotency)
 
 <FillBlank no='105-5' tpl='___ write(val, version):' :answers='["def"]' hint='回想本讲关于 CAP 的正确表述 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 CAP 的正确表述与一致性谱系 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/105-cap-base.py`
+
+```bash
+python3 examples/lessons/105-cap-base.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/105-cap-base.py) · [全部示例代码索引](/examples/)

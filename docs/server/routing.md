@@ -74,15 +74,15 @@ print('cache keys', [f.__name__ for f in CACHE])
 
 <OutputBox title='主示例运行结果' output='  open db\nresult (7, &#39;db-1&#39;)\ncache keys [&#39;get_db&#39;, &#39;get_user&#39;, &#39;endpoint&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import inspect\n\nclass Depends:\n    def __init__(self, fn):\n        self.fn = fn\n\ndef get_db():\n    print(&#39;  open db&#39;)\n    return {&#39;conn&#39;: &#39;db-1&#39;}\n\ndef get_user(db=Depends(get_db)):\n    return {&#39;uid&#39;: 7, &#39;db&#39;: db[&#39;conn&#39;]}\n\nCACHE = {}\ndef resolve(callable_):\n    if callable_ in CACHE:\n        return CACHE[callable_]\n    sig = inspect.signature(callable_)\n    kwargs = {}\n    for name, p in sig.parameters.items():\n        if isinstance(p.default, Depends):\n            kwargs[name] = resolve(p.default.fn)\n    value = callable_(**kwargs)\n    CACHE[callable_] = value\n    return value\n\ndef endpoint(user=Depends(get_user), db=Depends(get_db)):\n    return (user[&#39;uid&#39;], db[&#39;conn&#39;])\n\nCACHE.clear()\nprint(&#39;result&#39;, resolve(endpoint))\nprint(&#39;cache keys&#39;, [f.__name__ for f in CACHE])' :notes='["导入 inspect，用于读取每个可调用对象的参数表", "定义依赖标记类，实例作为默认值挂在函数上", "构造方法是依赖实例的初始化入口", "把被依赖的函数对象保存到实例", "定义资源型依赖，模拟开启数据库连接", "打印标记，便于观察它究竟执行了几次", "返回连接描述对象", "定义依赖另一个依赖的函数，形成依赖树第二层", "组合出当前用户对象，db 由框架注入", "请求级缓存字典，键是被依赖的函数对象", "resolve 是最小依赖解析器，递归解析整棵树", "命中缓存直接返回，保证同一请求只建一次连接", "把缓存值作为解析结果返回", "未命中则读取该函数的签名", "准备注入给它的关键字参数", "遍历参数，找出声明了 Depends 的项", "只接管标记过的参数，普通参数不处理", "递归解析子依赖，深度优先构建依赖树", "用解析好的参数调用目标函数", "把结果写回缓存，供后续共享", "返回解析值", "定义端点，直接依赖 get_db、间接经 get_user 依赖它", "返回用户 id 与连接名，用于验证注入结果", "清空缓存，模拟一个新请求开始", "解析端点；get_db 只打印一次即证明缓存生效", "列出被解析过的函数，看到完整的三层依赖树"]' title='第 084 讲 · 路由、依赖注入与请求校验' />
+<LineByLine code='import inspect\n\nclass Depends:\n    def __init__(self, fn):\n        self.fn = fn\n\ndef get_db():\n    print(&#39;  open db&#39;)\n    return {&#39;conn&#39;: &#39;db-1&#39;}\n\ndef get_user(db=Depends(get_db)):\n    return {&#39;uid&#39;: 7, &#39;db&#39;: db[&#39;conn&#39;]}\n\nCACHE = {}\ndef resolve(callable_):\n    if callable_ in CACHE:\n        return CACHE[callable_]\n    sig = inspect.signature(callable_)\n    kwargs = {}\n    for name, p in sig.parameters.items():\n        if isinstance(p.default, Depends):\n            kwargs[name] = resolve(p.default.fn)\n    value = callable_(**kwargs)\n    CACHE[callable_] = value\n    return value\n\ndef endpoint(user=Depends(get_user), db=Depends(get_db)):\n    return (user[&#39;uid&#39;], db[&#39;conn&#39;])\n\nCACHE.clear()\nprint(&#39;result&#39;, resolve(endpoint))\nprint(&#39;cache keys&#39;, [f.__name__ for f in CACHE])' :notes='["导入 inspect，用于读取每个可调用对象的参数表", "空行，只用于分隔逻辑块，不影响执行结果。", "定义依赖标记类，实例作为默认值挂在函数上", "构造方法是依赖实例的初始化入口", "把被依赖的函数对象保存到实例", "空行，只用于分隔逻辑块，不影响执行结果。", "定义资源型依赖，模拟开启数据库连接", "打印标记，便于观察它究竟执行了几次", "返回连接描述对象", "空行，只用于分隔逻辑块，不影响执行结果。", "定义依赖另一个依赖的函数，形成依赖树第二层", "组合出当前用户对象，db 由框架注入", "空行，只用于分隔逻辑块，不影响执行结果。", "请求级缓存字典，键是被依赖的函数对象", "resolve 是最小依赖解析器，递归解析整棵树", "命中缓存直接返回，保证同一请求只建一次连接", "把缓存值作为解析结果返回", "未命中则读取该函数的签名", "准备注入给它的关键字参数", "遍历参数，找出声明了 Depends 的项", "只接管标记过的参数，普通参数不处理", "递归解析子依赖，深度优先构建依赖树", "用解析好的参数调用目标函数", "把结果写回缓存，供后续共享", "返回解析值", "空行，只用于分隔逻辑块，不影响执行结果。", "定义端点，直接依赖 get_db、间接经 get_user 依赖它", "返回用户 id 与连接名，用于验证注入结果", "空行，只用于分隔逻辑块，不影响执行结果。", "清空缓存，模拟一个新请求开始", "解析端点；get_db 只打印一次即证明缓存生效", "列出被解析过的函数，看到完整的三层依赖树"]' title='第 084 讲 · 路由、依赖注入与请求校验' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults' />
+<Callout type="tip" title='核心心智模型' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的…' />
 
-<ConceptDiagram type='compare2' title='第 084 讲 · 把依赖写成声明：默认参数里的 Depends 与依赖树' labels='把依赖写成声明：默认参数里的 Depends|参数校验：类型强制、约束与 422 的来源|薄路由层：编排、可测试与失效信号' caption='把入口层做成可测试、可复用的薄层' />
+<ConceptDiagram type='compare2' title='第 084 讲 · 把依赖写成声明：默认参数里的 Depends 与依赖树' labels='把依赖写成声明：默认参数里的 Depends…|参数校验：类型强制、约束与 422 的来源|薄路由层：编排、可测试与失效信号|版本化路由' caption='把入口层做成可测试、可复用的薄层' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 依赖缓存：同一请求内为何只解析一次
@@ -229,9 +229,9 @@ for bad in ({'page': 0, 'size': 20, 'q': 'py'}, {'page': 1, 'size': 'x', 'q': 'p
 
 参数抽取按 `kind` 分派：`PATH`、`QUERY`、`BODY`、`HEADER` 各有固定的取值来源，这正是同一注解能自动区分路径参数与查询参数的原因。
 
-<Term word='路径与查询参数' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults__` 里，框架启动' />
+<Term word='路径与查询参数' text='依赖注入的核心不是「自动传参」，而是把「我需要什么」与「怎么拿到」分开。FastAPI 用 `Depends` 表达依赖：路径函数把 `user=Depends(get_user)`、`db=Depends(get_db)` 写成默认参数，`Depends` 对象就挂在函数的 `__defaults__` 里，框架启动…' />
 
-<Term word='请求体与 Pydantic 模型' text='入口参数分三类：路径参数（`/users/{uid}`）、查询参数（`?page=1&amp;size=20`）、请求体（`JSON`）。Pydantic v2 的 `BaseModel` 用 `Field` 声明约束：`Field(gt=0)`、`Field(ge=1, le=100)`、`Field(min_length=' />
+<Term word='请求体与 Pydantic 模型' text='入口参数分三类：路径参数（`/users/{uid}`）、查询参数（`?page=1&amp;size=20`）、请求体（`JSON`）。Pydantic v2 的 `BaseModel` 用 `Field` 声明约束：`Field(gt=0)`、`Field(ge=1, le=100)`…' />
 
 
 ## 可测试的薄路由层：不启服务也能测校验分支
@@ -311,13 +311,13 @@ print('orders', fake['orders'])
 
 <Callout type="idea" title='落地提示' text='路由层只做校验、鉴权、编排与响应映射，领域逻辑放独立模块并保持框架无关' />
 
-<CheckList id='P084b' title='上线前自检' :items='["能复现并解释「同一请求里 get_db 被解析三次，连接池被占满」", "能复现并解释「yield 依赖里的 session.close() 没放在」", "能复现并解释「测试一个校验分支也要起 HTTP 服务造完整请求」", "能用一条命令验证 路径与查询参数", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P084b' title='上线前自检' :items='["能复现并解释「同一请求里 get_db 被解析三次，连接池被占满」", "能复现并解释「yield 依赖里的 session.close() 没放在…」", "能复现并解释「测试一个校验分支也要起 HTTP 服务造完整请求」", "能用一条命令验证 路径与查询参数", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 路径与查询参数 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 路径与查询参数 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查与排查顺序
@@ -330,7 +330,7 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 | yield 依赖里的 session.close() 没放在 finally，异常后连接泄漏 | 发生异常时生成器被提前关闭，yield 之后的普通语句不会执行 | 把提交/回滚与 close 写进 finally 块：try: yield session finally: session.close() |
 | 测试一个校验分支也要起 HTTP 服务造完整请求 | 业务逻辑堆在路由函数里，校验与领域逻辑无法脱离框架调用 | 把领域逻辑移到不 import 框架的独立模块，用 dependency_overrides 替换依赖；接口测试只覆盖薄的编排与状态码 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：同一请求里 get_db 被解析三次，连接池", "body": "把 use_cache 关掉或在函数体里手工调用依赖函数，绕过了请求级缓存", "tip": "保持依赖默认 use_cache=True，并把数据库获取统一声明成 Depends；需要强制重算时才对单个依赖设 use_cache=False"}, {"title": "第 2 步：yield 依赖里的 session.clo", "body": "发生异常时生成器被提前关闭，yield 之后的普通语句不会执行", "tip": "把提交/回滚与 close 写进 finally 块：try: yield session finally: session.close()"}, {"title": "第 3 步：测试一个校验分支也要起 HTTP 服务造完整", "body": "业务逻辑堆在路由函数里，校验与领域逻辑无法脱离框架调用", "tip": "把领域逻辑移到不 import 框架的独立模块，用 dependency_overrides 替换依赖；接口测试只覆盖薄的编排与状态码"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：同一请求里 get_db 被解析三次，连接池…", "body": "把 use_cache 关掉或在函数体里手工调用依赖函数，绕过了请求级缓存", "tip": "保持依赖默认 use_cache=True，并把数据库获取统一声明成 Depends；需要强制重算时才对单个依赖设 use_cache=False"}, {"title": "第 2 步：yield 依赖里的 session.clo…", "body": "发生异常时生成器被提前关闭，yield 之后的普通语句不会执行", "tip": "把提交/回滚与 close 写进 finally 块：try: yield session finally: session.close()"}, {"title": "第 3 步：测试一个校验分支也要起 HTTP 服务造完整…", "body": "业务逻辑堆在路由函数里，校验与领域逻辑无法脱离框架调用", "tip": "把领域逻辑移到不 import 框架的独立模块，用 dependency_overrides 替换依赖；接口测试只覆盖薄的编排与状态码"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -369,3 +369,16 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 3. yield 依赖在响应后触发 finally，用来提交/回滚与归还连接；清理必须写进 finally
 
 [下一讲：REST API 设计、OpenAPI 与幂等](/server/rest-api)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/084-routing.py`
+
+```bash
+python3 examples/lessons/084-routing.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/084-routing.py) · [全部示例代码索引](/examples/)

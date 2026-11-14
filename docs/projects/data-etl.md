@@ -93,15 +93,15 @@ print('rows', con.execute('SELECT count(*) FROM agg').fetchone()[0])
 
 <OutputBox title='主示例运行结果' output='dead 1 1\nagg [(10, 12), (12, 9)]\nwatermark 12\nrows 2' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import csv, io, sqlite3\nfrom collections import defaultdict\n\nRAW = chr(10).join([&#39;id,ts,level,amount&#39;, &#39;1,10,INFO,5&#39;, &#39;2,11,BAD,x&#39;,\n                    &#39;3,11,INFO,7&#39;, &#39;4,12,INFO,9&#39;]) + chr(10)\n\ndef parse(stream):\n    for row in csv.DictReader(stream):\n        try:\n            yield dict(id=int(row[&#39;id&#39;]), ts=int(row[&#39;ts&#39;]),\n                       level=row[&#39;level&#39;], amount=int(row[&#39;amount&#39;]))\n        except ValueError:\n            yield None\n\ndef clean(rows, dead):\n    for r in rows:\n        if r is None:\n            dead.append(r)\n        else:\n            yield r\n\ndef tumble(rows, width):\n    for r in rows:\n        yield r[&#39;ts&#39;] // width * width, r\n\ncon = sqlite3.connect(&#39;:memory:&#39;)\ncon.execute(&#39;CREATE TABLE agg (bucket INTEGER PRIMARY KEY, total INTEGER)&#39;)\ncon.execute(&#39;CREATE TABLE meta (k TEXT PRIMARY KEY, v INTEGER)&#39;)\n\ndef run_once(raw, con):\n    dead, agg, wm = [], defaultdict(int), 0\n    for bucket, r in tumble(clean(parse(io.StringIO(raw)), dead), width=2):\n        agg[bucket] += r[&#39;amount&#39;]\n        wm = max(wm, r[&#39;ts&#39;])\n    for bucket, total in agg.items():\n        con.execute(&#39;INSERT INTO agg(bucket,total) VALUES(?,?) &#39;\n                    &#39;ON CONFLICT(bucket) DO UPDATE SET total=excluded.total&#39;, (bucket, total))\n    con.execute(&#39;INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=max(v,excluded.v)&#39;, (&#39;watermark&#39;, wm))\n    con.commit()\n    return len(dead)\n\nprint(&#39;dead&#39;, run_once(RAW, con), run_once(RAW, con))\nprint(&#39;agg&#39;, con.execute(&#39;SELECT bucket,total FROM agg ORDER BY bucket&#39;).fetchall())\nprint(&#39;watermark&#39;, con.execute(&#39;SELECT v FROM meta WHERE k=?&#39;, (&#39;watermark&#39;,)).fetchone()[0])\nprint(&#39;rows&#39;, con.execute(&#39;SELECT count(*) FROM agg&#39;).fetchone()[0])' :notes='["导入 csv 解析、io 造流式输入、sqlite3 做幂等落库", "defaultdict 用于按时间桶累加金额", "用 chr(10) 拼出 CSV 源，规避示例里的反斜杠转义", "续行给出后三行数据，其中第二行 amount 是脏值 x", "parse 是生成器：每次 next 只解析一条记录", "DictReader 逐行产出 dict，值都是字符串", "类型转换放在 try 里，脏数据不会中断整条管道", "把 id、ts、amount 转成整数，level 保留字符串", "续行完成 amount 的转换，非数字会抛 ValueError", "except ValueError 捕获非数字与缺列导致的转换失败", "转换失败时产出 None 作为脏数据标记", "clean 把 None 分流到死信，其余继续向下游 yield", "逐条消费上游生成器，保持惰性", "None 表示上一步解析失败", "写进死信列表供质量报告统计", "正常记录才放行到聚合阶段", "yield 正常记录，继续向下游传递", "tumble 实现滚动窗口聚合，产出 (桶, 记录)", "逐条推进，不缓存整批", "桶键是 ts 整除宽度再乘宽度，width=2 时 10/11 同桶", "内存数据库连接，演示用；生产用文件库配 WAL", "agg 表以 bucket 为主键，是 upsert 的冲突目标", "meta 表存水位，键名固定为 watermark", "run_once 是一次可重跑的批次，返回值是死信条数", "死信列表、聚合字典、水位三者都从干净状态开始", "串起 parse → clean → tumble 三层生成器，按需拉取", "按桶累加金额，同桶记录合并", "水位取本批最大事件时间，只前进不回退", "把每个桶的聚合结果写入数据库", "INSERT 带参数绑定，值用 ? 占位杜绝 SQL 注入", "冲突时更新为 excluded.total，重跑不会翻倍", "水位同样 upsert，用 max 保证单调不回退", "整批一次提交，减少每行事务开销", "返回死信数，作为质量报告的一项", "连续重跑两次，死信数应一致", "打印聚合表全部行，重跑后仍是两条而非四条", "读回水位，验证按事件时间推进到 12", "统计行数，证明 upsert 让重放结果保持一致"]' title='第 127 讲 · 实战 06 · 日志 ETL 与 CSV / SQL 查询工具' />
+<LineByLine code='import csv, io, sqlite3\nfrom collections import defaultdict\n\nRAW = chr(10).join([&#39;id,ts,level,amount&#39;, &#39;1,10,INFO,5&#39;, &#39;2,11,BAD,x&#39;,\n                    &#39;3,11,INFO,7&#39;, &#39;4,12,INFO,9&#39;]) + chr(10)\n\ndef parse(stream):\n    for row in csv.DictReader(stream):\n        try:\n            yield dict(id=int(row[&#39;id&#39;]), ts=int(row[&#39;ts&#39;]),\n                       level=row[&#39;level&#39;], amount=int(row[&#39;amount&#39;]))\n        except ValueError:\n            yield None\n\ndef clean(rows, dead):\n    for r in rows:\n        if r is None:\n            dead.append(r)\n        else:\n            yield r\n\ndef tumble(rows, width):\n    for r in rows:\n        yield r[&#39;ts&#39;] // width * width, r\n\ncon = sqlite3.connect(&#39;:memory:&#39;)\ncon.execute(&#39;CREATE TABLE agg (bucket INTEGER PRIMARY KEY, total INTEGER)&#39;)\ncon.execute(&#39;CREATE TABLE meta (k TEXT PRIMARY KEY, v INTEGER)&#39;)\n\ndef run_once(raw, con):\n    dead, agg, wm = [], defaultdict(int), 0\n    for bucket, r in tumble(clean(parse(io.StringIO(raw)), dead), width=2):\n        agg[bucket] += r[&#39;amount&#39;]\n        wm = max(wm, r[&#39;ts&#39;])\n    for bucket, total in agg.items():\n        con.execute(&#39;INSERT INTO agg(bucket,total) VALUES(?,?) &#39;\n                    &#39;ON CONFLICT(bucket) DO UPDATE SET total=excluded.total&#39;, (bucket, total))\n    con.execute(&#39;INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=max(v,excluded.v)&#39;, (&#39;watermark&#39;, wm))\n    con.commit()\n    return len(dead)\n\nprint(&#39;dead&#39;, run_once(RAW, con), run_once(RAW, con))\nprint(&#39;agg&#39;, con.execute(&#39;SELECT bucket,total FROM agg ORDER BY bucket&#39;).fetchall())\nprint(&#39;watermark&#39;, con.execute(&#39;SELECT v FROM meta WHERE k=?&#39;, (&#39;watermark&#39;,)).fetchone()[0])\nprint(&#39;rows&#39;, con.execute(&#39;SELECT count(*) FROM agg&#39;).fetchone()[0])' :notes='["导入 csv 解析、io 造流式输入、sqlite3 做幂等落库", "defaultdict 用于按时间桶累加金额", "空行，只用于分隔逻辑块，不影响执行结果。", "用 chr(10) 拼出 CSV 源，规避示例里的反斜杠转义", "续行给出后三行数据，其中第二行 amount 是脏值 x", "空行，只用于分隔逻辑块，不影响执行结果。", "parse 是生成器：每次 next 只解析一条记录", "DictReader 逐行产出 dict，值都是字符串", "类型转换放在 try 里，脏数据不会中断整条管道", "把 id、ts、amount 转成整数，level 保留字符串", "续行完成 amount 的转换，非数字会抛 ValueError", "except ValueError 捕获非数字与缺列导致的转换失败", "转换失败时产出 None 作为脏数据标记", "空行，只用于分隔逻辑块，不影响执行结果。", "clean 把 None 分流到死信，其余继续向下游 yield", "逐条消费上游生成器，保持惰性", "None 表示上一步解析失败", "写进死信列表供质量报告统计", "正常记录才放行到聚合阶段", "yield 正常记录，继续向下游传递", "空行，只用于分隔逻辑块，不影响执行结果。", "tumble 实现滚动窗口聚合，产出 (桶, 记录)", "逐条推进，不缓存整批", "桶键是 ts 整除宽度再乘宽度，width=2 时 10/11 同桶", "空行，只用于分隔逻辑块，不影响执行结果。", "内存数据库连接，演示用；生产用文件库配 WAL", "agg 表以 bucket 为主键，是 upsert 的冲突目标", "meta 表存水位，键名固定为 watermark", "空行，只用于分隔逻辑块，不影响执行结果。", "run_once 是一次可重跑的批次，返回值是死信条数", "死信列表、聚合字典、水位三者都从干净状态开始", "串起 parse → clean → tumble 三层生成器，按需拉取", "按桶累加金额，同桶记录合并", "水位取本批最大事件时间，只前进不回退", "把每个桶的聚合结果写入数据库", "INSERT 带参数绑定，值用 ? 占位杜绝 SQL 注入", "冲突时更新为 excluded.total，重跑不会翻倍", "水位同样 upsert，用 max 保证单调不回退", "整批一次提交，减少每行事务开销", "返回死信数，作为质量报告的一项", "空行，只用于分隔逻辑块，不影响执行结果。", "连续重跑两次，死信数应一致", "打印聚合表全部行，重跑后仍是两条而非四条", "读回水位，验证按事件时间推进到 12", "统计行数，证明 upsert 让重放结果保持一致"]' title='第 127 讲 · 实战 06 · 日志 ETL 与 CSV / SQL 查询工具' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组' />
+<Callout type="tip" title='核心心智模型' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组…' />
 
-<ConceptDiagram type='layers3' title='第 127 讲 · 生成器管道与背压：内存不随输入增长' labels='生成器管道与背压：内存不随输入增长|脏数据隔离、窗口聚合与幂等写入|增量水位、质量校验与可回溯' caption='构建可回溯、可重跑的数据管道' />
+<ConceptDiagram type='layers3' title='第 127 讲 · 生成器管道与背压：内存不随输入增长' labels='生成器管道与背压：内存不随输入增长|脏数据隔离、窗口聚合与幂等写入|增量水位、质量校验与可回溯|数据质量校验' caption='构建可回溯、可重跑的数据管道' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 脏数据隔离、窗口聚合与幂等写入
@@ -217,9 +217,9 @@ print('first', next(lazy))
 
 <OutputBox title='原理验证' output='eager type list 1000\nlazy type generator\nlist heavier True\nfirst r0' />
 
-<Term word='生成器管道与背压' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组合就能把「解析 → ' />
+<Term word='生成器管道与背压' text='生成器是惰性求值：每次 `next` 只推进到下一个 `yield`，函数的局部变量保存在堆上的生成器帧里，因此同时驻留内存的只有当前一条记录，复杂度是 `O(1)` 而非 `O(N)`。`csv.DictReader` 本身就是迭代器，`io.StringIO` 让字符串像文件一样被逐行读，两者组合就能把「解析…' />
 
-<Term word='解析与脏数据隔离' text='`DictReader` 把每行转成 dict，但值全是字符串，`int(row[&#39;amount&#39;])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告' />
+<Term word='解析与脏数据隔离' text='`DictReader` 把每行转成 dict，但值全是字符串，`int(row[&#39;amount&#39;])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告…' />
 
 
 ## ETL 失败模式与防线
@@ -234,7 +234,7 @@ print('first', next(lazy))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 read() 全量载入日志，文件稍大就 OOM：一次性构造 N 个字符串对象，内存与输入线性增长' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 read() 全量载入日志，文件稍大就 ", "body": "一次性构造 N 个字符串对象，内存与输入线性增长", "tip": "用生成器逐行处理，csv.DictReader 与 io.StringIO 组合，别在循环里 list() 把惰性变回全量"}, {"title": "第 2 步：失败后从头重跑，聚合值翻倍", "body": "盲目 INSERT 没有冲突处理，同一批数据二次入库", "tip": "以桶或事件 id 为主键，用 INSERT ... ON CONFLICT(k) DO UPDATE SET c=excluded.c"}, {"title": "第 3 步：一行脏数据让整批中断、已处理结果全丢", "body": "解析异常向上抛出，生成器管道整体终止", "tip": "在 parse 生成器里 try/except 捕获 ValueError，把原始行送死信列表，批次结束出质量报告"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 read() 全量载入日志，文件稍大就…", "body": "一次性构造 N 个字符串对象，内存与输入线性增长", "tip": "用生成器逐行处理，csv.DictReader 与 io.StringIO 组合，别在循环里 list() 把惰性变回全量"}, {"title": "第 2 步：失败后从头重跑，聚合值翻倍", "body": "盲目 INSERT 没有冲突处理，同一批数据二次入库", "tip": "以桶或事件 id 为主键，用 INSERT ... ON CONFLICT(k) DO UPDATE SET c=excluded.c"}, {"title": "第 3 步：一行脏数据让整批中断、已处理结果全丢", "body": "解析异常向上抛出，生成器管道整体终止", "tip": "在 parse 生成器里 try/except 捕获 ValueError，把原始行送死信列表，批次结束出质量报告"}]' />
 
 
 ## 可重跑的日志聚合管道与质量报告
@@ -288,7 +288,7 @@ print('run2', run(SOURCE))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 生成器管道与背压 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 生成器管道与背压 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习、自测与一页纸速记
@@ -327,3 +327,16 @@ python -m compileall -q . && python -m pytest -q
 <Predict no='127-4' q='同一批数据用 ON CONFLICT DO UPDATE 连续重跑两次，agg 表的行数最可能是？' :options='["与单次运行相同（本例 2 行）", "翻倍（4 行）", "抛 sqlite3.IntegrityError"]' answer='0' output='rows 2' explain='聚合以 bucket 为主键，第二次运行的 INSERT 触发冲突分支改为覆盖更新，不会新增行；这正是可重跑的验收点，盲目 INSERT 才会翻倍或报错。' />
 
 <FillBlank no='127-5' tpl='___ csv, io, sqlite3' :answers='["import"]' hint='回想本讲关于 生成器管道与背压 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 生成器管道与背压：内存不随输入增长 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/127-data-etl.py`
+
+```bash
+python3 examples/lessons/127-data-etl.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/127-data-etl.py) · [全部示例代码索引](/examples/)

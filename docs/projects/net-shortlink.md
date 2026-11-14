@@ -31,7 +31,7 @@ description: 把服务端综合项目做成可压测的产品
 | 一句话目标 | 把服务端综合项目做成可压测的产品 |
 | 为下一讲铺垫 | 实战 06 · 日志 ETL 与 CSV / SQL 查询工具 |
 
-<Callout type="tip" title='核心心智模型' text='短码来自一个单调递增的发号器：数据库自增主键、Redis 的 `INCR` 或 Snowflake（时间戳 + 机器号 + 序列）。拿到整数 id 后用 `Base62` 压成短码，字符集固定为 0-9、A-Z、a-z 共 62 个 URL 安全字符；码长约等于 `floor(log_62(n)) ' />
+<Callout type="tip" title='核心心智模型' text='短码来自一个单调递增的发号器：数据库自增主键、Redis 的 `INCR` 或 Snowflake（时间戳 + 机器号 + 序列）。拿到整数 id 后用 `Base62` 压成短码，字符集固定为 0-9、A-Z、a-z 共 62 个 URL 安全字符；码长约等于…' />
 
 
 ## 发号与 Base62：为什么不用 UUID 或内容哈希
@@ -100,7 +100,7 @@ print('status', HTTPStatus.MOVED_PERMANENTLY.value, HTTPStatus.MOVED_PERMANENTLY
 
 <OutputBox title='主示例运行结果' output='codes [&#39;0&#39;, &#39;z&#39;, &#39;10&#39;, &#39;100&#39;]\nroundtrip True\nlru 1 4 [&#39;c&#39;, &#39;b&#39;]\netag 7f016ee1\nstatus 301 Moved Permanently 302 Found' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\nfrom collections import OrderedDict\nfrom http import HTTPStatus\n\nALPHABET = &#39;0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&#39;\n\ndef b62(n):\n    if n == 0:\n        return &#39;0&#39;\n    out = []\n    while n:\n        n, r = divmod(n, 62)\n        out.append(ALPHABET[r])\n    return &#39;&#39;.join(reversed(out))\n\ndef unb62(s):\n    n = 0\n    for ch in s:\n        n = n * 62 + ALPHABET.index(ch)\n    return n\n\nclass LRU:\n    def __init__(self, cap):\n        self.cap = cap\n        self.d = OrderedDict()\n        self.hit = 0\n        self.miss = 0\n    def get(self, k):\n        if k in self.d:\n            self.hit += 1\n            self.d.move_to_end(k)\n            return self.d[k]\n        self.miss += 1\n        return None\n    def put(self, k, v):\n        self.d[k] = v\n        self.d.move_to_end(k)\n        if len(self.d) &gt; self.cap:\n            self.d.popitem(last=False)\n\nprint(&#39;codes&#39;, [b62(i) for i in (0, 61, 62, 3844)])\nprint(&#39;roundtrip&#39;, all(unb62(b62(i)) == i for i in range(1000)))\ncache = LRU(cap=2)\nfor k in (&#39;a&#39;, &#39;b&#39;, &#39;a&#39;, &#39;c&#39;, &#39;b&#39;):\n    if cache.get(k) is None:\n        cache.put(k, &#39;url-&#39; + k)\nprint(&#39;lru&#39;, cache.hit, cache.miss, list(cache.d))\netag = hashlib.md5(b&#39;img-bytes&#39;).hexdigest()[:8]\nprint(&#39;etag&#39;, etag)\nprint(&#39;status&#39;, HTTPStatus.MOVED_PERMANENTLY.value, HTTPStatus.MOVED_PERMANENTLY.phrase,\n      HTTPStatus.FOUND.value, HTTPStatus.FOUND.phrase)' :notes='["导入 hashlib，用于内容哈希生成 ETag", "OrderedDict 是手写 LRU 的基础结构，兼具哈希与顺序", "HTTPStatus 提供状态码的标准 phrase，避免自己记错 302 名称", "Base62 字符集：10 个数字 + 26 大写 + 26 小写，共 62 个 URL 安全字符", "编码函数把整数 id 转成短码", "0 单独处理，避免 while 循环产出空串", "返回字符集中的第一个字符", "用列表收集每一位的字符", "循环取 62 进制的每一位", "divmod 同时得到商与余数，比 % 与 // 分两次算更省", "按余数从字符集取字符", "高位在低索引，反转后拼成最终短码", "解码函数验证编码可逆，是发号器正确性的最低要求", "累加器从 0 开始", "逐字符按 62 进制还原", "index 返回字符在字符集中的位置，字符集顺序必须固定", "返回还原后的整数 id", "LRU 缓存：OrderedDict 加命中/未命中计数", "构造时记下容量上限", "保存容量", "用 OrderedDict 维护访问顺序，末尾是最近使用", "命中计数初始化为 0", "未命中计数初始化为 0", "get 是读路径，命中要顺带更新顺序", "键存在即命中", "命中数加一，用于算命中率", "move_to_end 把该键移到末尾，标记为最近使用", "返回缓存值，不回源", "未命中数加一", "返回 None，让调用方回源并回填", "put 是写路径，同样维护顺序与容量", "写入或覆盖键值", "新写入的键也要移到末尾", "超过容量时触发淘汰", "popitem(last=False) 淘汰最久未用的头部，O(1)", "打印 0、61、62、3844 的短码，验证进位边界", "对前一千个 id 做编解码往返，全部一致才算可信", "容量为 2 的缓存，序列里故意重复访问 a 制造一次命中", "按序访问 a b a c b，观察淘汰行为", "未命中才回填，模拟回源加载", "回填时键值为拼接出来的 URL", "打印命中数、未命中数与最终键顺序", "用内容哈希的前 8 位十六进制作演示用 ETag", "打印 ETag，相同内容必然得到相同值", "打印 301 与 302 的标准 phrase，注意 302 是 Found", "续行给出 302 的值与 phrase，与 301 并列对照"]' title='第 126 讲 · 实战 05 · 短链与图片服务' />
+<LineByLine code='import hashlib\nfrom collections import OrderedDict\nfrom http import HTTPStatus\n\nALPHABET = &#39;0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz&#39;\n\ndef b62(n):\n    if n == 0:\n        return &#39;0&#39;\n    out = []\n    while n:\n        n, r = divmod(n, 62)\n        out.append(ALPHABET[r])\n    return &#39;&#39;.join(reversed(out))\n\ndef unb62(s):\n    n = 0\n    for ch in s:\n        n = n * 62 + ALPHABET.index(ch)\n    return n\n\nclass LRU:\n    def __init__(self, cap):\n        self.cap = cap\n        self.d = OrderedDict()\n        self.hit = 0\n        self.miss = 0\n    def get(self, k):\n        if k in self.d:\n            self.hit += 1\n            self.d.move_to_end(k)\n            return self.d[k]\n        self.miss += 1\n        return None\n    def put(self, k, v):\n        self.d[k] = v\n        self.d.move_to_end(k)\n        if len(self.d) &gt; self.cap:\n            self.d.popitem(last=False)\n\nprint(&#39;codes&#39;, [b62(i) for i in (0, 61, 62, 3844)])\nprint(&#39;roundtrip&#39;, all(unb62(b62(i)) == i for i in range(1000)))\ncache = LRU(cap=2)\nfor k in (&#39;a&#39;, &#39;b&#39;, &#39;a&#39;, &#39;c&#39;, &#39;b&#39;):\n    if cache.get(k) is None:\n        cache.put(k, &#39;url-&#39; + k)\nprint(&#39;lru&#39;, cache.hit, cache.miss, list(cache.d))\netag = hashlib.md5(b&#39;img-bytes&#39;).hexdigest()[:8]\nprint(&#39;etag&#39;, etag)\nprint(&#39;status&#39;, HTTPStatus.MOVED_PERMANENTLY.value, HTTPStatus.MOVED_PERMANENTLY.phrase,\n      HTTPStatus.FOUND.value, HTTPStatus.FOUND.phrase)' :notes='["导入 hashlib，用于内容哈希生成 ETag", "OrderedDict 是手写 LRU 的基础结构，兼具哈希与顺序", "HTTPStatus 提供状态码的标准 phrase，避免自己记错 302 名称", "空行，只用于分隔逻辑块，不影响执行结果。", "Base62 字符集：10 个数字 + 26 大写 + 26 小写，共 62 个 URL 安全字符", "空行，只用于分隔逻辑块，不影响执行结果。", "编码函数把整数 id 转成短码", "0 单独处理，避免 while 循环产出空串", "返回字符集中的第一个字符", "用列表收集每一位的字符", "循环取 62 进制的每一位", "divmod 同时得到商与余数，比 % 与 // 分两次算更省", "按余数从字符集取字符", "高位在低索引，反转后拼成最终短码", "空行，只用于分隔逻辑块，不影响执行结果。", "解码函数验证编码可逆，是发号器正确性的最低要求", "累加器从 0 开始", "逐字符按 62 进制还原", "index 返回字符在字符集中的位置，字符集顺序必须固定", "返回还原后的整数 id", "空行，只用于分隔逻辑块，不影响执行结果。", "LRU 缓存：OrderedDict 加命中/未命中计数", "构造时记下容量上限", "保存容量", "用 OrderedDict 维护访问顺序，末尾是最近使用", "命中计数初始化为 0", "未命中计数初始化为 0", "get 是读路径，命中要顺带更新顺序", "键存在即命中", "命中数加一，用于算命中率", "move_to_end 把该键移到末尾，标记为最近使用", "返回缓存值，不回源", "未命中数加一", "返回 None，让调用方回源并回填", "put 是写路径，同样维护顺序与容量", "写入或覆盖键值", "新写入的键也要移到末尾", "超过容量时触发淘汰", "popitem(last=False) 淘汰最久未用的头部，O(1)", "空行，只用于分隔逻辑块，不影响执行结果。", "打印 0、61、62、3844 的短码，验证进位边界", "对前一千个 id 做编解码往返，全部一致才算可信", "容量为 2 的缓存，序列里故意重复访问 a 制造一次命中", "按序访问 a b a c b，观察淘汰行为", "未命中才回填，模拟回源加载", "回填时键值为拼接出来的 URL", "打印命中数、未命中数与最终键顺序", "用内容哈希的前 8 位十六进制作演示用 ETag", "打印 ETag，相同内容必然得到相同值", "打印 301 与 302 的标准 phrase，注意 302 是 Found", "续行给出 302 的值与 phrase，与 301 并列对照"]' title='第 126 讲 · 实战 05 · 短链与图片服务' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -201,13 +201,13 @@ print('base', len(ALPHABET), 'log62(1e9)', round(math.log(1e9, 62), 2))
 
 ## LRU 缓存、热点码预热与入口防刷
 
-<ConceptDiagram type='flow4' title='第 126 讲 · 发号与 Base62：为什么不用 UUID 或内容哈希' labels='发号与 Base62：为什么不用 UUID |301 / 302 语义、LRU 缓存与防刷|图片服务：ETag、预签名直传与容量评估' caption='把服务端综合项目做成可压测的产品' />
+<ConceptDiagram type='flow4' title='第 126 讲 · 发号与 Base62：为什么不用 UUID 或内容哈希' labels='发号与 Base62：为什么不用 UUID…|301 / 302 语义、LRU 缓存与防刷|图片服务：ETag、预签名直传与容量评估|监控与容量' caption='把服务端综合项目做成可压测的产品' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 <Callout type="warn" title='本讲最容易踩的坑' text='短链用 301，运营改目标后老链接不生效：301 是永久重定向，浏览器与 CDN 会强缓存，改库不影响已缓存的映射' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：短链用 301，运营改目标后老链接不生效", "body": "301 是永久重定向，浏览器与 CDN 会强缓存，改库不影响已缓存的映射", "tip": "默认返回 302 Found；只有确认永不变更的映射才用 301，且提前声明缓存头策略"}, {"title": "第 2 步：把图片二进制存进 MySQL", "body": "大字段让备份膨胀、缓冲池命中率下降、列表查询变慢，且对象存储的成本与带宽优势全丢", "tip": "DB 只存 URL、尺寸、Content-Type 与哈希，二进制放对象存储并用预签名 URL 直传"}, {"title": "第 3 步：上传只按文件名或 Content-Type ", "body": "后缀与客户端声明都可伪造，伪装成图片的 HTML 被直出会带来存储型脚本风险", "tip": "扩展名白名单 + magic bytes（PNG 89 50 4E 47、JPEG FF D8 FF）+ 大小上限，三者叠加"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：短链用 301，运营改目标后老链接不生效", "body": "301 是永久重定向，浏览器与 CDN 会强缓存，改库不影响已缓存的映射", "tip": "默认返回 302 Found；只有确认永不变更的映射才用 301，且提前声明缓存头策略"}, {"title": "第 2 步：把图片二进制存进 MySQL", "body": "大字段让备份膨胀、缓冲池命中率下降、列表查询变慢，且对象存储的成本与带宽优势全丢", "tip": "DB 只存 URL、尺寸、Content-Type 与哈希，二进制放对象存储并用预签名 URL 直传"}, {"title": "第 3 步：上传只按文件名或 Content-Type…", "body": "后缀与客户端声明都可伪造，伪装成图片的 HTML 被直出会带来存储型脚本风险", "tip": "扩展名白名单 + magic bytes（PNG 89 50 4E 47、JPEG FF D8 FF）+ 大小上限，三者叠加"}]' />
 
 
 ## 图片服务：ETag、预签名直传与容量评估
@@ -224,16 +224,16 @@ print('base', len(ALPHABET), 'log62(1e9)', round(math.log(1e9, 62), 2))
 
 容量评估要压测出单机 QPS 与瓶颈位置：并发数除以平均延迟是吞吐上界，监控 p99 延迟、缓存命中率、回源率、带宽与 4xx/5xx 占比，才能判断该加缓存、加带宽还是加实例。
 
-<ConceptDiagram type='layers3' title='第 126 讲 · 分层视角' labels='发号与 Base62：为什么不用 UUI|301 / 302 语义、LRU 缓存与|图片服务：ETag、预签名直传与容量评估|监控与容量' caption='图片服务：ETag、预签名直传与容量评估' />
+<ConceptDiagram type='layers3' title='第 126 讲 · 分层视角' labels='发号与 Base62：为什么不用 UUI…|301 / 302 语义、LRU 缓存与…|图片服务：ETag、预签名直传与容量评估|监控与容量' caption='图片服务：ETag、预签名直传与容量评估' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 监控与容量 落在哪一层。
 
 
 ### 压测得出的单机 QPS 与瓶颈位置
 
-<Term word='发号与 Base62' text='短码来自一个单调递增的发号器：数据库自增主键、Redis 的 `INCR` 或 Snowflake（时间戳 + 机器号 + 序列）。拿到整数 id 后用 `Base62` 压成短码，字符集固定为 0-9、A-Z、a-z 共 62 个 URL 安全字符；码长约等于 `floor(log_62(n)) + 1`，62 的 ' />
+<Term word='发号与 Base62' text='短码来自一个单调递增的发号器：数据库自增主键、Redis 的 `INCR` 或 Snowflake（时间戳 + 机器号 + 序列）。拿到整数 id 后用 `Base62` 压成短码，字符集固定为 0-9、A-Z、a-z 共 62 个 URL 安全字符；码长约等于 `floor(log_62(n)) + 1`，62 的…' />
 
-<Term word='301 / 302 语义' text='`http.HTTPStatus` 里 `301` 的 phrase 是 Moved Permanently、`302` 是 Found（不是 Moved Temporarily），这正好点出关键差别：`301` 会被浏览器与 CDN 强缓存，短链一旦发出就无法靠改库撤回，只适合永不变更的映射；`302` 默认不缓存（' />
+<Term word='301 / 302 语义' text='`http.HTTPStatus` 里 `301` 的 phrase 是 Moved Permanently、`302` 是 Found（不是 Moved Temporarily），这正好点出关键差别：`301` 会被浏览器与 CDN 强缓存，短链一旦发出就无法靠改库撤回，只适合永不变更的映射；`302` 默认不缓存…' />
 
 <CheckList id='P126b' title='上线前自检' :items='["能复现并解释「短链用 301，运营改目标后老链接不生效」", "能复现并解释「把图片二进制存进 MySQL」", "能复现并解释「上传只按文件名或 Content-Type 判类型」", "能用一条命令验证 发号与 Base62", "关键路径有自动化测试与失败分支"]' />
 
@@ -355,4 +355,17 @@ print('missing', svc.resolve('zzzz', '1.2.3.4'))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 发号与 Base62 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 发号与 Base62 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/126-net-shortlink.py`
+
+```bash
+python3 examples/lessons/126-net-shortlink.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/126-net-shortlink.py) · [全部示例代码索引](/examples/)

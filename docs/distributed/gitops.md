@@ -47,7 +47,7 @@ Helm 用模板加 values 渲染清单，适合把同一套应用分发到多环�
 
 ### CI 渲染清单后的 diff 与策略检查
 
-<CheckList id='P111b' title='上线前自检' :items='["能复现并解释「用随机数或轮询给灰度流量分桶」", "能复现并解释「金丝雀放量没有样本量下限就做回滚判断」", "能复现并解释「集群里直接 kubectl edit 改配置，镜像用 lat」", "能用一条命令验证 声明式与期望状态", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P111b' title='上线前自检' :items='["能复现并解释「用随机数或轮询给灰度流量分桶」", "能复现并解释「金丝雀放量没有样本量下限就做回滚判断」", "能复现并解释「集群里直接 kubectl edit 改配置，镜像用 lat…」", "能用一条命令验证 声明式与期望状态", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 金丝雀、蓝绿与流量比例的确定性分桶
@@ -83,7 +83,7 @@ print('keep_when_low', should_rollback(1, 100))
 
 <OutputBox title='主示例运行结果' output='pct 5 canary_users 59\npct 20 canary_users 191\npct 50 canary_users 487\nrollback_when_high True\nkeep_when_low False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\n\ndef bucket(user, mod=1000):\n    return int(hashlib.md5(user.encode()).hexdigest()[:8], 16) % mod\n\ndef route(user, canary_pct):\n    return &#39;canary&#39; if bucket(user) &lt; canary_pct * 10 else &#39;stable&#39;\n\nusers = [&#39;u&#39; + str(i) for i in range(1000)]\nfor pct in (5, 20, 50):\n    c = sum(1 for u in users if route(u, pct) == &#39;canary&#39;)\n    print(&#39;pct&#39;, pct, &#39;canary_users&#39;, c)\n\ndef should_rollback(errors, total, threshold=0.02):\n    return total &gt; 0 and errors / total &gt; threshold\n\nprint(&#39;rollback_when_high&#39;, should_rollback(8, 100))\nprint(&#39;keep_when_low&#39;, should_rollback(1, 100))' :notes='["导入 hashlib 做稳定散列，保证同一用户落点固定", "把用户标识映射到 0 到 999 的千分桶", "md5 前 8 位十六进制转整数后取模，mod 默认 1000", "route 按灰度百分比决定版本", "桶号小于 pct*10 进金丝雀，否则进稳定版", "构造 1000 个用户用于统计实际放量比例", "依次观察 5%、20%、50% 三档", "统计落入金丝雀的用户数", "打印档位与实际人数，验证接近目标比例", "should_rollback 把错误率与阈值比较", "样本为 0 时不做判断，避免除零误判", "8/100 错误率 8% 超过 2% 阈值，应回滚", "1/100 错误率 1% 低于阈值，继续放量"]' title='第 111 讲 · GitOps、灰度发布与可观测平台' />
+<LineByLine code='import hashlib\n\ndef bucket(user, mod=1000):\n    return int(hashlib.md5(user.encode()).hexdigest()[:8], 16) % mod\n\ndef route(user, canary_pct):\n    return &#39;canary&#39; if bucket(user) &lt; canary_pct * 10 else &#39;stable&#39;\n\nusers = [&#39;u&#39; + str(i) for i in range(1000)]\nfor pct in (5, 20, 50):\n    c = sum(1 for u in users if route(u, pct) == &#39;canary&#39;)\n    print(&#39;pct&#39;, pct, &#39;canary_users&#39;, c)\n\ndef should_rollback(errors, total, threshold=0.02):\n    return total &gt; 0 and errors / total &gt; threshold\n\nprint(&#39;rollback_when_high&#39;, should_rollback(8, 100))\nprint(&#39;keep_when_low&#39;, should_rollback(1, 100))' :notes='["导入 hashlib 做稳定散列，保证同一用户落点固定", "空行，只用于分隔逻辑块，不影响执行结果。", "把用户标识映射到 0 到 999 的千分桶", "md5 前 8 位十六进制转整数后取模，mod 默认 1000", "空行，只用于分隔逻辑块，不影响执行结果。", "route 按灰度百分比决定版本", "桶号小于 pct*10 进金丝雀，否则进稳定版", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 1000 个用户用于统计实际放量比例", "依次观察 5%、20%、50% 三档", "统计落入金丝雀的用户数", "打印档位与实际人数，验证接近目标比例", "空行，只用于分隔逻辑块，不影响执行结果。", "should_rollback 把错误率与阈值比较", "样本为 0 时不做判断，避免除零误判", "空行，只用于分隔逻辑块，不影响执行结果。", "8/100 错误率 8% 超过 2% 阈值，应回滚", "1/100 错误率 1% 低于阈值，继续放量"]' title='第 111 讲 · GitOps、灰度发布与可观测平台' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -133,7 +133,7 @@ print('need_apply', len(diff) > 0)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用随机数或轮询给灰度流量分桶：同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用随机数或轮询给灰度流量分桶", "body": "同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因", "tip": "对稳定 user_id 做哈希取模落到千分桶，同一发布内映射恒定；内部灰度用 header 染色"}, {"title": "第 2 步：金丝雀放量没有样本量下限就做回滚判断", "body": "5% 流量初期样本极少，偶发几个错误就让错误率飙升，触发误回滚，发布反复失败", "tip": "设定最小样本量与连续观察窗口，样本不足时只观察不决策；用 burn rate 而非瞬时错误率"}, {"title": "第 3 步：集群里直接 kubectl edit 改配置", "body": "手工改动不在 Git 里，下次调和被覆盖且无法审计；latest 让同一份清单在不同时间拉到不同镜像，回滚失去确定性", "tip": "所有变更走 PR 由控制器调和，镜像固定为 digest，CI 渲染清单后做 diff 与策略检查"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用随机数或轮询给灰度流量分桶", "body": "同一用户刷新一次就切换版本，指标被混合稀释，会话状态在新旧实现间跳变，错误率差异无法归因", "tip": "对稳定 user_id 做哈希取模落到千分桶，同一发布内映射恒定；内部灰度用 header 染色"}, {"title": "第 2 步：金丝雀放量没有样本量下限就做回滚判断", "body": "5% 流量初期样本极少，偶发几个错误就让错误率飙升，触发误回滚，发布反复失败", "tip": "设定最小样本量与连续观察窗口，样本不足时只观察不决策；用 burn rate 而非瞬时错误率"}, {"title": "第 3 步：集群里直接 kubectl edit 改配置…", "body": "手工改动不在 Git 里，下次调和被覆盖且无法审计；latest 让同一份清单在不同时间拉到不同镜像，回滚失去确定性", "tip": "所有变更走 PR 由控制器调和，镜像固定为 digest，CI 渲染清单后做 diff 与策略检查"}]' />
 
 
 ## 可观测三支柱、SLO 与指标驱动的自动回滚
@@ -221,12 +221,12 @@ print('audit', c.audit)
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 声明式与期望状态 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 声明式与期望状态 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 集群里直接 kubectl edit 改配置，镜像用 latest tag
 
-<SequenceDiagram title='第 111 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "声明式期望状态、Helm 与", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "金丝雀、蓝绿与流量比例的确定", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 111 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "声明式期望状态、Helm 与…", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "金丝雀、蓝绿与流量比例的确定…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
 <FlowTimeline :steps='[{"title": "声明式期望状态、Helm 与 Kustomize", "desc": "GitOps 的核心是把集群的期望状态以声明式清单存在 Git 里，由控制器（Arg…", "tone": "blue"}, {"title": "金丝雀、蓝绿与流量比例的确定性分桶", "desc": "灰度发布按流量比例逐步放量：先放 5% 观察核心指标，再 20%、50%，最后 10…", "tone": "purple"}, {"title": "三支柱、SLO 与指标驱动的自动回滚", "desc": "可观测性三支柱是 Metrics（聚合指标与告警）、Logging（离散事件）、Tr…", "tone": "orange"}, {"title": "工程落地", "desc": "指标驱动的金丝雀发布控制器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
@@ -256,3 +256,16 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 <Predict no='111-4' q='1000 个用户按 20% 灰度分桶，落入 canary 的人数最可能是？' :options='["约 191，接近 200 但因哈希分布略有偏差", "恰好 200", "0，20% 需要 2000 用户才生效"]' answer='0' output='191' explain='千分桶里 20% 对应前 200 个桶；md5 散列在有限样本上并非绝对均匀，实测 1000 个用户有 191 个落入，接近但不等于理论值 200。' />
 
 <FillBlank no='111-5' tpl='___ hashlib' :answers='["import"]' hint='回想本讲关于 声明式与期望状态 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 声明式期望状态、Helm 与 Kustomize 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/111-gitops.py`
+
+```bash
+python3 examples/lessons/111-gitops.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/111-gitops.py) · [全部示例代码索引](/examples/)

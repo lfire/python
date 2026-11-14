@@ -61,9 +61,9 @@ print('codepoint', ord('中'))
 | len(s.encode('utf-8')) | 字节数 | 整数 | '中文' 为 6 |
 | str 加 bytes | 混合类型 | 报错 | TypeError，无隐式转换 |
 
-<ConceptDiagram type='compare2' title='第 009 讲 · 码点、编码与 str / bytes 的硬边界' labels='码点、编码与 str / bytes 的硬边|encode / decode 的错误处理与|四处显式声明：把乱码挡在边界之外' caption='能定位并解决绝大多数乱码问题' />
+<ConceptDiagram type='compare2' title='第 009 讲 · 码点、编码与 str / bytes 的硬边界' labels='码点、编码与 str / bytes 的硬边…|encode / decode 的错误处理与…|四处显式声明：把乱码挡在边界之外|多行字符串' caption='能定位并解决绝大多数乱码问题' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## encode / decode 的错误处理与 BOM
@@ -175,7 +175,7 @@ for enc, blob in [('utf-8-sig', bom_blob), ('ascii', plain_blob)]:
 
 <Callout type="warn" title='本讲最容易踩的坑' text='open 不写 encoding，或把 str 与 bytes 直接相加：省略 encoding 时依赖 locale 默认编码，Windows 与 Linux 可能不同；str 与 bytes 无隐式转换，拼接会抛 TypeError' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：open 不写 encoding，或把 st", "body": "省略 encoding 时依赖 locale 默认编码，Windows 与 Linux 可能不同；str 与 bytes 无隐式转换，拼接会抛 TypeError", "tip": "open 一律写明 encoding=&#39;utf-8&#39;；边界处先 encode/decode 再参与运算"}, {"title": "第 2 步：用普通 utf-8 读带 BOM 的文件", "body": "串首会留下不可见的 U+FEFF，导致首列名多一个前缀、字典查键静默失败", "tip": "改用 encoding=&#39;utf-8-sig&#39; 自动剥离 BOM，或用 codecs.BOM_UTF8 核对字节"}, {"title": "第 3 步：对已经是 str 的乱码再 decode，或", "body": "str 没有 decode 方法会抛 AttributeError；replace 把非法字节换成 U+FFFD 且不可逆", "tip": "保留原始 bytes 并用 .hex() 或 repr 记录证据，在唯一边界处按正确编码解码一次"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：open 不写 encoding，或把 st…", "body": "省略 encoding 时依赖 locale 默认编码，Windows 与 Linux 可能不同；str 与 bytes 无隐式转换，拼接会抛 TypeError", "tip": "open 一律写明 encoding=&#39;utf-8&#39;；边界处先 encode/decode 再参与运算"}, {"title": "第 2 步：用普通 utf-8 读带 BOM 的文件", "body": "串首会留下不可见的 U+FEFF，导致首列名多一个前缀、字典查键静默失败", "tip": "改用 encoding=&#39;utf-8-sig&#39; 自动剥离 BOM，或用 codecs.BOM_UTF8 核对字节"}, {"title": "第 3 步：对已经是 str 的乱码再 decode，或…", "body": "str 没有 decode 方法会抛 AttributeError；replace 把非法字节换成 U+FFFD 且不可逆", "tip": "保留原始 bytes 并用 .hex() 或 repr 记录证据，在唯一边界处按正确编码解码一次"}]' />
 
 
 ## 边界处只做一次转换：练习、自测与速记
@@ -203,3 +203,16 @@ for enc, blob in [('utf-8-sig', bom_blob), ('ascii', plain_blob)]:
 3. BOM 是 U+FEFF，UTF-8 的 BOM 字节 efbbbf；带 BOM 文件用 utf-8-sig 解码自动剥离
 
 [下一讲：字符串操作：切片、f-string 与常用方法](/foundation/string-ops)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/009-strings.py`
+
+```bash
+python3 examples/lessons/009-strings.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/009-strings.py) · [全部示例代码索引](/examples/)

@@ -27,11 +27,11 @@ description: 能解释并修复闭包捕获的经典 bug
 
 ## 先建立模型：名字、作用域与 cell
 
-<Callout type="tip" title='核心心智模型' text='名字查找顺序是 Local → Enclosing → Global → Built-in，四层都找不到才抛 `NameError`。关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`、`d' />
+<Callout type="tip" title='核心心智模型' text='名字查找顺序是 Local → Enclosing → Global → Built-in，四层都找不到才抛 `NameError`。关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`…' />
 
 <ConceptDiagram type='flow3' title='第 030 讲 · LEGB 与赋值即局部：名字在编译期定型' labels='LEGB 与赋值即局部：名字在编译期定型|闭包与 cell：捕获的是变量不是值|边界、失效信号与装饰器里的延迟绑定' caption='能解释并修复闭包捕获的经典 bug' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 **本讲定位**
 
@@ -137,7 +137,7 @@ print(build_bad()[0].__closure__[0].cell_contents)
 
 <OutputBox title='主示例运行结果' output='[3, 3, 3, 3]\n[0, 1, 2, 3]\n(&#39;i&#39;,)\n3' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def build_bad():\n    return [lambda: i for i in range(4)]\n\ndef build_good():\n    return [lambda i=i: i for i in range(4)]\n\nprint([f() for f in build_bad()])\nprint([f() for f in build_good()])\nprint(build_bad()[0].__code__.co_freevars)\nprint(build_bad()[0].__closure__[0].cell_contents)' :notes='["定义用推导式批量造 lambda 的函数", "四个 lambda 都读取同一个自由变量 i", "定义用默认参数捕获当前值的版本", "i=i 把每轮的 i 固化进各自 function 的 __defaults__", "坏版本四个函数都读到循环结束后的 i，全是 3", "好版本各自拿到 0、1、2、3", "坏版本 lambda 的 co_freevars 显示它捕获了自由变量 i", "__closure__[0].cell_contents 是共享 cell 的当前值 3"]' title='第 030 讲 · 作用域、LEGB 与闭包延迟绑定' />
+<LineByLine code='def build_bad():\n    return [lambda: i for i in range(4)]\n\ndef build_good():\n    return [lambda i=i: i for i in range(4)]\n\nprint([f() for f in build_bad()])\nprint([f() for f in build_good()])\nprint(build_bad()[0].__code__.co_freevars)\nprint(build_bad()[0].__closure__[0].cell_contents)' :notes='["定义用推导式批量造 lambda 的函数", "四个 lambda 都读取同一个自由变量 i", "空行，只用于分隔逻辑块，不影响执行结果。", "定义用默认参数捕获当前值的版本", "i=i 把每轮的 i 固化进各自 function 的 __defaults__", "空行，只用于分隔逻辑块，不影响执行结果。", "坏版本四个函数都读到循环结束后的 i，全是 3", "好版本各自拿到 0、1、2、3", "坏版本 lambda 的 co_freevars 显示它捕获了自由变量 i", "__closure__[0].cell_contents 是共享 cell 的当前值 3"]' title='第 030 讲 · 作用域、LEGB 与闭包延迟绑定' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -193,7 +193,7 @@ CPython 里闭包靠 cell 对象实现。
 
 把 `co_freevars` 与 `__closure__` 对照还能读出每个 cell 的当前值。global 的代价是引入模块级可变状态、难以隔离测试，计数器这类封装状态更适合 nonlocal。
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：循环里 lambda 引用 i，全部返回最终", "body": "闭包共享同一个 cell，读到的是循环结束后的值，且没有任何报错", "tip": "用 lambda i=i: ... 把当前值固化，或用工厂函数 make(i) 造独立作用域"}, {"title": "第 2 步：函数里先 print(x) 再 x = 1 ", "body": "x 因函数内赋值被编译期判为局部，赋值前读取的槽位还是空的", "tip": "要改全局先声明 global x；要读外层用 nonlocal 或把值当参数传入；或先初始化再读取"}, {"title": "第 3 步：声明了 nonlocal 却报 Syntax", "body": "nonlocal 要求名字确实存在于某个外层函数作用域，模块全局或压根不存在都不行", "tip": "确认外层有该局部变量；模块级变量改用 global；或重构为传参与类属性"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：循环里 lambda 引用 i，全部返回最终…", "body": "闭包共享同一个 cell，读到的是循环结束后的值，且没有任何报错", "tip": "用 lambda i=i: ... 把当前值固化，或用工厂函数 make(i) 造独立作用域"}, {"title": "第 2 步：函数里先 print(x) 再 x = 1…", "body": "x 因函数内赋值被编译期判为局部，赋值前读取的槽位还是空的", "tip": "要改全局先声明 global x；要读外层用 nonlocal 或把值当参数传入；或先初始化再读取"}, {"title": "第 3 步：声明了 nonlocal 却报 Syntax…", "body": "nonlocal 要求名字确实存在于某个外层函数作用域，模块全局或压根不存在都不行", "tip": "确认外层有该局部变量；模块级变量改用 global；或重构为传参与类属性"}]' />
 
 **错因速查**
 
@@ -218,9 +218,9 @@ CPython 里闭包靠 cell 对象实现。
 | cell.cell_contents 可写 | 3.7+ | 可直接改写 cell 内容 | 早期只读；可用于测试注入 |
 | inspect.getclosurevars | 3.3+ | 返回 nonlocals / globals / builtins / unbound | 一眼看清函数到底捕获了什么 |
 
-<Term word='LEGB 查找顺序' text='名字查找顺序是 Local → Enclosing → Global → Built-in，四层都找不到才抛 `NameError`。关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`、`def` / `cla' />
+<Term word='LEGB 查找顺序' text='名字查找顺序是 Local → Enclosing → Global → Built-in，四层都找不到才抛 `NameError`。关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`、`def`…' />
 
-<Term word='global 与 nonlocal' text='闭包等于函数加上它引用的自由变量环境。被内层函数引用的外层局部名字叫自由变量，编译器把它们放进 cell 对象：外层 code object 的 `co_cellvars` 列出自己创建供内层使用的 cell，内层的 `co_freevars` 列出引用的自由变量名；运行时 `function.__closure__`' />
+<Term word='global 与 nonlocal' text='闭包等于函数加上它引用的自由变量环境。被内层函数引用的外层局部名字叫自由变量，编译器把它们放进 cell 对象：外层 code object 的 `co_cellvars` 列出自己创建供内层使用的 cell，内层的 `co_freevars` 列出引用的自由变量名；运行时 `function.__closure__`…' />
 
 <FlowTimeline :steps='[{"title": "LEGB 与赋值即局部：名字在编译期定型", "desc": "名字查找顺序是 Local → Enclosing → Global → Built…", "tone": "blue"}, {"title": "闭包与 cell：捕获的是变量不是值", "desc": "闭包等于函数加上它引用的自由变量环境。被内层函数引用的外层局部名字叫自由变量，编译器…", "tone": "purple"}, {"title": "边界、失效信号与装饰器里的延迟绑定", "desc": "写装饰器最易踩这一层：若在 `for` 循环里批量注册或包装函数，wrapper 引…", "tone": "orange"}, {"title": "工程落地", "desc": "工厂函数造闭包：带状态的校验器与计数器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
@@ -275,13 +275,13 @@ print(make_counter.__code__.co_cellvars)
 
 <Callout type="idea" title='落地提示' text='用默认参数把值当场绑定，或用工厂函数制造新的作用域；写装饰器时尤其要注意这一层' />
 
-<CheckList id='P030b' title='上线前自检' :items='["能复现并解释「循环里 lambda 引用 i，全部返回最终值」", "能复现并解释「函数里先 print(x) 再 x = 1 抛 Unboun」", "能复现并解释「声明了 nonlocal 却报 SyntaxError」", "能用一条命令验证 LEGB 查找顺序", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P030b' title='上线前自检' :items='["能复现并解释「循环里 lambda 引用 i，全部返回最终值」", "能复现并解释「函数里先 print(x) 再 x = 1 抛 Unboun…」", "能复现并解释「声明了 nonlocal 却报 SyntaxError」", "能用一条命令验证 LEGB 查找顺序", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import inspect; print(inspect.signature(print))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `LEGB` 查找顺序 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `LEGB` 查找顺序 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 用练习把 LEGB 刻进直觉
@@ -320,3 +320,16 @@ python -c "import inspect; print(inspect.signature(print))"
 3. global 走 LOAD_GLOBAL / STORE_GLOBAL；nonlocal（3.0+）走 LOAD_DEREF / STORE_DEREF，要求外层确有该绑定
 
 [下一讲：高阶函数、lambda 与 map / filter / reduce](/functions/higher-order)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/030-scope.py`
+
+```bash
+python3 examples/lessons/030-scope.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/030-scope.py) · [全部示例代码索引](/examples/)

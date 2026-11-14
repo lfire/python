@@ -54,7 +54,7 @@ for name, p in sig.parameters.items():
 
 <OutputBox title='主示例运行结果' output='(&#39;db.local&#39;, 5432, 2.0, 5, {&#39;ssl&#39;: True})\nhost POSITIONAL_ONLY no-default\nport POSITIONAL_ONLY no-default\ntimeout POSITIONAL_OR_KEYWORD 1.0\nretries KEYWORD_ONLY 3\noptions VAR_KEYWORD no-default' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import inspect\n\ndef connect(host, port, /, timeout=1.0, *, retries=3, **options):\n    return (host, port, timeout, retries, options)\n\nsig = inspect.signature(connect)\nprint(connect(&#39;db.local&#39;, 5432, 2.0, retries=5, ssl=True))\nfor name, p in sig.parameters.items():\n    default = &#39;no-default&#39; if p.default is inspect.Parameter.empty else repr(p.default)\n    print(name, p.kind.name, default)' :notes='["导入 inspect：signature 与 Parameter 是读取参数契约的官方接口", "用 / 把 host、port 定为仅位置；用 * 把 retries 及之后定为仅关键字", "把五种形态收到的值打包成元组返回，便于逐项核对绑定结果", "取得 Signature 对象，parameters 是按定义顺序排列的映射", "2.0 按位置给 timeout，retries=5 走仅关键字，ssl=True 落进 **options", "遍历每个 Parameter，准备读取名字、kind 与默认值", "无默认值的参数其 default 是哨兵 inspect.Parameter.empty，转成可读串", "打印名字、kind.name 与默认值，得到完整的参数契约表"]' title='第 028 讲 · 函数定义与参数形态' />
+<LineByLine code='import inspect\n\ndef connect(host, port, /, timeout=1.0, *, retries=3, **options):\n    return (host, port, timeout, retries, options)\n\nsig = inspect.signature(connect)\nprint(connect(&#39;db.local&#39;, 5432, 2.0, retries=5, ssl=True))\nfor name, p in sig.parameters.items():\n    default = &#39;no-default&#39; if p.default is inspect.Parameter.empty else repr(p.default)\n    print(name, p.kind.name, default)' :notes='["导入 inspect：signature 与 Parameter 是读取参数契约的官方接口", "空行，只用于分隔逻辑块，不影响执行结果。", "用 / 把 host、port 定为仅位置；用 * 把 retries 及之后定为仅关键字", "把五种形态收到的值打包成元组返回，便于逐项核对绑定结果", "空行，只用于分隔逻辑块，不影响执行结果。", "取得 Signature 对象，parameters 是按定义顺序排列的映射", "2.0 按位置给 timeout，retries=5 走仅关键字，ssl=True 落进 **options", "遍历每个 Parameter，准备读取名字、kind 与默认值", "无默认值的参数其 default 是哨兵 inspect.Parameter.empty，转成可读串", "打印名字、kind.name 与默认值，得到完整的参数契约表"]' title='第 028 讲 · 函数定义与参数形态' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -68,9 +68,9 @@ for name, p in sig.parameters.items():
 | 仅关键字 | 裸 * 或 *args 之后 | KEYWORD_ONLY | __kwdefaults__ | 只能按关键字 |
 | 可变关键字 | **kwargs | VAR_KEYWORD | 无固定默认值，调用时成字典 | 接收多余关键字参数 |
 
-<ConceptDiagram type='hub4' title='第 028 讲 · 五段式参数：斜杠与星号如何切分签名' labels='五段式参数：斜杠与星号如何切分签名|默认值只在定义时求值一次|解包、绑定与一等对象' caption='准确使用五种参数并设计稳定接口' />
+<ConceptDiagram type='hub4' title='第 028 讲 · 五段式参数：斜杠与星号如何切分签名' labels='五段式参数：斜杠与星号如何切分签名|默认值只在定义时求值一次|解包、绑定与一等对象|签名与 inspect' caption='准确使用五种参数并设计稳定接口' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 默认值只在定义时求值一次
@@ -246,3 +246,16 @@ except TypeError as e:
 [下一讲：返回值、None 与多返回值](/functions/returns)
 
 <FillBlank no='028-5' tpl='___ inspect' :answers='["import"]' hint='回想本讲关于 位置与关键字参数 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 五段式参数：斜杠与星号如何切分签名 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/028-function-basics.py`
+
+```bash
+python3 examples/lessons/028-function-basics.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/028-function-basics.py) · [全部示例代码索引](/examples/)

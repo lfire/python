@@ -22,7 +22,7 @@ description: 定位并解决苛刻场景下的内存问题
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='看到 RSS 高就定时 gc.collect()：若增长来自 pymalloc arena 未归还或 C 扩展原生内存，收集既不动这些也不降 RSS，只增加停顿' />
 
-<Callout type="tip" title='核心心智模型' text='CPython 对小于 512 字节的对象走专用分配器 pymalloc（`Objects/obmalloc.c`），大对象直接交给 libc 的 malloc。它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；arena 内切成 4 KiB 的 pool' />
+<Callout type="tip" title='核心心智模型' text='CPython 对小于 512 字节的对象走专用分配器 pymalloc（`Objects/obmalloc.c`），大对象直接交给 libc 的 malloc。它按三级组织：arena 是 256 KiB 的内存块，按 4 KiB 页对齐从 OS 申请；arena 内切成 4 KiB 的 pool…' />
 
 
 ## pymalloc 三级结构：arena / pool / block
@@ -46,7 +46,7 @@ size class 以 8 字节为步长（8、16、24 直到 512 字节，共 64 档）
 | block | 8 到 512 字节，8 字节步长 | 实际分配给对象的单元，共 64 档 |
 | size class | 共 64 档 | 请求大小向上取整到档位 |
 
-<ConceptDiagram type='layers3' title='第 115 讲 · 分层视角' labels='pymalloc 三级结构：arena |分代 GC 的触发逻辑与 gcmodul|tracemalloc、pympler |与 glibc malloc 关系' caption='tracemalloc、pympler 与定位顺序' />
+<ConceptDiagram type='layers3' title='第 115 讲 · 分层视角' labels='pymalloc 三级结构：arena…|分代 GC 的触发逻辑与 gcmodul…|tracemalloc、pympler…|与 glibc malloc 关系' caption='tracemalloc、pympler 与定位顺序' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 与 glibc malloc 关系 落在哪一层。
 
@@ -122,7 +122,7 @@ print('gen0_below_threshold', gc.get_count()[0] < gc.get_threshold()[0])
 
 <OutputBox title='主示例运行结果' output='threshold (2000, 10, 10)\ntracked_list True\ntracked_int False\nnode_referrers 1\ncycle_collectable True\ngen0_below_threshold True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import gc\n\nprint(&#39;threshold&#39;, gc.get_threshold())\nprint(&#39;tracked_list&#39;, gc.is_tracked([]))\nprint(&#39;tracked_int&#39;, gc.is_tracked(1))\n\nclass Node:\n    __slots__ = (&#39;ref&#39;,)\n    def __init__(self):\n        self.ref = None\n\na = Node(); b = Node()\na.ref = b; b.ref = a\nrefs = len([r for r in gc.get_referrers(b) if isinstance(r, Node)])\nprint(&#39;node_referrers&#39;, refs)\ndel a, b\nfound = gc.collect(2)\nprint(&#39;cycle_collectable&#39;, found &gt;= 2)\nprint(&#39;gen0_below_threshold&#39;, gc.get_count()[0] &lt; gc.get_threshold()[0])' :notes='["导入 gc 观察分代回收", "3.13 默认阈值 (2000, 10, 10)", "list 是容器，参与 GC 追踪", "int 不含引用，不被 GC 追踪", "定义最小的循环引用节点", "__slots__ 限定属性，仍是 GC 追踪对象", "构造时初始化引用字段", "把 ref 置空，稍后构造环", "创建两个节点", "互相引用形成环，引用计数无法回收", "用 get_referrers 数出引用 b 的 Node 对象", "只有 a 一个 Node 引用 b", "删除两个名字，环变为不可达", "手动触发第 2 代全量收集", "至少回收两个循环节点，证明 GC 生效", "收集后 gen0 计数回落到阈值以下"]' title='第 115 讲 · 内存分配器 pymalloc 与 GC 源码' />
+<LineByLine code='import gc\n\nprint(&#39;threshold&#39;, gc.get_threshold())\nprint(&#39;tracked_list&#39;, gc.is_tracked([]))\nprint(&#39;tracked_int&#39;, gc.is_tracked(1))\n\nclass Node:\n    __slots__ = (&#39;ref&#39;,)\n    def __init__(self):\n        self.ref = None\n\na = Node(); b = Node()\na.ref = b; b.ref = a\nrefs = len([r for r in gc.get_referrers(b) if isinstance(r, Node)])\nprint(&#39;node_referrers&#39;, refs)\ndel a, b\nfound = gc.collect(2)\nprint(&#39;cycle_collectable&#39;, found &gt;= 2)\nprint(&#39;gen0_below_threshold&#39;, gc.get_count()[0] &lt; gc.get_threshold()[0])' :notes='["导入 gc 观察分代回收", "空行，只用于分隔逻辑块，不影响执行结果。", "3.13 默认阈值 (2000, 10, 10)", "list 是容器，参与 GC 追踪", "int 不含引用，不被 GC 追踪", "空行，只用于分隔逻辑块，不影响执行结果。", "定义最小的循环引用节点", "__slots__ 限定属性，仍是 GC 追踪对象", "构造时初始化引用字段", "把 ref 置空，稍后构造环", "空行，只用于分隔逻辑块，不影响执行结果。", "创建两个节点", "互相引用形成环，引用计数无法回收", "用 get_referrers 数出引用 b 的 Node 对象", "只有 a 一个 Node 引用 b", "删除两个名字，环变为不可达", "手动触发第 2 代全量收集", "至少回收两个循环节点，证明 GC 生效", "收集后 gen0 计数回落到阈值以下"]' title='第 115 讲 · 内存分配器 pymalloc 与 GC 源码' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -155,7 +155,7 @@ gc.enable()
 
 <Callout type="warn" title='本讲最容易踩的坑' text='看到 RSS 高就定时 gc.collect()：若增长来自 pymalloc arena 未归还或 C 扩展原生内存，收集既不动这些也不降 RSS，只增加停顿' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：看到 RSS 高就定时 gc.collect", "body": "若增长来自 pymalloc arena 未归还或 C 扩展原生内存，收集既不动这些也不降 RSS，只增加停顿", "tip": "先用 tracemalloc 与 RSS 差值分类；仍被引用改生命周期，碎片改分配布局，原生内存查扩展释放路径"}, {"title": "第 2 步：把 tracemalloc 统计当作进程全部", "body": "它只覆盖 Python 分配器经手的块，不含 C 扩展原生 malloc、mmap、glibc 缓存与线程栈", "tip": "同时采集 RSS 与 tracemalloc，差值大就转向 jemalloc prof 或扩展统计接口排查原生内存"}, {"title": "第 3 步：认为 del 之后对象一定被释放", "body": "互相引用的容器引用计数不为 0，只能等分代 GC；且 sys.getsizeof 不含容器元素与原生内存", "tip": "用 weakref 验证可回收性、gc.get_referrers 查谁还引用；理解 sys.getsizeof 只算对象自身结构"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：看到 RSS 高就定时 gc.collect…", "body": "若增长来自 pymalloc arena 未归还或 C 扩展原生内存，收集既不动这些也不降 RSS，只增加停顿", "tip": "先用 tracemalloc 与 RSS 差值分类；仍被引用改生命周期，碎片改分配布局，原生内存查扩展释放路径"}, {"title": "第 2 步：把 tracemalloc 统计当作进程全部…", "body": "它只覆盖 Python 分配器经手的块，不含 C 扩展原生 malloc、mmap、glibc 缓存与线程栈", "tip": "同时采集 RSS 与 tracemalloc，差值大就转向 jemalloc prof 或扩展统计接口排查原生内存"}, {"title": "第 3 步：认为 del 之后对象一定被释放", "body": "互相引用的容器引用计数不为 0，只能等分代 GC；且 sys.getsizeof 不含容器元素与原生内存", "tip": "用 weakref 验证可回收性、gc.get_referrers 查谁还引用；理解 sys.getsizeof 只算对象自身结构"}]' />
 
 
 ## tracemalloc、pympler 与定位顺序
@@ -227,7 +227,7 @@ diagnose(Node)
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 arena / pool / block 三级 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 arena / pool / block 三级 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -272,7 +272,7 @@ print('stats_keys', sorted(gc.get_stats()[0].keys()))
 
 <OutputBox title='扩展示例运行结果' output='list_growth [88, 88, 88, 88, 120, 120, 120, 120, 184]\ngc_threshold (2000, 10, 10)\nint_tracked False\nlist_tracked True\ntuple_with_list_tracked True\nstats_keys [&#39;collected&#39;, &#39;collections&#39;, &#39;uncollectable&#39;]' />
 
-<LineByLine code='import gc, sys\n\nsizes = []\nbuf = []\nfor i in range(9):\n    buf.append(i)\n    sizes.append(sys.getsizeof(buf))\nprint(&#39;list_growth&#39;, sizes)\nprint(&#39;gc_threshold&#39;, gc.get_threshold())\nprint(&#39;int_tracked&#39;, gc.is_tracked(1))\nprint(&#39;list_tracked&#39;, gc.is_tracked([1, 2, 3]))\nprint(&#39;tuple_with_list_tracked&#39;, gc.is_tracked(([1],)))\nprint(&#39;stats_keys&#39;, sorted(gc.get_stats()[0].keys()))' :notes='["逐次 append 并记录 sys.getsizeof", "列表容量按 4、8、16 档过度分配，尺寸呈台阶跳变", "3.13 三代默认阈值 (2000, 10, 10)", "小整数不参与循环，未被 GC 追踪", "列表是容器，一定被追踪", "含可变元素的元组可能参与循环，必须被追踪", "每代固定返回 collected/collections/uncollectable 三个键", "arena 只有整体空闲才归还 OS，少数存活对象钉住整块，造成对象已释放但 RSS 不降", "引用计数即时回收，循环垃圾交分代 GC；3.13 阈值 (2000, 10, 10)，collect(2) 全量", "容器被 GC 追踪、int/str 不被追踪；PEP 442 起带 __del__ 的循环先终结再回收", "gc.collect 只处理 Python 对象循环；C 扩展原生内存与 glibc 缓存不受它影响", "定位顺序：tracemalloc 找分配点 → 对比 RSS 差值 → gc.get_referrers/weakref 查引用与碎片"]' title='扩展示例逐行讲解' />
+<LineByLine code='import gc, sys\n\nsizes = []\nbuf = []\nfor i in range(9):\n    buf.append(i)\n    sizes.append(sys.getsizeof(buf))\nprint(&#39;list_growth&#39;, sizes)\nprint(&#39;gc_threshold&#39;, gc.get_threshold())\nprint(&#39;int_tracked&#39;, gc.is_tracked(1))\nprint(&#39;list_tracked&#39;, gc.is_tracked([1, 2, 3]))\nprint(&#39;tuple_with_list_tracked&#39;, gc.is_tracked(([1],)))\nprint(&#39;stats_keys&#39;, sorted(gc.get_stats()[0].keys()))' :notes='["逐次 append 并记录 sys.getsizeof", "空行，只用于分隔逻辑块，不影响执行结果。", "列表容量按 4、8、16 档过度分配，尺寸呈台阶跳变", "3.13 三代默认阈值 (2000, 10, 10)", "小整数不参与循环，未被 GC 追踪", "列表是容器，一定被追踪", "含可变元素的元组可能参与循环，必须被追踪", "每代固定返回 collected/collections/uncollectable 三个键", "这一行 `print(&#39;gc_threshold&#39;, gc.get_threshold())` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;int_tracked&#39;, gc.is_tracked(1))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;list_tracked&#39;, gc.is_tracked([1, 2, 3]))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tuple_with_list_tracked&#39;, gc.is_tracked(([1],` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;stats_keys&#39;, sorted(gc.get_stats()[0].keys())` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### arena_object 与整块 256 KiB 归还条件
@@ -362,3 +362,16 @@ tracemalloc.stop()
 3. 引用计数即时回收，循环垃圾交分代 GC；3.13 阈值 (2000, 10, 10)，collect(2) 全量
 
 [下一讲：导入系统源码与 import hook](/advanced/import-source)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/115-allocator.py`
+
+```bash
+python3 examples/lessons/115-allocator.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/115-allocator.py) · [全部示例代码索引](/examples/)

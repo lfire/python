@@ -55,7 +55,7 @@ print(first, rest)
 
 <OutputBox title='主示例运行结果' output='(2, 8, 5.0)\n2 8 5.0\nTrue\nTypeError cannot unpack non-iterable NoneType object\n1 [2, 3, 4]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def stats(xs):\n    if not xs:\n        return None\n    return min(xs), max(xs), sum(xs) / len(xs)\n\nprint(stats([2, 8, 5]))\nlo, hi, avg = stats([2, 8, 5])\nprint(lo, hi, avg)\nprint(stats([]) is None)\ntry:\n    a, b = stats([])\nexcept TypeError as e:\n    print(type(e).__name__, str(e))\nfirst, *rest = (1, 2, 3, 4)\nprint(first, rest)' :notes='["定义统计函数：空输入走失败分支，非空返回三个值", "空列表时提前返回 None，这是后面解包崩溃的来源", "返回 None 单例，函数此处结束", "逗号把 min、max、均值打包成一个三元组再返回", "打印整个返回值，看到它是一个元组对象", "用三个目标解包同一个元组", "三个名字分别拿到最小值、最大值与均值 5.0", "确认空输入的返回值就是 None 单例", "准备捕获对 None 解包时的类型错误", "失败路径返回 None，却按两个目标解包", "捕获预期的 TypeError", "打印异常类型与消息：None 不可迭代", "用扩展解包把首元素与剩余元素分开", "星号目标 rest 收集成 list，不是元组"]' title='第 029 讲 · 返回值、None 与多返回值' />
+<LineByLine code='def stats(xs):\n    if not xs:\n        return None\n    return min(xs), max(xs), sum(xs) / len(xs)\n\nprint(stats([2, 8, 5]))\nlo, hi, avg = stats([2, 8, 5])\nprint(lo, hi, avg)\nprint(stats([]) is None)\ntry:\n    a, b = stats([])\nexcept TypeError as e:\n    print(type(e).__name__, str(e))\nfirst, *rest = (1, 2, 3, 4)\nprint(first, rest)' :notes='["定义统计函数：空输入走失败分支，非空返回三个值", "空列表时提前返回 None，这是后面解包崩溃的来源", "返回 None 单例，函数此处结束", "逗号把 min、max、均值打包成一个三元组再返回", "空行，只用于分隔逻辑块，不影响执行结果。", "打印整个返回值，看到它是一个元组对象", "用三个目标解包同一个元组", "三个名字分别拿到最小值、最大值与均值 5.0", "确认空输入的返回值就是 None 单例", "准备捕获对 None 解包时的类型错误", "失败路径返回 None，却按两个目标解包", "捕获预期的 TypeError", "打印异常类型与消息：None 不可迭代", "用扩展解包把首元素与剩余元素分开", "星号目标 rest 收集成 list，不是元组"]' title='第 029 讲 · 返回值、None 与多返回值' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -69,9 +69,9 @@ print(first, rest)
 | a, *rest = seq | 首元素 + 一个 list | 批量解包 | 星号目标只能有一个 |
 | 含 yield 的函数调用 | generator 对象 | next(g) / for | 耗尽抛 StopIteration |
 
-<ConceptDiagram type='compare2' title='第 029 讲 · 函数只有一个返回对象：元组打包与解包' labels='函数只有一个返回对象：元组打包与解包|返回可变对象与契约污染|生成器函数：return 不是返回值' caption='理解函数边界上的数据契约' />
+<ConceptDiagram type='compare2' title='第 029 讲 · 函数只有一个返回对象：元组打包与解包' labels='函数只有一个返回对象：元组打包与解包|返回可变对象与契约污染|生成器函数：return 不是返回值|生成器返回' caption='理解函数边界上的数据契约' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 多返回值其实是先打包再解包
@@ -84,9 +84,9 @@ print(first, rest)
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "def stats(xs):\n    if not xs:\n        return None\n    return min(xs), max(xs), sum(xs) / len(xs)\n\nprint(stats([2, 8, 5]))\nlo, hi, avg = stats([2, 8, 5])\nprint(lo, hi, avg)\nprint(stats([]) is None)\ntry:\n    a, b = stats([])\nexcept TypeError as e:\n    print(type(e).__name__, str(e))\nfirst, *rest = (1, 2, 3, 4)\nprint(first, rest)", "note": "函数只有一个返回对象：元组打包与解包"}, {"label": "对照 / 进阶", "code": "class Cart:\n    def __init__(self):\n        self.items = []\n    def raw(self):\n        return self.items\n    def snapshot(self):\n        return tuple(self.items)\n\nc = Cart()\nc.items.append(&#39;book&#39;)\nr = c.raw()\nr.append(&#39;pen&#39;)\nprint(list(c.items), r is c.items)\nprint(c.snapshot(), type(c.snapshot()).__name__)\n\ndef pages():\n    yield &#39;a&#39;\n    return &#39;end&#39;\ng = pages()\nprint(next(g))\ntry:\n    next(g)\nexcept StopIteration as e:\n    print(type(e).__name__, e.value)", "note": "返回可变对象与契约污染"}]' title='两种写法切换看' />
 
-<Term word='隐式 return None' text='`return a, b` 与 `return (a, b)` 完全等价，逗号才是元组构造符，括号可省；编译后是依次压入 a、b 再 `BUILD_TUPLE` 2，栈上仍只有一个元组对象，而单个 `return a` 不生成 `BUILD_TUPLE`。调用侧 `x, y = f()` 由 `UNPACK_SEQUE' />
+<Term word='隐式 return None' text='`return a, b` 与 `return (a, b)` 完全等价，逗号才是元组构造符，括号可省；编译后是依次压入 a、b 再 `BUILD_TUPLE` 2，栈上仍只有一个元组对象，而单个 `return a` 不生成 `BUILD_TUPLE`。调用侧 `x, y = f()` 由…' />
 
-<Term word='元组打包与解包' text='直接返回 `self.items`、模块级缓存字典或任何内部可变容器，等于把对象引用交给调用方：外部一次 `append()` 就会原地改掉内部状态，而这次改动发生在函数之外、日志里看不到，封装被完全绕过。稳妥做法是返回副本 `list(self._items)`、`tuple(self._items)`，或干脆只暴露' />
+<Term word='元组打包与解包' text='直接返回 `self.items`、模块级缓存字典或任何内部可变容器，等于把对象引用交给调用方：外部一次 `append()` 就会原地改掉内部状态，而这次改动发生在函数之外、日志里看不到，封装被完全绕过。稳妥做法是返回副本 `list(self._items)`、`tuple(self._items)`，或干脆只暴露…' />
 
 
 ## 返回可变对象与契约污染
@@ -178,7 +178,7 @@ PEP 479（3.7）把漏出的 `StopIteration` 转 `RuntimeError`。下表按 PEP 
 | PEP 604 | 3.10 | X \| None 与联合类型 | Optional[X] 可写成 X \| None |
 | CO_GENERATOR | 长期稳定 | co_flags 的 0x20 标记生成器函数 | 调用时返回 genobject 而非执行帧 |
 
-<Callout type="tip" title='核心心智模型' text='`return a, b` 与 `return (a, b)` 完全等价，逗号才是元组构造符，括号可省；编译后是依次压入 a、b 再 `BUILD_TUPLE` 2，栈上仍只有一个元组对象，而单个 `return a` 不生成 `BUILD_TUPLE`。调用侧 `x, y = f()` 由 `UN' />
+<Callout type="tip" title='核心心智模型' text='`return a, b` 与 `return (a, b)` 完全等价，逗号才是元组构造符，括号可省；编译后是依次压入 a、b 再 `BUILD_TUPLE` 2，栈上仍只有一个元组对象，而单个 `return a` 不生成 `BUILD_TUPLE`。调用侧 `x, y = f()` 由…' />
 
 
 ## 返回值常见错误与修复
@@ -210,7 +210,7 @@ PEP 479（3.7）把漏出的 `StopIteration` 转 `RuntimeError`。下表按 PEP 
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 None 同时表示没找到与合法空值：调用方 if r is None 无法区分两种语义，容易把合法结果当失败丢弃' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 None 同时表示没找到与合法空值", "body": "调用方 if r is None 无法区分两种语义，容易把合法结果当失败丢弃", "tip": "没找到抛 LookupError 子类，或返回 Result(ok=..., value=...)；字段缺省用 Optional 表达"}, {"title": "第 2 步：对可能失败的返回值直接 a, b = fin", "body": "失败路径返回 None，解包 None 抛 TypeError: cannot unpack non-iterable NoneType object", "tip": "先 r = find() 并判空，或让 find 始终返回同类型元组、失败时抛异常"}, {"title": "第 3 步：函数返回内部 self.items 列表，外", "body": "返回的是可变容器引用，封装被绕过，改动在函数外扩散且不可见", "tip": "返回 tuple(self.items) 或 list(self.items) 副本；只暴露只读视图"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 None 同时表示没找到与合法空值", "body": "调用方 if r is None 无法区分两种语义，容易把合法结果当失败丢弃", "tip": "没找到抛 LookupError 子类，或返回 Result(ok=..., value=...)；字段缺省用 Optional 表达"}, {"title": "第 2 步：对可能失败的返回值直接 a, b = fin…", "body": "失败路径返回 None，解包 None 抛 TypeError: cannot unpack non-iterable NoneType object", "tip": "先 r = find() 并判空，或让 find 始终返回同类型元组、失败时抛异常"}, {"title": "第 3 步：函数返回内部 self.items 列表，外…", "body": "返回的是可变容器引用，封装被绕过，改动在函数外扩散且不可见", "tip": "返回 tuple(self.items) 或 list(self.items) 副本；只暴露只读视图"}]' />
 
 
 ## Repository 查询：把成功与失败写成一条明确契约
@@ -277,3 +277,16 @@ print(find('u1').value)
 3. 解包元素数不符抛 ValueError: too many / not enough values to unpack；带星号解包（3.0+）星号目标是 list
 
 [下一讲：作用域、LEGB 与闭包延迟绑定](/functions/scope)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/029-returns.py`
+
+```bash
+python3 examples/lessons/029-returns.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/029-returns.py) · [全部示例代码索引](/examples/)

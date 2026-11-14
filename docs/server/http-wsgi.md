@@ -73,7 +73,7 @@ print('wsgi keys', sorted(k for k in env if k.startswith('wsgi.')))
 
 <OutputBox title='主示例运行结果' output='status 200 OK\ncontent-type text/plain; charset=utf-8\nbody GET /health HTTP/1.1\nwsgi keys [&#39;wsgi.errors&#39;, &#39;wsgi.input&#39;, &#39;wsgi.multiprocess&#39;, &#39;wsgi.multithread&#39;, &#39;wsgi.run_once&#39;, &#39;wsgi.url_scheme&#39;, &#39;wsgi.version&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from wsgiref.util import setup_testing_defaults\n\ndef app(environ, start_response):\n    start_response(&#39;200 OK&#39;, [(&#39;Content-Type&#39;, &#39;text/plain; charset=utf-8&#39;)])\n    line = environ[&#39;REQUEST_METHOD&#39;] + &#39; &#39; + environ[&#39;PATH_INFO&#39;] + &#39; &#39; + environ[&#39;SERVER_PROTOCOL&#39;]\n    return [line.encode(&#39;utf-8&#39;)]\n\ncaptured = {}\ndef start_response(status, headers, exc_info=None):\n    captured[&#39;status&#39;] = status\n    captured[&#39;headers&#39;] = dict(headers)\n    return lambda data: None\n\nenv = {}\nsetup_testing_defaults(env)\nenv[&#39;REQUEST_METHOD&#39;] = &#39;GET&#39;\nenv[&#39;PATH_INFO&#39;] = &#39;/health&#39;\nenv[&#39;SERVER_PROTOCOL&#39;] = &#39;HTTP/1.1&#39;\nbody = b&#39;&#39;.join(app(env, start_response))\nprint(&#39;status&#39;, captured[&#39;status&#39;])\nprint(&#39;content-type&#39;, captured[&#39;headers&#39;][&#39;Content-Type&#39;])\nprint(&#39;body&#39;, body.decode())\nprint(&#39;wsgi keys&#39;, sorted(k for k in env if k.startswith(&#39;wsgi.&#39;)))' :notes='["导入 setup_testing_defaults，按 PEP 3333 补齐最小 environ", "定义 WSGI 应用，签名固定为 environ 与 start_response 两个位置参数", "在返回响应体前调用 start_response，状态行是 &#39;200 OK&#39;", "从 environ 读方法、路径与协议版本，拼成响应文本", "返回值必须是 bytes 的可迭代对象，这里只有一个字节块", "用字典捕获 start_response 的参数，模拟服务器的回调记录", "自定义 start_response，第三个参数 exc_info 供错误处理复用", "记录状态字符串", "把 headers 转成 dict 便于读取 Content-Type", "返回 write 可调用对象；本例不用它，直接返回可迭代体", "构造空 environ，交由 setup_testing_defaults 填充", "补齐 wsgi.input、wsgi.errors、wsgi.version 等标准键", "设置请求方法", "设置请求路径 PATH_INFO", "设置 SERVER_PROTOCOL，注意它不是 wsgi.* 键", "把应用返回的字节块拼接成完整响应体", "确认状态行被正确回调", "确认 Content-Type 头被正确传出", "打印解码后的响应体，证明 WSGI 一问一答完成", "列出 environ 里全部 wsgi.* 键，核对协议要求的字段"]' title='第 082 讲 · HTTP 协议与 WSGI / ASGI' />
+<LineByLine code='from wsgiref.util import setup_testing_defaults\n\ndef app(environ, start_response):\n    start_response(&#39;200 OK&#39;, [(&#39;Content-Type&#39;, &#39;text/plain; charset=utf-8&#39;)])\n    line = environ[&#39;REQUEST_METHOD&#39;] + &#39; &#39; + environ[&#39;PATH_INFO&#39;] + &#39; &#39; + environ[&#39;SERVER_PROTOCOL&#39;]\n    return [line.encode(&#39;utf-8&#39;)]\n\ncaptured = {}\ndef start_response(status, headers, exc_info=None):\n    captured[&#39;status&#39;] = status\n    captured[&#39;headers&#39;] = dict(headers)\n    return lambda data: None\n\nenv = {}\nsetup_testing_defaults(env)\nenv[&#39;REQUEST_METHOD&#39;] = &#39;GET&#39;\nenv[&#39;PATH_INFO&#39;] = &#39;/health&#39;\nenv[&#39;SERVER_PROTOCOL&#39;] = &#39;HTTP/1.1&#39;\nbody = b&#39;&#39;.join(app(env, start_response))\nprint(&#39;status&#39;, captured[&#39;status&#39;])\nprint(&#39;content-type&#39;, captured[&#39;headers&#39;][&#39;Content-Type&#39;])\nprint(&#39;body&#39;, body.decode())\nprint(&#39;wsgi keys&#39;, sorted(k for k in env if k.startswith(&#39;wsgi.&#39;)))' :notes='["导入 setup_testing_defaults，按 PEP 3333 补齐最小 environ", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 WSGI 应用，签名固定为 environ 与 start_response 两个位置参数", "在返回响应体前调用 start_response，状态行是 &#39;200 OK&#39;", "从 environ 读方法、路径与协议版本，拼成响应文本", "返回值必须是 bytes 的可迭代对象，这里只有一个字节块", "空行，只用于分隔逻辑块，不影响执行结果。", "用字典捕获 start_response 的参数，模拟服务器的回调记录", "自定义 start_response，第三个参数 exc_info 供错误处理复用", "记录状态字符串", "把 headers 转成 dict 便于读取 Content-Type", "返回 write 可调用对象；本例不用它，直接返回可迭代体", "空行，只用于分隔逻辑块，不影响执行结果。", "构造空 environ，交由 setup_testing_defaults 填充", "补齐 wsgi.input、wsgi.errors、wsgi.version 等标准键", "设置请求方法", "设置请求路径 PATH_INFO", "设置 SERVER_PROTOCOL，注意它不是 wsgi.* 键", "把应用返回的字节块拼接成完整响应体", "确认状态行被正确回调", "确认 Content-Type 头被正确传出", "打印解码后的响应体，证明 WSGI 一问一答完成", "列出 environ 里全部 wsgi.* 键，核对协议要求的字段"]' title='第 082 讲 · HTTP 协议与 WSGI / ASGI' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -124,7 +124,7 @@ print('wsgi.version', e['wsgi.version'], 'url_scheme', e['wsgi.url_scheme'])
 | 生命周期 | lifespan.startup / lifespan.shutdown | 无额外字段，用于建/释放连接池 |
 | scope.type | http / websocket / lifespan | asgi.version 为 '3.0' |
 
-<Callout type="tip" title='核心心智模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PR' />
+<Callout type="tip" title='核心心智模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`…' />
 
 
 ### http.response.start 必须先于 body
@@ -174,9 +174,9 @@ print('asgi version', scope['asgi']['version'])
 
 <Compare :panels='[{"label": "主示例", "code": "from wsgiref.util import setup_testing_defaults\n\ndef app(environ, start_response):\n    start_response(&#39;200 OK&#39;, [(&#39;Content-Type&#39;, &#39;text/plain; charset=utf-8&#39;)])\n    line = environ[&#39;REQUEST_METHOD&#39;] + &#39; &#39; + environ[&#39;PATH_INFO&#39;] + &#39; &#39; + environ[&#39;SERVER_PROTOCOL&#39;]\n    return [line.encode(&#39;utf-8&#39;)]\n\ncaptured = {}\ndef start_response(status, headers, exc_info=None):\n    captured[&#39;status&#39;] = status\n    captured[&#39;headers&#39;] = dict(headers)\n    return lambda data: None\n\nenv = {}\nsetup_testing_defaults(env)\nenv[&#39;REQUEST_METHOD&#39;] = &#39;GET&#39;\nenv[&#39;PATH_INFO&#39;] = &#39;/health&#39;\nenv[&#39;SERVER_PROTOCOL&#39;] = &#39;HTTP/1.1&#39;\nbody = b&#39;&#39;.join(app(env, start_response))\nprint(&#39;status&#39;, captured[&#39;status&#39;])\nprint(&#39;content-type&#39;, captured[&#39;headers&#39;][&#39;Content-Type&#39;])\nprint(&#39;body&#39;, body.decode())\nprint(&#39;wsgi keys&#39;, sorted(k for k in env if k.startswith(&#39;wsgi.&#39;)))", "note": "WSGI：两个参数、一个回调、一段字节迭代"}, {"label": "对照 / 进阶", "code": "import asyncio\n\nasync def asgi_app(scope, receive, send):\n    await receive()\n    await send({&#39;type&#39;: &#39;http.response.start&#39;, &#39;status&#39;: 200,\n                &#39;headers&#39;: [(b&#39;content-type&#39;, b&#39;text/plain&#39;)]})\n    await send({&#39;type&#39;: &#39;http.response.body&#39;,\n                &#39;body&#39;: (scope[&#39;method&#39;] + &#39; &#39; + scope[&#39;path&#39;]).encode()})\n\nsent = []\nasync def receive():\n    return {&#39;type&#39;: &#39;http.request&#39;, &#39;body&#39;: b&#39;&#39;, &#39;more_body&#39;: False}\nasync def send(m):\n    sent.append(m)\n\nscope = {&#39;type&#39;: &#39;http&#39;, &#39;asgi&#39;: {&#39;version&#39;: &#39;3.0&#39;, &#39;spec_version&#39;: &#39;2.3&#39;},\n         &#39;method&#39;: &#39;GET&#39;, &#39;path&#39;: &#39;/health&#39;, &#39;query_string&#39;: b&#39;&#39;,\n         &#39;headers&#39;: [(b&#39;host&#39;, b&#39;localhost&#39;)]}\nasyncio.run(asgi_app(scope, receive, send))\nprint(&#39;message types&#39;, [m[&#39;type&#39;] for m in sent])\nprint(&#39;status&#39;, sent[0][&#39;status&#39;])\nprint(&#39;body&#39;, sent[1][&#39;body&#39;].decode())\nprint(&#39;asgi version&#39;, scope[&#39;asgi&#39;][&#39;version&#39;])", "note": "ASGI：scope、receive、send 与消息类型"}]' title='两种写法对照' note='差异集中在 请求响应模型；先看输出，再找背后的规则。' />
 
-<ConceptDiagram type='layers3' title='第 082 讲 · WSGI：两个参数、一个回调、一段字节迭代' labels='WSGI：两个参数、一个回调、一段字节迭代|ASGI：scope、receive、sen|同步异步混跑：阻塞调用为何会拖垮整个 loo' caption='理解框架之下发生了什么' />
+<ConceptDiagram type='layers3' title='第 082 讲 · WSGI：两个参数、一个回调、一段字节迭代' labels='WSGI：两个参数、一个回调、一段字节迭代|ASGI：scope、receive、sen…|同步异步混跑：阻塞调用为何会拖垮整个 loo…|同步异步混跑' caption='理解框架之下发生了什么' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 同步异步混跑：阻塞调用如何拖垮整个 loop
@@ -258,13 +258,13 @@ print('headers keys', sorted(k for k in (captured['headers'] or {}) if k.startsw
 
 <Callout type="idea" title='落地提示' text='按协议选框架：传统 CRUD 用同步栈更省心，需要长连接与高并发 IO 时上 ASGI' />
 
-<CheckList id='P082b' title='上线前自检' :items='["能复现并解释「在 async 视图里直接调用同步阻塞库，压测时全部请求一起」", "能复现并解释「WSGI 应用返回 str 列表，服务器报断言错误」", "能复现并解释「给 ASGI 应用发 http.response.body 」", "能用一条命令验证 请求响应模型", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P082b' title='上线前自检' :items='["能复现并解释「在 async 视图里直接调用同步阻塞库，压测时全部请求一起…」", "能复现并解释「WSGI 应用返回 str 列表，服务器报断言错误」", "能复现并解释「给 ASGI 应用发 http.response.body…」", "能用一条命令验证 请求响应模型", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 请求响应模型 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 请求响应模型 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 服务器如何驱动应用：environ、三参数与事件循环
@@ -279,9 +279,9 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 `lifespan` 是独立的一条连接级协议，服务器在启动阶段发 `lifespan.startup`、应用回 `lifespan.startup.complete` 后才开始接流量，关闭时对称收尾，保证连接池先建后用的时序。
 
-<Term word='请求响应模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`、`C' />
+<Term word='请求响应模型' text='WSGI（PEP 3333）把应用约定成一个可调用对象 `application(environ, start_response)`。`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`…' />
 
-<Term word='WSGI 可调用对象' text='ASGI 把应用约定成 `async def` 定义的 `app(scope, receive, send)`，三个都是位置参数。`scope` 是每次连接建一次的 `dict`，含 `type`（`&#39;http&#39;` / `&#39;websocket&#39;` / `&#39;lifespan&#39;`）、`asgi` 子字典（`version`' />
+<Term word='WSGI 可调用对象' text='ASGI 把应用约定成 `async def` 定义的 `app(scope, receive, send)`，三个都是位置参数。`scope` 是每次连接建一次的 `dict`，含 `type`（`&#39;http&#39;` / `&#39;websocket&#39;` / `&#39;lifespan&#39;`）、`asgi` 子字典（`version`…' />
 
 
 ## 错因速查与排查顺序
@@ -294,7 +294,7 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 | WSGI 应用返回 str 列表，服务器报断言错误 | PEP 3333 要求返回 bytes 的可迭代对象，str 不是合法响应块 | 统一用 line.encode('utf-8') 或包一层中间件做编码；用 wsgiref.validate.validator 包装应用可在开发期暴露违规 |
 | 给 ASGI 应用发 http.response.body 却没先发 start | ASGI 协议要求 http.response.start 必须先于任何 body 消息 | 先 await send(&#123;'type': 'http.response.start', 'status': 200, 'headers': [...]&#125;)，再发 body；status 用 int、headers 用 bytes 键值对 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 async 视图里直接调用同步阻塞库，压", "body": "同步调用不 await、不让出，占死事件循环所在线程，loop 上其它协程全部停摆", "tip": "用 await asyncio.to_thread(blocking_fn, ...)，或把该路径函数定义成普通 def 让框架自动丢线程池"}, {"title": "第 2 步：WSGI 应用返回 str 列表，服务器报断", "body": "PEP 3333 要求返回 bytes 的可迭代对象，str 不是合法响应块", "tip": "统一用 line.encode(&#39;utf-8&#39;) 或包一层中间件做编码；用 wsgiref.validate.validator 包装应用可在开发期暴露违规"}, {"title": "第 3 步：给 ASGI 应用发 http.respon", "body": "ASGI 协议要求 http.response.start 必须先于任何 body 消息", "tip": "先 await send({&#39;type&#39;: &#39;http.response.start&#39;, &#39;status&#39;: 200, &#39;headers&#39;: [...]})，再发 body；status 用 int、headers 用 bytes 键值对"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 async 视图里直接调用同步阻塞库，压…", "body": "同步调用不 await、不让出，占死事件循环所在线程，loop 上其它协程全部停摆", "tip": "用 await asyncio.to_thread(blocking_fn, ...)，或把该路径函数定义成普通 def 让框架自动丢线程池"}, {"title": "第 2 步：WSGI 应用返回 str 列表，服务器报断…", "body": "PEP 3333 要求返回 bytes 的可迭代对象，str 不是合法响应块", "tip": "统一用 line.encode(&#39;utf-8&#39;) 或包一层中间件做编码；用 wsgiref.validate.validator 包装应用可在开发期暴露违规"}, {"title": "第 3 步：给 ASGI 应用发 http.respon…", "body": "ASGI 协议要求 http.response.start 必须先于任何 body 消息", "tip": "先 await send({&#39;type&#39;: &#39;http.response.start&#39;, &#39;status&#39;: 200, &#39;headers&#39;: [...]})，再发 body；status 用 int、headers 用 bytes 键值对"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -333,3 +333,16 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 3. ASGI = async app(scope, receive, send)，scope.type 为 http/websocket/lifespan，asgi.version 为 3.0
 
 [下一讲：FastAPI / Flask / Django 选型](/server/frameworks)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/082-http-wsgi.py`
+
+```bash
+python3 examples/lessons/082-http-wsgi.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/082-http-wsgi.py) · [全部示例代码索引](/examples/)

@@ -31,7 +31,7 @@ hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.list
 
 可验证：对一个把换行替换成 NL 的非单射编码，穷举长度不超过 3 的小字母表得到 85 个候选、9 个反例，收缩后最小反例是字面量 'NL'。
 
-<Callout type="tip" title='核心心智模型' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形' />
+<Callout type="tip" title='核心心智模型' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形…' />
 
 **本讲定位**
 
@@ -59,9 +59,9 @@ hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.list
 | RuleBasedStateMachine + @rule + Bundle | 状态机测试 | 操作序列一起收缩 |
 | HealthCheck.too_slow / filter_too_much | 失效信号 | 应修策略而非一律关闭 |
 
-<Term word='hypothesis 策略' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输' />
+<Term word='hypothesis 策略' text='hypothesis 用 `@given` 声明输入空间，例如 `st.integers()` 与 `st.lists(st.text())`，测试体写一条对所有输入都应成立的性质：不变量（排序后仍有序）、往返（`decode(encode(s)) == s`）、神谕（与一个可信参考实现比对）、变形（输入做等价变换后输…' />
 
-<Term word='收缩到最小反例' text='收缩的价值不只是「短」，而是把复杂的失败输入化简到能一眼看懂的本质：从 &#39;xNLy&#39;、&#39;NLNLNL&#39; 这类输入逐步删字符，只要删后仍触发失败就继续，最终停在 &#39;NL&#39;，正好暴露「编码不是单射」这个根因。状态机测试用 `RuleBasedStateMachine` 配合 `@initialize`、`@rule`、`B' />
+<Term word='收缩到最小反例' text='收缩的价值不只是「短」，而是把复杂的失败输入化简到能一眼看懂的本质：从 &#39;xNLy&#39;、&#39;NLNLNL&#39; 这类输入逐步删字符，只要删后仍触发失败就继续，最终停在 &#39;NL&#39;，正好暴露「编码不是单射」这个根因。状态机测试用 `RuleBasedStateMachine` 配合 `@initialize`、`@rule`…' />
 
 
 ## 对照：手写用例与 @given 找到的反例
@@ -103,7 +103,7 @@ print('minimal', sorted(m for m in minimal))
 
 <OutputBox title='主示例运行结果' output='generated cases 85\ncounterexamples 9\nminimal [&#39;NL&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import itertools\n\ndef encode(s):\n    return s.replace(chr(10), &#39;NL&#39;)\n\ndef decode(s):\n    return s.replace(&#39;NL&#39;, chr(10))\n\ndef prop(s):\n    return decode(encode(s)) == s\n\nalphabet = [&#39;N&#39;, &#39;L&#39;, chr(10), &#39;a&#39;]\ncandidates = [&#39;&#39;.join(p) for n in range(4) for p in itertools.product(alphabet, repeat=n)]\nfailing = [s for s in candidates if not prop(s)]\nprint(&#39;generated cases&#39;, len(candidates))\nprint(&#39;counterexamples&#39;, len(failing))\n\ndef shrink(s):\n    best = s\n    changed = True\n    while changed:\n        changed = False\n        for i in range(len(best)):\n            cand = best[:i] + best[i+1:]\n            if cand and not prop(cand):\n                best = cand\n                changed = True\n                break\n    return best\n\nminimal = {shrink(s) for s in failing}\nprint(&#39;minimal&#39;, sorted(m for m in minimal))' :notes='["导入 itertools，用笛卡尔积穷举小输入空间", "定义编码：把换行替换成字面量 NL", "这个替换不是单射，是后续反例的根因", "定义解码：把 NL 还原成换行", "含字面量 NL 的原文会被误还原", "定义性质：编解码往返必须等于原串", "字母表含 N、L、真实换行与普通字符", "生成长度 0 到 3 的全部候选串，共 85 个", "挑出所有破坏往返性质的反例", "打印生成规模，证明覆盖远超手写用例", "打印反例数量", "定义收缩：逐步删字符逼近最小反例", "best 保存当前最短的失败输入", "changed 标记本轮是否还能继续收缩", "每轮重置标志", "逐个位置尝试删除一个字符", "构造删去第 i 位的候选", "候选非空且仍失败才接受", "接受更短的失败输入", "标记本轮有进展，继续下一轮", "找到一处成功收缩即重新开始", "返回不可再收缩的最小反例", "对所有反例收缩并去重成集合", "打印最小反例，暴露非单射根因", "属性测试问「对所有这类输入性质是否成立」：不变量、往返、神谕、变形、幂等", "hypothesis 用 @given + 策略生成输入，settings(max_examples, derandomize) 控规模与可复现"]' title='第 077 讲 · 属性测试、基准测试与模糊测试' />
+<LineByLine code='import itertools\n\ndef encode(s):\n    return s.replace(chr(10), &#39;NL&#39;)\n\ndef decode(s):\n    return s.replace(&#39;NL&#39;, chr(10))\n\ndef prop(s):\n    return decode(encode(s)) == s\n\nalphabet = [&#39;N&#39;, &#39;L&#39;, chr(10), &#39;a&#39;]\ncandidates = [&#39;&#39;.join(p) for n in range(4) for p in itertools.product(alphabet, repeat=n)]\nfailing = [s for s in candidates if not prop(s)]\nprint(&#39;generated cases&#39;, len(candidates))\nprint(&#39;counterexamples&#39;, len(failing))\n\ndef shrink(s):\n    best = s\n    changed = True\n    while changed:\n        changed = False\n        for i in range(len(best)):\n            cand = best[:i] + best[i+1:]\n            if cand and not prop(cand):\n                best = cand\n                changed = True\n                break\n    return best\n\nminimal = {shrink(s) for s in failing}\nprint(&#39;minimal&#39;, sorted(m for m in minimal))' :notes='["导入 itertools，用笛卡尔积穷举小输入空间", "空行，只用于分隔逻辑块，不影响执行结果。", "定义编码：把换行替换成字面量 NL", "这个替换不是单射，是后续反例的根因", "空行，只用于分隔逻辑块，不影响执行结果。", "定义解码：把 NL 还原成换行", "含字面量 NL 的原文会被误还原", "空行，只用于分隔逻辑块，不影响执行结果。", "定义性质：编解码往返必须等于原串", "字母表含 N、L、真实换行与普通字符", "空行，只用于分隔逻辑块，不影响执行结果。", "生成长度 0 到 3 的全部候选串，共 85 个", "挑出所有破坏往返性质的反例", "打印生成规模，证明覆盖远超手写用例", "打印反例数量", "定义收缩：逐步删字符逼近最小反例", "空行，只用于分隔逻辑块，不影响执行结果。", "best 保存当前最短的失败输入", "changed 标记本轮是否还能继续收缩", "每轮重置标志", "逐个位置尝试删除一个字符", "构造删去第 i 位的候选", "候选非空且仍失败才接受", "接受更短的失败输入", "标记本轮有进展，继续下一轮", "找到一处成功收缩即重新开始", "返回不可再收缩的最小反例", "对所有反例收缩并去重成集合", "打印最小反例，暴露非单射根因", "空行，只用于分隔逻辑块，不影响执行结果。", "属性测试问「对所有这类输入性质是否成立」：不变量、往返、神谕、变形、幂等", "hypothesis 用 @given + 策略生成输入，settings(max_examples, derandomize) 控规模与可复现"]' title='第 077 讲 · 属性测试、基准测试与模糊测试' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -156,15 +156,15 @@ print('interpreter', sys.version_info[0], sys.version_info[1])
 
 <OutputBox title='原理验证' output='seeded reproducible True\nseed 7 differs from 8 True\ninterpreter 3 13' />
 
-<ConceptDiagram type='layers3' title='第 077 讲 · 属性测试：从「例子」到「性质」' labels='属性测试：从「例子」到「性质」|收缩、状态机测试与可复现|基准测试与模糊测试：别和属性测试混为一谈' caption='用生成的输入发现手写用例想不到的边界' />
+<ConceptDiagram type='layers3' title='第 077 讲 · 属性测试：从「例子」到「性质」' labels='属性测试：从「例子」到「性质」|收缩、状态机测试与可复现|基准测试与模糊测试：别和属性测试混为一谈|种子与可复现' caption='用生成的输入发现手写用例想不到的边界' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 ```bash
 python -m pytest -q --disable-warnings
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 hypothesis 策略 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 hypothesis 策略 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## hypothesis 把一次运行建模成选择序列的底层
@@ -267,7 +267,7 @@ print('pinned regression', json.dumps([repr(m) for m in minimal[:3]]))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='只写正常输入的手工用例：编码、空值、极值、Unicode、超长串、字面量撞转义序列这些事故源永远写不全' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只写正常输入的手工用例", "body": "编码、空值、极值、Unicode、超长串、字面量撞转义序列这些事故源永远写不全", "tip": "给纯函数与解析器加往返/幂等/神谕性质，用 @given 生成输入，反例固化成 @example"}, {"title": "第 2 步：找到反例却不固化、或一律关掉 HealthC", "body": "下次运行换随机序列可能不再复现，too_slow/filter_too_much 被硬关会掩盖策略写坏", "tip": "把最小反例写进 @example 并提交 .hypothesis/examples；针对告警修策略而不是全局 suppress_health_check"}, {"title": "第 3 步：把基准当一次性数字、没有回归阈值", "body": "重构让耗时翻倍也不会让 CI 变红，性能退化静默累积", "tip": "pytest-benchmark 设 --benchmark-compare 与回归阈值，timeit 多轮取最小，热点提交前后都测"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只写正常输入的手工用例", "body": "编码、空值、极值、Unicode、超长串、字面量撞转义序列这些事故源永远写不全", "tip": "给纯函数与解析器加往返/幂等/神谕性质，用 @given 生成输入，反例固化成 @example"}, {"title": "第 2 步：找到反例却不固化、或一律关掉 HealthC…", "body": "下次运行换随机序列可能不再复现，too_slow/filter_too_much 被硬关会掩盖策略写坏", "tip": "把最小反例写进 @example 并提交 .hypothesis/examples；针对告警修策略而不是全局 suppress_health_check"}, {"title": "第 3 步：把基准当一次性数字、没有回归阈值", "body": "重构让耗时翻倍也不会让 CI 变红，性能退化静默累积", "tip": "pytest-benchmark 设 --benchmark-compare 与回归阈值，timeit 多轮取最小，热点提交前后都测"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -306,3 +306,16 @@ print('pinned regression', json.dumps([repr(m) for m in minimal[:3]]))
 3. 失败沿随机选择序列做 delta-debugging 收缩到最小反例，存 .hypothesis/examples 并用 @example 固化
 
 [下一讲：日志：logging、结构化日志与追踪关联](/engineering/logging)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/077-property-testing.py`
+
+```bash
+python3 examples/lessons/077-property-testing.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/077-property-testing.py) · [全部示例代码索引](/examples/)

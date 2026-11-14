@@ -41,7 +41,7 @@ RuntimeError: generator didn't stop
 | 一句话目标 | 写出异常安全的资源管理代码 |
 | 为下一讲铺垫 | __slots__、弱引用与对象内存布局 |
 
-<Callout type="tip" title='核心心智模型' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用 `__exit__(exc_type, e' />
+<Callout type="tip" title='核心心智模型' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用…' />
 
 
 ## with 的展开：__enter__、三参数 __exit__ 与异常抑制
@@ -86,7 +86,7 @@ except ValueError as e:
 
 <OutputBox title='主示例运行结果' output='begin t1\nbody t1\nexit True no-error\nbegin t2\nexit False ValueError\ncaught boom' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Transaction:\n    def __init__(self, name):\n        self.name = name\n    def __enter__(self):\n        print(&#39;begin&#39;, self.name)\n        return self\n    def __exit__(self, exc_type, exc_value, tb):\n        print(&#39;exit&#39;, exc_type is None, type(exc_value).__name__ if exc_value else &#39;no-error&#39;)\n        return False\n\nwith Transaction(&#39;t1&#39;) as t:\n    print(&#39;body&#39;, t.name)\ntry:\n    with Transaction(&#39;t2&#39;):\n        raise ValueError(&#39;boom&#39;)\nexcept ValueError as e:\n    print(&#39;caught&#39;, str(e))' :notes='["自定义上下文管理器，集中演示 __enter__ 与 __exit__ 协议", "构造时保存事务名", "把名字绑到实例属性，with 期间保持有效", "__enter__ 在 with 体执行前调用", "打印进入信息；真实场景在这里申请连接、开启事务", "返回值绑定到 as t，这里返回管理器自身", "__exit__ 固定接收异常类、异常实例、traceback 三个参数", "无异常时 exc_type 为 None，有异常时读出异常类型名", "返回 False 不抑制异常，让它继续向上传播", "正常路径：__enter__ 返回值绑定到 t", "with 体正常执行完毕", "外层 try 用于接住第二段故意抛出的异常", "异常路径：进入第二个 with", "with 体抛 ValueError，触发异常分发", "异常作为三参数传给 __exit__，返回 False 后向外抛", "打印被捕获的消息，证明 return False 没有抑制异常"]' title='第 042 讲 · 上下文管理器与 with 协议' />
+<LineByLine code='class Transaction:\n    def __init__(self, name):\n        self.name = name\n    def __enter__(self):\n        print(&#39;begin&#39;, self.name)\n        return self\n    def __exit__(self, exc_type, exc_value, tb):\n        print(&#39;exit&#39;, exc_type is None, type(exc_value).__name__ if exc_value else &#39;no-error&#39;)\n        return False\n\nwith Transaction(&#39;t1&#39;) as t:\n    print(&#39;body&#39;, t.name)\ntry:\n    with Transaction(&#39;t2&#39;):\n        raise ValueError(&#39;boom&#39;)\nexcept ValueError as e:\n    print(&#39;caught&#39;, str(e))' :notes='["自定义上下文管理器，集中演示 __enter__ 与 __exit__ 协议", "构造时保存事务名", "把名字绑到实例属性，with 期间保持有效", "__enter__ 在 with 体执行前调用", "打印进入信息；真实场景在这里申请连接、开启事务", "返回值绑定到 as t，这里返回管理器自身", "__exit__ 固定接收异常类、异常实例、traceback 三个参数", "无异常时 exc_type 为 None，有异常时读出异常类型名", "返回 False 不抑制异常，让它继续向上传播", "空行，只用于分隔逻辑块，不影响执行结果。", "正常路径：__enter__ 返回值绑定到 t", "with 体正常执行完毕", "外层 try 用于接住第二段故意抛出的异常", "异常路径：进入第二个 with", "with 体抛 ValueError，触发异常分发", "异常作为三参数传给 __exit__，返回 False 后向外抛", "打印被捕获的消息，证明 return False 没有抑制异常"]' title='第 042 讲 · 上下文管理器与 with 协议' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -163,9 +163,9 @@ print('after suppress')
 | asynccontextmanager | 3.7 | async with 的生成器写法 | __aexit__ 必须是 async def |
 | AsyncExitStack | 3.7 | 异步上下文的动态组合 | enter_async_context 返回可等待对象 |
 
-<Term word='__enter__ / __exit__' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用 `__exit__(exc_type, exc_value, ' />
+<Term word='__enter__ / __exit__' text='`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用…' />
 
-<Term word='异常三参数与抑制' text='`contextlib.contextmanager` 把一个「只 `yield` 一次」的生成器函数变成上下文管理器：`yield` 之前的代码对应 `__enter__`，`yield` 之后的代码对应 `__exit__`，且必须用 `try/finally` 包住 `yield`，否则异常路径不会执行清理。它返' />
+<Term word='异常三参数与抑制' text='`contextlib.contextmanager` 把一个「只 `yield` 一次」的生成器函数变成上下文管理器：`yield` 之前的代码对应 `__enter__`，`yield` 之后的代码对应 `__exit__`，且必须用 `try/finally` 包住 `yield`，否则异常路径不会执行清理。它返…' />
 
 
 ## 事务与资源场景：把申请与释放写成一段强制配对
@@ -235,11 +235,11 @@ except KeyError:
 | 组合工具 | ExitStack | AsyncExitStack |
 | 清理里等待 | 不允许 await | 可以 await 网络关闭与锁释放 |
 
-<ConceptDiagram type='layers3' title='第 042 讲 · 分层视角' labels='with 的展开：__enter__、三|contextlib 三件套：conte|事务与资源场景：把申请与释放写成一段强制|事务与计时场景' caption='事务与资源场景：把申请与释放写成一段强制配对' />
+<ConceptDiagram type='layers3' title='第 042 讲 · 分层视角' labels='with 的展开：__enter__、三…|contextlib 三件套：conte…|事务与资源场景：把申请与释放写成一段强制…|事务与计时场景' caption='事务与资源场景：把申请与释放写成一段强制配对' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 事务与计时场景 落在哪一层。
 
-<FlowTimeline :steps='[{"title": "with 的展开：__enter__、三参数 __exit__ 与异常抑制", "desc": "`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得…", "tone": "blue"}, {"title": "contextlib 三件套：contextmanager、ExitStack 与 suppress", "desc": "`contextlib.contextmanager` 把一个「只 `yield` …", "tone": "purple"}, {"title": "事务与资源场景：把申请与释放写成一段强制配对", "desc": "上下文管理器最大的工程价值，是让「申请—使用—释放」在语法层面强制配对，异常路径和正…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sqlite3 事务上下文保证异常回滚与成功提交", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "with 的展开：__enter__、三参数 _…", "desc": "`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得…", "tone": "blue"}, {"title": "contextlib 三件套：contextma…", "desc": "`contextlib.contextmanager` 把一个「只 `yield`…", "tone": "purple"}, {"title": "事务与资源场景：把申请与释放写成一段强制配对", "desc": "上下文管理器最大的工程价值，是让「申请—使用—释放」在语法层面强制配对，异常路径和正…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sqlite3 事务上下文保证异常回滚与成功提交", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 用 sqlite3 事务上下文保证异常回滚与成功提交
@@ -287,13 +287,13 @@ conn.close()
 
 <Callout type="idea" title='落地提示' text='数据库连接、分布式锁、临时目录、指标计时都应做成上下文管理器，让「申请—释放」在语法层面强制配对' />
 
-<CheckList id='P042b' title='上线前自检' :items='["能复现并解释「__exit__ 里随手 return True 吞掉真实异」", "能复现并解释「contextmanager 生成器 yield 了两次或没」", "能复现并解释「在异步代码里用同步 with 管理数据库连接」", "能用一条命令验证 __enter__ / __exit__", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P042b' title='上线前自检' :items='["能复现并解释「__exit__ 里随手 return True 吞掉真实异…」", "能复现并解释「contextmanager 生成器 yield 了两次或没…」", "能复现并解释「在异步代码里用同步 with 管理数据库连接」", "能用一条命令验证 __enter__ / __exit__", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__enter__` / `__exit__` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__enter__` / `__exit__` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## __exit__ 随手 return True 吞异常的错因速查
@@ -308,7 +308,7 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='__exit__ 里随手 return True 吞掉真实异常：返回真值即抑制异常，异常不会传播、traceback 也不记录，日志里只剩「任务成功」' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：__exit__ 里随手 return Tr", "body": "返回真值即抑制异常，异常不会传播、traceback 也不记录，日志里只剩「任务成功」", "tip": "只在明确要吞的异常类型上返回 True（如 issubclass(exc_type, FileNotFoundError)），其余返回 False 并 logging.exception 记录"}, {"title": "第 2 步：contextmanager 生成器 yie", "body": "第二次 yield 会让 generator.throw() 无法终止生成器，抛 RuntimeError: generator didn&#39;t stop after throw()；没有 finally 则异常路径跳过清理", "tip": "生成器只 yield 一次，并用 try: yield ... finally: 释放资源，把清理放在 finally 里"}, {"title": "第 3 步：在异步代码里用同步 with 管理数据库连接", "body": "__exit__ 是普通 def，里面无法 await 关闭连接；__aexit__ 未定义时 async with 抛 AttributeError: __aenter__", "tip": "改为 __aenter__/__aexit__ 两个 async def 并配合 async with，或用 asynccontextmanager / AsyncExitStack"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：__exit__ 里随手 return Tr…", "body": "返回真值即抑制异常，异常不会传播、traceback 也不记录，日志里只剩「任务成功」", "tip": "只在明确要吞的异常类型上返回 True（如 issubclass(exc_type, FileNotFoundError)），其余返回 False 并 logging.exception 记录"}, {"title": "第 2 步：contextmanager 生成器 yie…", "body": "第二次 yield 会让 generator.throw() 无法终止生成器，抛 RuntimeError: generator didn&#39;t stop after throw()；没有 finally 则异常路径跳过清理", "tip": "生成器只 yield 一次，并用 try: yield ... finally: 释放资源，把清理放在 finally 里"}, {"title": "第 3 步：在异步代码里用同步 with 管理数据库连接", "body": "__exit__ 是普通 def，里面无法 await 关闭连接；__aexit__ 未定义时 async with 抛 AttributeError: __aenter__", "tip": "改为 __aenter__/__aexit__ 两个 async def 并配合 async with，或用 asynccontextmanager / AsyncExitStack"}]' />
 
 
 ## 练一练、测一测、记一记
@@ -347,3 +347,16 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 3. contextmanager 生成器只 yield 一次并配 try/finally；二次 yield 抛 RuntimeError: generator didn't stop after throw()
 
 [下一讲：__slots__、弱引用与对象内存布局](/oop/slots)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/042-context.py`
+
+```bash
+python3 examples/lessons/042-context.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/042-context.py) · [全部示例代码索引](/examples/)

@@ -70,13 +70,13 @@ print('empty set is dict?', isinstance({}, dict))
 
 <OutputBox title='主示例运行结果' output='after add [1, 2, 3, 4] 4\nremove missing KeyError\nunion [1, 2, 3, 4, 5]\nintersection [3]\ndifference [1, 2]\nsymmetric [1, 2, 4, 5]\nsubset True True True\ncomprehension [0, 1, 4, 9, 16, 25]\nfrozenset hashable value\nfrozenset ops [1, 2, 3, 4] frozenset\nset dedup [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nordered dedup [&#39;b&#39;, &#39;a&#39;, &#39;c&#39;]\nempty set is dict? True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='s = {1, 2, 3}\ns.add(4)\ns.discard(10)\nprint(&#39;after add&#39;, sorted(s), len(s))\ntry:\n    s.remove(10)\nexcept KeyError as e:\n    print(&#39;remove missing&#39;, type(e).__name__)\n\na = {1, 2, 3}\nb = {3, 4, 5}\nprint(&#39;union&#39;, sorted(a | b))\nprint(&#39;intersection&#39;, sorted(a &amp; b))\nprint(&#39;difference&#39;, sorted(a - b))\nprint(&#39;symmetric&#39;, sorted(a ^ b))\nprint(&#39;subset&#39;, {1, 2} &lt;= a, {1, 2} &lt; a, a.isdisjoint({9}))\n\nsquares = {x * x for x in range(6)}\nprint(&#39;comprehension&#39;, sorted(squares))\n\nfs = frozenset([1, 2, 3])\nprint(&#39;frozenset hashable&#39;, {fs: &#39;value&#39;}[frozenset([3, 2, 1])])\nprint(&#39;frozenset ops&#39;, sorted(fs | {4}), type(fs | {4}).__name__)\n\nseq = [&#39;b&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;a&#39;]\nprint(&#39;set dedup&#39;, sorted(set(seq)))\nprint(&#39;ordered dedup&#39;, list(dict.fromkeys(seq)))\nprint(&#39;empty set is dict?&#39;, isinstance({}, dict))' :notes='["字面量构造一个整数集合", "add 平均 O(1) 新增元素", "discard 对缺失元素静默忽略，不抛异常", "用 sorted 输出以消除集合顺序的不确定性", "remove 对缺失元素会抛异常", "尝试删除不存在的 10", "捕获 KeyError，对比 discard 的行为", "构造两个有交集的集合用于演示四种运算", "并集 |，用 sorted 得到可复现结果", "交集 &amp;，只保留两集合共有的 3", "差集 -，保留在 a 但不在 b 的元素", "对称差 ^，保留只出现在其中一侧的元素", "子集、真子集与 isdisjoint 三个关系判断", "集合推导式生成 0 到 5 的平方集合", "sorted 后输出，避免依赖哈希顺序", "frozenset 不可变且可哈希", "用它作 dict 键，顺序不同的同一组合命中同一值", "frozenset 与 set 做运算结果仍是 frozenset", "含重复元素的序列，用于对比两种去重", "set 去重不保序，故用 sorted 得到字母序", "dict.fromkeys 按首次出现顺序保序去重", "{} 是空 dict，空集合必须显式写 set()", "{} 是空 dict，空集合必须写 set()；s.pop() 返回任意元素，空集合抛 KeyError", "保序去重写 list(dict.fromkeys(seq))；高频判重先规整成 set，别对 list 反复用 in"]' title='第 023 讲 · set / frozenset：哈希、集合运算与去重' />
+<LineByLine code='s = {1, 2, 3}\ns.add(4)\ns.discard(10)\nprint(&#39;after add&#39;, sorted(s), len(s))\ntry:\n    s.remove(10)\nexcept KeyError as e:\n    print(&#39;remove missing&#39;, type(e).__name__)\n\na = {1, 2, 3}\nb = {3, 4, 5}\nprint(&#39;union&#39;, sorted(a | b))\nprint(&#39;intersection&#39;, sorted(a &amp; b))\nprint(&#39;difference&#39;, sorted(a - b))\nprint(&#39;symmetric&#39;, sorted(a ^ b))\nprint(&#39;subset&#39;, {1, 2} &lt;= a, {1, 2} &lt; a, a.isdisjoint({9}))\n\nsquares = {x * x for x in range(6)}\nprint(&#39;comprehension&#39;, sorted(squares))\n\nfs = frozenset([1, 2, 3])\nprint(&#39;frozenset hashable&#39;, {fs: &#39;value&#39;}[frozenset([3, 2, 1])])\nprint(&#39;frozenset ops&#39;, sorted(fs | {4}), type(fs | {4}).__name__)\n\nseq = [&#39;b&#39;, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, &#39;a&#39;]\nprint(&#39;set dedup&#39;, sorted(set(seq)))\nprint(&#39;ordered dedup&#39;, list(dict.fromkeys(seq)))\nprint(&#39;empty set is dict?&#39;, isinstance({}, dict))' :notes='["字面量构造一个整数集合", "add 平均 O(1) 新增元素", "discard 对缺失元素静默忽略，不抛异常", "用 sorted 输出以消除集合顺序的不确定性", "remove 对缺失元素会抛异常", "尝试删除不存在的 10", "捕获 KeyError，对比 discard 的行为", "构造两个有交集的集合用于演示四种运算", "空行，只用于分隔逻辑块，不影响执行结果。", "并集 |，用 sorted 得到可复现结果", "交集 &amp;，只保留两集合共有的 3", "差集 -，保留在 a 但不在 b 的元素", "对称差 ^，保留只出现在其中一侧的元素", "子集、真子集与 isdisjoint 三个关系判断", "集合推导式生成 0 到 5 的平方集合", "sorted 后输出，避免依赖哈希顺序", "空行，只用于分隔逻辑块，不影响执行结果。", "frozenset 不可变且可哈希", "用它作 dict 键，顺序不同的同一组合命中同一值", "空行，只用于分隔逻辑块，不影响执行结果。", "frozenset 与 set 做运算结果仍是 frozenset", "含重复元素的序列，用于对比两种去重", "set 去重不保序，故用 sorted 得到字母序", "空行，只用于分隔逻辑块，不影响执行结果。", "dict.fromkeys 按首次出现顺序保序去重", "{} 是空 dict，空集合必须显式写 set()", "{} 是空 dict，空集合必须写 set()；s.pop() 返回任意元素，空集合抛 KeyError", "保序去重写 list(dict.fromkeys(seq))；高频判重先规整成 set，别对 list 反复用 in"]' title='第 023 讲 · set / frozenset：哈希、集合运算与去重' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='hub4' title='第 023 讲 · 哈希表实现与集合运算：O(1) 的边界' labels='哈希表实现与集合运算：O(1) 的边界|frozenset、哈希随机化与保序去重|选型：判重、去重、成员判断的成本账' caption='用集合把成员判断与去重做到 O(1)' />
+<ConceptDiagram type='hub4' title='第 023 讲 · 哈希表实现与集合运算：O(1) 的边界' labels='哈希表实现与集合运算：O(1) 的边界|frozenset、哈希随机化与保序去重|选型：判重、去重、成员判断的成本账|哈希随机化' caption='用集合把成员判断与去重做到 O(1)' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 集合运算对照
@@ -227,9 +227,9 @@ set 在 CPython 里是与 dict 同源的哈希表：表项只存 `(hash, key)` �
 
 后面的术语卡收这组关系。
 
-<Term word='集合的哈希实现' text='CPython 的 set 与 dict 同源，都是开放寻址哈希表，只是表项只存 `(hash, key)` 而不存 value。`add` / `remove` / `in` 平均 `O(1)`、最坏 `O(n)`（哈希冲突严重时会退化成线性探测），负载因子超过约 2/3 就扩容并 rehash；删除同样写墓碑标记，' />
+<Term word='集合的哈希实现' text='CPython 的 set 与 dict 同源，都是开放寻址哈希表，只是表项只存 `(hash, key)` 而不存 value。`add` / `remove` / `in` 平均 `O(1)`、最坏 `O(n)`（哈希冲突严重时会退化成线性探测），负载因子超过约 2/3 就扩容并 rehash；删除同样写墓碑标记…' />
 
-<Term word='增删与运算' text='set 是可变对象，所以不可哈希，既不能作 dict 键也不能塞进另一个 set；`frozenset(iterable)` 把表冻结后允许求 hash，于是能表达「顺序无关的一组标签」这类键：`frozenset([&#39;a&#39;,&#39;b&#39;])` 与 `frozenset([&#39;b&#39;,&#39;a&#39;])` 相等且哈希相同，会命中同一条规' />
+<Term word='增删与运算' text='set 是可变对象，所以不可哈希，既不能作 dict 键也不能塞进另一个 set；`frozenset(iterable)` 把表冻结后允许求 hash，于是能表达「顺序无关的一组标签」这类键：`frozenset([&#39;a&#39;,&#39;b&#39;])` 与 `frozenset([&#39;b&#39;,&#39;a&#39;])` 相等且哈希相同，会命中同一条规…' />
 
 
 ## 日志去重与标签过滤：set 判重、frozenset 规则键与保序输出
@@ -295,3 +295,16 @@ print('symmetric', sorted(with_a ^ with_b))
 3. | & - ^ 分别是并、交、差、对称差，|= &= -= ^= 是原地版本；remove 缺失抛 KeyError，discard 静默忽略
 
 [下一讲：推导式：四种写法与可读性边界](/containers/comprehension)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/023-set.py`
+
+```bash
+python3 examples/lessons/023-set.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/023-set.py) · [全部示例代码索引](/examples/)

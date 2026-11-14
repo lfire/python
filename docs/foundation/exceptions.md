@@ -92,13 +92,13 @@ print(issubclass(KeyboardInterrupt, Exception), issubclass(SystemExit, Exception
 
 <OutputBox title='主示例运行结果' output='9090 8080\nConfigError (&#39;port&#39;, &#39;not an integer&#39;) port\nValueError True\nFalse False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class ConfigError(Exception):\n    def __init__(self, key, reason):\n        super().__init__(key, reason)\n        self.key = key\n\ndef read_port(cfg):\n    try:\n        return int(cfg[&#39;port&#39;])\n    except KeyError:\n        return 8080\n    except ValueError as e:\n        raise ConfigError(&#39;port&#39;, &#39;not an integer&#39;) from e\n\nprint(read_port({&#39;port&#39;: &#39;9090&#39;}), read_port({}))\ntry:\n    read_port({&#39;port&#39;: &#39;abc&#39;})\nexcept ConfigError as e:\n    print(type(e).__name__, e.args, e.key)\n    print(type(e.__cause__).__name__, e.__suppress_context__)\nprint(issubclass(KeyboardInterrupt, Exception), issubclass(SystemExit, Exception))' :notes='["定义自定义异常，继承 Exception 而不是 BaseException，保证 except Exception 能拦住", "构造器接收出错的键与原因两个业务字段", "调用父类构造器把 (key, reason) 存进 args，str(e) 才有内容", "把 key 额外挂到实例上，边界层可直接读取做日志字段", "read_port 演示 EAFP：不做预检查，直接取值并转换", "try 只包住可能出错的两步，正常路径零成本", "int(cfg[&#39;port&#39;]) 同时可能抛 KeyError（缺键）与 ValueError（格式错）", "缺键属于预期情况，返回默认端口 8080", "except 命中后不再检查后续子句，本分支直接 return", "捕获转换失败，并把底层错误包装成业务异常", "raise ... from e 设置 __cause__ 为这个 ValueError，traceback 显示直接原因", "分别验证：正常转换与缺键默认值", "触发 ValueError 分支，验证包装后的异常形态", "只捕获自定义异常，裸 except 与 except Exception 都不要写", "打印类型、args 元组与自定义字段；args 来自 super().__init__", "__cause__ 是 ValueError，__suppress_context__ 因 from 被置 True", "KeyboardInterrupt 与 SystemExit 都直接继承 BaseException", "两者都不是 Exception 子类，故 except Exception 捕获不到它们"]' title='第 015 讲 · 异常：捕获、异常链与自定义异常' />
+<LineByLine code='class ConfigError(Exception):\n    def __init__(self, key, reason):\n        super().__init__(key, reason)\n        self.key = key\n\ndef read_port(cfg):\n    try:\n        return int(cfg[&#39;port&#39;])\n    except KeyError:\n        return 8080\n    except ValueError as e:\n        raise ConfigError(&#39;port&#39;, &#39;not an integer&#39;) from e\n\nprint(read_port({&#39;port&#39;: &#39;9090&#39;}), read_port({}))\ntry:\n    read_port({&#39;port&#39;: &#39;abc&#39;})\nexcept ConfigError as e:\n    print(type(e).__name__, e.args, e.key)\n    print(type(e.__cause__).__name__, e.__suppress_context__)\nprint(issubclass(KeyboardInterrupt, Exception), issubclass(SystemExit, Exception))' :notes='["定义自定义异常，继承 Exception 而不是 BaseException，保证 except Exception 能拦住", "构造器接收出错的键与原因两个业务字段", "调用父类构造器把 (key, reason) 存进 args，str(e) 才有内容", "把 key 额外挂到实例上，边界层可直接读取做日志字段", "空行，只用于分隔逻辑块，不影响执行结果。", "read_port 演示 EAFP：不做预检查，直接取值并转换", "try 只包住可能出错的两步，正常路径零成本", "int(cfg[&#39;port&#39;]) 同时可能抛 KeyError（缺键）与 ValueError（格式错）", "缺键属于预期情况，返回默认端口 8080", "except 命中后不再检查后续子句，本分支直接 return", "捕获转换失败，并把底层错误包装成业务异常", "raise ... from e 设置 __cause__ 为这个 ValueError，traceback 显示直接原因", "空行，只用于分隔逻辑块，不影响执行结果。", "分别验证：正常转换与缺键默认值", "触发 ValueError 分支，验证包装后的异常形态", "只捕获自定义异常，裸 except 与 except Exception 都不要写", "打印类型、args 元组与自定义字段；args 来自 super().__init__", "__cause__ 是 ValueError，__suppress_context__ 因 from 被置 True", "KeyboardInterrupt 与 SystemExit 都直接继承 BaseException", "两者都不是 Exception 子类，故 except Exception 捕获不到它们"]' title='第 015 讲 · 异常：捕获、异常链与自定义异常' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='flow3' title='第 015 讲 · 异常层级与 except 的匹配边界' labels='异常层级与 except 的匹配边界|else / finally 与 raise|EAFP / LBYL 与异常的性能账' caption='建立 EAFP 风格的错误处理直觉' />
+<ConceptDiagram type='flow3' title='第 015 讲 · 异常层级与 except 的匹配边界' labels='异常层级与 except 的匹配边界|else / finally 与 raise…|EAFP / LBYL 与异常的性能账' caption='建立 EAFP 风格的错误处理直觉' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 裸 except 为什么会连 Ctrl+C 一起吞掉
@@ -177,9 +177,9 @@ print(clean('3'), clean('x'), log)
 | raise 无参 | 重新抛出当前正在处理的异常 | 只能在 except 或其调用链内使用 |
 | raise X from Y | 设 __cause__ 为 Y 并 suppress context | traceback 打印 direct cause of 文案 |
 
-<Term word='异常层级与 BaseException' text='所有异常的根是 `BaseException`，它的直接子类里只有 `Exception` 是日常错误的祖先：`ValueError`、`TypeError`、`KeyError`、`OSError`、`ImportError` 都挂在 `Exception` 之下；而 `SystemExit`、`KeyboardIn' />
+<Term word='异常层级与 BaseException' text='所有异常的根是 `BaseException`，它的直接子类里只有 `Exception` 是日常错误的祖先：`ValueError`、`TypeError`、`KeyError`、`OSError`、`ImportError` 都挂在 `Exception` 之下；而 `SystemExit`…' />
 
-<Term word='try / except / else / finally' text='`try` 之后可以跟 `except`、`else`、`finally` 三类子句。`else` 只在 `try` 块没抛异常时执行，用途是把正常路径的后续与可能出错的语句分开，避免把本不该被 `except` 捕获的代码塞进 `try` 被误吞。`finally` 在正常、异常、`return`、`break`、`' />
+<Term word='try / except / else / finally' text='`try` 之后可以跟 `except`、`else`、`finally` 三类子句。`else` 只在 `try` 块没抛异常时执行，用途是把正常路径的后续与可能出错的语句分开，避免把本不该被 `except` 捕获的代码塞进 `try` 被误吞。`finally` 在正常、异常、`return`、`break`…' />
 
 
 ## EAFP / LBYL 与异常的性能账
@@ -283,7 +283,7 @@ os.remove(p)
 | finally 里写了 return，异常凭空消失 | finally 的 return 会覆盖 try 与 except 的返回值，并丢弃正在传播的异常对象 | finally 只放 close / release / unlock 等清理语句，返回值与业务逻辑都留在 try 与 else 里 |
 | 自定义异常用 except Exception 拦不住 | 误把异常基类写成继承 BaseException，或层次设计得让调用方只能按 Exception 基类兜底 | class AppError(Exception): pass，业务异常再从 AppError 细分；边界层统一捕获 AppError 转成错误码与日志 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：Ctrl+C 杀不掉脚本，sys.exit(", "body": "裸 except: 或 except BaseException 把 KeyboardInterrupt 与 SystemExit 一起吞了，它们直接继承 BaseException 而非 Exception", "tip": "只捕获具体异常类型；确实要兜底时写 except Exception as e: 并至少 log.exception 记录，绝不用裸 except"}, {"title": "第 2 步：finally 里写了 return，异常凭", "body": "finally 的 return 会覆盖 try 与 except 的返回值，并丢弃正在传播的异常对象", "tip": "finally 只放 close / release / unlock 等清理语句，返回值与业务逻辑都留在 try 与 else 里"}, {"title": "第 3 步：自定义异常用 except Exceptio", "body": "误把异常基类写成继承 BaseException，或层次设计得让调用方只能按 Exception 基类兜底", "tip": "class AppError(Exception): pass，业务异常再从 AppError 细分；边界层统一捕获 AppError 转成错误码与日志"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：Ctrl+C 杀不掉脚本，sys.exit…", "body": "裸 except: 或 except BaseException 把 KeyboardInterrupt 与 SystemExit 一起吞了，它们直接继承 BaseException 而非 Exception", "tip": "只捕获具体异常类型；确实要兜底时写 except Exception as e: 并至少 log.exception 记录，绝不用裸 except"}, {"title": "第 2 步：finally 里写了 return，异常凭…", "body": "finally 的 return 会覆盖 try 与 except 的返回值，并丢弃正在传播的异常对象", "tip": "finally 只放 close / release / unlock 等清理语句，返回值与业务逻辑都留在 try 与 else 里"}, {"title": "第 3 步：自定义异常用 except Exceptio…", "body": "误把异常基类写成继承 BaseException，或层次设计得让调用方只能按 Exception 基类兜底", "tip": "class AppError(Exception): pass，业务异常再从 AppError 细分；边界层统一捕获 AppError 转成错误码与日志"}]' />
 
 
 ## 把失败分支练成肌肉记忆
@@ -311,3 +311,16 @@ os.remove(p)
 3. else 只在 try 无异常时执行；finally 总执行，但其中的 return 会覆盖返回值并吞掉异常
 
 [下一讲：阶段综合：交互式命令行计算器](/foundation/capstone)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/015-exceptions.py`
+
+```bash
+python3 examples/lessons/015-exceptions.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/015-exceptions.py) · [全部示例代码索引](/examples/)

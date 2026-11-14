@@ -49,11 +49,11 @@ description: 能安全地在线程间传递数据
 | daemon=True | 解释器退出时被直接丢弃 | 把刷盘、finally 清理放进 daemon 线程 |
 | threading.local() | 每线程独立属性空间 | 在 async 协程里用它，应改 contextvars |
 
-<Callout type="tip" title='核心心智模型' text='`threading.Thread` 的构造参数有 `group`、`target`、`name`、`args`、`kwargs` 与 `daemon`，其中 `group` 是保留参数，必须传 `None`。`start()` 只能调一次，重复调用抛 `RuntimeError`（threads ' />
+<Callout type="tip" title='核心心智模型' text='`threading.Thread` 的构造参数有 `group`、`target`、`name`、`args`、`kwargs` 与 `daemon`，其中 `group` 是保留参数，必须传 `None`。`start()` 只能调一次，重复调用抛 `RuntimeError`（threads…' />
 
-<ConceptDiagram type='flow4' title='第 061 讲 · Thread 生命周期、daemon 与线程局部存储' labels='Thread 生命周期、daemon 与线程|GIL 原子边界与竞态的可复现条件|队列、Future 与失败传播' caption='能安全地在线程间传递数据' />
+<ConceptDiagram type='flow4' title='第 061 讲 · Thread 生命周期、daemon 与线程局部存储' labels='Thread 生命周期、daemon 与线程…|GIL 原子边界与竞态的可复现条件|队列、Future 与失败传播|线程异常不冒泡' caption='能安全地在线程间传递数据' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 命名、超时与可观测的执行器骨架
@@ -80,7 +80,7 @@ print('all joined', all(not t.is_alive() for t in ts))
 
 <OutputBox title='主示例运行结果' output='before start alive [False, False, False, False]\nqueue size 4\nresults [&#39;w0&#39;, &#39;w1&#39;, &#39;w2&#39;, &#39;w3&#39;]\nall joined True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import threading\nimport queue\n\nq = queue.Queue()\nresults = []\n\ndef worker(n):\n    q.put(n * n)\n    results.append(threading.current_thread().name)\n\nts = [threading.Thread(target=worker, args=(i,), name=&#39;w&#39; + str(i)) for i in range(4)]\nprint(&#39;before start alive&#39;, [t.is_alive() for t in ts])\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;queue size&#39;, q.qsize())\nprint(&#39;results&#39;, sorted(results))\nprint(&#39;all joined&#39;, all(not t.is_alive() for t in ts))' :notes='["导入 threading 建线程并读取当前线程名", "导入 queue，用线程安全队列传数据", "无界队列，put/get 内部带锁与 Condition", "普通 list 只收集线程名，最后一次读", "worker 把平方值放进队列", "队列 put 单次调用即线程安全", "单次 append 可依赖 GIL 原子性", "建 4 个命名线程，args 必须是元组", "start 之前 is_alive 全为 False", "start 只能一次，重复抛 RuntimeError", "join 等待结束，但不返回结果、不重抛异常", "qsize 是近似值；此处无消费者稳定为 4", "排序后打印四个名字，证明都跑过", "join 返回后所有线程已结束"]' title='第 061 讲 · threading：线程生命周期与共享状态' />
+<LineByLine code='import threading\nimport queue\n\nq = queue.Queue()\nresults = []\n\ndef worker(n):\n    q.put(n * n)\n    results.append(threading.current_thread().name)\n\nts = [threading.Thread(target=worker, args=(i,), name=&#39;w&#39; + str(i)) for i in range(4)]\nprint(&#39;before start alive&#39;, [t.is_alive() for t in ts])\nfor t in ts: t.start()\nfor t in ts: t.join()\nprint(&#39;queue size&#39;, q.qsize())\nprint(&#39;results&#39;, sorted(results))\nprint(&#39;all joined&#39;, all(not t.is_alive() for t in ts))' :notes='["导入 threading 建线程并读取当前线程名", "导入 queue，用线程安全队列传数据", "空行，只用于分隔逻辑块，不影响执行结果。", "无界队列，put/get 内部带锁与 Condition", "普通 list 只收集线程名，最后一次读", "空行，只用于分隔逻辑块，不影响执行结果。", "worker 把平方值放进队列", "队列 put 单次调用即线程安全", "单次 append 可依赖 GIL 原子性", "空行，只用于分隔逻辑块，不影响执行结果。", "建 4 个命名线程，args 必须是元组", "start 之前 is_alive 全为 False", "start 只能一次，重复抛 RuntimeError", "join 等待结束，但不返回结果、不重抛异常", "qsize 是近似值；此处无消费者稳定为 4", "排序后打印四个名字，证明都跑过", "join 返回后所有线程已结束"]' title='第 061 讲 · threading：线程生命周期与共享状态' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -204,9 +204,9 @@ CPython 的 ceval 主循环在执行字节码前假定当前线程持有 GIL；`
 
 至于让出时机，仍由 `sys.getswitchinterval()` 的间隔与 3.10+ 的 eval breaker 检查决定，阻塞式系统调用前则通过 `Py_BEGIN_ALLOW_THREADS` 主动释放 GIL——这部分与全景那一讲是同一套机制，这里只需记住它不改变竞态结论。
 
-<Term word='Thread 与 daemon' text='`threading.Thread` 的构造参数有 `group`、`target`、`name`、`args`、`kwargs` 与 `daemon`，其中 `group` 是保留参数，必须传 `None`。`start()` 只能调一次，重复调用抛 `RuntimeError`（threads can only b' />
+<Term word='Thread 与 daemon' text='`threading.Thread` 的构造参数有 `group`、`target`、`name`、`args`、`kwargs` 与 `daemon`，其中 `group` 是保留参数，必须传 `None`。`start()` 只能调一次，重复调用抛 `RuntimeError`（threads can only b…' />
 
-<Term word='线程局部存储' text='GIL 保证的是单条字节码层面的原子性，不是业务操作的原子性。模块级的 `counter += 1` 在 3.13 反汇编为 `LOAD_GLOBAL` / `LOAD_CONST` / `BINARY_OP` / `STORE_GLOBAL` 四条指令，切换可以落在任意两条之间：两个线程都读到旧值、各自加一，再写回同' />
+<Term word='线程局部存储' text='GIL 保证的是单条字节码层面的原子性，不是业务操作的原子性。模块级的 `counter += 1` 在 3.13 反汇编为 `LOAD_GLOBAL` / `LOAD_CONST` / `BINARY_OP` / `STORE_GLOBAL` 四条指令，切换可以落在任意两条之间：两个线程都读到旧值、各自加一，再写回同…' />
 
 
 ## 可观测的批量任务执行器：命名、超时、异常一个不丢
@@ -268,7 +268,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='认为有 GIL 就不用给 counter 加锁：GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：认为有 GIL 就不用给 counter 加", "body": "GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值", "tip": "用 threading.Lock 包住复合操作，或把状态放进 queue.Queue 由单消费者更新"}, {"title": "第 2 步：子线程抛异常后主线程 join 完打印成功", "body": "子线程异常经 threading.excepthook 打到 stderr，不向 join 方传播", "tip": "改用 ThreadPoolExecutor.submit 拿 Future，逐个 result() 暴露异常；给线程命名并接统一日志"}, {"title": "第 3 步：用 daemon 线程做日志落盘或缓存刷新", "body": "解释器退出时 daemon 线程被直接终止，finally 与缓冲刷新不保证执行", "tip": "关键收尾放非 daemon 线程并显式 join，或用队列 + 主线程收尾"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：认为有 GIL 就不用给 counter 加…", "body": "GIL 只保证单条字节码原子；counter += 1 是四条字节码，中间被切换就写回旧值", "tip": "用 threading.Lock 包住复合操作，或把状态放进 queue.Queue 由单消费者更新"}, {"title": "第 2 步：子线程抛异常后主线程 join 完打印成功", "body": "子线程异常经 threading.excepthook 打到 stderr，不向 join 方传播", "tip": "改用 ThreadPoolExecutor.submit 拿 Future，逐个 result() 暴露异常；给线程命名并接统一日志"}, {"title": "第 3 步：用 daemon 线程做日志落盘或缓存刷新", "body": "解释器退出时 daemon 线程被直接终止，finally 与缓冲刷新不保证执行", "tip": "关键收尾放非 daemon 线程并显式 join，或用队列 + 主线程收尾"}]' />
 
 
 ## 练习、自测与速记
@@ -307,3 +307,16 @@ if __name__ == '__main__':
 3. 子线程异常走 threading.excepthook 打到 stderr 就结束，Future.result() 才会重新抛出
 
 [下一讲：线程同步：Lock、Condition、Semaphore、Event](/concurrency/sync-primitives)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/061-threading.py`
+
+```bash
+python3 examples/lessons/061-threading.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/061-threading.py) · [全部示例代码索引](/examples/)

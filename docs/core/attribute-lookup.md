@@ -66,11 +66,11 @@ def __getattribute__(self, name):
 | 5 | cls_attr 非 None | 普通类属性 | 直接返回类属性对象 |
 | 6 | 以上皆空 | 触发 AttributeError | 若定义 __getattr__ 则调用它兜底 |
 
-<ConceptDiagram type='flow4' title='第 056 讲 · obj.x 的完整优先级链' labels='obj.x 的完整优先级链|__getattribute__ 的递归与 |描述符协议、cached_property ' caption='解释所有属性相关现象的统一模型' />
+<ConceptDiagram type='flow4' title='第 056 讲 · obj.x 的完整优先级链' labels='obj.x 的完整优先级链|__getattribute__ 的递归与…|描述符协议、cached_property…|性能与递归风险' caption='解释所有属性相关现象的统一模型' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` ' />
+<Callout type="tip" title='核心心智模型' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr`…' />
 
 
 ## __getattribute__ 的递归与 __setattr__ 对称性
@@ -116,13 +116,13 @@ print(type(Demo.__dict__['a']).__name__, hasattr(DataDesc, '__set__'))
 
 <OutputBox title='主示例运行结果' output='data-desc\ninstance-b\nassigned\nDataDesc True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class DataDesc:\n    def __get__(self, obj, owner):\n        return &#39;data-desc&#39;\n    def __set__(self, obj, value):\n        pass\n\nclass NonDataDesc:\n    def __get__(self, obj, owner):\n        return &#39;non-data-desc&#39;\n\nclass Demo:\n    a = DataDesc()\n    b = NonDataDesc()\n\nd = Demo()\nd.__dict__[&#39;a&#39;] = &#39;instance-a&#39;\nd.__dict__[&#39;b&#39;] = &#39;instance-b&#39;\nprint(d.a)\nprint(d.b)\nd.b = &#39;assigned&#39;\nprint(d.b)\nprint(type(Demo.__dict__[&#39;a&#39;]).__name__, hasattr(DataDesc, &#39;__set__&#39;))' :notes='["定义数据描述符类型，带 __set__", "数据描述符的 __get__", "返回固定串，供对比谁被命中", "有 __set__ 即成为数据描述符", "方法体留空，赋值会被分派到这里", "定义非数据描述符类型，只有 __get__", "非数据描述符的 __get__", "仅在实例字典未命中时被调用", "把两个描述符挂到类上作类属性", "a 是数据描述符实例", "b 是非数据描述符实例", "创建实例，此时 __dict__ 为空", "绕过动态链，直接塞同名键 a", "同样塞同名键 b，检验谁优先", "a 仍读到数据描述符，实例字典被跳过", "b 命中实例字典，非数据描述符被遮蔽", "给 b 赋值：非数据描述符没有 __set__", "赋值写入实例字典，读到刚写的值", "用 __dict__ 取原始类属性，确认类型与 __set__"]' title='第 056 讲 · 属性访问链路与 __getattribute__' />
+<LineByLine code='class DataDesc:\n    def __get__(self, obj, owner):\n        return &#39;data-desc&#39;\n    def __set__(self, obj, value):\n        pass\n\nclass NonDataDesc:\n    def __get__(self, obj, owner):\n        return &#39;non-data-desc&#39;\n\nclass Demo:\n    a = DataDesc()\n    b = NonDataDesc()\n\nd = Demo()\nd.__dict__[&#39;a&#39;] = &#39;instance-a&#39;\nd.__dict__[&#39;b&#39;] = &#39;instance-b&#39;\nprint(d.a)\nprint(d.b)\nd.b = &#39;assigned&#39;\nprint(d.b)\nprint(type(Demo.__dict__[&#39;a&#39;]).__name__, hasattr(DataDesc, &#39;__set__&#39;))' :notes='["定义数据描述符类型，带 __set__", "数据描述符的 __get__", "返回固定串，供对比谁被命中", "有 __set__ 即成为数据描述符", "方法体留空，赋值会被分派到这里", "空行，只用于分隔逻辑块，不影响执行结果。", "定义非数据描述符类型，只有 __get__", "非数据描述符的 __get__", "仅在实例字典未命中时被调用", "空行，只用于分隔逻辑块，不影响执行结果。", "把两个描述符挂到类上作类属性", "a 是数据描述符实例", "b 是非数据描述符实例", "空行，只用于分隔逻辑块，不影响执行结果。", "创建实例，此时 __dict__ 为空", "绕过动态链，直接塞同名键 a", "同样塞同名键 b，检验谁优先", "a 仍读到数据描述符，实例字典被跳过", "b 命中实例字典，非数据描述符被遮蔽", "给 b 赋值：非数据描述符没有 __set__", "赋值写入实例字典，读到刚写的值", "用 __dict__ 取原始类属性，确认类型与 __set__"]' title='第 056 讲 · 属性访问链路与 __getattribute__' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Term word='__getattribute__ 总入口' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` 是数据描述符，也就是' />
+<Term word='__getattribute__ 总入口' text='任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, &#39;x&#39;)`，object 的默认实现按固定次序解析。第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` 是数据描述符，也就是…' />
 
-<Term word='数据描述符优先' text='覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__`，都会再次触发 `__getattribute__`，形成无限递归，最终抛 `RecursionError`（报错文字是 maximum recursio' />
+<Term word='数据描述符优先' text='覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__`，都会再次触发 `__getattribute__`，形成无限递归，最终抛 `RecursionError`（报错文字是 maximum recursio…' />
 
 
 ## 对照：__getattr__ 兜底为何绕过校验
@@ -261,7 +261,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='代理对象、懒加载、远程属性用 __getattr__ 实现；不要滥改 __getattribute__，它位于每次属性访问的热路径上' />
 
-<CheckList id='P056b' title='上线前自检' :items='["能复现并解释「在 __getattribute__ 里用 self.xxx」", "能复现并解释「给实例塞同名属性想覆盖 property 的校验」", "能复现并解释「用 hasattr / getattr 判断属性是否存在就万」", "能用一条命令验证 __getattribute__ 总入口", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P056b' title='上线前自检' :items='["能复现并解释「在 __getattribute__ 里用 self.xxx…」", "能复现并解释「给实例塞同名属性想覆盖 property 的校验」", "能复现并解释「用 hasattr / getattr 判断属性是否存在就万…」", "能用一条命令验证 __getattribute__ 总入口", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -273,7 +273,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='在 __getattribute__ 里用 self.xxx 取别的属性：任何 self.xxx 都会再次进入 __getattribute__，形成无限递归并抛 RecursionError' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 __getattribute__ 里用 ", "body": "任何 self.xxx 都会再次进入 __getattribute__，形成无限递归并抛 RecursionError", "tip": "只在少量名字上拦截，其余一律 return object.__getattribute__(self, name)"}, {"title": "第 2 步：给实例塞同名属性想覆盖 property 的", "body": "property 是数据描述符，优先级高于实例 __dict__，实例值永远读不到且赋值会走 setter", "tip": "把可变状态存进 property 的 setter 管理的私有字段，或改用非数据描述符 / cached_property"}, {"title": "第 3 步：用 hasattr / getattr 判断", "body": "hasattr 只吞 AttributeError，property 的 __get__ 里抛 ValueError 会照常冒泡；__getattr__ 还会让拼错的名字返回假值", "tip": "用 inspect.getattr_static 定位真实类属性，让 __getattr__ 对未知名字 raise AttributeError 而非静默返回"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 __getattribute__ 里用…", "body": "任何 self.xxx 都会再次进入 __getattribute__，形成无限递归并抛 RecursionError", "tip": "只在少量名字上拦截，其余一律 return object.__getattribute__(self, name)"}, {"title": "第 2 步：给实例塞同名属性想覆盖 property 的…", "body": "property 是数据描述符，优先级高于实例 __dict__，实例值永远读不到且赋值会走 setter", "tip": "把可变状态存进 property 的 setter 管理的私有字段，或改用非数据描述符 / cached_property"}, {"title": "第 3 步：用 hasattr / getattr 判断…", "body": "hasattr 只吞 AttributeError，property 的 __get__ 里抛 ValueError 会照常冒泡；__getattr__ 还会让拼错的名字返回假值", "tip": "用 inspect.getattr_static 定位真实类属性，让 __getattr__ 对未知名字 raise AttributeError 而非静默返回"}]' />
 
 
 ## 练习、自测与速记
@@ -317,4 +317,17 @@ if __name__ == '__main__':
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__getattribute__` 总入口 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__getattribute__` 总入口 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/056-attribute-lookup.py`
+
+```bash
+python3 examples/lessons/056-attribute-lookup.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/056-attribute-lookup.py) · [全部示例代码索引](/examples/)

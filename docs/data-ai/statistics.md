@@ -22,7 +22,7 @@ A/B 实验上线前，分析师拿一份转化数据算均值，发现比历史�
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用均值描述收入、订单额等偏态数据：均值最小化平方误差，单条极值会以平方项拉高结果' />
 
-<Callout type="tip" title='核心心智模型' text='statistics 模块提供 mean、fmean、median、median_low/high、mode/multimode、pstdev、stdev、variance、quantiles。mean 是算术平均，对极值极其敏感；median 是排序后的中间值，抗离群点，因而在偏态分布（收入、订单' />
+<Callout type="tip" title='核心心智模型' text='statistics 模块提供 mean、fmean、median、median_low/high、mode/multimode、pstdev、stdev、variance、quantiles。mean 是算术平均，对极值极其敏感；median 是排序后的中间值，抗离群点，因而在偏态分布（收入、订单…' />
 
 
 ## 描述统计：均值、中位数与 1.5 倍 IQR 离群点
@@ -79,9 +79,9 @@ print('outliers', [x for x in data if x < lo or x > hi])
 
 用 `random.seed` 固定种子、`random.choices` 做有放回抽样、`statistics.mean`/stdev 复算，能在纯标准库里把这条定理变成可复现的数值证据：把总体设成 1 到 100 的均匀分布，抽 2000 组每组 30 个，样本均值的均值应贴近 50.5、标准差贴近总体标准差除以根号 30。
 
-<ConceptDiagram type='flow4' title='第 096 讲 · 描述统计与离群点：均值和中位数谁更可信' labels='描述统计与离群点：均值和中位数谁更可信|抽样、中心极限定理与置信区间|假设检验、p 值与相关不等于因果' caption='在建模前建立对数据的基本判断' />
+<ConceptDiagram type='flow4' title='第 096 讲 · 描述统计与离群点：均值和中位数谁更可信' labels='描述统计与离群点：均值和中位数谁更可信|抽样、中心极限定理与置信区间|假设检验、p 值与相关不等于因果|相关不等于因果' caption='在建模前建立对数据的基本判断' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 假设检验与 p 值：最小实现与数值验证
@@ -197,7 +197,7 @@ print(explore(sample))
 
 <Callout type="idea" title='落地提示' text='先做探索性分析与可视化，明确检验假设与显著性水平，业务结论标注适用边界' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用均值描述收入、订单额等偏态数据", "body": "均值最小化平方误差，单条极值会以平方项拉高结果", "tip": "改看中位数与 IQR，或先按 1.5 倍 IQR 规则识别并说明离群点处理方式"}, {"title": "第 2 步：反复做检验直到 p 小于 0.05 就宣布有", "body": "每次检验都有 alpha 的假阳性率，20 次独立检验至少一次假阳性约 0.64", "tip": "预先固定假设与样本量，多重比较用 Bonferroni 校正，报告效应量与置信区间"}, {"title": "第 3 步：把相关系数高写成因果结论", "body": "两个变量都被气温/时间等混杂变量驱动时 r 可接近 1 却无因果", "tip": "用随机对照实验或控制混杂的设计，报告里只写「相关」并标注适用边界"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用均值描述收入、订单额等偏态数据", "body": "均值最小化平方误差，单条极值会以平方项拉高结果", "tip": "改看中位数与 IQR，或先按 1.5 倍 IQR 规则识别并说明离群点处理方式"}, {"title": "第 2 步：反复做检验直到 p 小于 0.05 就宣布有…", "body": "每次检验都有 alpha 的假阳性率，20 次独立检验至少一次假阳性约 0.64", "tip": "预先固定假设与样本量，多重比较用 Bonferroni 校正，报告效应量与置信区间"}, {"title": "第 3 步：把相关系数高写成因果结论", "body": "两个变量都被气温/时间等混杂变量驱动时 r 可接近 1 却无因果", "tip": "用随机对照实验或控制混杂的设计，报告里只写「相关」并标注适用边界"}]' />
 
 <CheckList id='P096b' title='上线前自检' :items='["能复现并解释「用均值描述收入、订单额等偏态数据」", "能复现并解释「反复做检验直到 p 小于 0.05 就宣布有效」", "能复现并解释「把相关系数高写成因果结论」", "能用一条命令验证 描述统计与离群点", "关键路径有自动化测试与失败分支"]' />
 
@@ -236,3 +236,16 @@ print(explore(sample))
 [下一讲：机器学习流程：特征、划分与评价](/data-ai/ml-workflow)
 
 <FillBlank no='096-5' tpl='___ statistics as st' :answers='["import"]' hint='回想本讲关于 描述统计与离群点 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 描述统计与离群点：均值和中位数谁更可信 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/096-statistics.py`
+
+```bash
+python3 examples/lessons/096-statistics.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/096-statistics.py) · [全部示例代码索引](/examples/)

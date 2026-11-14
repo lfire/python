@@ -44,11 +44,11 @@ SDP 说依赖方向要指向更稳定的组件，用不稳定性 `I = Ce / (Ce +
 
 三个可观测的失效信号：改一个需求平均触及超过三个包、单测必须启动真实数据库才能跑、以及 PR 平均改动文件数逐月上升。把这三项打进 CI 报表，技术债才有具体数字，而不是评审会上的形容词。
 
-<Callout type="tip" title='核心心智模型' text='Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SD' />
+<Callout type="tip" title='核心心智模型' text='Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SD…' />
 
 <ConceptDiagram type='flow3' title='第 120 讲 · 变化方向与边界：用提交历史把耦合量化出来' labels='变化方向与边界：用提交历史把耦合量化出来|依赖倒置与端口适配器：让领域层不认识基础设施|模块化单体到服务拆分：判据、契约与渐进式重构' caption='为长期演进的系统做结构决策' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 依赖倒置与端口适配器：让领域层不认识基础设施
@@ -115,7 +115,7 @@ print('annotation', list(Pricing.__init__.__annotations__))
 
 <OutputBox title='主示例运行结果' output='memory True memory pass\njson True json pass\nannotation [&#39;port&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import json\nfrom typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass RatePort(Protocol):\n    def get(self, key: str) -&gt; float: ...\n    def put(self, key: str, value: float) -&gt; None: ...\n\nclass MemoryAdapter:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key, 1.0)\n    def put(self, key, value):\n        self._d[key] = value\n\nclass JsonAdapter:\n    def __init__(self):\n        self._blob = &#39;{}&#39;\n    def get(self, key):\n        return json.loads(self._blob).get(key, 1.0)\n    def put(self, key, value):\n        d = json.loads(self._blob)\n        d[key] = value\n        self._blob = json.dumps(d)\n\nclass Pricing:\n    def __init__(self, port: RatePort):\n        self.port = port\n    def total(self, base, key):\n        return round(base * self.port.get(key), 2)\n\ndef contract(port, label):\n    assert isinstance(port, RatePort), label\n    port.put(&#39;vip&#39;, 0.8)\n    svc = Pricing(port)\n    assert svc.total(100.0, &#39;vip&#39;) == 80.0, label\n    assert svc.total(100.0, &#39;guest&#39;) == 100.0, label\n    return label + &#39; pass&#39;\n\nfor label, port in [(&#39;memory&#39;, MemoryAdapter()), (&#39;json&#39;, JsonAdapter())]:\n    print(label, isinstance(port, RatePort), contract(port, label))\nprint(&#39;annotation&#39;, list(Pricing.__init__.__annotations__))' :notes='["导入 json，JsonAdapter 用它把状态序列化成字符串模拟文件持久化", "从 typing 取 Protocol 与 runtime_checkable，构造运行时可检查的端口协议", "@runtime_checkable 让 isinstance(obj, RatePort) 可用，否则协议只能静态检查", "领域层定义 RatePort：只声明 get/put，不依赖任何具体存储", "get 契约：接收键返回浮点数，方法体用省略号表示为纯声明", "put 契约：写入键值对返回 None，实现方必须同名同参", "内存适配器，不继承 RatePort，靠结构化子类型满足协议", "构造时建一个空字典作为存储", "把字典挂到实例上", "get 缺省返回 1.0，保证未命中键时定价不被打折", "用 dict.get 取值并给缺省，缺省值本身属于契约的一部分", "put 直接写字典", "写操作只有一条赋值，体现适配器可以极薄", "第二个适配器：同样两个方法，但用 JSON 字符串存储，证明实现可替换", "初始状态是空对象字面量", "把持久化介质表示成一个字符串字段", "get 先反序列化再取值，缺省同样是 1.0", "json.loads 把字符串还原成字典后再查键", "put 需要读出、修改、写回三步", "把当前状态解析成字典", "写入新键值", "重新序列化为字符串，模拟落盘后的持久化介质", "领域服务：只认识 RatePort，不认识 dict 也不认识 json", "构造注入端口，参数标注为协议类型而非具体类", "把端口保存为实例属性", "total 的业务规则：基准价乘折扣率后保留两位小数", "调用端口的 get，领域逻辑与存储解耦", "契约测试：对任意实现跑同一组断言，锁住跨实现的行为不变", "运行时校验实现满足协议，缺方法会立刻暴露", "写入 VIP 折扣 0.8", "用待测端口装配领域服务", "断言命中 VIP 时 100 乘 0.8 等于 80.0", "断言未命中键时走缺省 1.0，结果仍是 100.0", "全部通过返回标签加 pass 字符串", "遍历两个实现，打印协议检查与契约结果", "同一组用例分别作用于内存版与 JSON 版，输出应一致", "打印构造参数的注解名，证明依赖被标注为抽象端口"]' title='第 120 讲 · 架构设计：领域分层、演进与重构' />
+<LineByLine code='import json\nfrom typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass RatePort(Protocol):\n    def get(self, key: str) -&gt; float: ...\n    def put(self, key: str, value: float) -&gt; None: ...\n\nclass MemoryAdapter:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key, 1.0)\n    def put(self, key, value):\n        self._d[key] = value\n\nclass JsonAdapter:\n    def __init__(self):\n        self._blob = &#39;{}&#39;\n    def get(self, key):\n        return json.loads(self._blob).get(key, 1.0)\n    def put(self, key, value):\n        d = json.loads(self._blob)\n        d[key] = value\n        self._blob = json.dumps(d)\n\nclass Pricing:\n    def __init__(self, port: RatePort):\n        self.port = port\n    def total(self, base, key):\n        return round(base * self.port.get(key), 2)\n\ndef contract(port, label):\n    assert isinstance(port, RatePort), label\n    port.put(&#39;vip&#39;, 0.8)\n    svc = Pricing(port)\n    assert svc.total(100.0, &#39;vip&#39;) == 80.0, label\n    assert svc.total(100.0, &#39;guest&#39;) == 100.0, label\n    return label + &#39; pass&#39;\n\nfor label, port in [(&#39;memory&#39;, MemoryAdapter()), (&#39;json&#39;, JsonAdapter())]:\n    print(label, isinstance(port, RatePort), contract(port, label))\nprint(&#39;annotation&#39;, list(Pricing.__init__.__annotations__))' :notes='["导入 json，JsonAdapter 用它把状态序列化成字符串模拟文件持久化", "从 typing 取 Protocol 与 runtime_checkable，构造运行时可检查的端口协议", "空行，只用于分隔逻辑块，不影响执行结果。", "@runtime_checkable 让 isinstance(obj, RatePort) 可用，否则协议只能静态检查", "领域层定义 RatePort：只声明 get/put，不依赖任何具体存储", "get 契约：接收键返回浮点数，方法体用省略号表示为纯声明", "put 契约：写入键值对返回 None，实现方必须同名同参", "空行，只用于分隔逻辑块，不影响执行结果。", "内存适配器，不继承 RatePort，靠结构化子类型满足协议", "构造时建一个空字典作为存储", "把字典挂到实例上", "get 缺省返回 1.0，保证未命中键时定价不被打折", "用 dict.get 取值并给缺省，缺省值本身属于契约的一部分", "put 直接写字典", "写操作只有一条赋值，体现适配器可以极薄", "空行，只用于分隔逻辑块，不影响执行结果。", "第二个适配器：同样两个方法，但用 JSON 字符串存储，证明实现可替换", "初始状态是空对象字面量", "把持久化介质表示成一个字符串字段", "get 先反序列化再取值，缺省同样是 1.0", "json.loads 把字符串还原成字典后再查键", "put 需要读出、修改、写回三步", "把当前状态解析成字典", "写入新键值", "重新序列化为字符串，模拟落盘后的持久化介质", "空行，只用于分隔逻辑块，不影响执行结果。", "领域服务：只认识 RatePort，不认识 dict 也不认识 json", "构造注入端口，参数标注为协议类型而非具体类", "把端口保存为实例属性", "total 的业务规则：基准价乘折扣率后保留两位小数", "调用端口的 get，领域逻辑与存储解耦", "空行，只用于分隔逻辑块，不影响执行结果。", "契约测试：对任意实现跑同一组断言，锁住跨实现的行为不变", "运行时校验实现满足协议，缺方法会立刻暴露", "写入 VIP 折扣 0.8", "用待测端口装配领域服务", "断言命中 VIP 时 100 乘 0.8 等于 80.0", "断言未命中键时走缺省 1.0，结果仍是 100.0", "全部通过返回标签加 pass 字符串", "空行，只用于分隔逻辑块，不影响执行结果。", "遍历两个实现，打印协议检查与契约结果", "同一组用例分别作用于内存版与 JSON 版，输出应一致", "打印构造参数的注解名，证明依赖被标注为抽象端口"]' title='第 120 讲 · 架构设计：领域分层、演进与重构' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -188,14 +188,14 @@ print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain
 
 <Callout type="warn" title='本讲最容易踩的坑' text='领域层 import pymysql/redis，换个存储要改几十处调用点：高层策略直接依赖低层实现，违反依赖倒置；测试必须连真实库' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：领域层 import pymysql/red", "body": "高层策略直接依赖低层实现，违反依赖倒置；测试必须连真实库", "tip": "领域层定义 Protocol 端口，实现放适配器层，构造注入；单测用内存 Fake，装配集中在 composition root"}, {"title": "第 2 步：没有清晰边界就按「一个服务一个库」提前拆微服", "body": "把进程内函数调用换成 RPC，引入网络分区、部分失败与分布式事务", "tip": "先做模块化单体 + 契约测试守住边界，按团队规模、伸缩与发布节奏的真实痛点再拆"}, {"title": "第 3 步：大爆炸式重写，上线后行为漂移且无法回退", "body": "没有行为保持测试，也没有渐进替换与开关，旧行为无法对照", "tip": "重构前录 Golden Master 黄金样本，绞杀者逐路由接管 + 特性开关，回放不一致即回滚"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：领域层 import pymysql/red…", "body": "高层策略直接依赖低层实现，违反依赖倒置；测试必须连真实库", "tip": "领域层定义 Protocol 端口，实现放适配器层，构造注入；单测用内存 Fake，装配集中在 composition root"}, {"title": "第 2 步：没有清晰边界就按「一个服务一个库」提前拆微服…", "body": "把进程内函数调用换成 RPC，引入网络分区、部分失败与分布式事务", "tip": "先做模块化单体 + 契约测试守住边界，按团队规模、伸缩与发布节奏的真实痛点再拆"}, {"title": "第 3 步：大爆炸式重写，上线后行为漂移且无法回退", "body": "没有行为保持测试，也没有渐进替换与开关，旧行为无法对照", "tip": "重构前录 Golden Master 黄金样本，绞杀者逐路由接管 + 特性开关，回放不一致即回滚"}]' />
 
 
 ## 契约测试、semver 与 /v1 /v2 并存窗口
 
 <Compare :panels='[{"label": "主示例", "code": "import json\nfrom typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass RatePort(Protocol):\n    def get(self, key: str) -&gt; float: ...\n    def put(self, key: str, value: float) -&gt; None: ...\n\nclass MemoryAdapter:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key, 1.0)\n    def put(self, key, value):\n        self._d[key] = value\n\nclass JsonAdapter:\n    def __init__(self):\n        self._blob = &#39;{}&#39;\n    def get(self, key):\n        return json.loads(self._blob).get(key, 1.0)\n    def put(self, key, value):\n        d = json.loads(self._blob)\n        d[key] = value\n        self._blob = json.dumps(d)\n\nclass Pricing:\n    def __init__(self, port: RatePort):\n        self.port = port\n    def total(self, base, key):\n        return round(base * self.port.get(key), 2)\n\ndef contract(port, label):\n    assert isinstance(port, RatePort), label\n    port.put(&#39;vip&#39;, 0.8)\n    svc = Pricing(port)\n    assert svc.total(100.0, &#39;vip&#39;) == 80.0, label\n    assert svc.total(100.0, &#39;guest&#39;) == 100.0, label\n    return label + &#39; pass&#39;\n\nfor label, port in [(&#39;memory&#39;, MemoryAdapter()), (&#39;json&#39;, JsonAdapter())]:\n    print(label, isinstance(port, RatePort), contract(port, label))\nprint(&#39;annotation&#39;, list(Pricing.__init__.__annotations__))", "note": "变化方向与边界：用提交历史把耦合量化出来"}, {"label": "对照 / 进阶", "code": "class CompliantStore:\n    def get(self, key):\n        return 0.9\n\nclass ViolatingStore:\n    def get(self, key):\n        return 0.0\n\ndef verify(store):\n    v = store.get(&#39;x&#39;)\n    if v != 0.9:\n        return &#39;contract violated: got &#39; + str(v)\n    return &#39;pass&#39;\n\nprint(&#39;compliant&#39;, verify(CompliantStore()))\nprint(&#39;violating&#39;, verify(ViolatingStore()))", "note": "依赖倒置与端口适配器：让领域层不认识基础设施"}]' title='两种写法对照' note='差异集中在 变化方向与边界；先看输出，再找背后的规则。' />
 
-<CheckList id='P120b' title='上线前自检' :items='["能复现并解释「领域层 import pymysql/redis，换个存储要」", "能复现并解释「没有清晰边界就按「一个服务一个库」提前拆微服务」", "能复现并解释「大爆炸式重写，上线后行为漂移且无法回退」", "能用一条命令验证 变化方向与边界", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P120b' title='上线前自检' :items='["能复现并解释「领域层 import pymysql/redis，换个存储要…」", "能复现并解释「没有清晰边界就按「一个服务一个库」提前拆微服务」", "能复现并解释「大爆炸式重写，上线后行为漂移且无法回退」", "能用一条命令验证 变化方向与边界", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 绞杀者模式、影子流量与技术决策的回退路径
@@ -209,7 +209,7 @@ print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain
 | 行为保持测试（Golden Master） | 重构前缺少应有的行为基线 | 回放不一致即判定重构引入回归 |
 | 消费者驱动契约测试 | 两侧发布节奏不同、需独立上线 | 契约文件版本化，旧契约并行保留 |
 
-<ArchBlueprint title='第 120 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "变化方向与边界：用提交历史把耦合量化出来", "protocol": "调用 / 请求", "items": [{"label": "变化方向与边界：用提交历", "sub": "输入与前置", "detail": "Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SD", "tone": "blue"}]}, {"name": "核心规则", "note": "依赖倒置与端口适配器：让领域层不认识基础设施", "protocol": "语言 / 运行时协议", "items": [{"label": "依赖倒置与端口适配器：让", "sub": "状态与边界", "detail": "依赖倒置原则（DIP）要求高层策略不依赖低层细节，二者都依赖抽象。Python 里最轻量的抽象是 `typing.Protocol`（PEP 544，3.8 起）：端口由领域层定义为结构化子类型，方法体写 `...`，实现类无需继承，只要方法名与签名匹配即被视为满足协议，这叫结构化子类型。加上 `@", "tone": "purple"}]}, {"name": "落地与收尾", "note": "模块化单体到服务拆分：判据、契约与渐进式重构", "items": [{"label": "模块化单体到服务拆分：判", "sub": "工程处理", "detail": "拆服务的触发条件是团队规模、独立伸缩、发布节奏差异与故障隔离，不是代码行数；康威定律提醒组织沟通结构会复刻进系统边界，边界没理清时拆得越碎，分布式故障越多。跨边界行为靠消费者驱动契约测试（consumer-driven contract，Pact 的思想）锁定：消费方把期望的请求与响应写成一份契约文", "tone": "green"}]}]' />
+<ArchBlueprint title='第 120 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "变化方向与边界：用提交历史把耦合量化出来", "protocol": "调用 / 请求", "items": [{"label": "变化方向与边界：用提交历…", "sub": "输入与前置", "detail": "Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SD…", "tone": "blue"}]}, {"name": "核心规则", "note": "依赖倒置与端口适配器：让领域层不认识基础设施", "protocol": "语言 / 运行时协议", "items": [{"label": "依赖倒置与端口适配器：让…", "sub": "状态与边界", "detail": "依赖倒置原则（DIP）要求高层策略不依赖低层细节，二者都依赖抽象。Python 里最轻量的抽象是 `typing.Protocol`（PEP 544，3.8 起）：端口由领域层定义为结构化子类型，方法体写 `...`，实现类无需继承，只要方法名与签名匹配即被视为满足协议，这叫结构化子类型。加上…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "模块化单体到服务拆分：判据、契约与渐进式重构", "items": [{"label": "模块化单体到服务拆分：判…", "sub": "工程处理", "detail": "拆服务的触发条件是团队规模、独立伸缩、发布节奏差异与故障隔离，不是代码行数；康威定律提醒组织沟通结构会复刻进系统边界，边界没理清时拆得越碎，分布式故障越多。跨边界行为靠消费者驱动契约测试（consumer-driven contract，Pact 的思想）锁定：消费方把期望的请求与响应写成一份契约文…", "tone": "green"}]}]' />
 
 
 ## 依赖倒置的运行期多态分派
@@ -222,9 +222,9 @@ Protocol 在类创建时由 typing 的元类收集成员名构成 `_ProtocolMeta
 
 契约测试之所以能替代集成测试守住边界，是因为它把跨组件的隐含假设显式化为可回放的输入输出对；绞杀者模式依赖的则是路由层对请求的分派，本质是策略模式作用在流量入口。拆成微服务后，本地事务变成跨网络的 Saga，CAP 约束下只能用补偿换可用性，这正是「一次函数调用变一次分布式故障」在系统层的根因。
 
-<Term word='变化方向与边界' text='Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SDP 说依赖方向要指向' />
+<Term word='变化方向与边界' text='Robert C. Martin 的稳定依赖原则（SDP）与共同闭包原则（CCP）给的是可计算判据，不是口号。CCP 说：会因同一原因、在同一时间改动的类应聚在同一组件；把过去半年每次提交里一起被修改的文件对做共现统计，共现频率高的文件就是事实上的内聚边界，若它们散落在四个包里，说明边界画错了。SDP 说依赖方向要指向…' />
 
-<Term word='依赖倒置与端口适配器' text='依赖倒置原则（DIP）要求高层策略不依赖低层细节，二者都依赖抽象。Python 里最轻量的抽象是 `typing.Protocol`（PEP 544，3.8 起）：端口由领域层定义为结构化子类型，方法体写 `...`，实现类无需继承，只要方法名与签名匹配即被视为满足协议，这叫结构化子类型。加上 `@runtime_ch' />
+<Term word='依赖倒置与端口适配器' text='依赖倒置原则（DIP）要求高层策略不依赖低层细节，二者都依赖抽象。Python 里最轻量的抽象是 `typing.Protocol`（PEP 544，3.8 起）：端口由领域层定义为结构化子类型，方法体写 `...`，实现类无需继承，只要方法名与签名匹配即被视为满足协议，这叫结构化子类型。加上…' />
 
 
 ## 技术债的量化指标与行为保持测试
@@ -303,7 +303,7 @@ print('quote', compose('json').quote(200.0, 'vip'))
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 变化方向与边界 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 变化方向与边界 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -348,3 +348,16 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 3. 领域层定义端口、适配器层实现、composition root 装配；构造函数注入让单测可用内存 Fake
 
 [下一讲：资深能力图谱、技术选型与持续精进](/advanced/senior-path)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/120-architecture.py`
+
+```bash
+python3 examples/lessons/120-architecture.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/120-architecture.py) · [全部示例代码索引](/examples/)

@@ -35,7 +35,7 @@ description: 系统性地提升泛化能力
 
 读曲线要看趋势与多次平均，别盯着单个点下结论。
 
-<Callout type="tip" title='核心心智模型' text='对回归问题，把期望泛化误差拆开，会得到 `Bias² + Var + σ²` 三项之和：偏差是模型平均预测与真实函数之间的差，衡量欠拟合；方差是预测对训练集扰动的敏感程度，衡量过拟合；σ² 是数据本身带、再怎么调也去不掉的噪声。模型越复杂（多项式次数越高、树越深、k 越小），偏差越小而方差越大，两者' />
+<Callout type="tip" title='核心心智模型' text='对回归问题，把期望泛化误差拆开，会得到 `Bias² + Var + σ²` 三项之和：偏差是模型平均预测与真实函数之间的差，衡量欠拟合；方差是预测对训练集扰动的敏感程度，衡量过拟合；σ² 是数据本身带、再怎么调也去不掉的噪声。模型越复杂（多项式次数越高、树越深、k 越小），偏差越小而方差越大，两者…' />
 
 
 ## 学习曲线与验证曲线：形态决定动作
@@ -85,9 +85,9 @@ print('MSE approx', round(bias ** 2 + var, 3))
 | 验证误差随容量先降后升 | 存在最优容量 | 取 U 型最低点的超参 |
 | 验证误差随 n 增大仍下降 | 数据仍不够 | 继续加数据 |
 
-<ConceptDiagram type='layers3' title='第 102 讲 · 偏差方差分解、学习曲线与验证曲线' labels='偏差方差分解、学习曲线与验证曲线|网格、随机、贝叶斯搜索与交叉验证|正则、早停、类别不平衡与选择陷阱' caption='系统性地提升泛化能力' />
+<ConceptDiagram type='layers3' title='第 102 讲 · 偏差方差分解、学习曲线与验证曲线' labels='偏差方差分解、学习曲线与验证曲线|网格、随机、贝叶斯搜索与交叉验证|正则、早停、类别不平衡与选择陷阱|模型选择陷阱' caption='系统性地提升泛化能力' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 网格、随机与贝叶斯搜索的取舍
@@ -171,7 +171,7 @@ print('best_k', best_k)
 
 随机搜索之所以常优于网格，是因为在 d 维空间里网格对每个重要维度只取到 m 个不同值，而随机采样能让每个维度都覆盖到更多不同的取值。
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在测试集上反复调参，报告 0.93 上线只有", "body": "测试集参与决策后退化为验证集，最优分数带选择偏差，不再无偏", "tip": "用嵌套交叉验证内层选参、外层评估；固定一份从未参与决策的测试集只做一次性最终报告"}, {"title": "第 2 步：极不平衡数据用 accuracy、交叉验证不", "body": "accuracy 被多数类主导，未分层的折里正类可能几乎为零、分数剧烈波动", "tip": "用 StratifiedKFold，指标换 PR-AUC/F1/recall，配合 class_weight 或阈值调整"}, {"title": "第 3 步：先在全量做特征选择/标准化再交叉验证", "body": "预处理参数在全量 fit，测试折信息泄进训练，分数虚高", "tip": "把预处理放进 Pipeline 只在训练折 fit；SMOTE 等重采样也只在训练折内做"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在测试集上反复调参，报告 0.93 上线只有…", "body": "测试集参与决策后退化为验证集，最优分数带选择偏差，不再无偏", "tip": "用嵌套交叉验证内层选参、外层评估；固定一份从未参与决策的测试集只做一次性最终报告"}, {"title": "第 2 步：极不平衡数据用 accuracy、交叉验证不…", "body": "accuracy 被多数类主导，未分层的折里正类可能几乎为零、分数剧烈波动", "tip": "用 StratifiedKFold，指标换 PR-AUC/F1/recall，配合 class_weight 或阈值调整"}, {"title": "第 3 步：先在全量做特征选择/标准化再交叉验证", "body": "预处理参数在全量 fit，测试折信息泄进训练，分数虚高", "tip": "把预处理放进 Pipeline 只在训练折 fit；SMOTE 等重采样也只在训练折内做"}]' />
 
 
 ## 用学习曲线决定「加数据」还是「降复杂度」
@@ -208,7 +208,7 @@ for frac in (0.3, 0.6, 1.0):
 python -c "from collections import Counter; print(Counter([0,0,1]).most_common(1))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 偏差方差分解 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 偏差方差分解 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 偏差方差等式的逐项推导：交叉项为什么归零
@@ -255,7 +255,7 @@ for n in (1, 5, 20, 100):
 
 <OutputBox title='扩展示例运行结果' output='n 1 mean_optimism 0.0006\nn 5 mean_optimism 0.0203\nn 20 mean_optimism 0.0269\nn 100 mean_optimism 0.0294' />
 
-<LineByLine code='def lcg(seed, n):\n    out, x = [], seed\n    for _ in range(n):\n        x = (1103515245 * x + 12345) % (1 &lt;&lt; 31)\n        out.append(x / (1 &lt;&lt; 31))\n    return out\n\ndef optimism(n_configs, trials, seed):\n    us = lcg(seed, n_configs * trials)\n    total = 0.0\n    for t in range(trials):\n        chunk = us[t * n_configs:(t + 1) * n_configs]\n        best = max(0.80 + (u - 0.5) * 0.06 for u in chunk)\n        total += best - 0.80\n    return round(total / trials, 4)\n\nfor n in (1, 5, 20, 100):\n    print(&#39;n&#39;, n, &#39;mean_optimism&#39;, optimism(n, 200, 20240607))' :notes='["确定性线性同余发生器，避免依赖 random 模块的版本差异", "每组真实分数统一设为 0.80，best 减 0.80 纯粹是选择偏差", "对固定 N 重复 200 次实验估计 E[max eta]，输出随 N 单调上升", "分类用 `StratifiedKFold`，时序用 `TimeSeriesSplit`；嵌套 CV 让外层评估、内层选参彻底隔离", "不平衡换 PR-AUC / F1 / recall，过采样只在训练折内做，会学习的预处理一律放进 `Pipeline`", "守住测试集只用一次；试 m 组取 max 会系统性抬高报告分数，留一份从未参与决策的测试集", "期望泛化误差 = 偏差平方 + 方差 + 不可约噪声 σ²，容量增大偏差降方差升，最优复杂度在 U 型底部", "学习曲线：间距大是高方差、加数据有效；两者都高且贴近是高偏差、该加特征或换模型", "`GridSearchCV` 穷举 `m^d` 组、`RandomizedSearchCV` 随机采样、贝叶斯优化按采集函数选点，三者都要配交叉验证", "分类用 `StratifiedKFold`，时序用 `TimeSeriesSplit`；嵌套 CV 让外层评估、内层选参彻底隔离", "不平衡换 PR-AUC / F1 / recall，过采样只在训练折内做，会学习的预处理一律放进 `Pipeline`", "守住测试集只用一次；试 m 组取 max 会系统性抬高报告分数，留一份从未参与决策的测试集", "期望泛化误差 = 偏差平方 + 方差 + 不可约噪声 σ²，容量增大偏差降方差升，最优复杂度在 U 型底部", "学习曲线：间距大是高方差、加数据有效；两者都高且贴近是高偏差、该加特征或换模型", "`GridSearchCV` 穷举 `m^d` 组、`RandomizedSearchCV` 随机采样、贝叶斯优化按采集函数选点，三者都要配交叉验证", "分类用 `StratifiedKFold`，时序用 `TimeSeriesSplit`；嵌套 CV 让外层评估、内层选参彻底隔离"]' title='扩展示例逐行讲解' />
+<LineByLine code='def lcg(seed, n):\n    out, x = [], seed\n    for _ in range(n):\n        x = (1103515245 * x + 12345) % (1 &lt;&lt; 31)\n        out.append(x / (1 &lt;&lt; 31))\n    return out\n\ndef optimism(n_configs, trials, seed):\n    us = lcg(seed, n_configs * trials)\n    total = 0.0\n    for t in range(trials):\n        chunk = us[t * n_configs:(t + 1) * n_configs]\n        best = max(0.80 + (u - 0.5) * 0.06 for u in chunk)\n        total += best - 0.80\n    return round(total / trials, 4)\n\nfor n in (1, 5, 20, 100):\n    print(&#39;n&#39;, n, &#39;mean_optimism&#39;, optimism(n, 200, 20240607))' :notes='["确定性线性同余发生器，避免依赖 random 模块的版本差异", "每组真实分数统一设为 0.80，best 减 0.80 纯粹是选择偏差", "对固定 N 重复 200 次实验估计 E[max eta]，输出随 N 单调上升", "这一行 `x = (1103515245 * x + 12345) % (1 &lt;&lt; 31)` 的作用，可对照上方输出逐项核对。", "这一行 `out.append(x / (1 &lt;&lt; 31))` 的作用，可对照上方输出逐项核对。", "这一行 `return out` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def optimism(n_configs, trials, seed):` 的作用，可对照上方输出逐项核对。", "这一行 `us = lcg(seed, n_configs * trials)` 的作用，可对照上方输出逐项核对。", "这一行 `total = 0.0` 的作用，可对照上方输出逐项核对。", "这一行 `for t in range(trials):` 的作用，可对照上方输出逐项核对。", "这一行 `chunk = us[t * n_configs:(t + 1) * n_configs]` 的作用，可对照上方输出逐项核对。", "这一行 `best = max(0.80 + (u - 0.5) * 0.06 for u in chunk)` 的作用，可对照上方输出逐项核对。", "这一行 `total += best - 0.80` 的作用，可对照上方输出逐项核对。", "这一行 `return round(total / trials, 4)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `for n in (1, 5, 20, 100):` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;n&#39;, n, &#39;mean_optimism&#39;, optimism(n, 200, 2024` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 把「试了 N 组超参、汇报最好的那组」写成概率问题：设每组真实泛化分数都是 mu，验证分数是 mu + eta，eta 是零均值噪声（来自验证集有限、折划分与随机种子）。
 
@@ -348,3 +348,16 @@ for n in (10, 60, 180):
 3. `GridSearchCV` 穷举 `m^d` 组、`RandomizedSearchCV` 随机采样、贝叶斯优化按采集函数选点，三者都要配交叉验证
 
 [下一讲：深度学习与 PyTorch：张量、自动微分与训练循环](/data-ai/deep-learning)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/102-model-tuning.py`
+
+```bash
+python3 examples/lessons/102-model-tuning.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/102-model-tuning.py) · [全部示例代码索引](/examples/)

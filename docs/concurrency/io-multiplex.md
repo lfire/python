@@ -49,11 +49,11 @@ macOS/BSD 对应 kqueue，Windows 是 `IOCP`（前摄器而非反应器），sel
 | kqueue / KqueueSelector | O(就绪数)，内核事件队列 | 受系统 fd 限制 | macOS / BSD |
 | IOCP | 完成端口，内核完成操作后通知 | 受系统限制 | Windows，前摄器非反应器 |
 
-<ConceptDiagram type='flow4' title='第 066 讲 · 阻塞 / 非阻塞 fd 与 select / poll / epoll' labels='阻塞 / 非阻塞 fd 与 select /|水平触发、边缘触发与 reactors 模式|selectors 标准库与可移植写法' caption='理解事件循环在系统调用层的样子' />
+<ConceptDiagram type='flow4' title='第 066 讲 · 阻塞 / 非阻塞 fd 与 select / poll / epoll' labels='阻塞 / 非阻塞 fd 与 select…|水平触发、边缘触发与 reactors 模式|selectors 标准库与可移植写法|反应器模式' caption='理解事件循环在系统调用层的样子' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='socket 默认阻塞，recv 无数据时会挂起线程；`setblocking(False)`（等价于 `settimeout(0.0)`）之后，无数据立刻抛 `BlockingIOError`，errno 为 `EAGAIN` / `EWOULDBLOCK`（两者常是同一个值）。`select.s' />
+<Callout type="tip" title='核心心智模型' text='socket 默认阻塞，recv 无数据时会挂起线程；`setblocking(False)`（等价于 `settimeout(0.0)`）之后，无数据立刻抛 `BlockingIOError`，errno 为 `EAGAIN` / `EWOULDBLOCK`（两者常是同一个值）。…' />
 
 
 ## 用 select 写一次事件循环
@@ -81,7 +81,7 @@ sel.close()
 
 <OutputBox title='主示例运行结果' output='selector KqueueSelector\nregistered 1\nevent peerA True\npayload b&#39;hello&#39;' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import socket\nimport selectors\n\nsel = selectors.DefaultSelector()\na, b = socket.socketpair()\na.setblocking(False)\nb.setblocking(False)\nsel.register(a, selectors.EVENT_READ, data=&#39;peerA&#39;)\nprint(&#39;selector&#39;, type(sel).__name__)\nprint(&#39;registered&#39;, len(sel.get_map()))\nb.send(b&#39;hello&#39;)\nevents = sel.select(timeout=1)\nfor key, mask in events:\n    print(&#39;event&#39;, key.data, mask == selectors.EVENT_READ)\n    print(&#39;payload&#39;, key.fileobj.recv(64))\na.close()\nb.close()\nsel.close()' :notes='["导入 socket 建本机 socketpair 做自测", "导入 selectors 使用跨平台抽象", "macOS 上选 KqueueSelector", "一对已连接的 socket", "读端非阻塞，无数据 recv 会抛 BlockingIOError", "写端同样非阻塞", "注册读事件，data 携带上下文标签", "打印实际选择器类型，证明平台差异", "get_map 里恰好一个已注册 fd", "从 b 写入，使 a 变为可读", "select 带超时，避免无事件时永久挂住", "遍历就绪事件列表", "key.data 是注册时的标签，mask 为 EVENT_READ", "读一次数据；LT 下若有剩余还会再次就绪", "关闭读端 socket", "关闭写端 socket", "关闭选择器释放内核资源"]' title='第 066 讲 · IO 多路复用：select / poll / epoll' />
+<LineByLine code='import socket\nimport selectors\n\nsel = selectors.DefaultSelector()\na, b = socket.socketpair()\na.setblocking(False)\nb.setblocking(False)\nsel.register(a, selectors.EVENT_READ, data=&#39;peerA&#39;)\nprint(&#39;selector&#39;, type(sel).__name__)\nprint(&#39;registered&#39;, len(sel.get_map()))\nb.send(b&#39;hello&#39;)\nevents = sel.select(timeout=1)\nfor key, mask in events:\n    print(&#39;event&#39;, key.data, mask == selectors.EVENT_READ)\n    print(&#39;payload&#39;, key.fileobj.recv(64))\na.close()\nb.close()\nsel.close()' :notes='["导入 socket 建本机 socketpair 做自测", "导入 selectors 使用跨平台抽象", "空行，只用于分隔逻辑块，不影响执行结果。", "macOS 上选 KqueueSelector", "一对已连接的 socket", "读端非阻塞，无数据 recv 会抛 BlockingIOError", "写端同样非阻塞", "注册读事件，data 携带上下文标签", "打印实际选择器类型，证明平台差异", "get_map 里恰好一个已注册 fd", "从 b 写入，使 a 变为可读", "select 带超时，避免无事件时永久挂住", "遍历就绪事件列表", "key.data 是注册时的标签，mask 为 EVENT_READ", "读一次数据；LT 下若有剩余还会再次就绪", "关闭读端 socket", "关闭写端 socket", "关闭选择器释放内核资源"]' title='第 066 讲 · IO 多路复用：select / poll / epoll' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -150,7 +150,7 @@ asyncio 的 `BaseSelectorEventLoop` 正是用 `selectors.DefaultSelector`，`loo
 | 边缘触发 ET（EPOLLET） | 仅状态跃迁时报告一次 | 必须循环读到 BlockingIOError/EAGAIN | 连接永久卡住，事件不再来 |
 | EPOLLONESHOT | 只报告一次后自动失活 | 处理后 epoll_ctl(MOD) 重新武装 | 忘记重新武装则该 fd 再无事件 |
 
-<FlowTimeline :steps='[{"title": "阻塞 / 非阻塞 fd 与 select / poll / epoll", "desc": "socket 默认阻塞，recv 无数据时会挂起线程；`setblocking(Fa…", "tone": "blue"}, {"title": "水平触发、边缘触发与 reactors 模式", "desc": "水平触发（LT，epoll 默认，select/poll 也是）只要 fd 仍处于就…", "tone": "purple"}, {"title": "selectors 标准库与可移植写法", "desc": "`selectors`（3.4+）提供一层统一抽象：`DefaultSelector…", "tone": "orange"}, {"title": "工程落地", "desc": "用 selectors 写一个最小 echo server（反应器骨", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "阻塞 / 非阻塞 fd 与 select / p…", "desc": "socket 默认阻塞，recv 无数据时会挂起线程…", "tone": "blue"}, {"title": "水平触发、边缘触发与 reactors 模式", "desc": "水平触发（LT，epoll 默认，select/poll 也是）只要 fd 仍处于就…", "tone": "purple"}, {"title": "selectors 标准库与可移植写法", "desc": "`selectors`（3.4+）提供一层统一抽象…", "tone": "orange"}, {"title": "工程落地", "desc": "用 selectors 写一个最小 echo server（反应器骨…", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 内核如何替进程监视一批 fd
@@ -165,9 +165,9 @@ kqueue 用内核事件队列与 changelist 达到类似效果。LT 与 ET 的区
 
 asyncio 的 `BaseSelectorEventLoop` 用的正是这套 register/select 循环，add_reader/add_writer 只是往 data 里挂回调。
 
-<Term word='阻塞与非阻塞 IO' text='socket 默认阻塞，recv 无数据时会挂起线程；`setblocking(False)`（等价于 `settimeout(0.0)`）之后，无数据立刻抛 `BlockingIOError`，errno 为 `EAGAIN` / `EWOULDBLOCK`（两者常是同一个值）。`select.select` 用 f' />
+<Term word='阻塞与非阻塞 IO' text='socket 默认阻塞，recv 无数据时会挂起线程；`setblocking(False)`（等价于 `settimeout(0.0)`）之后，无数据立刻抛 `BlockingIOError`，errno 为 `EAGAIN` / `EWOULDBLOCK`（两者常是同一个值）。`select.select` 用 f…' />
 
-<Term word='select / poll / epoll 对比' text='水平触发（LT，epoll 默认，select/poll 也是）只要 fd 仍处于就绪状态（接收缓冲区还有数据），每次 wait 都会再次报告；边缘触发（ET，需显式 `EPOLLET`）只在状态发生跃迁时报告一次，因此必须在一个循环里把缓冲区读到 `BlockingIOError` / `EAGAIN` 为止，漏读就' />
+<Term word='select / poll / epoll 对比' text='水平触发（LT，epoll 默认，select/poll 也是）只要 fd 仍处于就绪状态（接收缓冲区还有数据），每次 wait 都会再次报告；边缘触发（ET，需显式 `EPOLLET`）只在状态发生跃迁时报告一次，因此必须在一个循环里把缓冲区读到 `BlockingIOError` / `EAGAIN` 为止，漏读就…' />
 
 
 ## selectors 标准库、可移植写法与 echo server 骨架
@@ -253,7 +253,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='边缘触发下 recv 只读一次，连接卡死：ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：边缘触发下 recv 只读一次，连接卡死", "body": "ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件", "tip": "循环 recv 直到 BlockingIOError/EAGAIN，或改用默认 LT 并接受每轮拷贝"}, {"title": "第 2 步：在 macOS 直接 import sele", "body": "epoll 是 Linux 专属，macOS 提供 kqueue 与 poll", "tip": "用 selectors.DefaultSelector 写可移植代码，它会自动选 KqueueSelector"}, {"title": "第 3 步：事件循环 handler 里做同步阻塞调用", "body": "select 之后的 dispatch 仍在单线程，一个阻塞 recv/requests 会停住整个 loop", "tip": "handler 内全部非阻塞读写，阻塞工作丢进线程池或换 asyncio 原生异步库"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：边缘触发下 recv 只读一次，连接卡死", "body": "ET 只在状态跃迁时通知一次，缓冲区残留数据不会再触发事件", "tip": "循环 recv 直到 BlockingIOError/EAGAIN，或改用默认 LT 并接受每轮拷贝"}, {"title": "第 2 步：在 macOS 直接 import sele…", "body": "epoll 是 Linux 专属，macOS 提供 kqueue 与 poll", "tip": "用 selectors.DefaultSelector 写可移植代码，它会自动选 KqueueSelector"}, {"title": "第 3 步：事件循环 handler 里做同步阻塞调用", "body": "select 之后的 dispatch 仍在单线程，一个阻塞 recv/requests 会停住整个 loop", "tip": "handler 内全部非阻塞读写，阻塞工作丢进线程池或换 asyncio 原生异步库"}]' />
 
 
 ## 练习、自测与速记
@@ -297,4 +297,17 @@ if __name__ == '__main__':
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 阻塞与非阻塞 IO 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 阻塞与非阻塞 IO 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/066-io-multiplex.py`
+
+```bash
+python3 examples/lessons/066-io-multiplex.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/066-io-multiplex.py) · [全部示例代码索引](/examples/)

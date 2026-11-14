@@ -51,7 +51,7 @@ CPU 密集循环必须放进进程池或用 `asyncio.to_thread`，debug 模式�
 | TimerHandle | events.py | call_later 包装的定时回调，进 _scheduled 堆 |
 | Task | tasks.py | Future 子类，__step 推进协程到下一个 await |
 
-<SequenceDiagram title='第 117 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "事件循环 _run_once", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "Task.__step、Fu", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 117 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "事件循环 _run_once…", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "Task.__step、Fu…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
 
 ### _ready 回调一路跑完，selector 回不去
@@ -117,7 +117,7 @@ asyncio.run(main())
 
 <OutputBox title='主示例运行结果' output='task_type Task\ncoro work\ncancelling_before 0\ncancelling_after 1\nresult cancelled\ncancelled_flag False done True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import asyncio\n\nasync def work():\n    try:\n        await asyncio.sleep(10)\n        return &#39;done&#39;\n    except asyncio.CancelledError:\n        return &#39;cancelled&#39;\n\nasync def main():\n    t = asyncio.create_task(work())\n    print(&#39;task_type&#39;, type(t).__name__)\n    print(&#39;coro&#39;, t.get_coro().__name__)\n    await asyncio.sleep(0)\n    print(&#39;cancelling_before&#39;, t.cancelling())\n    t.cancel()\n    print(&#39;cancelling_after&#39;, t.cancelling())\n    r = await t\n    print(&#39;result&#39;, r)\n    print(&#39;cancelled_flag&#39;, t.cancelled(), &#39;done&#39;, t.done())\n\nasyncio.run(main())' :notes='["导入 asyncio", "定义被取消的工作协程", "捕获取消异常以观察 Task 最终状态", "长时间睡眠，模拟等待中的任务", "正常完成时的返回值", "CancelledError 被吞掉并返回一个字符串", "吞掉取消后 Task 变为正常完成而非取消态", "主协程创建并管理 Task", "create_task 把协程包成 Task 并排入事件循环", "打印类型，确认为 Task", "get_coro 取回被包装的协程对象及其名字", "让出一次控制权，使 Task 推进到 sleep", "取消前 cancelling 计数为 0", "cancel 设置取消请求并递增计数", "cancel 后 cancelling 变为 1", "await Task 取回结果", "协程吞掉 CancelledError，返回 cancelled 字符串", "cancelled() 为 False，因为异常没再抛出", "用 asyncio.run 驱动事件循环"]' title='第 117 讲 · asyncio 事件循环与 Task 源码' />
+<LineByLine code='import asyncio\n\nasync def work():\n    try:\n        await asyncio.sleep(10)\n        return &#39;done&#39;\n    except asyncio.CancelledError:\n        return &#39;cancelled&#39;\n\nasync def main():\n    t = asyncio.create_task(work())\n    print(&#39;task_type&#39;, type(t).__name__)\n    print(&#39;coro&#39;, t.get_coro().__name__)\n    await asyncio.sleep(0)\n    print(&#39;cancelling_before&#39;, t.cancelling())\n    t.cancel()\n    print(&#39;cancelling_after&#39;, t.cancelling())\n    r = await t\n    print(&#39;result&#39;, r)\n    print(&#39;cancelled_flag&#39;, t.cancelled(), &#39;done&#39;, t.done())\n\nasyncio.run(main())' :notes='["导入 asyncio", "空行，只用于分隔逻辑块，不影响执行结果。", "定义被取消的工作协程", "捕获取消异常以观察 Task 最终状态", "长时间睡眠，模拟等待中的任务", "正常完成时的返回值", "CancelledError 被吞掉并返回一个字符串", "吞掉取消后 Task 变为正常完成而非取消态", "空行，只用于分隔逻辑块，不影响执行结果。", "主协程创建并管理 Task", "create_task 把协程包成 Task 并排入事件循环", "打印类型，确认为 Task", "get_coro 取回被包装的协程对象及其名字", "让出一次控制权，使 Task 推进到 sleep", "取消前 cancelling 计数为 0", "cancel 设置取消请求并递增计数", "cancel 后 cancelling 变为 1", "await Task 取回结果", "协程吞掉 CancelledError，返回 cancelled 字符串", "cancelled() 为 False，因为异常没再抛出", "空行，只用于分隔逻辑块，不影响执行结果。", "用 asyncio.run 驱动事件循环"]' title='第 117 讲 · asyncio 事件循环与 Task 源码' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -153,7 +153,7 @@ asyncio.run(main())
 
 <Callout type="warn" title='本讲最容易踩的坑' text='在 async 函数里跑无 await 的 CPU 密集循环：协程在一次 _ready 回调里一路跑完，_run_once 回不到 selector，所有超时、定时器与心跳一起饿死' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 async 函数里跑无 await 的 ", "body": "协程在一次 _ready 回调里一路跑完，_run_once 回不到 selector，所有超时、定时器与心跳一起饿死", "tip": "把计算放进 asyncio.to_thread 或进程池，或在循环里定期 await asyncio.sleep(0)；开 debug 模式查慢回调"}, {"title": "第 2 步：捕获 CancelledError 后不重新", "body": "Task 变成正常完成，cancelled() 为 False，上层超时逻辑以为任务成功，取消语义被悄悄吞掉", "tip": "清理完成后重新 raise，让取消向上传播；需要区分来源时用 cancelling()/uncancel()"}, {"title": "第 3 步：finally 里直接 await 清理且不", "body": "清理段的 await 可能被同一次取消链再次打断，连接与缓冲没关干净", "tip": "用 asyncio.shield 包裹清理并再套 asyncio.timeout 限定上限，保留对 inner 的引用并最终 await 它"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在 async 函数里跑无 await 的…", "body": "协程在一次 _ready 回调里一路跑完，_run_once 回不到 selector，所有超时、定时器与心跳一起饿死", "tip": "把计算放进 asyncio.to_thread 或进程池，或在循环里定期 await asyncio.sleep(0)；开 debug 模式查慢回调"}, {"title": "第 2 步：捕获 CancelledError 后不重新…", "body": "Task 变成正常完成，cancelled() 为 False，上层超时逻辑以为任务成功，取消语义被悄悄吞掉", "tip": "清理完成后重新 raise，让取消向上传播；需要区分来源时用 cancelling()/uncancel()"}, {"title": "第 3 步：finally 里直接 await 清理且不…", "body": "清理段的 await 可能被同一次取消链再次打断，连接与缓冲没关干净", "tip": "用 asyncio.shield 包裹清理并再套 asyncio.timeout 限定上限，保留对 inner 的引用并最终 await 它"}]' />
 
 
 ## shield、超时与 TaskGroup 的正确组合
@@ -250,7 +250,7 @@ asyncio.run(main())
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 BaseEventLoop 与 selector 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 BaseEventLoop 与 selector 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -297,3 +297,16 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 3. Task.__step 每次只推进到下一个 await，Future 完成经 add_done_callback/__wakeup 重新调度
 
 [下一讲：GIL 源码、自适应解释器与无 GIL 路线](/advanced/gil-source)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/117-asyncio-source.py`
+
+```bash
+python3 examples/lessons/117-asyncio-source.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/117-asyncio-source.py) · [全部示例代码索引](/examples/)

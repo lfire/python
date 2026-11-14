@@ -78,11 +78,11 @@ print('cache size after', len(cache))
 
 <OutputBox title='主示例运行结果' output='weak alive True\ncollected True\nweak dead True\ncache size 1\ncache size after 0' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import gc, weakref\n\nclass Node:\n    pass\na = Node()\nb = Node()\na.peer = b\nb.peer = a\nwr = weakref.ref(a)\nprint(&#39;weak alive&#39;, wr() is a)\ndel a, b\ncollected = gc.collect()\nprint(&#39;collected&#39;, collected &gt; 0)\nprint(&#39;weak dead&#39;, wr() is None)\ncache = weakref.WeakValueDictionary()\nobj = Node()\ncache[&#39;k&#39;] = obj\nprint(&#39;cache size&#39;, len(cache))\ndel obj\ngc.collect()\nprint(&#39;cache size after&#39;, len(cache))' :notes='["导入 gc 与 weakref，分别管收集与弱引用", "空行分隔导入与类定义", "普通类默认带 __weakref__，可被弱引用", "创建第一个节点", "创建第二个节点", "a 引用 b，建立一条强引用", "b 反向引用 a，构成循环，计数不会归零", "对 a 建弱引用，不增加它的引用计数", "此时 a 还活着，弱引用能取回对象", "删掉外部两个名字，只剩循环引用", "手动全量收集，返回不可达对象数", "循环垃圾被回收，数量大于 0", "a 消亡后弱引用返回 None", "改用 WeakValueDictionary 做缓存，值是弱引用", "新建一个会话对象", "放进缓存，此时仍有 obj 这个强引用", "缓存里有一个条目", "删掉唯一的外部强引用", "再次收集，让弱引用回调生效", "条目自动移除，缓存不持有对象"]' title='第 053 讲 · 分代 GC、循环引用与 weakref' />
+<LineByLine code='import gc, weakref\n\nclass Node:\n    pass\na = Node()\nb = Node()\na.peer = b\nb.peer = a\nwr = weakref.ref(a)\nprint(&#39;weak alive&#39;, wr() is a)\ndel a, b\ncollected = gc.collect()\nprint(&#39;collected&#39;, collected &gt; 0)\nprint(&#39;weak dead&#39;, wr() is None)\ncache = weakref.WeakValueDictionary()\nobj = Node()\ncache[&#39;k&#39;] = obj\nprint(&#39;cache size&#39;, len(cache))\ndel obj\ngc.collect()\nprint(&#39;cache size after&#39;, len(cache))' :notes='["导入 gc 与 weakref，分别管收集与弱引用", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与类定义", "普通类默认带 __weakref__，可被弱引用", "创建第一个节点", "创建第二个节点", "a 引用 b，建立一条强引用", "b 反向引用 a，构成循环，计数不会归零", "对 a 建弱引用，不增加它的引用计数", "此时 a 还活着，弱引用能取回对象", "删掉外部两个名字，只剩循环引用", "手动全量收集，返回不可达对象数", "循环垃圾被回收，数量大于 0", "a 消亡后弱引用返回 None", "改用 WeakValueDictionary 做缓存，值是弱引用", "新建一个会话对象", "放进缓存，此时仍有 obj 这个强引用", "缓存里有一个条目", "删掉唯一的外部强引用", "再次收集，让弱引用回调生效", "条目自动移除，缓存不持有对象"]' title='第 053 讲 · 分代 GC、循环引用与 weakref' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_ref' />
+<Callout type="tip" title='核心心智模型' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与…' />
 
 
 ### 三代 GC 的默认阈值与触发规则
@@ -111,14 +111,14 @@ print('cache size after', len(cache))
 
 因此泄漏排查要先分清「对象还被强引用活着」与「内存只是没归还分配器」，前者用 `gc.get_objects()` 增量与 `get_referrers` 定位，后者属于正常的分配器行为。
 
-<ConceptDiagram type='hub4' title='第 053 讲 · 循环引用为何让计数失效，以及三代 GC 的触发规则' labels='循环引用为何让计数失效，以及三代 GC 的触|__del__ 的陷阱与 PEP 442 之|weakref 家族与泄漏定位方法' caption='诊断并修复内存泄漏' />
+<ConceptDiagram type='hub4' title='第 053 讲 · 循环引用为何让计数失效，以及三代 GC 的触发规则' labels='循环引用为何让计数失效，以及三代 GC 的触…|__del__ 的陷阱与 PEP 442 之…|weakref 家族与泄漏定位方法|objgraph 定位' caption='诊断并修复内存泄漏' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 分代链表与 gc_generation 结构
 
-<ConceptDiagram type='layers3' title='第 053 讲 · 分层视角' labels='循环引用为何让计数失效，以及三代 GC |__del__ 的陷阱与 PEP 442|weakref 家族与泄漏定位方法|objgraph 定位' caption='weakref 家族与泄漏定位方法' />
+<ConceptDiagram type='layers3' title='第 053 讲 · 分层视角' labels='循环引用为何让计数失效，以及三代 GC…|__del__ 的陷阱与 PEP 442…|weakref 家族与泄漏定位方法|objgraph 定位' caption='weakref 家族与泄漏定位方法' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 objgraph 定位 落在哪一层。
 
@@ -219,16 +219,16 @@ print('count', len(gc.get_count()) == 3)
 | WeakSet | 元素是弱引用 | 观察者集合 |
 | weakref.finalize（3.4+） | 注册消亡回调 | 替代 __del__ 做可取消的清理 |
 
-<Term word='循环引用为何计数失效' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_refs` 计数。收集时先' />
+<Term word='循环引用为何计数失效' text='引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcnt` 至少为 1，即便外部已无任何引用也永不归零，这就是循环垃圾。分代 GC 专门补这个缺口：它只跟踪可能参与循环的容器对象（`list`、`dict`、自定义实例等），在每个对象上维护 gc 链表与 `gc_refs` 计数。收集时先…' />
 
-<Term word='三代与阈值' text='历史上带 `__del__`（finalizer）的对象参与循环时，CPython 无法安全决定析构顺序，因为 finalizer 可能把对象重新复活；3.4 之前这类循环垃圾不可回收，会被放进 `gc.garbage` 列表，需要人工处理。PEP 442（3.4 起）重新设计了终结流程：先调用所有不可达对象的 fin' />
+<Term word='三代与阈值' text='历史上带 `__del__`（finalizer）的对象参与循环时，CPython 无法安全决定析构顺序，因为 finalizer 可能把对象重新复活；3.4 之前这类循环垃圾不可回收，会被放进 `gc.garbage` 列表，需要人工处理。PEP 442（3.4 起）重新设计了终结流程：先调用所有不可达对象的 fin…' />
 
 
 ## 版本与调优：gc.collect 的时机和阈值调整
 
-<FlowTimeline :steps='[{"title": "循环引用为何让计数失效，以及三代 GC 的触发规则", "desc": "引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者 `ob_refcn…", "tone": "blue"}, {"title": "__del__ 的陷阱与 PEP 442 之后的行为", "desc": "历史上带 `__del__`（finalizer）的对象参与循环时，CPython …", "tone": "purple"}, {"title": "weakref 家族与泄漏定位方法", "desc": "弱引用不增加 `ob_refcnt`，只在一个回调链表里登记；对象引用计数归零时把弱…", "tone": "orange"}, {"title": "工程落地", "desc": "缓存泄漏诊断：强引用 dict 与 WeakValueDiction", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "循环引用为何让计数失效，以及三代 GC 的触发规…", "desc": "引用计数只在计数归零时释放，A 持有 B、B 又持有 A 时两者…", "tone": "blue"}, {"title": "__del__ 的陷阱与 PEP 442 之后的…", "desc": "历史上带 `__del__`（finalizer）的对象参与循环时，CPython…", "tone": "purple"}, {"title": "weakref 家族与泄漏定位方法", "desc": "弱引用不增加 `ob_refcnt`，只在一个回调链表里登记；对象引用计数归零时把弱…", "tone": "orange"}, {"title": "工程落地", "desc": "缓存泄漏诊断：强引用 dict 与 WeakValueDiction…", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用普通 dict 做对象缓存导致内存持续上涨", "body": "字典对每个值持有强引用，外部引用消失后对象仍被缓存挂着，计数不归零", "tip": "改用 weakref.WeakValueDictionary / WeakSet，或给缓存加容量与过期淘汰"}, {"title": "第 2 步：把关键释放逻辑写进 __del__ 并套用旧", "body": "PEP 442（3.4+）后带 finalizer 的循环可被回收，但 __del__ 抛出的异常只打印到 stderr、调用顺序不直观、对象还可能复活", "tip": "用显式 close() 或上下文管理器（第 42 讲），或 weakref.finalize 注册可取消的清理回调；__del__ 只做轻量兜底"}, {"title": "第 3 步：对 int、str、tuple 或无 __w", "body": "这些对象没有弱引用支持槽，weakref.ref 抛 TypeError: cannot create weak reference to &#39;int&#39; object", "tip": "只对支持弱引用的自定义类使用；slots 类把 &#39;__weakref__&#39; 显式写进 __slots__（第 43 讲）"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用普通 dict 做对象缓存导致内存持续上涨", "body": "字典对每个值持有强引用，外部引用消失后对象仍被缓存挂着，计数不归零", "tip": "改用 weakref.WeakValueDictionary / WeakSet，或给缓存加容量与过期淘汰"}, {"title": "第 2 步：把关键释放逻辑写进 __del__ 并套用旧…", "body": "PEP 442（3.4+）后带 finalizer 的循环可被回收，但 __del__ 抛出的异常只打印到 stderr、调用顺序不直观、对象还可能复活", "tip": "用显式 close() 或上下文管理器（第 42 讲），或 weakref.finalize 注册可取消的清理回调；__del__ 只做轻量兜底"}, {"title": "第 3 步：对 int、str、tuple 或无 __w…", "body": "这些对象没有弱引用支持槽，weakref.ref 抛 TypeError: cannot create weak reference to &#39;int&#39; object", "tip": "只对支持弱引用的自定义类使用；slots 类把 &#39;__weakref__&#39; 显式写进 __slots__（第 43 讲）"}]' />
 
 
 ## 缓存泄漏诊断：强引用 dict 与 WeakValueDictionary 对照
@@ -272,13 +272,13 @@ print('weak cache emptied', len(weak_cache) == 0)
 
 <Callout type="idea" title='落地提示' text='缓存、观察者、父子双向引用优先用 weakref；泄漏排查先看 gc.get_objects 的增量而非总内存' />
 
-<CheckList id='P053b' title='上线前自检' :items='["能复现并解释「用普通 dict 做对象缓存导致内存持续上涨」", "能复现并解释「把关键释放逻辑写进 __del__ 并套用旧版不可回收结论」", "能复现并解释「对 int、str、tuple 或无 __weakref__」", "能用一条命令验证 循环引用为何计数失效", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P053b' title='上线前自检' :items='["能复现并解释「用普通 dict 做对象缓存导致内存持续上涨」", "能复现并解释「把关键释放逻辑写进 __del__ 并套用旧版不可回收结论」", "能复现并解释「对 int、str、tuple 或无 __weakref__…」", "能用一条命令验证 循环引用为何计数失效", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 循环引用为何计数失效 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 循环引用为何计数失效 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -327,3 +327,16 @@ python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 3. gc.collect(2) 返回不可达对象数；gc.get_count / get_threshold / get_objects 用于排查
 
 [下一讲：GIL 真相：存在原因、切换与影响边界](/core/gil)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/053-gc.py`
+
+```bash
+python3 examples/lessons/053-gc.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/053-gc.py) · [全部示例代码索引](/examples/)

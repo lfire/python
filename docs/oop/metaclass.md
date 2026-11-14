@@ -80,11 +80,11 @@ print('bases', [b.__name__ for b in Model.__bases__])
 
 <OutputBox title='主示例运行结果' output='metaclass Registry\nregistered model\ndynamic Dynamic 42\nbases [&#39;object&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Registry(type):\n    def __new__(mcls, name, bases, ns):\n        cls = super().__new__(mcls, name, bases, ns)\n        cls.registered = name.lower()\n        return cls\nclass Model(metaclass=Registry):\n    pass\n\nprint(&#39;metaclass&#39;, type(Model).__name__)\nprint(&#39;registered&#39;, Model.registered)\nDynamic = type(&#39;Dynamic&#39;, (object,), {&#39;value&#39;: 42})\nprint(&#39;dynamic&#39;, Dynamic.__name__, Dynamic.value)\nprint(&#39;bases&#39;, [b.__name__ for b in Model.__bases__])' :notes='["自定义元类，继承 type 才能干预类创建", "__new__ 在 __init__ 之前，可改写 namespace 与 bases", "必须调用 super().__new__ 并传 mcls，拿到真正的类对象", "在类创建期注入一个 registered 属性", "务必 return 类对象，漏掉会让类变成 None", "用 metaclass= 指定元类", "空类体，registered 由元类补上", "空行分隔定义与验证", "type(Model) 是元类 Registry，不是 type", "读回元类注入的属性，值为小写的类名", "type(name, bases, ns) 三参数形式动态创建类", "动态类名与类属性都能正常访问"]' title='第 045 讲 · 元类：__new__、type 与类创建过程' />
+<LineByLine code='class Registry(type):\n    def __new__(mcls, name, bases, ns):\n        cls = super().__new__(mcls, name, bases, ns)\n        cls.registered = name.lower()\n        return cls\nclass Model(metaclass=Registry):\n    pass\n\nprint(&#39;metaclass&#39;, type(Model).__name__)\nprint(&#39;registered&#39;, Model.registered)\nDynamic = type(&#39;Dynamic&#39;, (object,), {&#39;value&#39;: 42})\nprint(&#39;dynamic&#39;, Dynamic.__name__, Dynamic.value)\nprint(&#39;bases&#39;, [b.__name__ for b in Model.__bases__])' :notes='["自定义元类，继承 type 才能干预类创建", "__new__ 在 __init__ 之前，可改写 namespace 与 bases", "必须调用 super().__new__ 并传 mcls，拿到真正的类对象", "在类创建期注入一个 registered 属性", "务必 return 类对象，漏掉会让类变成 None", "用 metaclass= 指定元类", "空类体，registered 由元类补上", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔定义与验证", "type(Model) 是元类 Registry，不是 type", "读回元类注入的属性，值为小写的类名", "type(name, bases, ns) 三参数形式动态创建类", "动态类名与类属性都能正常访问"]' title='第 045 讲 · 元类：__new__、type 与类创建过程' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普通类 `C` 来说 `type(C)` 是 `type`，而 `type` 自己也是自己的实例。类有三种创建方式：`class` 语句、`type(name, bases, ns)` 三参数调用、以及自定义元类。`t' />
+<Callout type="tip" title='核心心智模型' text='在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普通类 `C` 来说 `type(C)` 是 `type`，而 `type` 自己也是自己的实例。类有三种创建方式：`class` 语句、`type(name, bases, ns)` 三参数调用、以及自定义元类。…' />
 
 
 ### type 三参数形式与类对象属性
@@ -172,20 +172,20 @@ CPython 把每个类表示为 `PyTypeObject`（heap type 或 static type）。
 
 理解这条 C 层链路，就知道为什么「收集字段」必须放 `__new__`、为什么漏 `return` 会让类变成 `None`。
 
-<ConceptDiagram type='flow3' title='第 045 讲 · 类也是对象：type 的三参数形式与默认元类' labels='类也是对象：type 的三参数形式与默认元类|类创建时间线：__prepare__、类体、|选型与冲突：元类、__init_subcla' caption='能读懂并写出框架级的类定制逻辑' />
+<ConceptDiagram type='flow3' title='第 045 讲 · 类也是对象：type 的三参数形式与默认元类' labels='类也是对象：type 的三参数形式与默认元类|类创建时间线：__prepare__、类体…|选型与冲突：元类、__init_subcla…' caption='能读懂并写出框架级的类定制逻辑' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## __set_name__ 与 __init_subclass__ 如何替代部分元类
 
-<FlowTimeline :steps='[{"title": "类也是对象：type 的三参数形式与默认元类", "desc": "在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普…", "tone": "blue"}, {"title": "类创建时间线：__prepare__、类体、__new__、set_name、init_subclass、__init__", "desc": "执行 `class` 语句时，CPython 的 `__build_class__`…", "tone": "purple"}, {"title": "选型与冲突：元类、__init_subclass__、类装饰器各管一段", "desc": "元类控制「类如何被创建」，能力最强，也最容易让 IDE、类型检查器与调试器失去线索：…", "tone": "orange"}, {"title": "工程落地", "desc": "ORM 字段注册：元类收集映射 + __set_name__ 命名", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "类也是对象：type 的三参数形式与默认元类", "desc": "在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普…", "tone": "blue"}, {"title": "类创建时间线：__prepare__、类体、__…", "desc": "执行 `class` 语句时，CPython 的 `__build_class__`…", "tone": "purple"}, {"title": "选型与冲突：元类、__init_subclass…", "desc": "元类控制「类如何被创建」，能力最强，也最容易让 IDE、类型检查器与调试器失去线索…", "tone": "orange"}, {"title": "工程落地", "desc": "ORM 字段注册：元类收集映射 + __set_name__ 命名", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<Term word='类也是对象' text='在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普通类 `C` 来说 `type(C)` 是 `type`，而 `type` 自己也是自己的实例。类有三种创建方式：`class` 语句、`type(name, bases, ns)` 三参数调用、以及自定义元类。`type(&#39;Dyn&#39;,' />
+<Term word='类也是对象' text='在 CPython 里类本身是堆上的对象，`type(obj)` 返回它的类型；对普通类 `C` 来说 `type(C)` 是 `type`，而 `type` 自己也是自己的实例。类有三种创建方式：`class` 语句、`type(name, bases, ns)` 三参数调用、以及自定义元类。…' />
 
-<Term word='type 的三参数形式' text='执行 `class` 语句时，CPython 的 `__build_class__` 先确定元类，再调用元类的 `__prepare__(name, bases)` 拿到命名空间映射，默认返回普通 `dict`；3.7 起 `dict` 正式保证插入顺序（CPython 3.6 已实现，只是当时尚未写进语言规范），所以' />
+<Term word='type 的三参数形式' text='执行 `class` 语句时，CPython 的 `__build_class__` 先确定元类，再调用元类的 `__prepare__(name, bases)` 拿到命名空间映射，默认返回普通 `dict`；3.7 起 `dict` 正式保证插入顺序（CPython 3.6 已实现，只是当时尚未写进语言规范），所以…' />
 
-<SequenceDiagram title='第 045 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "类也是对象：type 的三参", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "类创建时间线：__prepa", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 045 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "类也是对象：type 的三参…", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "类创建时间线：__prepa…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
 
 ## 选型与冲突：元类、__init_subclass__、类装饰器各管一段
@@ -237,7 +237,7 @@ print('field name', User.uid.name)
 | 多个元类不兼容 | 合并元类 | 新建继承所有相关元类的元类 |
 | 零参数 super() | __class__ cell | 由编译器在类体生成，重建类时要留意 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：元类 __new__ 里漏写 return ", "body": "__new__ 必须返回类对象，返回 None 会让 class 语句绑定到 None，实例化时报 TypeError: &#39;NoneType&#39; object is not callable", "tip": "始终 cls = super().__new__(mcls, name, bases, ns) 并在末尾 return cls；改写逻辑只作用于 cls"}, {"title": "第 2 步：把字段收集或校验放进元类 __init__，", "body": "__set_name__ 与 __init_subclass__ 已在 __new__ 内跑过，__init__ 拿到的类可能已被改过，且无法再改 bases", "tip": "需要改写 namespace、bases 或注入属性的逻辑放 __new__；只做登记时改用 __init_subclass__"}, {"title": "第 3 步：同时继承两个带不同自定义元类的基类", "body": "__build_class__ 无法选出兼容所有基类的最派生元类，抛 metaclass conflict", "tip": "新建一个继承所有相关元类的元类并指定给子类，或统一让所有基类共用同一元类"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：元类 __new__ 里漏写 return…", "body": "__new__ 必须返回类对象，返回 None 会让 class 语句绑定到 None，实例化时报 TypeError: &#39;NoneType&#39; object is not callable", "tip": "始终 cls = super().__new__(mcls, name, bases, ns) 并在末尾 return cls；改写逻辑只作用于 cls"}, {"title": "第 2 步：把字段收集或校验放进元类 __init__…", "body": "__set_name__ 与 __init_subclass__ 已在 __new__ 内跑过，__init__ 拿到的类可能已被改过，且无法再改 bases", "tip": "需要改写 namespace、bases 或注入属性的逻辑放 __new__；只做登记时改用 __init_subclass__"}, {"title": "第 3 步：同时继承两个带不同自定义元类的基类", "body": "__build_class__ 无法选出兼容所有基类的最派生元类，抛 metaclass conflict", "tip": "新建一个继承所有相关元类的元类并指定给子类，或统一让所有基类共用同一元类"}]' />
 
 
 ## ORM 字段注册：元类收集映射 + __set_name__ 命名
@@ -281,13 +281,13 @@ print(create_sql(User))
 
 <Callout type="idea" title='落地提示' text='ORM 映射、字段注册、接口校验是元类的经典场景；写之前先确认没有更轻的方案' />
 
-<CheckList id='P045b' title='上线前自检' :items='["能复现并解释「元类 __new__ 里漏写 return super().」", "能复现并解释「把字段收集或校验放进元类 __init__，结果与声明顺序不」", "能复现并解释「同时继承两个带不同自定义元类的基类」", "能用一条命令验证 类也是对象", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P045b' title='上线前自检' :items='["能复现并解释「元类 __new__ 里漏写 return super().…」", "能复现并解释「把字段收集或校验放进元类 __init__，结果与声明顺序不…」", "能复现并解释「同时继承两个带不同自定义元类的基类」", "能用一条命令验证 类也是对象", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "print(type('Demo', (), {'x':1}).__mro__)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 类也是对象 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 类也是对象 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 漏写 super().__new__、在 __init__ 里收集字段、元类冲突的错因速查
@@ -336,7 +336,7 @@ print('cell points to C', C.m.__closure__[0].cell_contents is C)
 
 <OutputBox title='扩展示例运行结果' output='classcell in ns True\ncell type cell\ncell points to C True' />
 
-<LineByLine code='import types\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns, **kw):\n        cell = ns.get(&#39;__classcell__&#39;)\n        print(&#39;classcell in ns&#39;, isinstance(cell, types.CellType))\n        return super().__new__(mcls, name, bases, ns)\n\nclass Base:\n    pass\n\nclass C(Base, metaclass=Meta):\n    def m(self):\n        return super().m()\n\nprint(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__)\nprint(&#39;cell points to C&#39;, C.m.__closure__[0].cell_contents is C)\n' :notes='["types.CellType 用来核验 ns 里的 __classcell__ 是不是闭包单元", "自定义元类继承 type，才能在 __new__ 阶段读到原始命名空间", "类体用了零参数 super()，编译器会把 __classcell__ 写进 ns", "把 ns 原样交给 type.__new__，cell 才会被取出并回填到方法闭包", "读回方法闭包的第一个 cell，确认其运行时类型", "cell 内容指向 C 本身，证明 __classcell__ 已被 type_new 正确回填", "类是 type 的实例；type(name, bases, ns) 三参数形式与 class 语句等价", "类创建顺序：__prepare__ → 类体 → __new__ → __set_name__/__init_subclass__ → __init__", "__new__ 可改 bases 与 namespace 且必须 return 类对象；__init__ 时类已定型", "__set_name__(owner, name) 与 __init_subclass__(**kw) 都是 3.6 / PEP 487 的 type.__new__ 内回调", "元类冲突需新建继承所有相关元类的合并元类；零参 super() 依赖 __class__ cell", "登记/校验优先 __init_subclass__，加方法优先类装饰器，只有改创建输入才用元类", "类是 type 的实例；type(name, bases, ns) 三参数形式与 class 语句等价"]' title='扩展示例逐行讲解' />
+<LineByLine code='import types\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns, **kw):\n        cell = ns.get(&#39;__classcell__&#39;)\n        print(&#39;classcell in ns&#39;, isinstance(cell, types.CellType))\n        return super().__new__(mcls, name, bases, ns)\n\nclass Base:\n    pass\n\nclass C(Base, metaclass=Meta):\n    def m(self):\n        return super().m()\n\nprint(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__)\nprint(&#39;cell points to C&#39;, C.m.__closure__[0].cell_contents is C)\n' :notes='["types.CellType 用来核验 ns 里的 __classcell__ 是不是闭包单元", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义元类继承 type，才能在 __new__ 阶段读到原始命名空间", "类体用了零参数 super()，编译器会把 __classcell__ 写进 ns", "把 ns 原样交给 type.__new__，cell 才会被取出并回填到方法闭包", "读回方法闭包的第一个 cell，确认其运行时类型", "cell 内容指向 C 本身，证明 __classcell__ 已被 type_new 正确回填", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class Base:` 的作用，可对照上方输出逐项核对。", "这一行 `pass` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class C(Base, metaclass=Meta):` 的作用，可对照上方输出逐项核对。", "这一行 `def m(self):` 的作用，可对照上方输出逐项核对。", "这一行 `return super().m()` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cell points to C&#39;, C.m.__closure__[0].cell_co` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### __classcell__ 如何穿过 namespace 回到零参数 super
@@ -450,3 +450,16 @@ print('fixed super', Fixed.m.__closure__[0].cell_contents is Fixed)
 3. __new__ 可改 bases 与 namespace 且必须 return 类对象；__init__ 时类已定型
 
 [下一讲：反射与自省：getattr、inspect 与 __dict__](/oop/introspection)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/045-metaclass.py`
+
+```bash
+python3 examples/lessons/045-metaclass.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/045-metaclass.py) · [全部示例代码索引](/examples/)

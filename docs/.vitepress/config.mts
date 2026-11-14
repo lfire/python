@@ -92,6 +92,8 @@ export default defineConfig({
       },
       { text: '工程实战', link: '/projects/' },
       { text: '数据与 AI', link: '/data-ai/' },
+      { text: '专题补遗', link: '/topics/' },
+      { text: '示例代码', link: '/examples/' },
       { text: '练习与速查', link: '/practice/' },
       { text: '关于', link: '/about/' },
     ],
@@ -310,6 +312,26 @@ export default defineConfig({
         { text: '关于本站', collapsed: false, items: [
           { text: '关于本站', link: '/about/' },
           { text: '本地运行与 Pages 部署', link: '/about/deploy' },
+        ] },
+      ],
+      '/topics/': [
+        { text: '专题补遗', collapsed: false, items: [
+          { text: '专题导览 · 参考课程查漏补缺', link: '/topics/' },
+          { text: '正则表达式 re：从字符类到回溯', link: '/topics/regex' },
+          { text: 'Scrapy 与反爬合规：从 Spider 到生产采集', link: '/topics/scrapy-antibot' },
+          { text: '接口与 Web UI 自动化测试', link: '/topics/testing-automation' },
+          { text: '办公自动化进阶：PPT、GUI 与批处理', link: '/topics/office-advanced' },
+          { text: '深度学习项目：CNN、RNN、迁移学习与部署', link: '/topics/dl-projects' },
+          { text: 'RAG 框架与大模型 API 实战', link: '/topics/rag-frameworks' },
+          { text: 'Flask 实操：路由、模板与会话', link: '/topics/web-frameworks' },
+          { text: '数据分析实战：Jupyter 到报告导出', link: '/topics/data-projects' },
+          { text: '工程底座：Linux、Git、SQL 与多版本', link: '/topics/toolchain-foundation' },
+          { text: '参考课程对照与学习路线', link: '/topics/reference-map' }
+        ] },
+      ],
+      '/examples/': [
+        { text: '示例代码', collapsed: false, items: [
+          { text: '示例代码索引', link: '/examples/' },
         ] },
       ],
     },

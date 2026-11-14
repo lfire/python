@@ -73,11 +73,11 @@ print('has LOAD_DEREF', 'LOAD_DEREF' in [i.opname for i in dis.get_instructions(
 
 <OutputBox title='主示例运行结果' output='argcount 2\nvarnames (&#39;a&#39;, &#39;b&#39;, &#39;c&#39;)\nhas load_fast True\nhas store_fast True\nhas binary True\nhas return True\nfreevars (&#39;x&#39;,)\nhas LOAD_DEREF True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import dis\n\ndef add(a, b):\n    c = a + b\n    return c\nprint(&#39;argcount&#39;, add.__code__.co_argcount)\nprint(&#39;varnames&#39;, add.__code__.co_varnames)\nops = [i.opname for i in dis.get_instructions(add)]\nprint(&#39;has load_fast&#39;, &#39;LOAD_FAST&#39; in ops)\nprint(&#39;has store_fast&#39;, &#39;STORE_FAST&#39; in ops)\nprint(&#39;has binary&#39;, any(o in ops for o in (&#39;BINARY_OP&#39;, &#39;BINARY_ADD&#39;)))\nprint(&#39;has return&#39;, &#39;RETURN_VALUE&#39; in ops)\ndef outer():\n    x = 10\n    def inner():\n        return x\n    return inner\ninner = outer()\nprint(&#39;freevars&#39;, inner.__code__.co_freevars)\nprint(&#39;has LOAD_DEREF&#39;, &#39;LOAD_DEREF&#39; in [i.opname for i in dis.get_instructions(inner)])' :notes='["导入 dis，结论一律现场反汇编验证", "空行分隔导入与函数定义", "双参数函数，局部变量 c 也进 co_varnames", "加法是栈式二元运算，结果压回栈", "返回局部变量，触发 LOAD_FAST 与 RETURN_VALUE", "co_argcount 记录位置参数个数", "co_varnames 按参数与局部变量顺序排列", "取出该函数所有指令的 opname 列表", "局部变量读取对应 LOAD_FAST", "局部变量写入对应 STORE_FAST", "3.11 起是 BINARY_OP，3.10 及以前是 BINARY_ADD，故两者取其一判断", "函数以 RETURN_VALUE 结束", "定义外层函数制造闭包", "x 被内层引用，编译成 cell 变量", "内层函数读取自由变量 x", "返回内层函数对象，__closure__ 带上 cell", "拿到闭包函数", "co_freevars 列出自由变量名", "读自由变量走 LOAD_DEREF 而非 LOAD_FAST"]' title='第 050 讲 · 字节码、栈式虚拟机与 dis 实战' />
+<LineByLine code='import dis\n\ndef add(a, b):\n    c = a + b\n    return c\nprint(&#39;argcount&#39;, add.__code__.co_argcount)\nprint(&#39;varnames&#39;, add.__code__.co_varnames)\nops = [i.opname for i in dis.get_instructions(add)]\nprint(&#39;has load_fast&#39;, &#39;LOAD_FAST&#39; in ops)\nprint(&#39;has store_fast&#39;, &#39;STORE_FAST&#39; in ops)\nprint(&#39;has binary&#39;, any(o in ops for o in (&#39;BINARY_OP&#39;, &#39;BINARY_ADD&#39;)))\nprint(&#39;has return&#39;, &#39;RETURN_VALUE&#39; in ops)\ndef outer():\n    x = 10\n    def inner():\n        return x\n    return inner\ninner = outer()\nprint(&#39;freevars&#39;, inner.__code__.co_freevars)\nprint(&#39;has LOAD_DEREF&#39;, &#39;LOAD_DEREF&#39; in [i.opname for i in dis.get_instructions(inner)])' :notes='["导入 dis，结论一律现场反汇编验证", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与函数定义", "双参数函数，局部变量 c 也进 co_varnames", "加法是栈式二元运算，结果压回栈", "返回局部变量，触发 LOAD_FAST 与 RETURN_VALUE", "co_argcount 记录位置参数个数", "co_varnames 按参数与局部变量顺序排列", "取出该函数所有指令的 opname 列表", "局部变量读取对应 LOAD_FAST", "局部变量写入对应 STORE_FAST", "3.11 起是 BINARY_OP，3.10 及以前是 BINARY_ADD，故两者取其一判断", "函数以 RETURN_VALUE 结束", "定义外层函数制造闭包", "x 被内层引用，编译成 cell 变量", "内层函数读取自由变量 x", "返回内层函数对象，__closure__ 带上 cell", "拿到闭包函数", "co_freevars 列出自由变量名", "读自由变量走 LOAD_DEREF 而非 LOAD_FAST"]' title='第 050 讲 · 字节码、栈式虚拟机与 dis 实战' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查' />
+<Callout type="tip" title='核心心智模型' text='CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查…' />
 
 
 ## 常见栈式指令速查（含 3.11 变化）
@@ -93,9 +93,9 @@ print('has LOAD_DEREF', 'LOAD_DEREF' in [i.opname for i in dis.get_instructions(
 | CALL / PRECALL | 函数调用 | 3.11 起引入，3.12 移除 PRECALL |
 | RETURN_VALUE / POP_TOP | 返回 / 丢弃栈顶 | 长期可用 |
 
-<Term word='栈式指令与 LOAD / STORE' text='CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查字典快；全局与内置名' />
+<Term word='栈式指令与 LOAD / STORE' text='CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查字典快；全局与内置名…' />
 
-<Term word='常见指令速查' text='闭包变量不在 fast locals 而在 cell 对象里：外层函数的局部变量被内层引用时，编译器把它标成 cell，函数对象的 `__closure__` 持有这些 cell，内层读写走 `LOAD_DEREF` / `STORE_DEREF`，3.11 起还会在入口用 `MAKE_CELL`、`COPY_FREE' />
+<Term word='常见指令速查' text='闭包变量不在 fast locals 而在 cell 对象里：外层函数的局部变量被内层引用时，编译器把它标成 cell，函数对象的 `__closure__` 持有这些 cell，内层读写走 `LOAD_DEREF` / `STORE_DEREF`，3.11 起还会在入口用 `MAKE_CELL`…' />
 
 
 ## ceval 主循环如何逐条取指与压栈
@@ -110,9 +110,9 @@ ceval 是一个基于栈的大循环：每条字节码指令从求值栈取参�
 
 三类结构都落在编译器产物上，所以版本升级会直接改变可观测的字节码。
 
-<ConceptDiagram type='flow3' title='第 050 讲 · 栈式虚拟机与常见指令：值在栈上流动' labels='栈式虚拟机与常见指令：值在栈上流动|闭包、推导式与异常表：三条容易看错的结构|版本演进与自适应特化：别把某个版本的字节码当' caption='通过字节码验证语言层面的结论' />
+<ConceptDiagram type='flow3' title='第 050 讲 · 栈式虚拟机与常见指令：值在栈上流动' labels='栈式虚拟机与常见指令：值在栈上流动|闭包、推导式与异常表：三条容易看错的结构|版本演进与自适应特化：别把某个版本的字节码当…' caption='通过字节码验证语言层面的结论' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 闭包、推导式与异常表：三条容易看错的结构
@@ -200,7 +200,7 @@ except FileNotFoundError:
 | 3.13 | 自由线程构建与 JIT 骨架继续演进 | 性能与指令结论按构建分别测 |
 | 推导式作用域 | 3.x 起变量不泄漏到外层 | 3.12 前后帧结构不同但作用域规则一致 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 3.10 的 BINARY_ADD / ", "body": "3.11 起改为 BINARY_OP 与 CALL，3.12 又移除 PRECALL，指令集持续变化", "tip": "结论落在跨版本稳定的事实上（co_freevars、co_stacksize 为正、是否存在 LOAD_FAST），版本敏感项在输出里注明范围，用目标版本 dis 现场验证"}, {"title": "第 2 步：按 Python 2 经验以为推导式变量会泄", "body": "3.x 推导式有自己的作用域；3.12 的 PEP 709 又把它内联、去掉 &lt;listcomp&gt; 独立帧", "tip": "用 co_consts 里是否含 &lt;listcomp&gt; 与 dis 结果判断具体版本行为，别把帧结构当语言规则"}, {"title": "第 3 步：只看源码行数评估热路径性能", "body": "源码短不等于指令少，Python 层循环对应大量字节码，内置函数常只剩一次 CALL", "tip": "先 dis 最小片段，再用 perf_counter 计时；把循环下沉到 C 实现或内置聚合才是有效优化"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 3.10 的 BINARY_ADD…", "body": "3.11 起改为 BINARY_OP 与 CALL，3.12 又移除 PRECALL，指令集持续变化", "tip": "结论落在跨版本稳定的事实上（co_freevars、co_stacksize 为正、是否存在 LOAD_FAST），版本敏感项在输出里注明范围，用目标版本 dis 现场验证"}, {"title": "第 2 步：按 Python 2 经验以为推导式变量会泄…", "body": "3.x 推导式有自己的作用域；3.12 的 PEP 709 又把它内联、去掉 &lt;listcomp&gt; 独立帧", "tip": "用 co_consts 里是否含 &lt;listcomp&gt; 与 dis 结果判断具体版本行为，别把帧结构当语言规则"}, {"title": "第 3 步：只看源码行数评估热路径性能", "body": "源码短不等于指令少，Python 层循环对应大量字节码，内置函数常只剩一次 CALL", "tip": "先 dis 最小片段，再用 perf_counter 计时；把循环下沉到 C 实现或内置聚合才是有效优化"}]' />
 
 
 ## 用 dis 证明「源码短不等于指令少」
@@ -234,13 +234,13 @@ print('has line table', hasattr(loop_sum.__code__, 'co_linetable') or hasattr(lo
 
 <Callout type="idea" title='落地提示' text='排查诡异行为时先 dis 一小段，再决定是语言规则、优化还是库的问题；性能热点也常在这里显形' />
 
-<CheckList id='P050b' title='上线前自检' :items='["能复现并解释「把 3.10 的 BINARY_ADD / CALL_FUN」", "能复现并解释「按 Python 2 经验以为推导式变量会泄漏到外层，或以为」", "能复现并解释「只看源码行数评估热路径性能」", "能用一条命令验证 栈式指令与 LOAD / STORE", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P050b' title='上线前自检' :items='["能复现并解释「把 3.10 的 BINARY_ADD / CALL_FUN…」", "能复现并解释「按 Python 2 经验以为推导式变量会泄漏到外层，或以为…」", "能复现并解释「只看源码行数评估热路径性能」", "能用一条命令验证 栈式指令与 LOAD / STORE", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 栈式指令与 `LOAD` / `STORE` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 栈式指令与 `LOAD` / `STORE` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -289,3 +289,16 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 3. 闭包变量存 cell：co_freevars / co_cellvars 记录映射，读写走 LOAD_DEREF，值来自 __closure__
 
 [下一讲：帧、调用栈与命名空间](/core/frames)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/050-bytecode.py`
+
+```bash
+python3 examples/lessons/050-bytecode.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/050-bytecode.py) · [全部示例代码索引](/examples/)

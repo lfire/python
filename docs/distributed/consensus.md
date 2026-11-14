@@ -20,7 +20,7 @@ description: 理解一致性组件替你承担了什么
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把配置中心当业务数据库每次请求都读写：每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时' />
 
-<Callout type="tip" title='核心心智模型' text='Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数' />
+<Callout type="tip" title='核心心智模型' text='Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数…' />
 
 
 ## Raft 的多数派与任期：Leader 选举、日志复制
@@ -42,9 +42,9 @@ follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat inter
 | 5 | 3 | 2 | 常见生产配置 |
 | 7 | 4 | 3 | 写延迟随多数派变大，非必要不增大 |
 
-<ConceptDiagram type='compare2' title='第 109 讲 · Leader 选举、任期与日志复制的多数派' labels='Leader 选举、任期与日志复制的多数派|成员变更、etcd 定位与租约维持的注册|健康检查、配置推送与灰度回滚' caption='理解一致性组件替你承担了什么' />
+<ConceptDiagram type='compare2' title='第 109 讲 · Leader 选举、任期与日志复制的多数派' labels='Leader 选举、任期与日志复制的多数派|成员变更、etcd 定位与租约维持的注册|健康检查、配置推送与灰度回滚|配置推送与灰度' caption='理解一致性组件替你承担了什么' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## commitIndex 与未提交条目的覆盖
@@ -111,7 +111,7 @@ print('alive2_writable', c.writable(2))
 
 <OutputBox title='主示例运行结果' output='quorum 3\ncommit_initial 0\ncommit_after_replication 3\nalive3_writable True\nalive2_writable False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Cluster:\n    def __init__(self, n):\n        self.n = n\n        self.match = [0] * n\n    def commit_index(self):\n        replicas = sorted(self.match, reverse=True)\n        return replicas[self.n // 2]\n    def writable(self, alive):\n        return alive &gt; self.n // 2\n\nc = Cluster(5)\nprint(&#39;quorum&#39;, 5 // 2 + 1)\nprint(&#39;commit_initial&#39;, c.commit_index())\nc.match = [5, 4, 3, 0, 0]\nprint(&#39;commit_after_replication&#39;, c.commit_index())\nprint(&#39;alive3_writable&#39;, c.writable(3))\nprint(&#39;alive2_writable&#39;, c.writable(2))' :notes='["定义模拟 5 节点 Raft 集群", "构造器接收节点总数", "保存节点数用于计算多数派", "match 是各节点已复制的最大日志索引，初始为 0", "求可提交的最大日志索引", "把 matchIndex 降序排列", "取第 n//2 项，即多数派都达到的索引", "判断当前存活数能否形成多数派", "存活数必须严格大于半数", "创建 5 节点集群", "多数派为 5//2+1，即 3", "初始所有 matchIndex 为 0，提交点为 0", "模拟复制进度：两节点落后", "降序第 2 项为 3，即 commitIndex 为 3", "存活 3 台满足多数派，可写", "存活 2 台不足多数派，拒绝写入以保证安全"]' title='第 109 讲 · Raft 共识、服务发现与配置中心' />
+<LineByLine code='class Cluster:\n    def __init__(self, n):\n        self.n = n\n        self.match = [0] * n\n    def commit_index(self):\n        replicas = sorted(self.match, reverse=True)\n        return replicas[self.n // 2]\n    def writable(self, alive):\n        return alive &gt; self.n // 2\n\nc = Cluster(5)\nprint(&#39;quorum&#39;, 5 // 2 + 1)\nprint(&#39;commit_initial&#39;, c.commit_index())\nc.match = [5, 4, 3, 0, 0]\nprint(&#39;commit_after_replication&#39;, c.commit_index())\nprint(&#39;alive3_writable&#39;, c.writable(3))\nprint(&#39;alive2_writable&#39;, c.writable(2))' :notes='["定义模拟 5 节点 Raft 集群", "构造器接收节点总数", "保存节点数用于计算多数派", "match 是各节点已复制的最大日志索引，初始为 0", "求可提交的最大日志索引", "把 matchIndex 降序排列", "取第 n//2 项，即多数派都达到的索引", "判断当前存活数能否形成多数派", "存活数必须严格大于半数", "空行，只用于分隔逻辑块，不影响执行结果。", "创建 5 节点集群", "多数派为 5//2+1，即 3", "初始所有 matchIndex 为 0，提交点为 0", "模拟复制进度：两节点落后", "降序第 2 项为 3，即 commitIndex 为 3", "存活 3 台满足多数派，可写", "存活 2 台不足多数派，拒绝写入以保证安全"]' title='第 109 讲 · Raft 共识、服务发现与配置中心' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -164,7 +164,7 @@ print('valid_after_renew', l.valid(t0 + 12))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把配置中心当业务数据库每次请求都读写：每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把配置中心当业务数据库每次请求都读写", "body": "每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时", "tip": "配置用 Watch 推送加本地缓存，业务数据留在各自存储，中心只放成员、租约、配置版本等强一致元数据"}, {"title": "第 2 步：服务注册写一条永久记录，不续约也不下线", "body": "实例被 SIGKILL 或整机掉电后来不及注销，注册表长期残留死地址，流量持续打过去", "tip": "注册时申请带 TTL 的租约并周期 KeepAlive，崩溃后租约到期自动删除，调用方再加本地失败摘除"}, {"title": "第 3 步：4 节点 Raft 集群期望能容忍 2 节点", "body": "4 节点 quorum 仍是 3，只容忍 1 节点故障，偶数规模不提升容错还多付一次复制", "tip": "生产用奇数节点（3 或 5）；成员变更走受控的 joint consensus 或单节点逐步变更，避免双多数派"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把配置中心当业务数据库每次请求都读写", "body": "每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时", "tip": "配置用 Watch 推送加本地缓存，业务数据留在各自存储，中心只放成员、租约、配置版本等强一致元数据"}, {"title": "第 2 步：服务注册写一条永久记录，不续约也不下线", "body": "实例被 SIGKILL 或整机掉电后来不及注销，注册表长期残留死地址，流量持续打过去", "tip": "注册时申请带 TTL 的租约并周期 KeepAlive，崩溃后租约到期自动删除，调用方再加本地失败摘除"}, {"title": "第 3 步：4 节点 Raft 集群期望能容忍 2 节点…", "body": "4 节点 quorum 仍是 3，只容忍 1 节点故障，偶数规模不提升容错还多付一次复制", "tip": "生产用奇数节点（3 或 5）；成员变更走受控的 joint consensus 或单节点逐步变更，避免双多数派"}]' />
 
 **注册中心常见误用与失效信号**
 
@@ -227,7 +227,7 @@ print('expired', r.expire(t + 31))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Leader 选举与日志复制 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Leader 选举与日志复制 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -252,7 +252,7 @@ Raft 的安全性不靠「leader 不会出错」，而靠两条可证明的不�
 
 源码路径（etcd 3.5/3.6）：raft/`raft.go` 的 Step 与 becomeCandidate、raft/`log.go` 的 commitTo、raft/`rawnode.go` 的 Advance。
 
-<ConceptDiagram type='flow4' title='第 109 讲 · 扩展图解' labels='|A|+|B| 大于 N|A 与 B 交集非空|共享节点持已提交条目|isUpToDate 过滤落后候选' caption='多数派交集与选举限制共同保证新 leader 必含全部已提交条目，缺一不可' />
+<ConceptDiagram type='flow4' title='第 109 讲 · 扩展图解' labels='A 与 B 的票数之和大于 N|A 与 B 交集非空|共享节点持已提交条目|isUpToDate 过滤落后候选' caption='多数派交集与选举限制共同保证新 leader 必含全部已提交条目，缺一不可' />
 
 
 ### RequestVote 里 isUpToDate 的比较式
@@ -304,7 +304,7 @@ print('jitter_300ms', first_round_success(5, 2000, 300))
 
 <OutputBox title='扩展示例运行结果' output='no_jitter 0.0\njitter_100ms 0.59\njitter_300ms 0.845' />
 
-<LineByLine code='import random\n\ndef first_round_success(n, trials, jitter_ms, seed=5):\n    rng = random.Random(seed)\n    wins = 0\n    for _ in range(trials):\n        timeouts = [150 + (rng.uniform(0, jitter_ms) if jitter_ms else 0) for _ in range(n)]\n        t1, t2 = sorted(timeouts)[:2]\n        if t2 - t1 &gt; 10:\n            wins += 1\n    return round(wins / trials, 3)\n\nprint(&#39;no_jitter&#39;, first_round_success(5, 2000, 0))\nprint(&#39;jitter_100ms&#39;, first_round_success(5, 2000, 100))\nprint(&#39;jitter_300ms&#39;, first_round_success(5, 2000, 300))' :notes='["固定种子保证分裂投票概率可复现", "jitter=0 表示所有节点选举超时相同，必然同时发起投票", "取最早与次早超时之差，差值超过 10ms 广播延迟才算唯一 candidate 拿到多数票", "成员变更走 joint consensus / 单节点逐步过渡，etcd 用 `ConfChange`；每次写都要复制落盘，Raft 只适合少量元数据", "服务注册用 `Lease` + `KeepAlive` 而非永久记录，崩溃即停续约、TTL 到期删键，比主动注销可靠", "健康检查分中心侧与客户端侧两层；配置用 `Watch` 推送、带版本可灰度可回滚，读取保留本地缓存与旧值兜底", "Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派", "5 节点容忍 2 故障、4 节点只容忍 1，生产用奇数节点；收到多数派确认才推进 `commitIndex`", "选举限制保证新 leader 含全部已提交条目；只提交当前任期条目，前任期条目被间接提交", "成员变更走 joint consensus / 单节点逐步过渡，etcd 用 `ConfChange`；每次写都要复制落盘，Raft 只适合少量元数据", "服务注册用 `Lease` + `KeepAlive` 而非永久记录，崩溃即停续约、TTL 到期删键，比主动注销可靠", "健康检查分中心侧与客户端侧两层；配置用 `Watch` 推送、带版本可灰度可回滚，读取保留本地缓存与旧值兜底", "Raft 拆成 Leader 选举、日志复制、安全性三题；`term` 单调递增，`floor(N/2)+1` 为多数派"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\ndef first_round_success(n, trials, jitter_ms, seed=5):\n    rng = random.Random(seed)\n    wins = 0\n    for _ in range(trials):\n        timeouts = [150 + (rng.uniform(0, jitter_ms) if jitter_ms else 0) for _ in range(n)]\n        t1, t2 = sorted(timeouts)[:2]\n        if t2 - t1 &gt; 10:\n            wins += 1\n    return round(wins / trials, 3)\n\nprint(&#39;no_jitter&#39;, first_round_success(5, 2000, 0))\nprint(&#39;jitter_100ms&#39;, first_round_success(5, 2000, 100))\nprint(&#39;jitter_300ms&#39;, first_round_success(5, 2000, 300))' :notes='["固定种子保证分裂投票概率可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "jitter=0 表示所有节点选举超时相同，必然同时发起投票", "取最早与次早超时之差，差值超过 10ms 广播延迟才算唯一 candidate 拿到多数票", "这一行 `wins = 0` 的作用，可对照上方输出逐项核对。", "这一行 `for _ in range(trials):` 的作用，可对照上方输出逐项核对。", "这一行 `timeouts = [150 + (rng.uniform(0, jitter_ms) if jitt` 的作用，可对照上方输出逐项核对。", "这一行 `t1, t2 = sorted(timeouts)[:2]` 的作用，可对照上方输出逐项核对。", "这一行 `if t2 - t1 &gt; 10:` 的作用，可对照上方输出逐项核对。", "这一行 `wins += 1` 的作用，可对照上方输出逐项核对。", "这一行 `return round(wins / trials, 3)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;no_jitter&#39;, first_round_success(5, 2000, 0))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;jitter_100ms&#39;, first_round_success(5, 2000, 1` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;jitter_300ms&#39;, first_round_success(5, 2000, 3` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 <Quiz no='109-1' q='5 节点 Raft 集群里，为什么两个不同任期产生的多数派一定包含同一条已提交日志？' :options='["两个多数派必有交集，共享节点持有已提交条目，且 isUpToDate 保证它只投给日志不比自己旧的 candidate", "因为所有节点使用完全相同的 election timeout", "因为 leader 会把日志广播给全部 5 个节点之后才提交", "因为 term 单调递增会自动回滚掉旧任期的日志"]' answer="0" explain='多数派交集给出共享节点，选举限制给出「新 leader 日志不旧于投票者」，两者合起来才是 Leader Completeness；单靠 term 或全副本广播都不够，提交只需多数派确认。' />
 
@@ -368,3 +368,16 @@ print('old_leader_read_index', old.read_index(False))
 3. 选举限制保证新 leader 含全部已提交条目；只提交当前任期条目，前任期条目被间接提交
 
 [下一讲：容器化与 Kubernetes 部署](/distributed/docker-k8s)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/109-consensus.py`
+
+```bash
+python3 examples/lessons/109-consensus.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/109-consensus.py) · [全部示例代码索引](/examples/)

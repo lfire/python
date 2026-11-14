@@ -79,13 +79,13 @@ print('is tuple', isinstance(p, tuple), p[0] + p[1])
 
 <OutputBox title='主示例运行结果' output='single tuple no comma int\nshallow immutable ([1, 2, 9], 3)\nassign error TypeError\nunhashable TypeError\ndict key a\nunpack 10 20 star 1 [2, 3, 4]\nmatch origin x-axis quadrant\nnamed 3 4 {&#39;x&#39;: 3, &#39;y&#39;: 4} Point(x=3, y=9)\nis tuple True 7' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections import namedtuple\n\nsingle = (1,)\nnot_tuple = (1)\nprint(&#39;single&#39;, type(single).__name__, &#39;no comma&#39;, type(not_tuple).__name__)\n\nt = ([1, 2], 3)\nt[0].append(9)\nprint(&#39;shallow immutable&#39;, t)\ntry:\n    t[0] = [0]\nexcept TypeError as e:\n    print(&#39;assign error&#39;, type(e).__name__)\n\ntry:\n    print(hash(([1, 2],)))\nexcept TypeError as e:\n    print(&#39;unhashable&#39;, type(e).__name__)\n\ncoord = (10, 20)\nprint(&#39;dict key&#39;, {(1, 2): &#39;a&#39;}[(1, 2)])\na, b = coord\nhead, *tail = (1, 2, 3, 4)\nprint(&#39;unpack&#39;, a, b, &#39;star&#39;, head, tail)\n\ndef classify(point):\n    match point:\n        case (0, 0):\n            return &#39;origin&#39;\n        case (x, 0):\n            return &#39;x-axis&#39;\n        case (x, y):\n            return &#39;quadrant&#39;\n\nprint(&#39;match&#39;, classify((0, 0)), classify((5, 0)), classify((2, 3)))\n\nPoint = namedtuple(&#39;Point&#39;, &#39;x y&#39;)\np = Point(3, 4)\nprint(&#39;named&#39;, p.x, p.y, p._asdict(), p._replace(y=9))\nprint(&#39;is tuple&#39;, isinstance(p, tuple), p[0] + p[1])' :notes='["导入 namedtuple 工厂，用于给字段命名", "单元素元组必须写逗号，这是唯一的构造依据", "漏写逗号时括号只做分组，得到的是 int", "打印两个类型，对比 tuple 与 int", "构造一个含 list 的元组，演示浅层不可变", "改不了指针，却能改 t[0] 指向的 list 内容", "打印被原地修改后的元组内容", "尝试给元组下标赋值", "触发 TypeError，证明引用数组不可变", "捕获预期的 TypeError 并打印类型", "尝试对含 list 的元组取哈希", "list 不可哈希会让整个元组不可哈希", "捕获 TypeError，说明它不能作 dict 键", "构造纯不可变元组作为坐标", "用 tuple 作 dict 键并成功取回值", "基本解包把两个位置绑定到 a 与 b", "扩展解包，星号目标取剩余元素", "星号目标 tail 是 list 而不是 tuple", "定义函数演示 3.10+ 的序列模式匹配", "match 对 tuple 按位置匹配", "case (0, 0) 匹配原点，字面量按相等比较", "返回原点标记", "case (x, 0) 匹配第二个元素为 0 的点", "x 按位置捕获，未用到的名字不影响匹配", "case (x, y) 兜底绑定两个坐标", "返回象限标记", "对三种点分别匹配并打印结果", "用工厂函数生成带字段名 x、y 的 tuple 子类", "构造 Point 实例，仍按位置存值", "字段按名字读，_asdict 转 dict，_replace 生成新实例", "namedtuple 是 tuple 子类，索引与加法沿用 tuple 行为", "不可变是浅层的：不能改指针，但能改指针指向的 list；hash 要求所有元素可哈希", "tuple 无 allocated 过度分配，比同元素 list 省内存；只含常量时会被折叠进 co_consts"]' title='第 020 讲 · tuple 与具名元组：不可变性的价值' />
+<LineByLine code='from collections import namedtuple\n\nsingle = (1,)\nnot_tuple = (1)\nprint(&#39;single&#39;, type(single).__name__, &#39;no comma&#39;, type(not_tuple).__name__)\n\nt = ([1, 2], 3)\nt[0].append(9)\nprint(&#39;shallow immutable&#39;, t)\ntry:\n    t[0] = [0]\nexcept TypeError as e:\n    print(&#39;assign error&#39;, type(e).__name__)\n\ntry:\n    print(hash(([1, 2],)))\nexcept TypeError as e:\n    print(&#39;unhashable&#39;, type(e).__name__)\n\ncoord = (10, 20)\nprint(&#39;dict key&#39;, {(1, 2): &#39;a&#39;}[(1, 2)])\na, b = coord\nhead, *tail = (1, 2, 3, 4)\nprint(&#39;unpack&#39;, a, b, &#39;star&#39;, head, tail)\n\ndef classify(point):\n    match point:\n        case (0, 0):\n            return &#39;origin&#39;\n        case (x, 0):\n            return &#39;x-axis&#39;\n        case (x, y):\n            return &#39;quadrant&#39;\n\nprint(&#39;match&#39;, classify((0, 0)), classify((5, 0)), classify((2, 3)))\n\nPoint = namedtuple(&#39;Point&#39;, &#39;x y&#39;)\np = Point(3, 4)\nprint(&#39;named&#39;, p.x, p.y, p._asdict(), p._replace(y=9))\nprint(&#39;is tuple&#39;, isinstance(p, tuple), p[0] + p[1])' :notes='["导入 namedtuple 工厂，用于给字段命名", "空行，只用于分隔逻辑块，不影响执行结果。", "单元素元组必须写逗号，这是唯一的构造依据", "漏写逗号时括号只做分组，得到的是 int", "打印两个类型，对比 tuple 与 int", "空行，只用于分隔逻辑块，不影响执行结果。", "构造一个含 list 的元组，演示浅层不可变", "改不了指针，却能改 t[0] 指向的 list 内容", "打印被原地修改后的元组内容", "尝试给元组下标赋值", "触发 TypeError，证明引用数组不可变", "捕获预期的 TypeError 并打印类型", "尝试对含 list 的元组取哈希", "空行，只用于分隔逻辑块，不影响执行结果。", "list 不可哈希会让整个元组不可哈希", "捕获 TypeError，说明它不能作 dict 键", "构造纯不可变元组作为坐标", "用 tuple 作 dict 键并成功取回值", "空行，只用于分隔逻辑块，不影响执行结果。", "基本解包把两个位置绑定到 a 与 b", "扩展解包，星号目标取剩余元素", "星号目标 tail 是 list 而不是 tuple", "定义函数演示 3.10+ 的序列模式匹配", "match 对 tuple 按位置匹配", "空行，只用于分隔逻辑块，不影响执行结果。", "case (0, 0) 匹配原点，字面量按相等比较", "返回原点标记", "case (x, 0) 匹配第二个元素为 0 的点", "x 按位置捕获，未用到的名字不影响匹配", "case (x, y) 兜底绑定两个坐标", "返回象限标记", "对三种点分别匹配并打印结果", "用工厂函数生成带字段名 x、y 的 tuple 子类", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 Point 实例，仍按位置存值", "空行，只用于分隔逻辑块，不影响执行结果。", "字段按名字读，_asdict 转 dict，_replace 生成新实例", "namedtuple 是 tuple 子类，索引与加法沿用 tuple 行为", "不可变是浅层的：不能改指针，但能改指针指向的 list；hash 要求所有元素可哈希", "tuple 无 allocated 过度分配，比同元素 list 省内存；只含常量时会被折叠进 co_consts"]' title='第 020 讲 · tuple 与具名元组：不可变性的价值' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='flow3' title='第 020 讲 · 语法与浅层不可变：逗号才是构造符' labels='语法与浅层不可变：逗号才是构造符|命名元组与 frozen dataclass|解包、序列模式匹配与作为字典键' caption='知道什么时候该用不可变容器' />
+<ConceptDiagram type='flow3' title='第 020 讲 · 语法与浅层不可变：逗号才是构造符' labels='语法与浅层不可变：逗号才是构造符|命名元组与 frozen dataclass…|解包、序列模式匹配与作为字典键' caption='知道什么时候该用不可变容器' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## tuple 与 list 对照：什么时候该用不可变
@@ -234,3 +234,16 @@ print('unpack', a, b, m)
 <Predict no='020-4' q='t = ([1, 2], 3); t[0].append(9); hash(t) 这三步的结果依次是？' :options='["t 变成 ([1, 2, 9], 3)，hash 正常返回整数", "抛 TypeError，因为 tuple 不支持内部 list 修改", "t 变成 ([1, 2, 9], 3)，随后 hash 抛 TypeError"]' answer='2' output='t 变成 ([1, 2, 9], 3)，随后 hash 抛 TypeError' explain='元组的不可变只约束它保存的指针数组，t[0] 指向的 list 仍可原地 append；但 hash(tuple) 要求每个元素可哈希，含 list 时抛 TypeError: unhashable type: &#39;list&#39;。' />
 
 <FillBlank no='020-5' tpl='from collections  ___ namedtuple' :answers='["import"]' hint='回想本讲关于 元组与单元素写法 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 语法与浅层不可变：逗号才是构造符 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/020-tuple.py`
+
+```bash
+python3 examples/lessons/020-tuple.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/020-tuple.py) · [全部示例代码索引](/examples/)

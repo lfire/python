@@ -56,7 +56,7 @@ print('fraction', Fraction(1, 3) + Fraction(1, 6))
 
 <OutputBox title='主示例运行结果' output='float_sum 0.30000000000000004\nequal False\nisclose True\ndecimal 0.3\ndecimal_eq True\nfraction 1/2' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from decimal import Decimal\nfrom fractions import Fraction\nimport math\n\nprint(&#39;float_sum&#39;, 0.1 + 0.2)\nprint(&#39;equal&#39;, 0.1 + 0.2 == 0.3)\nprint(&#39;isclose&#39;, math.isclose(0.1 + 0.2, 0.3))\nprint(&#39;decimal&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;))\nprint(&#39;decimal_eq&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;) == Decimal(&#39;0.3&#39;))\nprint(&#39;fraction&#39;, Fraction(1, 3) + Fraction(1, 6))' :notes='["导入 Decimal：十进制表示，金额场景用它避免二进制误差", "导入 Fraction：用整数分子分母做精确有理数运算", "导入 math 以使用浮点近似比较 isclose", "0.1 与 0.2 的二进制近似相加得 0.30000000000000004", "用 == 判断两个浮点计算结果相等，结果为 False", "math.isclose 按相对容差判定，二者视为足够接近", "字符串构造的 Decimal 精确相加得 0.3", "Decimal 的 == 比较值，精确相等故为 True", "Fraction 精确通分，1/3 加 1/6 打印成 1/2"]' title='第 008 讲 · 数值体系：int 任意精度、float、Decimal 与 bool' />
+<LineByLine code='from decimal import Decimal\nfrom fractions import Fraction\nimport math\n\nprint(&#39;float_sum&#39;, 0.1 + 0.2)\nprint(&#39;equal&#39;, 0.1 + 0.2 == 0.3)\nprint(&#39;isclose&#39;, math.isclose(0.1 + 0.2, 0.3))\nprint(&#39;decimal&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;))\nprint(&#39;decimal_eq&#39;, Decimal(&#39;0.1&#39;) + Decimal(&#39;0.2&#39;) == Decimal(&#39;0.3&#39;))\nprint(&#39;fraction&#39;, Fraction(1, 3) + Fraction(1, 6))' :notes='["导入 Decimal：十进制表示，金额场景用它避免二进制误差", "导入 Fraction：用整数分子分母做精确有理数运算", "导入 math 以使用浮点近似比较 isclose", "空行，只用于分隔逻辑块，不影响执行结果。", "0.1 与 0.2 的二进制近似相加得 0.30000000000000004", "用 == 判断两个浮点计算结果相等，结果为 False", "math.isclose 按相对容差判定，二者视为足够接近", "字符串构造的 Decimal 精确相加得 0.3", "Decimal 的 == 比较值，精确相等故为 True", "Fraction 精确通分，1/3 加 1/6 打印成 1/2"]' title='第 008 讲 · 数值体系：int 任意精度、float、Decimal 与 bool' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -132,9 +132,9 @@ print('complex', 3 + 4j, abs(3 + 4j))
 
 术语卡把「字符串或整数构造」与「float 构造」分栏。
 
-<Term word='int 的任意精度实现' text='CPython 的 int 是变长对象：PyLongObject 用一个 digit 数组（64 位平台默认每 digit 存 30 位）保存绝对值，`ob_size` 带符号记录长度，因此数值没有固定上限，`2 ** 100` 得到 31 位十进制数完全合法，只有内存是边界。代价是位数越多，加减乘除要遍历的 digi' />
+<Term word='int 的任意精度实现' text='CPython 的 int 是变长对象：PyLongObject 用一个 digit 数组（64 位平台默认每 digit 存 30 位）保存绝对值，`ob_size` 带符号记录长度，因此数值没有固定上限，`2 ** 100` 得到 31 位十进制数完全合法，只有内存是边界。代价是位数越多，加减乘除要遍历的 digi…' />
 
-<Term word='float 与 IEEE 754' text='float 对应 C 的 double，遵循 `IEEE 754` 二进制 64 位：1 位符号、11 位指数、52 位尾数，约 15 到 17 位有效十进制数字。十进制的 0.1 转成二进制是无限循环小数，只能存成最接近的近似值，`struct.pack(&#39;&gt;d&#39;, 0.1).hex()` 得到 3fb9999999' />
+<Term word='float 与 IEEE 754' text='float 对应 C 的 double，遵循 `IEEE 754` 二进制 64 位：1 位符号、11 位指数、52 位尾数，约 15 到 17 位有效十进制数字。十进制的 0.1 转成二进制是无限循环小数，只能存成最接近的近似值，`struct.pack(&#39;&gt;d&#39;, 0.1).hex()` 得到 3fb9999999…' />
 
 
 ## 四类数值类型怎么选：维度对照
@@ -185,9 +185,9 @@ Decimal 则用十进制的系数加指数，配合一个线程局部的 Context 
 
 理解这几种表示的数据结构，就能推断「为什么 int 不溢出」「为什么金额不能用 float」「为什么 Decimal 要用字符串构造」，而不用死记结论。
 
-<ConceptDiagram type='hub4' title='第 008 讲 · int 任意精度与 bool：不会溢出的代价' labels='int 任意精度与 bool：不会溢出的代价|float 与 IEEE 754：0.1 +|Decimal、Fraction 与量化：把' caption='根据场景选对数值类型，避开精度陷阱' />
+<ConceptDiagram type='hub4' title='第 008 讲 · int 任意精度与 bool：不会溢出的代价' labels='int 任意精度与 bool：不会溢出的代价|float 与 IEEE 754：0.1 +…|Decimal、Fraction 与量化：把…|复数与位运算' caption='根据场景选对数值类型，避开精度陷阱' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 结算服务：把量化规则写进领域层
@@ -247,7 +247,7 @@ print('two_places', str(gross))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 float 累加金额、用 == 判断两个计算结果相等：0.1 等十进制小数在二进制里是近似值，误差随累加放大，== 把表示误差当成逻辑差异' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 float 累加金额、用 == 判断两个", "body": "0.1 等十进制小数在二进制里是近似值，误差随累加放大，== 把表示误差当成逻辑差异", "tip": "金额用 Decimal(&#39;0.10&#39;) 累加并 quantize 到分位；浮点比较用 math.isclose"}, {"title": "第 2 步：用 Decimal(0.1) 构造十进制数", "body": "传入 float 会把 float 已有的二进制近似值原样带进 Decimal，得到一长串尾数", "tip": "一律用字符串 Decimal(&#39;0.1&#39;) 构造，或从 int 构造"}, {"title": "第 3 步：把 True 当普通整数收进金额统计，或把 ", "body": "bool 是 int 子类会悄悄计入求和；Decimal 与 float 做算术会抛 TypeError", "tip": "统计前用 type(x) is bool 排除；表达式里先统一成 Decimal，不混用 float"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 float 累加金额、用 == 判断两个…", "body": "0.1 等十进制小数在二进制里是近似值，误差随累加放大，== 把表示误差当成逻辑差异", "tip": "金额用 Decimal(&#39;0.10&#39;) 累加并 quantize 到分位；浮点比较用 math.isclose"}, {"title": "第 2 步：用 Decimal(0.1) 构造十进制数", "body": "传入 float 会把 float 已有的二进制近似值原样带进 Decimal，得到一长串尾数", "tip": "一律用字符串 Decimal(&#39;0.1&#39;) 构造，或从 int 构造"}, {"title": "第 3 步：把 True 当普通整数收进金额统计，或把…", "body": "bool 是 int 子类会悄悄计入求和；Decimal 与 float 做算术会抛 TypeError", "tip": "统计前用 type(x) is bool 排除；表达式里先统一成 Decimal，不混用 float"}]' />
 
 
 ## 按场景选数值类型：练习、自测与速记
@@ -275,3 +275,16 @@ print('two_places', str(gross))
 3. math.isclose 默认 rel_tol=1e-9、abs_tol=0.0；接近零时靠 abs_tol 兜底
 
 [下一讲：字符串与编码：Unicode、str / bytes 与转义](/foundation/strings)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/008-numeric.py`
+
+```bash
+python3 examples/lessons/008-numeric.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/008-numeric.py) · [全部示例代码索引](/examples/)

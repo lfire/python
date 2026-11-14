@@ -55,7 +55,7 @@ print('cwd_abs', os.path.isabs(report['cwd']))
 
 <OutputBox title='主示例运行结果' output='keys [&#39;cwd&#39;, &#39;executable&#39;, &#39;in_venv&#39;, &#39;site_count&#39;, &#39;version&#39;]\nin_venv False\nversion_major 3\nsite_ok True\ncwd_abs True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import os, sys, site\n\nreport = {\n    &#39;version&#39;: &#39;%d.%d.%d&#39; % sys.version_info[:3],\n    &#39;executable&#39;: sys.executable,\n    &#39;in_venv&#39;: sys.prefix != sys.base_prefix,\n    &#39;cwd&#39;: os.getcwd(),\n    &#39;site_count&#39;: len(site.getsitepackages()),\n}\n\nprint(&#39;keys&#39;, sorted(report))\nprint(&#39;in_venv&#39;, report[&#39;in_venv&#39;])\nprint(&#39;version_major&#39;, sys.version_info[0])\nprint(&#39;site_ok&#39;, report[&#39;site_count&#39;] &gt;= 1)\nprint(&#39;cwd_abs&#39;, os.path.isabs(report[&#39;cwd&#39;]))' :notes='["导入 os 读工作目录、sys 读解释器状态、site 读站点目录", "report 把环境三要素收进一个字典，便于整体打印与比对", "version_info[:3] 取前三段格式化成 major.minor.micro", "sys.executable 是当前解释器二进制的绝对路径", "sys.prefix != sys.base_prefix 是 PEP 405 定义的 venv 判据", "os.getcwd() 记录工作目录，它决定 sys.path[0] 的一部分", "site.getsitepackages() 返回生效的站点目录，数量至少为一", "字典闭合；此时 report 只是内存里的普通 dict", "打印排序后的键，验证三要素都已被采集", "未激活 venv 时 prefix 与 base_prefix 相等，输出 False", "version_info[0] 是 major，单独打印便于做版本门槛", "站点目录数量 &gt;= 1 说明依赖有安装位置", "cwd 是绝对路径，说明工作目录这一变量已可核对"]' title='第 002 讲 · 环境与工具链：解释器、虚拟环境与编辑器' />
+<LineByLine code='import os, sys, site\n\nreport = {\n    &#39;version&#39;: &#39;%d.%d.%d&#39; % sys.version_info[:3],\n    &#39;executable&#39;: sys.executable,\n    &#39;in_venv&#39;: sys.prefix != sys.base_prefix,\n    &#39;cwd&#39;: os.getcwd(),\n    &#39;site_count&#39;: len(site.getsitepackages()),\n}\n\nprint(&#39;keys&#39;, sorted(report))\nprint(&#39;in_venv&#39;, report[&#39;in_venv&#39;])\nprint(&#39;version_major&#39;, sys.version_info[0])\nprint(&#39;site_ok&#39;, report[&#39;site_count&#39;] &gt;= 1)\nprint(&#39;cwd_abs&#39;, os.path.isabs(report[&#39;cwd&#39;]))' :notes='["导入 os 读工作目录、sys 读解释器状态、site 读站点目录", "空行，只用于分隔逻辑块，不影响执行结果。", "report 把环境三要素收进一个字典，便于整体打印与比对", "version_info[:3] 取前三段格式化成 major.minor.micro", "sys.executable 是当前解释器二进制的绝对路径", "sys.prefix != sys.base_prefix 是 PEP 405 定义的 venv 判据", "os.getcwd() 记录工作目录，它决定 sys.path[0] 的一部分", "site.getsitepackages() 返回生效的站点目录，数量至少为一", "字典闭合；此时 report 只是内存里的普通 dict", "空行，只用于分隔逻辑块，不影响执行结果。", "打印排序后的键，验证三要素都已被采集", "未激活 venv 时 prefix 与 base_prefix 相等，输出 False", "version_info[0] 是 major，单独打印便于做版本门槛", "站点目录数量 &gt;= 1 说明依赖有安装位置", "cwd 是绝对路径，说明工作目录这一变量已可核对"]' title='第 002 讲 · 环境与工具链：解释器、虚拟环境与编辑器' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -170,9 +170,9 @@ CPython 启动阶段按顺序拼出 `sys.path`，这个顺序决定了「谁被�
 
 这也解释了为什么锁文件要带哈希：pip 的 `--require-hashes` 在下载后比对 sha256，正是为了防止镜像或缓存把包换成另一个字节序列。
 
-<ConceptDiagram type='layers3' title='第 002 讲 · 解释器版本：sys 里能读到的四个字段' labels='解释器版本：sys 里能读到的四个字段|依赖集合：venv 靠 sys.prefix|工作目录与复现：pyproject.toml' caption='搭好可复现、可隔离、可协作的开发环境' />
+<ConceptDiagram type='layers3' title='第 002 讲 · 解释器版本：sys 里能读到的四个字段' labels='解释器版本：sys 里能读到的四个字段|依赖集合：venv 靠 sys.prefix…|工作目录与复现：pyproject.toml…|编辑器与 Jupyter / Cursor…' caption='搭好可复现、可隔离、可协作的开发环境' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## CI 环境自检：把四个事实打成一份可核对的报告
@@ -231,7 +231,7 @@ print('all_importable', r['deps'] and r['version'])
 
 <Callout type="warn" title='本讲最容易踩的坑' text='全局 pip install 后两个项目互相覆盖：系统解释器只有一个 site-packages，A 项目要 Django 4、B 项目要 Django 5，后装的会覆盖前者的文件，且 pip 不记录生产环境到底装了什么' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：全局 pip install 后两个项目互相", "body": "系统解释器只有一个 site-packages，A 项目要 Django 4、B 项目要 Django 5，后装的会覆盖前者的文件，且 pip 不记录生产环境到底装了什么", "tip": "每个项目建独立 venv，用 python -m pip 安装，并把依赖写进 pyproject.toml 加锁文件"}, {"title": "第 2 步：requirements.txt 里写 pa", "body": "&gt;= 只给下界，解析时可能拿到 1.5 或 2.2，而 2.x 改过 groupby 的默认行为，本地和 CI 装到不同版本就得到不同结果", "tip": "用 uv.lock 或 pip freeze 导出精确 == 与哈希，CI 加 pip install --require-hashes -r requirements.lock"}, {"title": "第 3 步：用 python pkg/mod.py 运行", "body": "直接跑脚本时 sys.path[0] 是 pkg 目录、__package__ 为空，from . import helper 抛 ImportError: attempted relative import with no known parent package", "tip": "改用 python -m pkg.mod，以模块方式执行，让包上下文与相对导入成立"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：全局 pip install 后两个项目互相…", "body": "系统解释器只有一个 site-packages，A 项目要 Django 4、B 项目要 Django 5，后装的会覆盖前者的文件，且 pip 不记录生产环境到底装了什么", "tip": "每个项目建独立 venv，用 python -m pip 安装，并把依赖写进 pyproject.toml 加锁文件"}, {"title": "第 2 步：requirements.txt 里写 pa…", "body": "&gt;= 只给下界，解析时可能拿到 1.5 或 2.2，而 2.x 改过 groupby 的默认行为，本地和 CI 装到不同版本就得到不同结果", "tip": "用 uv.lock 或 pip freeze 导出精确 == 与哈希，CI 加 pip install --require-hashes -r requirements.lock"}, {"title": "第 3 步：用 python pkg/mod.py 运行…", "body": "直接跑脚本时 sys.path[0] 是 pkg 目录、__package__ 为空，from . import helper 抛 ImportError: attempted relative import with no known parent package", "tip": "改用 python -m pkg.mod，以模块方式执行，让包上下文与相对导入成立"}]' />
 
 
 ## 把三个变量写进配置：练习、自测与速记
@@ -259,3 +259,16 @@ print('all_importable', r['deps'] and r['version'])
 3. python -m pip 绑定当前解释器；裸 pip 可能把包装进另一套 site-packages
 
 [下一讲：第一行 Python：从源码到字节码再到执行](/guide/hello)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/002-setup.py`
+
+```bash
+python3 examples/lessons/002-setup.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/002-setup.py) · [全部示例代码索引](/examples/)

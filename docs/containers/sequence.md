@@ -71,15 +71,15 @@ print(a, b)
 
 <OutputBox title='主示例运行结果' output='5 Mon Fri\n[&#39;Mon&#39;, &#39;Tue&#39;, &#39;Wed&#39;, &#39;Thu&#39;, &#39;Fri&#39;] True\nWeek [&#39;Tue&#39;, &#39;Thu&#39;]\n3 1 [&#39;Fri&#39;, &#39;Thu&#39;, &#39;Wed&#39;, &#39;Tue&#39;, &#39;Mon&#39;]\n[&#39;x&#39;, &#39;y&#39;, &#39;z&#39;] [&#39;Y&#39;, &#39;z&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections.abc import Sequence\n\nclass Week(Sequence):\n    def __init__(self, names):\n        self._names = tuple(names)\n    def __len__(self):\n        return len(self._names)\n    def __getitem__(self, index):\n        if isinstance(index, slice):\n            return Week(self._names[index])\n        return self._names[index]\n\nw = Week([&#39;Mon&#39;, &#39;Tue&#39;, &#39;Wed&#39;, &#39;Thu&#39;, &#39;Fri&#39;])\nprint(len(w), w[0], w[-1])\nprint(list(w), &#39;Wed&#39; in w)\ns = w[1:4:2]\nprint(type(s).__name__, list(s))\nprint(w.index(&#39;Thu&#39;), w.count(&#39;Mon&#39;), list(reversed(w)))\n\na = [&#39;x&#39;, &#39;y&#39;, &#39;z&#39;]\nb = a[1:]\nb[0] = &#39;Y&#39;\nprint(a, b)' :notes='["3.10 起必须从 collections.abc 导入，顶层 collections.Sequence 已移除", "继承抽象基类，只需补两个抽象方法即可获得整套序列行为", "构造时把输入固化成 tuple，保证视图只读", "底层用不可变 tuple 存储元素", "实现第一个抽象方法：len() 走 sq_length 槽", "把长度委托给底层 tuple", "实现第二个抽象方法，同时处理整数下标与 slice 对象", "切片语法传入的是 slice 对象而不是三个整数", "切片结果包装回 Week，保持返回类型一致", "整数下标含负数交给 tuple 处理，越界由它抛 IndexError", "构造五个工作日的序列", "验证 len、正向索引与负向索引", "for 迭代与 in 判断由 mixin 基于 __getitem__ 免费提供", "带步长的切片，__getitem__ 收到 slice(1, 4, 2)", "返回类型是 Week，内容是隔一个取一个", "index / count / reversed 都是 Sequence 的 mixin 方法", "对照内置 list 的切片语义", "切片返回同类型新列表，是浅拷贝副本", "只修改副本的第一个元素", "原列表不变，证明 list 切片不是视图"]' title='第 017 讲 · 序列协议与通用操作' />
+<LineByLine code='from collections.abc import Sequence\n\nclass Week(Sequence):\n    def __init__(self, names):\n        self._names = tuple(names)\n    def __len__(self):\n        return len(self._names)\n    def __getitem__(self, index):\n        if isinstance(index, slice):\n            return Week(self._names[index])\n        return self._names[index]\n\nw = Week([&#39;Mon&#39;, &#39;Tue&#39;, &#39;Wed&#39;, &#39;Thu&#39;, &#39;Fri&#39;])\nprint(len(w), w[0], w[-1])\nprint(list(w), &#39;Wed&#39; in w)\ns = w[1:4:2]\nprint(type(s).__name__, list(s))\nprint(w.index(&#39;Thu&#39;), w.count(&#39;Mon&#39;), list(reversed(w)))\n\na = [&#39;x&#39;, &#39;y&#39;, &#39;z&#39;]\nb = a[1:]\nb[0] = &#39;Y&#39;\nprint(a, b)' :notes='["3.10 起必须从 collections.abc 导入，顶层 collections.Sequence 已移除", "空行，只用于分隔逻辑块，不影响执行结果。", "继承抽象基类，只需补两个抽象方法即可获得整套序列行为", "构造时把输入固化成 tuple，保证视图只读", "底层用不可变 tuple 存储元素", "实现第一个抽象方法：len() 走 sq_length 槽", "把长度委托给底层 tuple", "实现第二个抽象方法，同时处理整数下标与 slice 对象", "切片语法传入的是 slice 对象而不是三个整数", "切片结果包装回 Week，保持返回类型一致", "整数下标含负数交给 tuple 处理，越界由它抛 IndexError", "空行，只用于分隔逻辑块，不影响执行结果。", "构造五个工作日的序列", "验证 len、正向索引与负向索引", "for 迭代与 in 判断由 mixin 基于 __getitem__ 免费提供", "带步长的切片，__getitem__ 收到 slice(1, 4, 2)", "返回类型是 Week，内容是隔一个取一个", "index / count / reversed 都是 Sequence 的 mixin 方法", "空行，只用于分隔逻辑块，不影响执行结果。", "对照内置 list 的切片语义", "切片返回同类型新列表，是浅拷贝副本", "只修改副本的第一个元素", "原列表不变，证明 list 切片不是视图"]' title='第 017 讲 · 序列协议与通用操作' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize' />
+<Callout type="tip" title='核心心智模型' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过…' />
 
-<ConceptDiagram type='layers3' title='第 017 讲 · 序列协议：两个方法撑起一整套操作' labels='序列协议：两个方法撑起一整套操作|collections.abc.Sequen|切片语义：副本、视图与 slice.indi' caption='理解所有序列共享的一套接口' />
+<ConceptDiagram type='layers3' title='第 017 讲 · 序列协议：两个方法撑起一整套操作' labels='序列协议：两个方法撑起一整套操作|collections.abc.Sequen…|切片语义：副本、视图与 slice.indi…|不可变序列' caption='理解所有序列共享的一套接口' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 可迭代协议与序列协议对照
@@ -139,9 +139,9 @@ print(slice(1, 10, 2).indices(5))
 | obj['k'] | str | 抛 TypeError | 非 int 非 slice 一律拒绝 |
 | for x in obj | 依次 0, 1, 2 ... | 抛 IndexError 终止迭代 | 仅当未定义 __iter__ 时回退 |
 
-<Term word='序列与可迭代的区别' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize` 抛 `Overf' />
+<Term word='序列与可迭代的区别' text='CPython 对序列的操作分两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize` 抛…' />
 
-<Term word='__len__ 与 __getitem__' text='手写容器时重复实现 `__iter__` / `__contains__` / `__reversed__` / `index` / `count` 纯属样板。`collections.abc.Sequence` 把这套约定固化：它只把 `__len__` 与 `__getitem__` 声明为抽象方法（继承自 `Si' />
+<Term word='__len__ 与 __getitem__' text='手写容器时重复实现 `__iter__` / `__contains__` / `__reversed__` / `index` / `count` 纯属样板。`collections.abc.Sequence` 把这套约定固化：它只把 `__len__` 与 `__getitem__` 声明为抽象方法（继承自…' />
 
 
 ## 切片语义：副本、视图与 slice.indices
@@ -246,7 +246,7 @@ print('slice', v[1:3], 'reversed', list(reversed(v)))
 | range | 实现 __len__ 与 __getitem__ 的惰性序列 | 内存恒定，不存全部元素 |
 | memoryview 切片 | 返回共享内存的视图 | 与 list / tuple / str 的切片副本语义相反 |
 
-<CheckList id='P017b' title='上线前自检' :items='["能复现并解释「改了切片得到的子序列，原列表却没变」", "能复现并解释「自定义类只写了 __getitem__，obj[a:b] 抛」", "能复现并解释「from collections import Sequen」", "能用一条命令验证 序列与可迭代的区别", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P017b' title='上线前自检' :items='["能复现并解释「改了切片得到的子序列，原列表却没变」", "能复现并解释「自定义类只写了 __getitem__，obj[a:b] 抛…」", "能复现并解释「from collections import Sequen…」", "能用一条命令验证 序列与可迭代的区别", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 错因速查与动手自测
@@ -295,3 +295,16 @@ print('slice', v[1:3], 'reversed', list(reversed(v)))
 [下一讲：list：动态数组、操作与时间复杂度](/containers/list-basics)
 
 <FillBlank no='017-5' tpl='from collections.abc  ___ Sequence' :answers='["import"]' hint='回想本讲关于 序列与可迭代的区别 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 序列协议：两个方法撑起一整套操作 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/017-sequence.py`
+
+```bash
+python3 examples/lessons/017-sequence.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/017-sequence.py) · [全部示例代码索引](/examples/)

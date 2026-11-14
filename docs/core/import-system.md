@@ -52,7 +52,7 @@ description: 能编写 import hook 并解决复杂导入问题
 | 3 | PathFinder | sys.path 上的 .py / 包 / zip / 命名空间包 | 全部落空则抛 ModuleNotFoundError |
 | 自定义 | 插入 sys.meta_path[0] 的对象 | 注册表名、加密源码、远程模块 | 返回 None 让默认链路兜底 |
 
-<Callout type="tip" title='核心心智模型' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历 `sys.m' />
+<Callout type="tip" title='核心心智模型' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历…' />
 
 
 ### sys.modules 命中即返回的代价
@@ -138,7 +138,7 @@ print('virtual_cfg' in sys.modules)
 
 <OutputBox title='主示例运行结果' output='3 2\nmemory:virtual_cfg MemoryLoader\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\nimport importlib.abc\nimport importlib.util\n\nclass MemoryLoader(importlib.abc.Loader):\n    def __init__(self, source):\n        self.source = source\n    def create_module(self, spec):\n        return None\n    def exec_module(self, module):\n        exec(self.source, module.__dict__)\n\nclass MemoryFinder(importlib.abc.MetaPathFinder):\n    def __init__(self, sources):\n        self.sources = sources\n    def find_spec(self, fullname, path=None, target=None):\n        if fullname in self.sources:\n            return importlib.util.spec_from_loader(\n                fullname, MemoryLoader(self.sources[fullname]),\n                origin=&#39;memory:&#39; + fullname)\n        return None\n\nSOURCES = {&#39;virtual_cfg&#39;: &#39;TIMEOUT = 3&#39; + chr(10) + &#39;RETRIES = 2&#39;}\nsys.meta_path.insert(0, MemoryFinder(SOURCES))\n\nimport virtual_cfg\nprint(virtual_cfg.TIMEOUT, virtual_cfg.RETRIES)\nprint(virtual_cfg.__spec__.origin, type(virtual_cfg.__loader__).__name__)\nprint(&#39;virtual_cfg&#39; in sys.modules)' :notes='["导入 sys，读取与改写 meta_path 和 modules", "导入 importlib.abc，取 Loader 与 MetaPathFinder 基类", "导入 importlib.util，用 spec_from_loader 构造 ModuleSpec", "定义 Loader：exec_module 负责执行模块代码", "构造时保存源码字符串", "把源码挂到实例上，供 exec_module 取用", "create_module 是 3.4+ 的可选钩子", "返回 None 让解释器用 module_from_spec 建空模块", "exec_module 取代旧 load_module，是正式加载入口", "在模块的 __dict__ 命名空间里执行源码", "定义 MetaPathFinder，实例挂到 sys.meta_path", "保存 模块名到源码 的映射", "注册表内容存到实例", "find_spec 由导入机按 meta_path 顺序逐一调用", "只接管注册表里登记过的名字", "spec_from_loader 构造 ModuleSpec", "把源码包进自定义 Loader 一并交给 spec", "origin 标成 memory:，说明不是磁盘文件", "未登记的名字返回 None，交给后续 finder", "源码用 chr(10) 拼换行，规避反斜杠转义", "插到 meta_path[0]，优先于 BuiltinImporter", "import 先查 sys.modules 未命中，才走 finder 链", "模块代码已被 exec_module 执行，两个常量可用", "__spec__.origin 与 __loader__ 类型证明走自定义链路", "导入结束后名字写入 sys.modules，重复 import 不再执行"]' title='第 055 讲 · 导入系统源码级：finder、loader 与缓存' />
+<LineByLine code='import sys\nimport importlib.abc\nimport importlib.util\n\nclass MemoryLoader(importlib.abc.Loader):\n    def __init__(self, source):\n        self.source = source\n    def create_module(self, spec):\n        return None\n    def exec_module(self, module):\n        exec(self.source, module.__dict__)\n\nclass MemoryFinder(importlib.abc.MetaPathFinder):\n    def __init__(self, sources):\n        self.sources = sources\n    def find_spec(self, fullname, path=None, target=None):\n        if fullname in self.sources:\n            return importlib.util.spec_from_loader(\n                fullname, MemoryLoader(self.sources[fullname]),\n                origin=&#39;memory:&#39; + fullname)\n        return None\n\nSOURCES = {&#39;virtual_cfg&#39;: &#39;TIMEOUT = 3&#39; + chr(10) + &#39;RETRIES = 2&#39;}\nsys.meta_path.insert(0, MemoryFinder(SOURCES))\n\nimport virtual_cfg\nprint(virtual_cfg.TIMEOUT, virtual_cfg.RETRIES)\nprint(virtual_cfg.__spec__.origin, type(virtual_cfg.__loader__).__name__)\nprint(&#39;virtual_cfg&#39; in sys.modules)' :notes='["导入 sys，读取与改写 meta_path 和 modules", "导入 importlib.abc，取 Loader 与 MetaPathFinder 基类", "导入 importlib.util，用 spec_from_loader 构造 ModuleSpec", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 Loader：exec_module 负责执行模块代码", "构造时保存源码字符串", "把源码挂到实例上，供 exec_module 取用", "create_module 是 3.4+ 的可选钩子", "返回 None 让解释器用 module_from_spec 建空模块", "exec_module 取代旧 load_module，是正式加载入口", "在模块的 __dict__ 命名空间里执行源码", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 MetaPathFinder，实例挂到 sys.meta_path", "保存 模块名到源码 的映射", "注册表内容存到实例", "find_spec 由导入机按 meta_path 顺序逐一调用", "只接管注册表里登记过的名字", "spec_from_loader 构造 ModuleSpec", "把源码包进自定义 Loader 一并交给 spec", "origin 标成 memory:，说明不是磁盘文件", "未登记的名字返回 None，交给后续 finder", "空行，只用于分隔逻辑块，不影响执行结果。", "源码用 chr(10) 拼换行，规避反斜杠转义", "插到 meta_path[0]，优先于 BuiltinImporter", "空行，只用于分隔逻辑块，不影响执行结果。", "import 先查 sys.modules 未命中，才走 finder 链", "模块代码已被 exec_module 执行，两个常量可用", "__spec__.origin 与 __loader__ 类型证明走自定义链路", "导入结束后名字写入 sys.modules，重复 import 不再执行"]' title='第 055 讲 · 导入系统源码级：finder、loader 与缓存' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -197,7 +197,7 @@ b 反向 `from a import NAME`，拿到的正是这个半初始化模块，若 `N
 | 3.11 | 命名空间包改由 _NamespaceLoader 接管 | 自定义 finder 要正确处理 origin=None |
 | 3.13 | cache_tag 为 cpython-313，pyc 名随之变化 | 多版本解释器共用目录须清 __pycache__ |
 
-<FlowTimeline :steps='[{"title": "sys.meta_path 的三段查找与 Finder 协议", "desc": "`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `…", "tone": "blue"}, {"title": "ModuleSpec、Loader 与 pyc 失效规则", "desc": "`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、…", "tone": "purple"}, {"title": "循环导入、命名空间包与 hook 的代价", "desc": "循环导入报错的根因是加载时序：模块 a 执行到 `import b` 时被挂起，此时…", "tone": "orange"}, {"title": "工程落地", "desc": "配置插件注册表：把字典加载成可 import 的模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "sys.meta_path 的三段查找与 Fin…", "desc": "`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建…", "tone": "blue"}, {"title": "ModuleSpec、Loader 与 pyc…", "desc": "`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`…", "tone": "purple"}, {"title": "循环导入、命名空间包与 hook 的代价", "desc": "循环导入报错的根因是加载时序：模块 a 执行到 `import b` 时被挂起，此时…", "tone": "orange"}, {"title": "工程落地", "desc": "配置插件注册表：把字典加载成可 import 的模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## _find_and_load 为什么先写缓存再执行
@@ -214,9 +214,9 @@ CPython 的导入逻辑由冻结进解释器的 `importlib._bootstrap` 实现，
 
 pyc 用 `marshal` 序列化 code object，头部记 magic number、标志位与源 mtime / 大小，加载时比对决定是否复用。
 
-<Term word='sys.meta_path 与 path_hooks' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历 `sys.meta_path`，' />
+<Term word='sys.meta_path 与 path_hooks' text='`import x` 会编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `importlib._bootstrap._find_and_load`：先以模块名查 `sys.modules`，命中且值非 `None` 就直接返回。未命中则按序遍历 `sys.meta_path`…' />
 
-<Term word='Finder / Loader 协议' text='`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、`origin`、`submodule_search_locations`（包非 `None`）、`has_location`、`cached`。loader 实现两个方法：`create_module(spec)` 返回模块对象或 `' />
+<Term word='Finder / Loader 协议' text='`ModuleSpec` 自 3.4 引入，字段含 `name`、`loader`、`origin`、`submodule_search_locations`（包非 `None`）、`has_location`、`cached`。loader 实现两个方法：`create_module(spec)` 返回模块对象或…' />
 
 
 ## 配置插件注册表：把字典加载成可 import 的模块
@@ -273,15 +273,15 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='插件式加载、加密模块、远程模块可用 import hook 实现；但要先评估对启动时间与可调试性的影响' />
 
-<CheckList id='P055b' title='上线前自检' :items='["能复现并解释「运行时生成新模块后 import 仍报 ModuleNotF」", "能复现并解释「包 __init__.py 里 from . import 」", "能复现并解释「改了 .py 但进程里行为没变」", "能用一条命令验证 sys.meta_path 与 path_hooks", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P055b' title='上线前自检' :items='["能复现并解释「运行时生成新模块后 import 仍报 ModuleNotF…」", "能复现并解释「包 __init__.py 里 from . import…」", "能复现并解释「改了 .py 但进程里行为没变」", "能用一条命令验证 sys.meta_path 与 path_hooks", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -X importtime -c "import json" 2>&1 | tail -4
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `sys.meta_path` 与 path_hooks 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `sys.meta_path` 与 path_hooks 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<SequenceDiagram title='第 055 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "sys.meta_path ", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "ModuleSpec、Loa", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 055 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "sys.meta_path…", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "ModuleSpec、Loa…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
 
 ## 错因速查与排查顺序
@@ -296,7 +296,7 @@ python -X importtime -c "import json" 2>&1 | tail -4
 
 <Callout type="warn" title='本讲最容易踩的坑' text='运行时生成新模块后 import 仍报 ModuleNotFoundError：PathFinder 缓存了目录清单与 FileFinder 实例，新文件不会自动进入视野' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：运行时生成新模块后 import 仍报 Mo", "body": "PathFinder 缓存了目录清单与 FileFinder 实例，新文件不会自动进入视野", "tip": "调用 importlib.invalidate_caches() 再导入；或把自定义 finder 插入 sys.meta_path[0] 直接接管"}, {"title": "第 2 步：包 __init__.py 里 from .", "body": "循环导入时模块已进 sys.modules，但被需要的属性还没定义到", "tip": "把子模块导入挪进函数体、抽公共依赖到第三模块，或改成 import pkg 后按 pkg.attr 访问"}, {"title": "第 3 步：改了 .py 但进程里行为没变", "body": "pyc 按 mtime 加大小校验，同秒同大小改动不失效；且进程内 sys.modules 不会重新执行", "tip": "核对 __pycache__ 时间戳，用 importlib.invalidate_caches() 与 importlib.reload()，部署前清理旧 pyc"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：运行时生成新模块后 import 仍报 Mo…", "body": "PathFinder 缓存了目录清单与 FileFinder 实例，新文件不会自动进入视野", "tip": "调用 importlib.invalidate_caches() 再导入；或把自定义 finder 插入 sys.meta_path[0] 直接接管"}, {"title": "第 2 步：包 __init__.py 里 from .…", "body": "循环导入时模块已进 sys.modules，但被需要的属性还没定义到", "tip": "把子模块导入挪进函数体、抽公共依赖到第三模块，或改成 import pkg 后按 pkg.attr 访问"}, {"title": "第 3 步：改了 .py 但进程里行为没变", "body": "pyc 按 mtime 加大小校验，同秒同大小改动不失效；且进程内 sys.modules 不会重新执行", "tip": "核对 __pycache__ 时间戳，用 importlib.invalidate_caches() 与 importlib.reload()，部署前清理旧 pyc"}]' />
 
 
 ## import.c 与 _bootstrap._find_and_load 的模块锁时序
@@ -341,7 +341,7 @@ print('source size', size)
 
 <OutputBox title='扩展示例运行结果' output='flag bits 0\nmtime nonzero True\nsource size 11' />
 
-<LineByLine code='import py_compile\nimport struct\nimport tempfile\nimport os\n\nsrc = os.path.join(tempfile.mkdtemp(), &#39;probe_mod.py&#39;)\nwith open(src, &#39;w&#39;) as f:\n    f.write(&#39;value = 42&#39; + chr(10))\ncached = py_compile.compile(src, doraise=True)\nwith open(cached, &#39;rb&#39;) as f:\n    head = f.read(16)\nmagic, flags, mtime, size = struct.unpack(&#39;&lt;4sIII&#39;, head)\nprint(&#39;flag bits&#39;, flags)\nprint(&#39;mtime nonzero&#39;, mtime &gt; 0)\nprint(&#39;source size&#39;, size)\n' :notes='["py_compile 负责把源码编译成 __pycache__ 下的 pyc", "struct 用来按小端布局拆开头部 16 字节", "tempfile 造一个隔离目录，避免污染工程目录", "os.path 拼出源文件路径", "在临时目录里写一个最小源文件", "用 chr(10) 拼换行，示例源码里不出现反斜杠转义", "compile 返回 pyc 路径，doraise=True 让失败直接抛异常", "以二进制读回 pyc，只取头部 16 字节", "read(16) 正好覆盖 magic 加三个 uint32 字段", "按 4sIII 解出 magic、flags、mtime、source size", "flags 为 0 表示 timestamp-based，而非 hash-based", "timestamp 模式下 mtime 必为非零", "source size 是源文件字节数，这里是 11", "默认 meta_path 顺序：BuiltinImporter / FrozenImporter / PathFinder；返回 None 表示交给下一个"]' title='扩展示例逐行讲解' />
+<LineByLine code='import py_compile\nimport struct\nimport tempfile\nimport os\n\nsrc = os.path.join(tempfile.mkdtemp(), &#39;probe_mod.py&#39;)\nwith open(src, &#39;w&#39;) as f:\n    f.write(&#39;value = 42&#39; + chr(10))\ncached = py_compile.compile(src, doraise=True)\nwith open(cached, &#39;rb&#39;) as f:\n    head = f.read(16)\nmagic, flags, mtime, size = struct.unpack(&#39;&lt;4sIII&#39;, head)\nprint(&#39;flag bits&#39;, flags)\nprint(&#39;mtime nonzero&#39;, mtime &gt; 0)\nprint(&#39;source size&#39;, size)\n' :notes='["py_compile 负责把源码编译成 __pycache__ 下的 pyc", "struct 用来按小端布局拆开头部 16 字节", "tempfile 造一个隔离目录，避免污染工程目录", "os.path 拼出源文件路径", "空行，只用于分隔逻辑块，不影响执行结果。", "在临时目录里写一个最小源文件", "用 chr(10) 拼换行，示例源码里不出现反斜杠转义", "compile 返回 pyc 路径，doraise=True 让失败直接抛异常", "以二进制读回 pyc，只取头部 16 字节", "read(16) 正好覆盖 magic 加三个 uint32 字段", "按 4sIII 解出 magic、flags、mtime、source size", "flags 为 0 表示 timestamp-based，而非 hash-based", "timestamp 模式下 mtime 必为非零", "source size 是源文件字节数，这里是 11", "这一行 `print(&#39;source size&#39;, size)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 **pyc 文件头 16 字节的字段布局**
 
@@ -443,3 +443,16 @@ print('cache key present', folder in sys.path_importer_cache)
 3. ModuleSpec 自 3.4 起承载 name/loader/origin/submodule_search_locations；exec_module 取代 load_module
 
 [下一讲：属性访问链路与 __getattribute__](/core/attribute-lookup)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/055-import-system.py`
+
+```bash
+python3 examples/lessons/055-import-system.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/055-import-system.py) · [全部示例代码索引](/examples/)

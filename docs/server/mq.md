@@ -40,11 +40,11 @@ Kafka 的 topic 加 consumer group 把两者掺在一起：组内消费者分摊
 | exactly-once | 不丢不重 | 消费端幂等 + 事务，非配置项 |
 | Kafka 事务 | 跨分区原子写 | 仍需消费端幂等兜底 |
 
-<Callout type="tip" title='核心心智模型' text='队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitMQ 的 queue 加 consumer、Celery 的 task queue 都属于这一类，适合把工作分发给多个 worker 做负载均衡。发布订阅（pub/sub）反过来，一条消息广播给所有订阅者；Kafka ' />
+<Callout type="tip" title='核心心智模型' text='队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitMQ 的 queue 加 consumer、Celery 的 task queue 都属于这一类，适合把工作分发给多个 worker 做负载均衡。发布订阅（pub/sub）反过来，一条消息广播给所有订阅者；Kafka…' />
 
-<ConceptDiagram type='compare2' title='第 089 讲 · 队列、发布订阅与三种投递语义' labels='队列、发布订阅与三种投递语义|确认、重试、死信与顺序|可靠投递的工程清单' caption='用异步任务解耦并保证可靠投递' />
+<ConceptDiagram type='compare2' title='第 089 讲 · 队列、发布订阅与三种投递语义' labels='队列、发布订阅与三种投递语义|确认、重试、死信与顺序|可靠投递的工程清单|顺序与分区' caption='用异步任务解耦并保证可靠投递' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 主示例：至少一次投递下的重复消息
@@ -85,7 +85,7 @@ print('dlq size', len(dlq))
 
 <OutputBox title='主示例运行结果' output='m1 acked attempt 1\nm1 duplicate-skipped\nm2 dead-lettered\nledger rows 1\ndlq size 1' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE done (key TEXT PRIMARY KEY)&#39;)\ndb.execute(&#39;CREATE TABLE ledger (id INTEGER PRIMARY KEY, amount INT)&#39;)\ndlq = []\ndef handle(msg):\n    if msg[&#39;amount&#39;] == 13:\n        raise ValueError(&#39;downstream error&#39;)\n    db.execute(&#39;INSERT INTO ledger (amount) VALUES (?)&#39;, (msg[&#39;amount&#39;],))\ndef consume(msg, max_retries=3):\n    key = msg[&#39;key&#39;]\n    if db.execute(&#39;SELECT 1 FROM done WHERE key=?&#39;, (key,)).fetchone():\n        return &#39;duplicate-skipped&#39;\n    for attempt in range(max_retries):\n        try:\n            handle(msg)\n            db.execute(&#39;INSERT INTO done (key) VALUES (?)&#39;, (key,))\n            return &#39;acked attempt &#39; + str(attempt + 1)\n        except ValueError:\n            continue\n    dlq.append(msg)\n    return &#39;dead-lettered&#39;\nfor m in [\n    {&#39;key&#39;:&#39;m1&#39;,&#39;amount&#39;:10},\n    {&#39;key&#39;:&#39;m1&#39;,&#39;amount&#39;:10},\n    {&#39;key&#39;:&#39;m2&#39;,&#39;amount&#39;:13},\n]:\n    print(m[&#39;key&#39;], consume(m))\nprint(&#39;ledger rows&#39;, db.execute(&#39;SELECT COUNT(*) FROM ledger&#39;).fetchone()[0])\nprint(&#39;dlq size&#39;, len(dlq))' :notes='["导入 sqlite3，用内存库实现去重表与账本", "建立内存连接", "done 表以业务幂等键为主键，记录已处理消息", "ledger 表模拟真实业务写入（记账）", "dlq 列表收集超过重试次数的死信", "定义业务处理函数，只做一次副作用", "amount 为 13 时模拟下游持续失败", "抛出可重试异常", "正常路径向账本插入一行", "定义消费函数，含幂等、重试与死信三段", "取出业务幂等键", "先查去重表，命中说明这条消息处理过", "命中直接跳过，等价于 ack 且不重复执行副作用", "最多重试 max_retries 次", "尝试执行业务", "调用 handle 执行业务写入，把副作用与去重分离", "业务成功后再写去重标记，二者应在同一事务", "返回 ack 结果与尝试次数", "可重试异常则进入下一轮", "continue 推进重试", "超过次数把消息放入死信队列", "返回死信状态", "构造三条消息，第一条与第二条例子是重复投递", "m1 首次，正常处理", "m1 重复到达，应被幂等跳过", "m2 一直失败，应进死信", "遍历并消费", "打印每条消息的处理结果", "账本只有 1 行，证明重复投递未重复记账", "死信队列 1 条，毒消息被隔离而非无限重试"]' title='第 089 讲 · 消息队列：Celery / RabbitMQ / Kafka' />
+<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE done (key TEXT PRIMARY KEY)&#39;)\ndb.execute(&#39;CREATE TABLE ledger (id INTEGER PRIMARY KEY, amount INT)&#39;)\ndlq = []\ndef handle(msg):\n    if msg[&#39;amount&#39;] == 13:\n        raise ValueError(&#39;downstream error&#39;)\n    db.execute(&#39;INSERT INTO ledger (amount) VALUES (?)&#39;, (msg[&#39;amount&#39;],))\ndef consume(msg, max_retries=3):\n    key = msg[&#39;key&#39;]\n    if db.execute(&#39;SELECT 1 FROM done WHERE key=?&#39;, (key,)).fetchone():\n        return &#39;duplicate-skipped&#39;\n    for attempt in range(max_retries):\n        try:\n            handle(msg)\n            db.execute(&#39;INSERT INTO done (key) VALUES (?)&#39;, (key,))\n            return &#39;acked attempt &#39; + str(attempt + 1)\n        except ValueError:\n            continue\n    dlq.append(msg)\n    return &#39;dead-lettered&#39;\nfor m in [\n    {&#39;key&#39;:&#39;m1&#39;,&#39;amount&#39;:10},\n    {&#39;key&#39;:&#39;m1&#39;,&#39;amount&#39;:10},\n    {&#39;key&#39;:&#39;m2&#39;,&#39;amount&#39;:13},\n]:\n    print(m[&#39;key&#39;], consume(m))\nprint(&#39;ledger rows&#39;, db.execute(&#39;SELECT COUNT(*) FROM ledger&#39;).fetchone()[0])\nprint(&#39;dlq size&#39;, len(dlq))' :notes='["导入 sqlite3，用内存库实现去重表与账本", "空行，只用于分隔逻辑块，不影响执行结果。", "建立内存连接", "done 表以业务幂等键为主键，记录已处理消息", "ledger 表模拟真实业务写入（记账）", "dlq 列表收集超过重试次数的死信", "定义业务处理函数，只做一次副作用", "amount 为 13 时模拟下游持续失败", "抛出可重试异常", "正常路径向账本插入一行", "定义消费函数，含幂等、重试与死信三段", "取出业务幂等键", "先查去重表，命中说明这条消息处理过", "命中直接跳过，等价于 ack 且不重复执行副作用", "最多重试 max_retries 次", "尝试执行业务", "调用 handle 执行业务写入，把副作用与去重分离", "业务成功后再写去重标记，二者应在同一事务", "返回 ack 结果与尝试次数", "可重试异常则进入下一轮", "continue 推进重试", "超过次数把消息放入死信队列", "返回死信状态", "构造三条消息，第一条与第二条例子是重复投递", "m1 首次，正常处理", "m1 重复到达，应被幂等跳过", "m2 一直失败，应进死信", "遍历并消费", "打印每条消息的处理结果", "账本只有 1 行，证明重复投递未重复记账", "死信队列 1 条，毒消息被隔离而非无限重试"]' title='第 089 讲 · 消息队列：Celery / RabbitMQ / Kafka' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -188,11 +188,11 @@ result backend 只存结果，并不提供幂等保证。顺序和幂等冲突�
 
 RabbitMQ 的 prefetch 用未确认计数做背压，Kafka 的 offset 是分区内的消费进度指针——先处理再提交可能重复、先提交再处理可能丢，这个次序正是投递语义在消费端的翻版。死信队列把反复失败的消息从主链路隔离，避免单条毒消息靠无限重试拖垮整体吞吐。
 
-<Term word='队列与发布订阅' text='队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitMQ 的 queue 加 consumer、Celery 的 task queue 都属于这一类，适合把工作分发给多个 worker 做负载均衡。发布订阅（pub/sub）反过来，一条消息广播给所有订阅者；Kafka 的 topic 加 ' />
+<Term word='队列与发布订阅' text='队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitMQ 的 queue 加 consumer、Celery 的 task queue 都属于这一类，适合把工作分发给多个 worker 做负载均衡。发布订阅（pub/sub）反过来，一条消息广播给所有订阅者；Kafka 的 topic 加…' />
 
-<Term word='至少一次与恰好一次的真相' text='RabbitMQ 这边，消费者处理完显式 `basic_ack`，没确认且连接断开的消息会 requeue 重新投递；`basic_qos(prefetch_count)` 限制未确认消息数，免得慢消费者被灌满内存；处理失败可以 `basic_nack(requeue=False)`，或配置 `x-dead-lette' />
+<Term word='至少一次与恰好一次的真相' text='RabbitMQ 这边，消费者处理完显式 `basic_ack`，没确认且连接断开的消息会 requeue 重新投递；`basic_qos(prefetch_count)` 限制未确认消息数，免得慢消费者被灌满内存；处理失败可以 `basic_nack(requeue=False)`，或配置…' />
 
-<FlowTimeline :steps='[{"title": "队列、发布订阅与三种投递语义", "desc": "队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitM…", "tone": "blue"}, {"title": "确认、重试、死信与顺序", "desc": "RabbitMQ 这边，消费者处理完显式 `basic_ack`，没确认且连接断开的…", "tone": "purple"}, {"title": "可靠投递的工程清单", "desc": "消息体固定带四样东西：`message_id`、业务幂等键、产生时间、schema …", "tone": "orange"}, {"title": "工程落地", "desc": "带去重表、死信与退避的任务消费者", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "队列、发布订阅与三种投递语义", "desc": "队列（point-to-point）里一条消息只被一个消费者取走处理，RabbitM…", "tone": "blue"}, {"title": "确认、重试、死信与顺序", "desc": "RabbitMQ 这边，消费者处理完显式 `basic_ack`，没确认且连接断开的…", "tone": "purple"}, {"title": "可靠投递的工程清单", "desc": "消息体固定带四样东西：`message_id`、业务幂等键、产生时间、schema…", "tone": "orange"}, {"title": "工程落地", "desc": "带去重表、死信与退避的任务消费者", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 带去重表、死信与退避的任务消费者
@@ -251,7 +251,7 @@ print('dead', db.execute('SELECT COUNT(*) FROM dead_letter').fetchone()[0])
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 队列与发布订阅 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 队列与发布订阅 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -302,3 +302,16 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 3. 重复来自两处：生产者等不到确认重发、消费者处理完未确认就崩溃被重新交付
 
 [下一讲：认证授权：Session、JWT、OAuth2 与 RBAC](/server/auth)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/089-mq.py`
+
+```bash
+python3 examples/lessons/089-mq.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/089-mq.py) · [全部示例代码索引](/examples/)

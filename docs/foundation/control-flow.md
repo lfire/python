@@ -56,7 +56,7 @@ print(describe('anything'))
 
 <OutputBox title='主示例运行结果' output='move 3 4\nstop done\npositive 9\nunknown\nunknown' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def describe(cmd):\n    match cmd:\n        case [&#39;go&#39;, x, y]:\n            return &#39;move &#39; + str(x) + &#39; &#39; + str(y)\n        case {&#39;type&#39;: &#39;stop&#39;, &#39;reason&#39;: r}:\n            return &#39;stop &#39; + str(r)\n        case [x] if x &gt; 0:\n            return &#39;positive &#39; + str(x)\n        case _:\n            return &#39;unknown&#39;\n\nprint(describe([&#39;go&#39;, 3, 4]))\nprint(describe({&#39;type&#39;: &#39;stop&#39;, &#39;reason&#39;: &#39;done&#39;}))\nprint(describe([9]))\nprint(describe([-1]))\nprint(describe(&#39;anything&#39;))' :notes='["定义按结构分流的函数，subject 是 cmd", "match 开始按书写顺序尝试各模式", "序列模式：长度 3 且首项为 go，解包绑定 x 与 y", "把坐标拼成返回串", "映射模式：dict 含 type 为 stop 的键，并绑定 reason 到 r", "把原因拼成返回串", "序列模式加守卫：单元素且值大于 0 才命中", "返回正数描述", "通配符兜底，必须放最后", "未命中任何具体模式时返回 unknown", "长度 3 的列表命中第一个模式，解包出 3 与 4", "含 type 与 reason 的 dict 命中映射模式", "单元素正数命中带守卫的模式", "单元素 -1 使守卫为假，落到通配符", "字符串不匹配序列与映射模式，落到通配符"]' title='第 012 讲 · 分支：if / elif / else 与 match-case' />
+<LineByLine code='def describe(cmd):\n    match cmd:\n        case [&#39;go&#39;, x, y]:\n            return &#39;move &#39; + str(x) + &#39; &#39; + str(y)\n        case {&#39;type&#39;: &#39;stop&#39;, &#39;reason&#39;: r}:\n            return &#39;stop &#39; + str(r)\n        case [x] if x &gt; 0:\n            return &#39;positive &#39; + str(x)\n        case _:\n            return &#39;unknown&#39;\n\nprint(describe([&#39;go&#39;, 3, 4]))\nprint(describe({&#39;type&#39;: &#39;stop&#39;, &#39;reason&#39;: &#39;done&#39;}))\nprint(describe([9]))\nprint(describe([-1]))\nprint(describe(&#39;anything&#39;))' :notes='["定义按结构分流的函数，subject 是 cmd", "match 开始按书写顺序尝试各模式", "序列模式：长度 3 且首项为 go，解包绑定 x 与 y", "把坐标拼成返回串", "映射模式：dict 含 type 为 stop 的键，并绑定 reason 到 r", "把原因拼成返回串", "序列模式加守卫：单元素且值大于 0 才命中", "返回正数描述", "通配符兜底，必须放最后", "未命中任何具体模式时返回 unknown", "空行，只用于分隔逻辑块，不影响执行结果。", "长度 3 的列表命中第一个模式，解包出 3 与 4", "含 type 与 reason 的 dict 命中映射模式", "单元素正数命中带守卫的模式", "单元素 -1 使守卫为假，落到通配符", "字符串不匹配序列与映射模式，落到通配符"]' title='第 012 讲 · 分支：if / elif / else 与 match-case' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -168,9 +168,9 @@ print('ternary', 'even' if 4 % 2 == 0 else 'odd')
 
 卫语句降低的是控制流嵌套深度，让失败路径在字节码里提前返回，主路径不再被多层跳转裹住。把结构匹配理解成一串条件跳转，顺序、守卫时机与不可达分支为什么会出问题就都串起来了。
 
-<ConceptDiagram type='layers3' title='第 012 讲 · match-case 是结构模式匹配，不是 switch' labels='match-case 是结构模式匹配，不是 |守卫、捕获与匹配顺序：把分支写成数据|卫语句与可读性边界：少嵌套、早返回' caption='写出层次清晰、可维护的条件逻辑' />
+<ConceptDiagram type='layers3' title='第 012 讲 · match-case 是结构模式匹配，不是 switch' labels='match-case 是结构模式匹配，不是…|守卫、捕获与匹配顺序：把分支写成数据|卫语句与可读性边界：少嵌套、早返回|早返回与卫语句' caption='写出层次清晰、可维护的条件逻辑' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 运维命令路由：结构匹配管形状、分派表管扁平值
@@ -237,3 +237,16 @@ print('missing', compute('mod', 2, 3))
 3. 序列模式不匹配 str/bytes/bytearray；守卫在模式绑定后求值，为假继续下一个 case
 
 [下一讲：循环：for / while、range 与循环 else](/foundation/loops)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/012-control-flow.py`
+
+```bash
+python3 examples/lessons/012-control-flow.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/012-control-flow.py) · [全部示例代码索引](/examples/)

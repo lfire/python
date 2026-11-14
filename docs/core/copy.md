@@ -47,9 +47,9 @@ description: 在接口边界上控制对象所有权
 | copy.copy(a) | 新建，id 不同 | 仍共享引用 | 不递归，不处理 | 通常返回原对象 |
 | copy.deepcopy(a) | 新建 | 递归新建，隔离 | 靠 memo 处理且保留 aliasing | 走 _deepcopy_atomic 直接复用 |
 
-<ConceptDiagram type='layers3' title='第 057 讲 · 三种复制层次的共享边界' labels='三种复制层次的共享边界|copy / deepcopy 协议与不可 |接口所有权：防御性拷贝与不可变替代' caption='在接口边界上控制对象所有权' />
+<ConceptDiagram type='layers3' title='第 057 讲 · 三种复制层次的共享边界' labels='三种复制层次的共享边界|copy / deepcopy 协议与不可…|接口所有权：防御性拷贝与不可变替代|防御性拷贝' caption='在接口边界上控制对象所有权' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 对照：一次 copy.copy 为什么没隔离嵌套配置
@@ -72,7 +72,7 @@ print('deep isolated', deep[0])
 
 <OutputBox title='主示例运行结果' output='outer is shallow False\nshallow inner shared True\ndeep inner new True\ndeep keeps alias True\nshallow sees [1, 2, 3]\ndeep isolated [1, 2]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import copy\n\ninner = [1, 2]\nouter = [inner, inner]\nshallow = copy.copy(outer)\ndeep = copy.deepcopy(outer)\nprint(&#39;outer is shallow&#39;, outer is shallow)\nprint(&#39;shallow inner shared&#39;, shallow[0] is outer[0])\nprint(&#39;deep inner new&#39;, deep[0] is not outer[0])\nprint(&#39;deep keeps alias&#39;, deep[0] is deep[1])\nouter[0].append(3)\nprint(&#39;shallow sees&#39;, shallow[0])\nprint(&#39;deep isolated&#39;, deep[0])' :notes='["导入 copy 模块，标准库实现复制协议", "建一个内层可变列表", "外层列表两次引用同一个 inner，制造 aliasing", "浅拷贝：只新建最外层容器", "深拷贝：递归复制并维护 memo", "外层确实是两个不同对象", "浅拷贝的内层仍与外层共用同一个列表对象", "深拷贝为每个内层建了新对象", "原图里共享的同一对象，深拷贝后仍共享同一个新对象", "改动原图的内层列表", "浅拷贝可见这次改动，证明内层共享", "深拷贝完全隔离，仍是旧值"]' title='第 057 讲 · 可变性、深浅拷贝与共享状态' />
+<LineByLine code='import copy\n\ninner = [1, 2]\nouter = [inner, inner]\nshallow = copy.copy(outer)\ndeep = copy.deepcopy(outer)\nprint(&#39;outer is shallow&#39;, outer is shallow)\nprint(&#39;shallow inner shared&#39;, shallow[0] is outer[0])\nprint(&#39;deep inner new&#39;, deep[0] is not outer[0])\nprint(&#39;deep keeps alias&#39;, deep[0] is deep[1])\nouter[0].append(3)\nprint(&#39;shallow sees&#39;, shallow[0])\nprint(&#39;deep isolated&#39;, deep[0])' :notes='["导入 copy 模块，标准库实现复制协议", "空行，只用于分隔逻辑块，不影响执行结果。", "建一个内层可变列表", "外层列表两次引用同一个 inner，制造 aliasing", "浅拷贝：只新建最外层容器", "深拷贝：递归复制并维护 memo", "外层确实是两个不同对象", "浅拷贝的内层仍与外层共用同一个列表对象", "深拷贝为每个内层建了新对象", "原图里共享的同一对象，深拷贝后仍共享同一个新对象", "改动原图的内层列表", "浅拷贝可见这次改动，证明内层共享", "深拷贝完全隔离，仍是旧值"]' title='第 057 讲 · 可变性、深浅拷贝与共享状态' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -122,7 +122,7 @@ copy 模块里 tuple 的深拷贝由 `_deepcopy_tuple` 处理，会先复制元�
 | 持有 _thread.lock / 文件句柄 | reduce 需 pickle 状态 | TypeError: cannot pickle '_thread.lock' object |
 | lambda / 局部函数 / 生成器 | reduce 找不到可引用名 | AttributeError 或 PicklingError |
 
-<Callout type="tip" title='核心心智模型' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等' />
+<Callout type="tip" title='核心心智模型' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等…' />
 
 
 ### 循环图里同一节点为何仍是同一个对象
@@ -163,9 +163,9 @@ reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstat
 
 `tracemalloc` 能测出浅拷贝只分配一个外层列表，深拷贝还会为每个内层容器额外分配，差额与容器数量成正比。
 
-<Term word='赋值 / 浅拷贝 / 深拷贝' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等价于 `x[:]` ' />
+<Term word='赋值 / 浅拷贝 / 深拷贝' text='赋值 `a = b` 不复制任何东西，只让两个名字引用同一个对象，`id(a) == id(b)` 成立。`copy.copy(x)` 生成一个新的最外层容器，但把内部元素的引用原样塞进去：对 list、dict、set 分别走 `_copy_list` / `_copy_dict` 等快捷路径，等价于 `x[:]`…' />
 
-<Term word='copy 与 deepcopy 协议' text='自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。因此一个持有' />
+<Term word='copy 与 deepcopy 协议' text='自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。因此一个持有…' />
 
 
 ## 接口边界的所有权：防御性拷贝与不可变替代
@@ -238,13 +238,13 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='库 API 返回副本或只读视图（MappingProxyType），在文档里写清所有权；性能敏感路径用不可变结构替代拷贝' />
 
-<CheckList id='P057b' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改了一行，三行全变」", "能复现并解释「用 copy.copy 包一层就以为隔离了嵌套配置」", "能复现并解释「deepcopy 一个持有锁或数据库连接的对象报 TypeE」", "能用一条命令验证 赋值 / 浅拷贝 / 深拷贝", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P057b' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改了一行，三行全变」", "能复现并解释「用 copy.copy 包一层就以为隔离了嵌套配置」", "能复现并解释「deepcopy 一个持有锁或数据库连接的对象报 TypeE…」", "能用一条命令验证 赋值 / 浅拷贝 / 深拷贝", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 赋值 / 浅拷贝 / 深拷贝 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 赋值 / 浅拷贝 / 深拷贝 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查与排查顺序
@@ -259,7 +259,7 @@ python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='[[0] * 3] * 3 改了一行，三行全变：外层乘法复制的是同一个内层列表的引用，而不是内容' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：[[0] * 3] * 3 改了一行，三行全", "body": "外层乘法复制的是同一个内层列表的引用，而不是内容", "tip": "用列表推导 [[0] * 3 for _ in range(3)]，或逐行 deepcopy"}, {"title": "第 2 步：用 copy.copy 包一层就以为隔离了嵌", "body": "浅拷贝只复制最外层，内层 dict/list 仍与调用方共享", "tip": "对嵌套结构用 copy.deepcopy，或把内部状态改为 tuple / frozen dataclass 从根上不可变"}, {"title": "第 3 步：deepcopy 一个持有锁或数据库连接的对", "body": "无 __deepcopy__ 时回退到 __reduce_ex__，需要 pickle 状态，而锁/句柄不可 pickle", "tip": "实现 __deepcopy__ 跳过资源字段、只复制数据字段；或改成传值而非传对象"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：[[0] * 3] * 3 改了一行，三行全…", "body": "外层乘法复制的是同一个内层列表的引用，而不是内容", "tip": "用列表推导 [[0] * 3 for _ in range(3)]，或逐行 deepcopy"}, {"title": "第 2 步：用 copy.copy 包一层就以为隔离了嵌…", "body": "浅拷贝只复制最外层，内层 dict/list 仍与调用方共享", "tip": "对嵌套结构用 copy.deepcopy，或把内部状态改为 tuple / frozen dataclass 从根上不可变"}, {"title": "第 3 步：deepcopy 一个持有锁或数据库连接的对…", "body": "无 __deepcopy__ 时回退到 __reduce_ex__，需要 pickle 状态，而锁/句柄不可 pickle", "tip": "实现 __deepcopy__ 跳过资源字段、只复制数据字段；或改成传值而非传对象"}]' />
 
 
 ## 练习、自测与速记
@@ -298,3 +298,16 @@ python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"
 3. deepcopy 回退路径是 __reduce_ex__(4) + copyreg，遇到锁/文件/连接会抛 cannot pickle 的 TypeError
 
 [下一讲：性能剖析：timeit、cProfile 与 tracemalloc](/core/profiling)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/057-copy.py`
+
+```bash
+python3 examples/lessons/057-copy.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/057-copy.py) · [全部示例代码索引](/examples/)

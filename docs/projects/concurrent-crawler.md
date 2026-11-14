@@ -18,9 +18,9 @@ description: 把单机采集演进成可调度的分布式系统
 
 朴素解法「多开几个进程 + 内存 set 去重」失败在三点：去重集合没有共享、任务取出即丢失缺少确认机制、频率与优先级没有统一约束。分布式化之后新增的不是「更快的抓取」，而是重复、乱序、部分失败与节点失联。这一讲用标准库搭出布隆去重、优先队列、`asyncio` 限流、`ack` 出队与断点快照的最小可运行骨架。
 
-<ConceptDiagram type='hub4' title='第 128 讲 · 串行到 asyncio：连接池、限流与合规默认值' labels='串行到 asyncio：连接池、限流与合规默|URL 去重与优先级：布隆过滤与最小堆|任务队列、ack、断点续爬与监控' caption='把单机采集演进成可调度的分布式系统' />
+<ConceptDiagram type='hub4' title='第 128 讲 · 串行到 asyncio：连接池、限流与合规默认值' labels='串行到 asyncio：连接池、限流与合规默…|URL 去重与优先级：布隆过滤与最小堆|任务队列、ack、断点续爬与监控|监控与合规' caption='把单机采集演进成可调度的分布式系统' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 串行基线到 asyncio：连接池、限流与合规默认值
@@ -86,7 +86,7 @@ print('fetched', asyncio.run(crawl(unique, 2)))
 
 <OutputBox title='主示例运行结果' output='unique [&#39;/a&#39;, &#39;/b&#39;, &#39;/c&#39;, &#39;/d&#39;]\npriority order [&#39;/c&#39;, &#39;/b&#39;, &#39;/a&#39;, &#39;/d&#39;]\nfetched [&#39;/A&#39;, &#39;/B&#39;, &#39;/C&#39;, &#39;/D&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import asyncio, hashlib, heapq\n\nclass Bloom:\n    def __init__(self, size, k):\n        self.size, self.k, self.bits = size, k, [0] * size\n    def _slots(self, s):\n        for i in range(self.k):\n            yield int(hashlib.md5((str(i) + s).encode()).hexdigest(), 16) % self.size\n    def add(self, s):\n        for p in self._slots(s):\n            self.bits[p] = 1\n    def maybe_seen(self, s):\n        return all(self.bits[p] for p in self._slots(s))\n\nfeed = [(2, &#39;/a&#39;), (1, &#39;/b&#39;), (2, &#39;/a&#39;), (0, &#39;/c&#39;), (1, &#39;/b&#39;), (3, &#39;/d&#39;)]\nbloom = Bloom(size=128, k=2)\nqueue, unique = [], []\nfor pri, u in feed:\n    if bloom.maybe_seen(u):\n        continue\n    bloom.add(u)\n    unique.append(u)\n    heapq.heappush(queue, (pri, u))\nprint(&#39;unique&#39;, unique)\nprint(&#39;priority order&#39;, [heapq.heappop(queue)[1] for _ in range(len(queue))])\n\nasync def crawl(urls, limit):\n    sem = asyncio.Semaphore(limit)\n    async def one(u):\n        async with sem:\n            await asyncio.sleep(0)\n            return u.upper()\n    return await asyncio.gather(*(one(u) for u in urls))\nprint(&#39;fetched&#39;, asyncio.run(crawl(unique, 2)))' :notes='["导入 asyncio 做并发、hashlib 造多哈希、heapq 做优先队列", "Bloom 是概率型去重结构，用比特数组表示见过哪些 URL", "构造时记下位数 m、哈希个数 k，并初始化全 0 比特数组", "把三个参数压缩到一行，bits 即长度 size 的列表", "_slots 生成 k 个哈希位置，是布隆过滤的核心", "用不同前缀 i 区分 k 个独立哈希", "md5 前缀加 URL 后取十六进制转整数，再对 size 取模得位置", "add 把某个 URL 对应的所有位置置 1", "遍历该 URL 的每个哈希位置", "置位为 1，表示已见过", "maybe_seen 判断所有位是否都已置 1", "全为 1 才返回 True，故存在误判可能但不会漏判", "模拟待抓 feed，含重复 /a 与 /b，优先级是元组第一项", "m=128、k=2 的布隆，参数决定误判率", "queue 是最小堆，unique 记录首次出现的 URL", "按 feed 顺序处理每条 (优先级, URL)", "布隆说见过就跳过，重复项在此被挡掉", "跳过重复 URL，不进入优先队列", "首次见到的 URL 加入布隆，置位所有哈希位置", "记录到 unique，作为本次真正要抓的集合", "按 (priority, url) 压入最小堆，O(log n)", "打印去重结果，四个不同 URL 各出现一次", "依次弹堆，验证数字小的优先级先出队", "crawl 是 asyncio 并发抓取骨架，limit 控制在途数", "在事件循环内创建 Semaphore，避免绑定未运行的 loop", "one 是单个抓取协程，模拟一次网络往返", "async with sem 把并发限制在 limit 以内", "await 让出事件循环，模拟等待网络响应", "返回处理后的结果，保持与输入一一对应", "gather 并发跑全部协程并按输入顺序收集结果", "用 asyncio.run 启动事件循环，打印抓取结果"]' title='第 128 讲 · 实战 07 · 并发爬虫与分布式调度' />
+<LineByLine code='import asyncio, hashlib, heapq\n\nclass Bloom:\n    def __init__(self, size, k):\n        self.size, self.k, self.bits = size, k, [0] * size\n    def _slots(self, s):\n        for i in range(self.k):\n            yield int(hashlib.md5((str(i) + s).encode()).hexdigest(), 16) % self.size\n    def add(self, s):\n        for p in self._slots(s):\n            self.bits[p] = 1\n    def maybe_seen(self, s):\n        return all(self.bits[p] for p in self._slots(s))\n\nfeed = [(2, &#39;/a&#39;), (1, &#39;/b&#39;), (2, &#39;/a&#39;), (0, &#39;/c&#39;), (1, &#39;/b&#39;), (3, &#39;/d&#39;)]\nbloom = Bloom(size=128, k=2)\nqueue, unique = [], []\nfor pri, u in feed:\n    if bloom.maybe_seen(u):\n        continue\n    bloom.add(u)\n    unique.append(u)\n    heapq.heappush(queue, (pri, u))\nprint(&#39;unique&#39;, unique)\nprint(&#39;priority order&#39;, [heapq.heappop(queue)[1] for _ in range(len(queue))])\n\nasync def crawl(urls, limit):\n    sem = asyncio.Semaphore(limit)\n    async def one(u):\n        async with sem:\n            await asyncio.sleep(0)\n            return u.upper()\n    return await asyncio.gather(*(one(u) for u in urls))\nprint(&#39;fetched&#39;, asyncio.run(crawl(unique, 2)))' :notes='["导入 asyncio 做并发、hashlib 造多哈希、heapq 做优先队列", "空行，只用于分隔逻辑块，不影响执行结果。", "Bloom 是概率型去重结构，用比特数组表示见过哪些 URL", "构造时记下位数 m、哈希个数 k，并初始化全 0 比特数组", "把三个参数压缩到一行，bits 即长度 size 的列表", "_slots 生成 k 个哈希位置，是布隆过滤的核心", "用不同前缀 i 区分 k 个独立哈希", "md5 前缀加 URL 后取十六进制转整数，再对 size 取模得位置", "add 把某个 URL 对应的所有位置置 1", "遍历该 URL 的每个哈希位置", "置位为 1，表示已见过", "maybe_seen 判断所有位是否都已置 1", "全为 1 才返回 True，故存在误判可能但不会漏判", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟待抓 feed，含重复 /a 与 /b，优先级是元组第一项", "m=128、k=2 的布隆，参数决定误判率", "queue 是最小堆，unique 记录首次出现的 URL", "按 feed 顺序处理每条 (优先级, URL)", "布隆说见过就跳过，重复项在此被挡掉", "跳过重复 URL，不进入优先队列", "首次见到的 URL 加入布隆，置位所有哈希位置", "记录到 unique，作为本次真正要抓的集合", "按 (priority, url) 压入最小堆，O(log n)", "打印去重结果，四个不同 URL 各出现一次", "依次弹堆，验证数字小的优先级先出队", "空行，只用于分隔逻辑块，不影响执行结果。", "crawl 是 asyncio 并发抓取骨架，limit 控制在途数", "在事件循环内创建 Semaphore，避免绑定未运行的 loop", "one 是单个抓取协程，模拟一次网络往返", "async with sem 把并发限制在 limit 以内", "await 让出事件循环，模拟等待网络响应", "返回处理后的结果，保持与输入一一对应", "gather 并发跑全部协程并按输入顺序收集结果", "用 asyncio.run 启动事件循环，打印抓取结果"]' title='第 128 讲 · 实战 07 · 并发爬虫与分布式调度' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -174,7 +174,7 @@ print('bits per item', round(1024 / 100, 2))
 
 监控至少要有：在途任务数、重复率、失败率、每域名 QPS、队列积压、节点心跳与快照时间；压测时先看这些指标再决定加 worker 还是加限流。
 
-<ArchBlueprint title='第 128 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "串行到 asyncio：连接池、限流与合规默认值", "protocol": "调用 / 请求", "items": [{"label": "串行到 asyncio：", "sub": "输入与前置", "detail": "串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Sema", "tone": "blue"}]}, {"name": "核心规则", "note": "URL 去重与优先级：布隆过滤与最小堆", "protocol": "语言 / 运行时协议", "items": [{"label": "URL 去重与优先级：布", "sub": "状态与边界", "detail": "去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 `(", "tone": "purple"}]}, {"name": "落地与收尾", "note": "任务队列、ack、断点续爬与监控", "items": [{"label": "任务队列、ack、断点续", "sub": "工程处理", "detail": "分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 `ack` 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写", "tone": "green"}]}]' />
+<ArchBlueprint title='第 128 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "串行到 asyncio：连接池、限流与合规默认值", "protocol": "调用 / 请求", "items": [{"label": "串行到 asyncio…", "sub": "输入与前置", "detail": "串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接…", "tone": "blue"}]}, {"name": "核心规则", "note": "URL 去重与优先级：布隆过滤与最小堆", "protocol": "语言 / 运行时协议", "items": [{"label": "URL 去重与优先级：布…", "sub": "状态与边界", "detail": "去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "任务队列、ack、断点续爬与监控", "items": [{"label": "任务队列、ack、断点续…", "sub": "工程处理", "detail": "分布式新增的四类问题要各自有机制。重复：消息是 at-least-once 投递，worker take 后任务进入 inflight 表，只有处理成功并 `ack` 才真正出队；节点崩溃时 inflight 里未确认的任务靠可见性超时或重启扫描重新入队，配合按 URL 主键 upsert 的幂等写…", "tone": "green"}]}]' />
 
 
 ## 事件循环与 Semaphore 的等待者队列
@@ -189,9 +189,9 @@ print('bits per item', round(1024 / 100, 2))
 
 分布式队列的 at-least-once 语义意味着任务可能被投递多次，只有「`ack` 后出队」加「按主键 upsert 的幂等写入」才能把重复投递收敛成一致结果；检查点用临时文件加原子 replace，保证快照不会是半截状态。
 
-<Term word='串行基线到 asyncio' text='串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Semaphore` 限制在' />
+<Term word='串行基线到 asyncio' text='串行 `requests` 的耗时是所有 RTT 之和，吞吐被单连接往返卡住。`asyncio` 配 `aiohttp.ClientSession` 用单线程事件循环把等待重叠：`TCPConnector` 用 `limit` 与 `limit_per_host` 限制总连接与单主机连接，`Semaphore` 限制在…' />
 
-<Term word='连接池与限流' text='去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约 `(1 - e^(-kn' />
+<Term word='连接池与限流' text='去重前先规范化 URL：去掉 fragment、按字典序排 query、host 转小写、默认端口归一化，否则同一个页面会有多种写法绕过去重。共享去重可用 Redis 的 `SETNX`（精确、可计数）或布隆过滤（省内存）：布隆用 m 位比特数组加 k 个独立哈希，插入 n 个元素后的误判率约…' />
 
 
 ## 去重方案对照：内存 set 与布隆过滤的边界
@@ -219,7 +219,7 @@ print('bits per item', round(1024 / 100, 2))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='多 worker 各用内存 set 去重，重复抓取率飙升：去重集合没有共享，同一 URL 在不同节点都被判定为首次' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：多 worker 各用内存 set 去重，重", "body": "去重集合没有共享，同一 URL 在不同节点都被判定为首次", "tip": "改用 Redis SETNX 或共享布隆过滤，布隆之后再做一次精确判重"}, {"title": "第 2 步：任务取出即出队，节点崩溃后任务永久丢失", "body": "没有 inflight 与确认机制，取出与完成之间发生故障就无从恢复", "tip": "worker take 后进 inflight、成功才 ack 出队，未确认任务靠可见性超时或重启扫描重新入队"}, {"title": "第 3 步：不限速短时间猛抓同一域名，被封 IP", "body": "没有每域名最小间隔、并发上限与退避，也没有读 robots.txt", "tip": "把 robots、limit_per_host、Semaphore 与 5xx/429 指数退避做成默认策略，并埋每域名 QPS 监控"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：多 worker 各用内存 set 去重，重…", "body": "去重集合没有共享，同一 URL 在不同节点都被判定为首次", "tip": "改用 Redis SETNX 或共享布隆过滤，布隆之后再做一次精确判重"}, {"title": "第 2 步：任务取出即出队，节点崩溃后任务永久丢失", "body": "没有 inflight 与确认机制，取出与完成之间发生故障就无从恢复", "tip": "worker take 后进 inflight、成功才 ack 出队，未确认任务靠可见性超时或重启扫描重新入队"}, {"title": "第 3 步：不限速短时间猛抓同一域名，被封 IP", "body": "没有每域名最小间隔、并发上限与退避，也没有读 robots.txt", "tip": "把 robots、limit_per_host、Semaphore 与 5xx/429 指数退避做成默认策略，并埋每域名 QPS 监控"}]' />
 
 
 ## 监控与合规默认值
@@ -287,7 +287,7 @@ print('remaining', [u for _, u in sorted(w2.heap)])
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 串行基线到 asyncio 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 串行基线到 asyncio 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 动手练习、自测与速记
@@ -315,3 +315,16 @@ python -m compileall -q . && python -m pytest -q
 3. heapq 最小堆 push/pop 是 O(log n)，元素用 (pri, seq, url) 避免同优先级比较不可排序对象
 
 [下一讲：实战 08 · KV 贯穿线 ① 内存版与接口抽象](/projects/kv-memory)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/128-concurrent-crawler.py`
+
+```bash
+python3 examples/lessons/128-concurrent-crawler.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/128-concurrent-crawler.py) · [全部示例代码索引](/examples/)

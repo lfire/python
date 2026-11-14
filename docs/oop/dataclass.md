@@ -55,7 +55,7 @@ description: 选对数据建模工具并理解校验边界
 | slots | False | 重建类并加 __slots__ | 3.10 |
 | weakref_slot | False | 给 slots 类加 __weakref__ | 3.11 |
 
-<Callout type="tip" title='核心心智模型' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、' />
+<Callout type="tip" title='核心心智模型' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`…' />
 
 
 ## dataclass 在类创建期生成了什么，不生成什么
@@ -97,7 +97,7 @@ except FrozenInstanceError as e:
 
 <OutputBox title='主示例运行结果' output='eq True lt True\nhash True\nrepr Item(name=&#39;pen&#39;, qty=2)\npost [] 2\nFrozenInstanceError' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from dataclasses import dataclass, field, FrozenInstanceError\n\n@dataclass(frozen=True, order=True)\nclass Item:\n    name: str\n    qty: int = 0\n    tags: list = field(default_factory=list, repr=False, compare=False)\n\na = Item(&#39;pen&#39;, 2)\nb = Item(&#39;pen&#39;, 2)\nprint(&#39;eq&#39;, a == b, &#39;lt&#39;, Item(&#39;pen&#39;, 1) &lt; a)\nprint(&#39;hash&#39;, hash(a) == hash(b))\nprint(&#39;repr&#39;, repr(a))\nprint(&#39;post&#39;, a.tags, a.qty)\ntry:\n    a.qty = 9\nexcept FrozenInstanceError as e:\n    print(type(e).__name__)' :notes='["导入 dataclass、field 与 FrozenInstanceError", "空行分隔导入与类定义", "frozen=True 且 order=True，同时开启哈希生成与比较方法", "非默认字段 name 排在最前", "带默认值的 qty，参与比较与哈希", "可变默认值用 default_factory，repr/compare 都关掉", "空行分隔定义与验证", "构造第一个实例，tags 由工厂生成空列表", "构造字段相同的第二个实例", "eq 按参与 compare 的字段判等；order 生成 __lt__", "frozen+eq 时自动生成 __hash__，相等者哈希相等", "repr 排除 repr=False 的 tags，只显示 name 与 qty", "default_factory 生效，tags 是独立的空列表", "尝试给冻结实例的字段重新赋值", "frozen 把 __setattr__ 换成抛 FrozenInstanceError 的版本", "打印异常类型，它是 AttributeError 的子类"]' title='第 047 讲 · dataclass、attrs 与 pydantic 模型' />
+<LineByLine code='from dataclasses import dataclass, field, FrozenInstanceError\n\n@dataclass(frozen=True, order=True)\nclass Item:\n    name: str\n    qty: int = 0\n    tags: list = field(default_factory=list, repr=False, compare=False)\n\na = Item(&#39;pen&#39;, 2)\nb = Item(&#39;pen&#39;, 2)\nprint(&#39;eq&#39;, a == b, &#39;lt&#39;, Item(&#39;pen&#39;, 1) &lt; a)\nprint(&#39;hash&#39;, hash(a) == hash(b))\nprint(&#39;repr&#39;, repr(a))\nprint(&#39;post&#39;, a.tags, a.qty)\ntry:\n    a.qty = 9\nexcept FrozenInstanceError as e:\n    print(type(e).__name__)' :notes='["导入 dataclass、field 与 FrozenInstanceError", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与类定义", "frozen=True 且 order=True，同时开启哈希生成与比较方法", "非默认字段 name 排在最前", "带默认值的 qty，参与比较与哈希", "可变默认值用 default_factory，repr/compare 都关掉", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔定义与验证", "构造第一个实例，tags 由工厂生成空列表", "构造字段相同的第二个实例", "eq 按参与 compare 的字段判等；order 生成 __lt__", "frozen+eq 时自动生成 __hash__，相等者哈希相等", "repr 排除 repr=False 的 tags，只显示 name 与 qty", "default_factory 生效，tags 是独立的空列表", "尝试给冻结实例的字段重新赋值", "frozen 把 __setattr__ 换成抛 FrozenInstanceError 的版本", "打印异常类型，它是 AttributeError 的子类"]' title='第 047 讲 · dataclass、attrs 与 pydantic 模型' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -114,9 +114,9 @@ except FrozenInstanceError as e:
 
 `pydantic` 则完全不同：它在 `__init__` 里按字段类型做解析与强制转换，把字符串 `'12'` 变成 `int`，逐字段收集错误后抛 `ValidationError`，属于运行时校验层而非代码生成层。
 
-<ConceptDiagram type='layers3' title='第 047 讲 · dataclass 在类创建期生成了什么，不生成什么' labels='dataclass 在类创建期生成了什么，不|field、frozen、order 与哈希|校验边界：dataclass、attrs、p' caption='选对数据建模工具并理解校验边界' />
+<ConceptDiagram type='layers3' title='第 047 讲 · dataclass 在类创建期生成了什么，不生成什么' labels='dataclass 在类创建期生成了什么，不…|field、frozen、order 与哈希…|校验边界：dataclass、attrs、p…|与 ORM 的边界' caption='选对数据建模工具并理解校验边界' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## field、frozen、order 与哈希联动的具体规则
@@ -181,9 +181,9 @@ except ValueError as e:
 | eq=True, frozen=False, unsafe_hash=True | 强制生成 | 能，但字段可变会破坏契约 |
 | 显式自定义 __hash__ | 保留自定义函数 | 能 |
 
-<Term word='dataclass 生成了什么' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、`frozen=Fa' />
+<Term word='dataclass 生成了什么' text='`@dataclass` 是类装饰器，在类创建之后读取 `__annotations__` 与类属性，用动态生成的函数源码补齐样板方法，再挂回类上。它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`…' />
 
-<Term word='field 与 default_factory' text='`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；`init` 决定是否进 `__init__` 参数，`repr` / `compare` / `hash' />
+<Term word='field 与 default_factory' text='`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；`init` 决定是否进 `__init__` 参数，`repr` / `compare`…' />
 
 
 ## 校验边界：dataclass、attrs、pydantic 分层使用
@@ -230,7 +230,7 @@ print('params:', [p for p in inspect.signature(dataclass).parameters if p in ('i
 | pydantic v2 | 实例化时按类型解析、转换、验证 | 第三方（Rust 核心） | HTTP / MQ / 配置等边界层 |
 | ORM 层 | 持久化时按列约束校验 | 取决于框架 | 数据库写入前 |
 
-<FlowTimeline :steps='[{"title": "dataclass 在类创建期生成了什么，不生成什么", "desc": "`@dataclass` 是类装饰器，在类创建之后读取 `__annotations…", "tone": "blue"}, {"title": "field、frozen、order 与哈希联动的具体规则", "desc": "`field()` 控制单个字段：`default` 给默认值，`default_f…", "tone": "purple"}, {"title": "校验边界：dataclass、attrs、pydantic 分层使用", "desc": "三者不在同一层竞争。`dataclass` 是标准库，只在类创建期生成样板方法，零运…", "tone": "orange"}, {"title": "工程落地", "desc": "配置边界层：显式校验后再构造 frozen 领域对象", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "dataclass 在类创建期生成了什么，不生成…", "desc": "`@dataclass` 是类装饰器，在类创建之后读取…", "tone": "blue"}, {"title": "field、frozen、order 与哈希联动…", "desc": "`field()` 控制单个字段：`default` 给默认值…", "tone": "purple"}, {"title": "校验边界：dataclass、attrs、pyd…", "desc": "三者不在同一层竞争。`dataclass` 是标准库，只在类创建期生成样板方法，零运…", "tone": "orange"}, {"title": "工程落地", "desc": "配置边界层：显式校验后再构造 frozen 领域对象", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 配置边界层：显式校验后再构造 frozen 领域对象
@@ -281,7 +281,7 @@ print('frozen value:', validate({'host': 'h', 'port': 80}).port)
 python -c "print(type('Demo', (), {}).__mro__)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 dataclass 生成了什么 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 dataclass 生成了什么 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -293,7 +293,7 @@ python -c "print(type('Demo', (), {}).__mro__)"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='可变默认值写成 tags: list = []：类创建期 dataclass 检测到可变默认值会抛 ValueError: mutable default ... use default_factory；绕过装饰器时则所有实例共享同一个列表' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：可变默认值写成 tags: list = [", "body": "类创建期 dataclass 检测到可变默认值会抛 ValueError: mutable default ... use default_factory；绕过装饰器时则所有实例共享同一个列表", "tip": "用 field(default_factory=list)，每次实例化调用工厂生成独立对象"}, {"title": "第 2 步：把外部输入直接交给 dataclass 以为", "body": "注解只是元数据，dataclass 不生成运行时类型检查，脏数据会流到业务深处才爆", "tip": "边界层用 pydantic 做解析与校验，或在 __post_init__ 里显式检查；内部对象再用 frozen dataclass"}, {"title": "第 3 步：以为 frozen=True 让对象彻底不可", "body": "frozen 只冻结字段绑定（替换 __setattr__），字段值若是 list/dict 仍可原地修改", "tip": "把可变字段换成 tuple / frozenset，或在 __post_init__ 里做防御性拷贝后再存"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：可变默认值写成 tags: list = […", "body": "类创建期 dataclass 检测到可变默认值会抛 ValueError: mutable default ... use default_factory；绕过装饰器时则所有实例共享同一个列表", "tip": "用 field(default_factory=list)，每次实例化调用工厂生成独立对象"}, {"title": "第 2 步：把外部输入直接交给 dataclass 以为…", "body": "注解只是元数据，dataclass 不生成运行时类型检查，脏数据会流到业务深处才爆", "tip": "边界层用 pydantic 做解析与校验，或在 __post_init__ 里显式检查；内部对象再用 frozen dataclass"}, {"title": "第 3 步：以为 frozen=True 让对象彻底不可…", "body": "frozen 只冻结字段绑定（替换 __setattr__），字段值若是 list/dict 仍可原地修改", "tip": "把可变字段换成 tuple / frozenset，或在 __post_init__ 里做防御性拷贝后再存"}]' />
 
 
 ## 选对工具再动手
@@ -332,3 +332,16 @@ python -c "print(type('Demo', (), {}).__mro__)"
 3. order=True 要求 eq=True；unsafe_hash 是给可变类强行开哈希的逃生口
 
 [下一讲：阶段综合：最小 ORM 与校验框架](/oop/capstone)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/047-dataclass.py`
+
+```bash
+python3 examples/lessons/047-dataclass.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/047-dataclass.py) · [全部示例代码索引](/examples/)

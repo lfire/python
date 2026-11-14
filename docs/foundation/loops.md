@@ -55,7 +55,7 @@ else:
 
 <OutputBox title='主示例运行结果' output='range_len 3\nrange_list [2, 5, 8]\nrange_mem True\nenumerate [(1, &#39;a&#39;), (2, &#39;b&#39;), (3, &#39;c&#39;)]\nzip [(&#39;a&#39;, 1), (&#39;b&#39;, 2)]\nno_break loop completed' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\nr = range(2, 10, 3)\nprint(&#39;range_len&#39;, len(r))\nprint(&#39;range_list&#39;, list(r))\nprint(&#39;range_mem&#39;, sys.getsizeof(range(1000000)) == sys.getsizeof(range(1)))\n\nwords = [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nprint(&#39;enumerate&#39;, list(enumerate(words, 1)))\nprint(&#39;zip&#39;, list(zip(words, [1, 2])))\n\nfor w in words:\n    if w == &#39;x&#39;:\n        break\nelse:\n    print(&#39;no_break&#39;, &#39;loop completed&#39;)' :notes='["导入 sys 以用 getsizeof 观测对象内存", "range(2, 10, 3) 只存三个整数，不物化元素", "len 由算术直接算出 3，不遍历生成元素", "list(r) 才把惰性序列物化成 [2, 5, 8]", "两个不同大小的 range 对象内存相同，证明惰性", "定义一个普通 list 供后续循环使用", "enumerate 的 start 设为 1，给每项配序号", "zip 以最短输入为准，第二个列表只有两项", "for 从 iter(words) 拿迭代器逐项取", "循环体里的 if 条件永远不成立", "因此这一行的 break 从未执行", "for 的 else 只在未被 break 时执行", "没有 break 故 else 分支执行，打印完成信息"]' title='第 013 讲 · 循环：for / while、range 与循环 else' />
+<LineByLine code='import sys\nr = range(2, 10, 3)\nprint(&#39;range_len&#39;, len(r))\nprint(&#39;range_list&#39;, list(r))\nprint(&#39;range_mem&#39;, sys.getsizeof(range(1000000)) == sys.getsizeof(range(1)))\n\nwords = [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nprint(&#39;enumerate&#39;, list(enumerate(words, 1)))\nprint(&#39;zip&#39;, list(zip(words, [1, 2])))\n\nfor w in words:\n    if w == &#39;x&#39;:\n        break\nelse:\n    print(&#39;no_break&#39;, &#39;loop completed&#39;)' :notes='["导入 sys 以用 getsizeof 观测对象内存", "range(2, 10, 3) 只存三个整数，不物化元素", "len 由算术直接算出 3，不遍历生成元素", "list(r) 才把惰性序列物化成 [2, 5, 8]", "两个不同大小的 range 对象内存相同，证明惰性", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个普通 list 供后续循环使用", "enumerate 的 start 设为 1，给每项配序号", "zip 以最短输入为准，第二个列表只有两项", "空行，只用于分隔逻辑块，不影响执行结果。", "for 从 iter(words) 拿迭代器逐项取", "循环体里的 if 条件永远不成立", "因此这一行的 break 从未执行", "for 的 else 只在未被 break 时执行", "没有 break 故 else 分支执行，打印完成信息"]' title='第 013 讲 · 循环：for / while、range 与循环 else' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -123,9 +123,9 @@ print('fixed', clean)
 
 理解「迭代器持有独立游标」，就知道为什么遍历副本或重建能修好跳项，以及为什么第二次遍历同一个迭代器会空转。
 
-<ConceptDiagram type='hub4' title='第 013 讲 · for 基于迭代协议：拿迭代器，不拿下标' labels='for 基于迭代协议：拿迭代器，不拿下标|range 是惰性序列：内存恒定与 O(1)|break / continue / els' caption='理解迭代的本质并写出高效循环' />
+<ConceptDiagram type='hub4' title='第 013 讲 · for 基于迭代协议：拿迭代器，不拿下标' labels='for 基于迭代协议：拿迭代器，不拿下标|range 是惰性序列：内存恒定与 O(1)…|break / continue / els…|避免索引循环' caption='理解迭代的本质并写出高效循环' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 大文件逐行清洗：惰性生成、重建过滤、for-else 兜底
@@ -181,7 +181,7 @@ print('pairs', len(pairs), 'first_tag', pairs[0][1])
 
 <Callout type="warn" title='本讲最容易踩的坑' text='遍历 list 的同时删除元素：迭代器按旧下标前进，删除让后续元素前移，紧邻的下一项被跳过且不报错' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：遍历 list 的同时删除元素", "body": "迭代器按旧下标前进，删除让后续元素前移，紧邻的下一项被跳过且不报错", "tip": "遍历切片副本 for n in nums[:]，或更推荐用列表推导式重建"}, {"title": "第 2 步：把 range 当成列表、或认为它有 __n", "body": "range 是只存三个整数的惰性序列，内存恒定，是可迭代对象不是迭代器", "tip": "需要物化才 list(range(...))；用 hasattr 分别检查 __iter__ 与 __next__"}, {"title": "第 3 步：以为 for-else 总执行，或把迭代器当", "body": "else 只在未被 break 时执行；迭代器一次耗尽，第二次循环空转且无异常", "tip": "查找失败分支用 for-else 并确认有 break；需重复遍历先 list(it) 物化"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：遍历 list 的同时删除元素", "body": "迭代器按旧下标前进，删除让后续元素前移，紧邻的下一项被跳过且不报错", "tip": "遍历切片副本 for n in nums[:]，或更推荐用列表推导式重建"}, {"title": "第 2 步：把 range 当成列表、或认为它有 __n…", "body": "range 是只存三个整数的惰性序列，内存恒定，是可迭代对象不是迭代器", "tip": "需要物化才 list(range(...))；用 hasattr 分别检查 __iter__ 与 __next__"}, {"title": "第 3 步：以为 for-else 总执行，或把迭代器当…", "body": "else 只在未被 break 时执行；迭代器一次耗尽，第二次循环空转且无异常", "tip": "查找失败分支用 for-else 并确认有 break；需重复遍历先 list(it) 物化"}]' />
 
 
 ## 按迭代协议写循环：练习、自测与速记
@@ -209,3 +209,16 @@ print('pairs', len(pairs), 'first_tag', pairs[0][1])
 3. for-else 仅在未被 break 时执行（被 continue 不算中断），适合写查找失败分支
 
 [下一讲：输入输出与文件初识：print、input、open、with](/foundation/io)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/013-loops.py`
+
+```bash
+python3 examples/lessons/013-loops.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/013-loops.py) · [全部示例代码索引](/examples/)

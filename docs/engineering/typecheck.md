@@ -49,11 +49,11 @@ pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，�
 | pyright typeCheckingMode='strict' | pyright 总严格度 | 逐项 report* 开关可细调 |
 | reveal_type(x) | 静态分析内建 | 打印推断类型，运行时不存在 |
 
-<Callout type="tip" title='核心心智模型' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implici' />
+<Callout type="tip" title='核心心智模型' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`…' />
 
-<ConceptDiagram type='compare2' title='第 074 讲 · 检查器配置与严格度：mypy 与 pyright' labels='检查器配置与严格度：mypy 与 pyrig|stub、py.typed 与 Any 的传|泛型不变性、协议与运行时互补' caption='让类型契约在 CI 中真正生效' />
+<ConceptDiagram type='compare2' title='第 074 讲 · 检查器配置与严格度：mypy 与 pyright' labels='检查器配置与严格度：mypy 与 pyrig…|stub、py.typed 与 Any 的传…|泛型不变性、协议与运行时互补|与运行时校验互补' caption='让类型契约在 CI 中真正生效' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### strict 与渐进加严的目录级策略
@@ -82,9 +82,9 @@ Any 被定义成同时是格顶与格底（与任意类型双向兼容），因�
 
 PEP 561 的 `py.typed` 是个空标记文件，检查器据此决定是否读取该包的行内注解；没有它，stub（`.pyi`）或 Any 就是唯一出路。
 
-<Term word='检查器配置与严格度' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implicit_optional' />
+<Term word='检查器配置与严格度' text='mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`…' />
 
-<Term word='stub 与第三方库' text='PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器才会使用它的内联注解；缺了这个标记，即便源码写了类型，第三方项目 import 它时也会被当成无类型，名字全部退化成 Any。无标注的库靠 stub 文件（`.pyi`）补：typeshed 随检查器附带标准库与常见第三方库的 stub' />
+<Term word='stub 与第三方库' text='PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器才会使用它的内联注解；缺了这个标记，即便源码写了类型，第三方项目 import 它时也会被当成无类型，名字全部退化成 Any。无标注的库靠 stub 文件（`.pyi`）补：typeshed 随检查器附带标准库与常见第三方库的 stub…' />
 
 
 ## 对照：isinstance(x, list[int]) 与运行时校验
@@ -108,7 +108,7 @@ print('Any to int at runtime', y)
 
 <OutputBox title='主示例运行结果' output='hints {&#39;a&#39;: &#39;int&#39;, &#39;b&#39;: &#39;int&#39;, &#39;return&#39;: &#39;int&#39;}\nsignature (a: int, b: int) -&gt; int\nisinstance generic raises TypeError True\nAny to int at runtime not an int' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import typing, inspect\n\ndef add(a: int, b: int) -&gt; int:\n    return a + b\n\nprint(&#39;hints&#39;, {k: v.__name__ for k, v in typing.get_type_hints(add).items()})\nprint(&#39;signature&#39;, str(inspect.signature(add)))\ntry:\n    isinstance([1, 2], list[int])\nexcept TypeError as e:\n    print(&#39;isinstance generic raises TypeError&#39;, &#39;generic&#39; in str(e).lower())\nx: typing.Any = &#39;not an int&#39;\ny: int = x\nprint(&#39;Any to int at runtime&#39;, y)' :notes='["导入 typing 读类型、inspect 读运行时签名", "定义带完整注解的函数，注解默认只是元数据", "函数体不校验类型，直接相加", "get_type_hints 解析出参数与返回值的真实类型对象", "inspect.signature 显示注解串，证明注解随函数保存", "准备验证参数化泛型能否用于 isinstance", "list[int] 是参数化泛型，不能作 isinstance 第二参数", "捕获预期的 TypeError", "错误信息含 generic，确认是参数化泛型被拒", "把字符串赋给 Any 类型变量，静态检查不拦截", "再赋给声明为 int 的名字，运行时毫无检查", "打印证明注解不强制：y 实际是字符串"]' title='第 074 讲 · 静态检查：mypy / pyright 与渐进式类型' />
+<LineByLine code='import typing, inspect\n\ndef add(a: int, b: int) -&gt; int:\n    return a + b\n\nprint(&#39;hints&#39;, {k: v.__name__ for k, v in typing.get_type_hints(add).items()})\nprint(&#39;signature&#39;, str(inspect.signature(add)))\ntry:\n    isinstance([1, 2], list[int])\nexcept TypeError as e:\n    print(&#39;isinstance generic raises TypeError&#39;, &#39;generic&#39; in str(e).lower())\nx: typing.Any = &#39;not an int&#39;\ny: int = x\nprint(&#39;Any to int at runtime&#39;, y)' :notes='["导入 typing 读类型、inspect 读运行时签名", "空行，只用于分隔逻辑块，不影响执行结果。", "定义带完整注解的函数，注解默认只是元数据", "函数体不校验类型，直接相加", "空行，只用于分隔逻辑块，不影响执行结果。", "get_type_hints 解析出参数与返回值的真实类型对象", "inspect.signature 显示注解串，证明注解随函数保存", "准备验证参数化泛型能否用于 isinstance", "list[int] 是参数化泛型，不能作 isinstance 第二参数", "捕获预期的 TypeError", "错误信息含 generic，确认是参数化泛型被拒", "把字符串赋给 Any 类型变量，静态检查不拦截", "再赋给声明为 int 的名字，运行时毫无检查", "打印证明注解不强制：y 实际是字符串"]' title='第 074 讲 · 静态检查：mypy / pyright 与渐进式类型' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -234,7 +234,7 @@ print('annotation not enforced', add('x', 'y'))
 
 <Callout type="idea" title='落地提示' text='从公共 API 与数据边界开始加类型，按目录逐步提高严格度，把未覆盖文件列成清单逐步清零' />
 
-<CheckList id='P074b' title='上线前自检' :items='["能复现并解释「为赶进度满仓 # type: ignore」", "能复现并解释「公共函数返回 Any 且不治理」", "能复现并解释「以为注解运行时会校验、或写 isinstance(x, li」", "能用一条命令验证 检查器配置与严格度", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P074b' title='上线前自检' :items='["能复现并解释「为赶进度满仓 # type: ignore」", "能复现并解释「公共函数返回 Any 且不治理」", "能复现并解释「以为注解运行时会校验、或写 isinstance(x, li…」", "能用一条命令验证 检查器配置与严格度", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -244,15 +244,15 @@ print('annotation not enforced', add('x', 'y'))
 | 公共函数返回 Any 且不治理 | Any 与任意类型双向兼容，沿调用链传播使整片代码失去保护 | 开 warn_return_any / disallow_any_generics，补返回类型或为第三方库加 stub / py.typed |
 | 以为注解运行时会校验、或写 isinstance(x, list[int]) | 注解默认不强制，add('x','y') 照常返回；参数化泛型作 isinstance 参数抛 TypeError | 运行期用 pydantic/dataclasses/手写 validate 校验，isinstance 只判未参数化的 list/dict |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：为赶进度满仓 # type: ignore", "body": "抑制口子越开越多，检查器变装饰，缺陷集中躲在最难查处", "tip": "精确到码 # type: ignore[arg-type]，开 warn_unused_ignores，按目录逐步提高严格度并清零忽略清单"}, {"title": "第 2 步：公共函数返回 Any 且不治理", "body": "Any 与任意类型双向兼容，沿调用链传播使整片代码失去保护", "tip": "开 warn_return_any / disallow_any_generics，补返回类型或为第三方库加 stub / py.typed"}, {"title": "第 3 步：以为注解运行时会校验、或写 isinstan", "body": "注解默认不强制，add(&#39;x&#39;,&#39;y&#39;) 照常返回；参数化泛型作 isinstance 参数抛 TypeError", "tip": "运行期用 pydantic/dataclasses/手写 validate 校验，isinstance 只判未参数化的 list/dict"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：为赶进度满仓 # type: ignore", "body": "抑制口子越开越多，检查器变装饰，缺陷集中躲在最难查处", "tip": "精确到码 # type: ignore[arg-type]，开 warn_unused_ignores，按目录逐步提高严格度并清零忽略清单"}, {"title": "第 2 步：公共函数返回 Any 且不治理", "body": "Any 与任意类型双向兼容，沿调用链传播使整片代码失去保护", "tip": "开 warn_return_any / disallow_any_generics，补返回类型或为第三方库加 stub / py.typed"}, {"title": "第 3 步：以为注解运行时会校验、或写 isinstan…", "body": "注解默认不强制，add(&#39;x&#39;,&#39;y&#39;) 照常返回；参数化泛型作 isinstance 参数抛 TypeError", "tip": "运行期用 pydantic/dataclasses/手写 validate 校验，isinstance 只判未参数化的 list/dict"}]' />
 
 ```bash
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 检查器配置与严格度 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 检查器配置与严格度 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<FlowTimeline :steps='[{"title": "检查器配置与严格度：mypy 与 pyright", "desc": "mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `…", "tone": "blue"}, {"title": "stub、py.typed 与 Any 的传播", "desc": "PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器…", "tone": "purple"}, {"title": "泛型不变性、协议与运行时互补", "desc": "PEP 585（3.9 起）让内置容器可直接下标：`list[int]`、`dict…", "tone": "orange"}, {"title": "工程落地", "desc": "静态注解与运行时校验互补的边界守卫", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "检查器配置与严格度：mypy 与 pyright", "desc": "mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的…", "tone": "blue"}, {"title": "stub、py.typed 与 Any 的传播", "desc": "PEP 561 规定：一个包只有在自身里带上 `py.typed` 标记文件，检查器…", "tone": "purple"}, {"title": "泛型不变性、协议与运行时互补", "desc": "PEP 585（3.9 起）让内置容器可直接下标：`list[int]`…", "tone": "orange"}, {"title": "工程落地", "desc": "静态注解与运行时校验互补的边界守卫", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 练习、自测与一页纸速记
@@ -291,3 +291,16 @@ python -m compileall -q . && python -m pytest -q
 3. Any 与任意类型双向兼容并沿调用链传播，用 warn_return_any / disallow_any_generics 治理
 
 [下一讲：单元测试：pytest、fixture 与参数化](/engineering/pytest)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/074-typecheck.py`
+
+```bash
+python3 examples/lessons/074-typecheck.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/074-typecheck.py) · [全部示例代码索引](/examples/)

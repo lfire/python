@@ -102,13 +102,13 @@ os.environ.pop('TASK_PATH', None)
 
 <OutputBox title='主示例运行结果' output='added 1\nadded 2\nadd 0 0\ndone 0 missing 1\nrows [{&#39;id&#39;: 1, &#39;title&#39;: &#39;写精讲&#39;, &#39;done&#39;: True}, {&#39;id&#39;: 2, &#39;title&#39;: &#39;跑自检&#39;, &#39;done&#39;: False}]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import argparse, json, os, tempfile\n\ndef load(path):\n    if not os.path.exists(path):\n        return []\n    with open(path, &#39;r&#39;, encoding=&#39;utf-8&#39;) as f:\n        return json.load(f)\n\ndef save(path, rows):\n    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or &#39;.&#39;)\n    try:\n        with os.fdopen(fd, &#39;w&#39;, encoding=&#39;utf-8&#39;) as f:\n            json.dump(rows, f, ensure_ascii=False)\n            f.flush()\n            os.fsync(f.fileno())\n        os.replace(tmp, path)\n    finally:\n        if os.path.exists(tmp):\n            os.remove(tmp)\n\ndef add(path, title):\n    rows = load(path)\n    rows.append({&#39;id&#39;: len(rows) + 1, &#39;title&#39;: title, &#39;done&#39;: False})\n    save(path, rows)\n    return rows[-1][&#39;id&#39;]\n\ndef done(path, tid):\n    rows = load(path)\n    hit = [r for r in rows if r[&#39;id&#39;] == tid]\n    if not hit:\n        return 1\n    hit[0][&#39;done&#39;] = True\n    save(path, rows)\n    return 0\n\ndef main(argv=None):\n    p = argparse.ArgumentParser(prog=&#39;todo&#39;)\n    sub = p.add_subparsers(dest=&#39;cmd&#39;, required=True)\n    sub.add_parser(&#39;add&#39;).add_argument(&#39;title&#39;)\n    sub.add_parser(&#39;done&#39;).add_argument(&#39;tid&#39;, type=int)\n    ns = p.parse_args(argv)\n    path = os.environ.get(&#39;TASK_PATH&#39;, &#39;todos.json&#39;)\n    if ns.cmd == &#39;add&#39;:\n        print(&#39;added&#39;, add(path, ns.title))\n        return 0\n    return done(path, ns.tid)\n\nwith tempfile.TemporaryDirectory() as d:\n    path = os.path.join(d, &#39;todos.json&#39;)\n    os.environ[&#39;TASK_PATH&#39;] = path\n    print(&#39;add&#39;, main([&#39;add&#39;, &#39;写精讲&#39;]), main([&#39;add&#39;, &#39;跑自检&#39;]))\n    print(&#39;done&#39;, main([&#39;done&#39;, &#39;1&#39;]), &#39;missing&#39;, main([&#39;done&#39;, &#39;99&#39;]))\n    print(&#39;rows&#39;, json.load(open(path, encoding=&#39;utf-8&#39;)))\nos.environ.pop(&#39;TASK_PATH&#39;, None)' :notes='["导入 argparse 做命令解析，json 做持久化，os 做原子替换，tempfile 建临时文件", "load 读取清单；文件不存在视为空库", "os.path.exists 先判断，避免首次运行时 FileNotFoundError", "不存在返回空列表，作为初始状态", "以 UTF-8 显式打开，跨平台不依赖系统默认编码", "json.load 反序列化，文件损坏时这里会抛 JSONDecodeError", "save 用临时文件加 os.replace 实现原子写", "mkstemp 必须在目标文件所在目录建临时文件，保证同文件系统", "try 包住整段写入，异常时走 finally 清理", "os.fdopen 把 fd 包成文本文件对象", "json.dump 序列化，ensure_ascii=False 让中文原样落盘", "f.flush 把用户态缓冲刷进内核页缓存", "os.fsync 把页缓存真正写到磁盘，防止断电丢数据", "os.replace 原子替换：读者只会看到完整旧文件或完整新文件", "finally 无论成功失败都执行清理", "仅在临时文件仍存在时才删，replace 成功后它已不存在", "删除残留的 .tmp，避免目录里堆积垃圾", "add 是纯领域逻辑，只依赖 load/save 返回的列表", "先读当前清单", "追加一条待办，id 用长度加一，done 初始为 False", "调用原子写落盘", "返回新条目的 id 供输出层使用", "done 按 id 标记完成，找不到返回业务错误码 1", "读取当前清单", "用列表推导找出匹配 id 的条目", "没命中则走业务错误分支", "return 1 让调用方据此设退出码", "命中则置 done 为 True", "保存回磁盘", "成功返回 0", "main 接收可注入的 argv，便于测试，默认 None 表示读 sys.argv", "建顶层解析器，prog 影响 usage 里显示的程序名", "add_subparsers 的 required=True 自 3.7 起支持，缺子命令直接报错", "add 子命令声明一个名为 title 的位置参数", "done 子命令声明 tid，type=int 在解析阶段完成字符串到整数转换", "parse_args 返回 Namespace，命令层只到这里为止", "存储路径从环境变量取，遵循 12-factor 配置外置", "命令分发：add 分支调用领域层并打印结果", "打印新 id", "add 成功固定返回 0", "其余命令把领域层返回的码原样作为退出码", "用 TemporaryDirectory 建隔离目录，测试不污染真实家目录", "组合出目标文件路径", "通过环境变量把路径注入 main，演示配置外置", "连续两次 add，外层 print 先输出两次内部打印再打印两个返回码", "done 命中返回 0，done 99 未命中返回 1，退出码区分业务成败", "直接读取最终文件，验证持久化内容正确", "清理环境变量，避免污染同进程的其它测试"]' title='第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发' />
+<LineByLine code='import argparse, json, os, tempfile\n\ndef load(path):\n    if not os.path.exists(path):\n        return []\n    with open(path, &#39;r&#39;, encoding=&#39;utf-8&#39;) as f:\n        return json.load(f)\n\ndef save(path, rows):\n    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or &#39;.&#39;)\n    try:\n        with os.fdopen(fd, &#39;w&#39;, encoding=&#39;utf-8&#39;) as f:\n            json.dump(rows, f, ensure_ascii=False)\n            f.flush()\n            os.fsync(f.fileno())\n        os.replace(tmp, path)\n    finally:\n        if os.path.exists(tmp):\n            os.remove(tmp)\n\ndef add(path, title):\n    rows = load(path)\n    rows.append({&#39;id&#39;: len(rows) + 1, &#39;title&#39;: title, &#39;done&#39;: False})\n    save(path, rows)\n    return rows[-1][&#39;id&#39;]\n\ndef done(path, tid):\n    rows = load(path)\n    hit = [r for r in rows if r[&#39;id&#39;] == tid]\n    if not hit:\n        return 1\n    hit[0][&#39;done&#39;] = True\n    save(path, rows)\n    return 0\n\ndef main(argv=None):\n    p = argparse.ArgumentParser(prog=&#39;todo&#39;)\n    sub = p.add_subparsers(dest=&#39;cmd&#39;, required=True)\n    sub.add_parser(&#39;add&#39;).add_argument(&#39;title&#39;)\n    sub.add_parser(&#39;done&#39;).add_argument(&#39;tid&#39;, type=int)\n    ns = p.parse_args(argv)\n    path = os.environ.get(&#39;TASK_PATH&#39;, &#39;todos.json&#39;)\n    if ns.cmd == &#39;add&#39;:\n        print(&#39;added&#39;, add(path, ns.title))\n        return 0\n    return done(path, ns.tid)\n\nwith tempfile.TemporaryDirectory() as d:\n    path = os.path.join(d, &#39;todos.json&#39;)\n    os.environ[&#39;TASK_PATH&#39;] = path\n    print(&#39;add&#39;, main([&#39;add&#39;, &#39;写精讲&#39;]), main([&#39;add&#39;, &#39;跑自检&#39;]))\n    print(&#39;done&#39;, main([&#39;done&#39;, &#39;1&#39;]), &#39;missing&#39;, main([&#39;done&#39;, &#39;99&#39;]))\n    print(&#39;rows&#39;, json.load(open(path, encoding=&#39;utf-8&#39;)))\nos.environ.pop(&#39;TASK_PATH&#39;, None)' :notes='["导入 argparse 做命令解析，json 做持久化，os 做原子替换，tempfile 建临时文件", "空行，只用于分隔逻辑块，不影响执行结果。", "load 读取清单；文件不存在视为空库", "os.path.exists 先判断，避免首次运行时 FileNotFoundError", "不存在返回空列表，作为初始状态", "以 UTF-8 显式打开，跨平台不依赖系统默认编码", "json.load 反序列化，文件损坏时这里会抛 JSONDecodeError", "空行，只用于分隔逻辑块，不影响执行结果。", "save 用临时文件加 os.replace 实现原子写", "mkstemp 必须在目标文件所在目录建临时文件，保证同文件系统", "try 包住整段写入，异常时走 finally 清理", "os.fdopen 把 fd 包成文本文件对象", "json.dump 序列化，ensure_ascii=False 让中文原样落盘", "f.flush 把用户态缓冲刷进内核页缓存", "os.fsync 把页缓存真正写到磁盘，防止断电丢数据", "os.replace 原子替换：读者只会看到完整旧文件或完整新文件", "finally 无论成功失败都执行清理", "仅在临时文件仍存在时才删，replace 成功后它已不存在", "删除残留的 .tmp，避免目录里堆积垃圾", "空行，只用于分隔逻辑块，不影响执行结果。", "add 是纯领域逻辑，只依赖 load/save 返回的列表", "先读当前清单", "追加一条待办，id 用长度加一，done 初始为 False", "调用原子写落盘", "返回新条目的 id 供输出层使用", "空行，只用于分隔逻辑块，不影响执行结果。", "done 按 id 标记完成，找不到返回业务错误码 1", "读取当前清单", "用列表推导找出匹配 id 的条目", "没命中则走业务错误分支", "return 1 让调用方据此设退出码", "命中则置 done 为 True", "保存回磁盘", "成功返回 0", "空行，只用于分隔逻辑块，不影响执行结果。", "main 接收可注入的 argv，便于测试，默认 None 表示读 sys.argv", "建顶层解析器，prog 影响 usage 里显示的程序名", "add_subparsers 的 required=True 自 3.7 起支持，缺子命令直接报错", "add 子命令声明一个名为 title 的位置参数", "done 子命令声明 tid，type=int 在解析阶段完成字符串到整数转换", "parse_args 返回 Namespace，命令层只到这里为止", "存储路径从环境变量取，遵循 12-factor 配置外置", "命令分发：add 分支调用领域层并打印结果", "打印新 id", "add 成功固定返回 0", "其余命令把领域层返回的码原样作为退出码", "空行，只用于分隔逻辑块，不影响执行结果。", "用 TemporaryDirectory 建隔离目录，测试不污染真实家目录", "组合出目标文件路径", "通过环境变量把路径注入 main，演示配置外置", "连续两次 add，外层 print 先输出两次内部打印再打印两个返回码", "done 命中返回 0，done 99 未命中返回 1，退出码区分业务成败", "直接读取最终文件，验证持久化内容正确", "清理环境变量，避免污染同进程的其它测试"]' title='第 122 讲 · 实战 01 · 待办清单 CLI 与命令分发' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='layers3' title='第 122 讲 · argparse 子命令与命令分发：命令层只解析不碰业务' labels='argparse 子命令与命令分发：命令层只|JSON 持久化与原子写入：临时文件加 os|四层分离、退出码与端到端测试' caption='交付一个可安装、可测试、可持久化的命令行工具' />
+<ConceptDiagram type='layers3' title='第 122 讲 · argparse 子命令与命令分发：命令层只解析不碰业务' labels='argparse 子命令与命令分发：命令层只…|JSON 持久化与原子写入：临时文件加 os…|四层分离、退出码与端到端测试|端到端测试' caption='交付一个可安装、可测试、可持久化的命令行工具' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 对照：把解析和业务塞进同一个函数
@@ -203,9 +203,9 @@ print('same dir', os.path.dirname(a) == os.path.dirname(b))
 
 <OutputBox title='原理验证' output='content new\ninode changed True\ntmp gone True\nsame dir True' />
 
-<Term word='命令解析 argparse / click' text='`ArgumentParser(prog=&#39;todo&#39;)` 建出解析器，`add_subparsers` 再挂子命令，其中 `dest=&#39;cmd&#39;` 决定命令名存到哪个字段、`required=True` 让缺子命令时直接报错而不是静默返回 `None`——这个参数从 3.7 起才支持。每个 `add_parser(&#39;' />
+<Term word='命令解析 argparse / click' text='`ArgumentParser(prog=&#39;todo&#39;)` 建出解析器，`add_subparsers` 再挂子命令，其中 `dest=&#39;cmd&#39;` 决定命令名存到哪个字段、`required=True` 让缺子命令时直接报错而不是静默返回 `None`——这个参数从 3.7 起才支持。每个…' />
 
-<Term word='数据模型与 JSON 持久化' text='`json.dump` 负责序列化、`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写进文件，`indent=2` 便于人读。原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；用' />
+<Term word='数据模型与 JSON 持久化' text='`json.dump` 负责序列化、`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写进文件，`indent=2` 便于人读。原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；用…' />
 
 
 ## 四层分离与替换点
@@ -275,7 +275,7 @@ pip install -e .
 | 把 json.JSONDecodeError 当成空列表继续 save | 文件损坏时静默当成空库并覆盖写，把用户仅存的数据抹掉 | 文件不存在才返回空列表；存在但解析失败要报错退出，保留原文件供人工恢复 |
 | 所有路径都返回 0，外层脚本误判成功 | 业务失败只 print 没设退出码，returncode 恒为 0 | main 返回整数、入口 sys.exit(main())；业务错误返 1，用法错误由 argparse 返 2 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接 open(path,&#39;w&#39;) 覆盖写，", "body": "先截断再逐字节写，崩溃窗口里目标文件本身就是损坏状态", "tip": "tempfile.mkstemp 在目标同目录写临时文件，flush + fsync 后 os.replace 原子替换"}, {"title": "第 2 步：把 json.JSONDecodeError", "body": "文件损坏时静默当成空库并覆盖写，把用户仅存的数据抹掉", "tip": "文件不存在才返回空列表；存在但解析失败要报错退出，保留原文件供人工恢复"}, {"title": "第 3 步：所有路径都返回 0，外层脚本误判成功", "body": "业务失败只 print 没设退出码，returncode 恒为 0", "tip": "main 返回整数、入口 sys.exit(main())；业务错误返 1，用法错误由 argparse 返 2"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：直接 open(path,&#39;w&#39;) 覆盖写…", "body": "先截断再逐字节写，崩溃窗口里目标文件本身就是损坏状态", "tip": "tempfile.mkstemp 在目标同目录写临时文件，flush + fsync 后 os.replace 原子替换"}, {"title": "第 2 步：把 json.JSONDecodeError…", "body": "文件损坏时静默当成空库并覆盖写，把用户仅存的数据抹掉", "tip": "文件不存在才返回空列表；存在但解析失败要报错退出，保留原文件供人工恢复"}, {"title": "第 3 步：所有路径都返回 0，外层脚本误判成功", "body": "业务失败只 print 没设退出码，returncode 恒为 0", "tip": "main 返回整数、入口 sys.exit(main())；业务错误返 1，用法错误由 argparse 返 2"}]' />
 
 
 ## 可安装 CLI：pyproject 入口点与端到端断言
@@ -360,3 +360,16 @@ print(e2e_test())
 3. 退出码分三类：0 成功、1 业务错误、2 argparse 用法错误；main 返整数配 sys.exit 透传
 
 [下一讲：实战 02 · 文件检索、日志与自动化办公](/projects/office-files)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/122-cli-todo.py`
+
+```bash
+python3 examples/lessons/122-cli-todo.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/122-cli-todo.py) · [全部示例代码索引](/examples/)

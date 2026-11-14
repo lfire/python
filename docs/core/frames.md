@@ -76,7 +76,7 @@ print('result', probe())
 
 <OutputBox title='主示例运行结果' output='locals snapshot True\nf_locals writes through True（3.13+ PEP 667 写透代理；3.12 及以前为 False）\nnames [&#39;frame&#39;, &#39;snap&#39;, &#39;x&#39;]\nglobals is module True\nG changed True\nresult True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\n\nG = 0\ndef probe():\n    x = 1\n    snap = locals()\n    snap[&#39;x&#39;] = 50\n    print(&#39;locals snapshot&#39;, x == 1)\n    frame = sys._getframe()\n    frame.f_locals[&#39;x&#39;] = 99\n    print(&#39;f_locals writes through&#39;, x == 99)\n    print(&#39;names&#39;, sorted(frame.f_code.co_varnames))\n    print(&#39;globals is module&#39;, frame.f_globals is globals())\n    globals()[&#39;G&#39;] = 7\n    print(&#39;G changed&#39;, G == 7)\n    return frame.f_lasti &gt;= 0\nprint(&#39;result&#39;, probe())' :notes='["导入 sys，用于取当前帧与全局字典", "模块级全局名字，用于对比 globals() 写回效果", "定义函数，内部演示帧与命名空间语义", "局部变量 x 存进 fast locals 数组", "locals() 返回独立快照字典（PEP 667 后语义不变）", "改快照里的 x，不影响真正的局部变量", "快照写入不回写，x 仍是 1", "sys._getframe(0) 拿到当前执行帧", "3.13 起 frame.f_locals 是写透代理，写入直接改局部 x", "写透生效，x 变为 99（3.12 及以前仍是快照，结果相反）", "co_varnames 按顺序列出局部变量名", "f_globals 与 globals() 指向同一份模块字典", "globals() 返回真实字典，写入立即影响全局名字", "读到的 G 已变成 7，证明全局写回有效", "f_lasti 是当前字节码偏移，执行中恒非负", "调用并打印返回值"]' title='第 051 讲 · 帧、调用栈与命名空间' />
+<LineByLine code='import sys\n\nG = 0\ndef probe():\n    x = 1\n    snap = locals()\n    snap[&#39;x&#39;] = 50\n    print(&#39;locals snapshot&#39;, x == 1)\n    frame = sys._getframe()\n    frame.f_locals[&#39;x&#39;] = 99\n    print(&#39;f_locals writes through&#39;, x == 99)\n    print(&#39;names&#39;, sorted(frame.f_code.co_varnames))\n    print(&#39;globals is module&#39;, frame.f_globals is globals())\n    globals()[&#39;G&#39;] = 7\n    print(&#39;G changed&#39;, G == 7)\n    return frame.f_lasti &gt;= 0\nprint(&#39;result&#39;, probe())' :notes='["导入 sys，用于取当前帧与全局字典", "空行，只用于分隔逻辑块，不影响执行结果。", "模块级全局名字，用于对比 globals() 写回效果", "定义函数，内部演示帧与命名空间语义", "局部变量 x 存进 fast locals 数组", "locals() 返回独立快照字典（PEP 667 后语义不变）", "改快照里的 x，不影响真正的局部变量", "快照写入不回写，x 仍是 1", "sys._getframe(0) 拿到当前执行帧", "3.13 起 frame.f_locals 是写透代理，写入直接改局部 x", "写透生效，x 变为 99（3.12 及以前仍是快照，结果相反）", "co_varnames 按顺序列出局部变量名", "f_globals 与 globals() 指向同一份模块字典", "globals() 返回真实字典，写入立即影响全局名字", "读到的 G 已变成 7，证明全局写回有效", "f_lasti 是当前字节码偏移，执行中恒非负", "调用并打印返回值"]' title='第 051 讲 · 帧、调用栈与命名空间' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -112,11 +112,11 @@ CPython 每次 Python 函数调用都建立一个执行帧。3.11 之前帧是�
 
 `sys.settrace` / `sys.setprofile` 在 `call` / `line` / `return` / `exception` 事件上回调 Python 函数，开销与事件密度成正比。
 
-<ConceptDiagram type='flow4' title='第 051 讲 · 帧对象：f_locals、f_globals、f_back 与属性查找' labels='帧对象：f_locals、f_globals|调用栈、递归深度与 tracing 回调|生成器帧保留与 locals() 语义边界' caption='理解执行上下文如何被创建与销毁' />
+<ConceptDiagram type='flow4' title='第 051 讲 · 帧对象：f_locals、f_globals、f_back 与属性查找' labels='帧对象：f_locals、f_globals…|调用栈、递归深度与 tracing 回调|生成器帧保留与 locals() 语义边界|locals() 的语义' caption='理解执行上下文如何被创建与销毁' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者' />
+<Callout type="tip" title='核心心智模型' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者…' />
 
 
 ## 调用栈、递归深度与 tracing 回调
@@ -225,9 +225,9 @@ print('frame cleared', g.gi_frame is None)
 | x = 9 | 局部变量绑定 | 是 | 直接改 fast locals |
 | state['x']=9 | 可变容器 | 是 | 把状态放进字典再改容器 |
 
-<Term word='帧对象与 f_locals / f_globals' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者帧（沿这条链往上就是' />
+<Term word='帧对象与 f_locals / f_globals' text='每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：`f_code` 指向正在执行的 code object，`f_locals` 是局部命名空间的字典快照，`f_globals` 是模块全局字典，`f_builtins` 是内置命名空间，`f_back` 指向调用者帧（沿这条链往上就是…' />
 
-<Term word='调用栈与递归深度' text='调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`；`sys.setrecu' />
+<Term word='调用栈与递归深度' text='调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`…' />
 
 
 ## 用 sys.settrace 写一个最小行覆盖率收集器
@@ -265,13 +265,13 @@ print('trace disabled after', sys.gettrace() is None)
 
 <Callout type="idea" title='落地提示' text='写 profiler、覆盖率工具、调试器时用 sys.setprofile / settrace；生产环境避免长期开启，开销与线程行为都要评估' />
 
-<CheckList id='P051b' title='上线前自检' :items='["能复现并解释「在帧里改 locals() 期待改变局部变量，或把 3.12」", "能复现并解释「生产服务长期开启 sys.settrace / setpro」", "能复现并解释「递归爆栈后盲目把 setrecursionlimit 调到极」", "能用一条命令验证 帧对象与 f_locals / f_globals", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P051b' title='上线前自检' :items='["能复现并解释「在帧里改 locals() 期待改变局部变量，或把 3.12…」", "能复现并解释「生产服务长期开启 sys.settrace / setpro…」", "能复现并解释「递归爆栈后盲目把 setrecursionlimit 调到极…」", "能用一条命令验证 帧对象与 f_locals / f_globals", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 帧对象与 f_locals / f_globals 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 帧对象与 f_locals / f_globals 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -283,9 +283,9 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='在帧里改 locals() 期待改变局部变量，或把 3.12 的 f_locals 快照结论套到 3.13：locals() 始终是独立快照，写入不回写；3.13 的 PEP 667 却把 frame.f_locals 改成写透代理，写入直接改局部变量，行为随版本翻转' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在帧里改 locals() 期待改变局部变量", "body": "locals() 始终是独立快照，写入不回写；3.13 的 PEP 667 却把 frame.f_locals 改成写透代理，写入直接改局部变量，行为随版本翻转", "tip": "直接赋值局部变量，或把状态放进可变容器再改容器；跨版本代码不要把 f_locals 当可写命名空间，只用于读取观察"}, {"title": "第 2 步：生产服务长期开启 sys.settrace ", "body": "每行、每次调用都要回调 Python 函数，p99 延迟上升，且只对当前线程生效", "tip": "仅调试或覆盖率采样时短时开启，用完 settrace(None) / setprofile(None) 关闭；性能剖析改用采样 profiler"}, {"title": "第 3 步：递归爆栈后盲目把 setrecursionl", "body": "上限抬高后可能先耗尽 C 栈导致解释器崩溃，而不是安全返回", "tip": "给递归补收敛基线或改成迭代，必要时小幅上调并压测；RecursionError 应作为设计信号而非调参对象"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：在帧里改 locals() 期待改变局部变量…", "body": "locals() 始终是独立快照，写入不回写；3.13 的 PEP 667 却把 frame.f_locals 改成写透代理，写入直接改局部变量，行为随版本翻转", "tip": "直接赋值局部变量，或把状态放进可变容器再改容器；跨版本代码不要把 f_locals 当可写命名空间，只用于读取观察"}, {"title": "第 2 步：生产服务长期开启 sys.settrace…", "body": "每行、每次调用都要回调 Python 函数，p99 延迟上升，且只对当前线程生效", "tip": "仅调试或覆盖率采样时短时开启，用完 settrace(None) / setprofile(None) 关闭；性能剖析改用采样 profiler"}, {"title": "第 3 步：递归爆栈后盲目把 setrecursionl…", "body": "上限抬高后可能先耗尽 C 栈导致解释器崩溃，而不是安全返回", "tip": "给递归补收敛基线或改成迭代，必要时小幅上调并压测；RecursionError 应作为设计信号而非调参对象"}]' />
 
-<FlowTimeline :steps='[{"title": "帧对象：f_locals、f_globals、f_back 与属性查找", "desc": "每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性：…", "tone": "blue"}, {"title": "调用栈、递归深度与 tracing 回调", "desc": "调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` …", "tone": "purple"}, {"title": "生成器帧保留与 locals() 语义边界", "desc": "普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁：`gi_fram…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sys.settrace 写一个最小行覆盖率收集器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "帧对象：f_locals、f_globals、f…", "desc": "每次 Python 函数调用都会创建一个执行帧，暴露为 frame 对象。常用属性…", "tone": "blue"}, {"title": "调用栈、递归深度与 tracing 回调", "desc": "调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__`…", "tone": "purple"}, {"title": "生成器帧保留与 locals() 语义边界", "desc": "普通函数返回后帧被销毁，局部变量随之消失；生成器把帧挂起而不是销毁…", "tone": "orange"}, {"title": "工程落地", "desc": "用 sys.settrace 写一个最小行覆盖率收集器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 看得见调用栈
@@ -324,3 +324,16 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 3. 3.13 PEP 667 把 frame.f_locals 改成写透代理（写入生效），3.12 及以前仍是快照；3.11 起帧内联为 _PyInterpreterFrame
 
 [下一讲：对象内存布局、引用计数与小对象池](/core/memory)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/051-frames.py`
+
+```bash
+python3 examples/lessons/051-frames.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/051-frames.py) · [全部示例代码索引](/examples/)

@@ -20,7 +20,7 @@ description: 串起办公文档的全套自动化流水线
 
 这一讲用标准库 `email.message.EmailMessage` 构造合规的 `MIME` 邮件、用 `string.Template` 做模板渲染、用环境变量注入凭证，并把附件白名单、大小上限、限速与失败清单做成一条可运行的最小流水线。
 
-<Callout type="tip" title='核心心智模型' text='`email.message.EmailMessage` 自 3.6 起提供现代 API，构造时传 `policy=policy.SMTP` 会用 `CRLF` 作行分隔（`policy.default` 用 LF，发送场景要前者）。`msg.set_content(text)` 自动设 `Cont' />
+<Callout type="tip" title='核心心智模型' text='`email.message.EmailMessage` 自 3.6 起提供现代 API，构造时传 `policy=policy.SMTP` 会用 `CRLF` 作行分隔（`policy.default` 用 LF，发送场景要前者）。`msg.set_content(text)` 自动设…' />
 
 
 ## MIME 与 EmailMessage：把邮件构造交给协议实现
@@ -93,7 +93,7 @@ print('big', check_attachment('big.pdf', b'x' * 2048, {'.pdf'}, 1024))
 
 <OutputBox title='主示例运行结果' output='rendered Hi Zhang, your 6 bill is 128.50 CNY.\nmultipart multipart/alternative\nhtml part text/html\nsubject encoded True\nsend enabled True\nsend disabled False\npdf accept\nexe reject type\nbig reject size' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import os\nfrom email.message import EmailMessage\nfrom email import policy\nfrom string import Template\n\ntpl = Template(&#39;Hi ${name}, your ${month} bill is ${amount} CNY.&#39;)\nbody = tpl.substitute(name=&#39;Zhang&#39;, month=&#39;6&#39;, amount=&#39;128.50&#39;)\nmsg = EmailMessage(policy=policy.SMTP)\nmsg[&#39;Subject&#39;] = &#39;账单通知&#39;\nmsg[&#39;From&#39;] = &#39;billing@example.com&#39;\nmsg[&#39;To&#39;] = &#39;user@example.com&#39;\nmsg.set_content(body)\nmsg.add_alternative(&#39;&lt;p&gt;bill 128.50 CNY&lt;/p&gt;&#39;, subtype=&#39;html&#39;)\n\ndef check_attachment(name, data, allowed, max_bytes):\n    ext = &#39;.&#39; + name.rsplit(&#39;.&#39;, 1)[-1].lower()\n    if ext not in allowed:\n        return &#39;reject type&#39;\n    if len(data) &gt; max_bytes:\n        return &#39;reject size&#39;\n    return &#39;accept&#39;\n\ndef send_enabled():\n    return bool(os.environ.get(&#39;SMTP_APP_PASSWORD&#39;))\n\nprint(&#39;rendered&#39;, body)\nprint(&#39;multipart&#39;, msg.get_content_type())\nprint(&#39;html part&#39;, msg.get_payload()[1].get_content_type())\nprint(&#39;subject encoded&#39;, b&#39;=?utf-8?&#39; in msg.as_bytes())\nos.environ[&#39;SMTP_APP_PASSWORD&#39;] = &#39;token&#39;\nprint(&#39;send enabled&#39;, send_enabled())\nos.environ.pop(&#39;SMTP_APP_PASSWORD&#39;, None)\nprint(&#39;send disabled&#39;, send_enabled())\nprint(&#39;pdf&#39;, check_attachment(&#39;bill.pdf&#39;, b&#39;x&#39; * 100, {&#39;.pdf&#39;}, 1024))\nprint(&#39;exe&#39;, check_attachment(&#39;setup.exe&#39;, b&#39;x&#39;, {&#39;.pdf&#39;}, 1024))\nprint(&#39;big&#39;, check_attachment(&#39;big.pdf&#39;, b&#39;x&#39; * 2048, {&#39;.pdf&#39;}, 1024))' :notes='["导入 os，凭证只从环境变量读，不写进源码", "取 EmailMessage（3.6 起）构造现代 MIME 邮件", "policy.SMTP 让行分隔用 CRLF，符合线路协议", "string.Template 做占位符渲染，替代手写字符串拼接", "模板里 ${name} 等是变化字段，模板本身保持不变", "substitute 缺键会抛 KeyError，避免占位符漏填", "以 SMTP policy 建消息对象", "中文主题是非 ASCII 头，序列化时会按 RFC 2047 编码", "From 用 ASCII 地址，避免头字段解析歧义", "To 头显式声明收件人", "set_content 自动设 text/plain 与传输编码", "add_alternative 把容器升级成 multipart/alternative 并加 HTML part", "附件校验函数：白名单、大小、类型三道判断", "按最后一个点取扩展名并归一为小写", "扩展名不在白名单时进入拒绝分支", "类型不符返回 reject type，供失败清单区分原因", "len(data) 与上限比较，判断字节数是否超标", "超出上限返回 reject size，与类型拒绝区分开", "三项都通过才接受", "凭证可用性函数：只有环境变量存在才允许发送", "bool 判断把缺失凭证映射成 False，不发送", "打印渲染结果，确认占位符已被真实数据替换", "打印容器类型，验证确实是 multipart/alternative", "取第二个 part 的 Content-Type，应是 text/html", "as_bytes() 序列化时才生成 encoded-word，故在字节流里检查", "注入一个占位凭证模拟密钥管理系统", "凭证存在时允许发送", "用完立即从环境移除，避免污染同进程其它片段", "凭证缺失时不发送，这是默认的安全状态", "合法 PDF 且小于上限，返回 accept", "伪装成 .exe 的附件被扩展名白名单拦下", "超过 1024 字节上限的 PDF 被大小校验拦下"]' title='第 124 讲 · 实战 03 · 邮件、PDF、Excel、Word 与图像视频' />
+<LineByLine code='import os\nfrom email.message import EmailMessage\nfrom email import policy\nfrom string import Template\n\ntpl = Template(&#39;Hi ${name}, your ${month} bill is ${amount} CNY.&#39;)\nbody = tpl.substitute(name=&#39;Zhang&#39;, month=&#39;6&#39;, amount=&#39;128.50&#39;)\nmsg = EmailMessage(policy=policy.SMTP)\nmsg[&#39;Subject&#39;] = &#39;账单通知&#39;\nmsg[&#39;From&#39;] = &#39;billing@example.com&#39;\nmsg[&#39;To&#39;] = &#39;user@example.com&#39;\nmsg.set_content(body)\nmsg.add_alternative(&#39;&lt;p&gt;bill 128.50 CNY&lt;/p&gt;&#39;, subtype=&#39;html&#39;)\n\ndef check_attachment(name, data, allowed, max_bytes):\n    ext = &#39;.&#39; + name.rsplit(&#39;.&#39;, 1)[-1].lower()\n    if ext not in allowed:\n        return &#39;reject type&#39;\n    if len(data) &gt; max_bytes:\n        return &#39;reject size&#39;\n    return &#39;accept&#39;\n\ndef send_enabled():\n    return bool(os.environ.get(&#39;SMTP_APP_PASSWORD&#39;))\n\nprint(&#39;rendered&#39;, body)\nprint(&#39;multipart&#39;, msg.get_content_type())\nprint(&#39;html part&#39;, msg.get_payload()[1].get_content_type())\nprint(&#39;subject encoded&#39;, b&#39;=?utf-8?&#39; in msg.as_bytes())\nos.environ[&#39;SMTP_APP_PASSWORD&#39;] = &#39;token&#39;\nprint(&#39;send enabled&#39;, send_enabled())\nos.environ.pop(&#39;SMTP_APP_PASSWORD&#39;, None)\nprint(&#39;send disabled&#39;, send_enabled())\nprint(&#39;pdf&#39;, check_attachment(&#39;bill.pdf&#39;, b&#39;x&#39; * 100, {&#39;.pdf&#39;}, 1024))\nprint(&#39;exe&#39;, check_attachment(&#39;setup.exe&#39;, b&#39;x&#39;, {&#39;.pdf&#39;}, 1024))\nprint(&#39;big&#39;, check_attachment(&#39;big.pdf&#39;, b&#39;x&#39; * 2048, {&#39;.pdf&#39;}, 1024))' :notes='["导入 os，凭证只从环境变量读，不写进源码", "取 EmailMessage（3.6 起）构造现代 MIME 邮件", "policy.SMTP 让行分隔用 CRLF，符合线路协议", "string.Template 做占位符渲染，替代手写字符串拼接", "空行，只用于分隔逻辑块，不影响执行结果。", "模板里 ${name} 等是变化字段，模板本身保持不变", "substitute 缺键会抛 KeyError，避免占位符漏填", "以 SMTP policy 建消息对象", "中文主题是非 ASCII 头，序列化时会按 RFC 2047 编码", "From 用 ASCII 地址，避免头字段解析歧义", "To 头显式声明收件人", "set_content 自动设 text/plain 与传输编码", "add_alternative 把容器升级成 multipart/alternative 并加 HTML part", "空行，只用于分隔逻辑块，不影响执行结果。", "附件校验函数：白名单、大小、类型三道判断", "按最后一个点取扩展名并归一为小写", "扩展名不在白名单时进入拒绝分支", "类型不符返回 reject type，供失败清单区分原因", "len(data) 与上限比较，判断字节数是否超标", "超出上限返回 reject size，与类型拒绝区分开", "三项都通过才接受", "空行，只用于分隔逻辑块，不影响执行结果。", "凭证可用性函数：只有环境变量存在才允许发送", "bool 判断把缺失凭证映射成 False，不发送", "空行，只用于分隔逻辑块，不影响执行结果。", "打印渲染结果，确认占位符已被真实数据替换", "打印容器类型，验证确实是 multipart/alternative", "取第二个 part 的 Content-Type，应是 text/html", "as_bytes() 序列化时才生成 encoded-word，故在字节流里检查", "注入一个占位凭证模拟密钥管理系统", "凭证存在时允许发送", "用完立即从环境移除，避免污染同进程其它片段", "凭证缺失时不发送，这是默认的安全状态", "合法 PDF 且小于上限，返回 accept", "伪装成 .exe 的附件被扩展名白名单拦下", "超过 1024 字节上限的 PDF 被大小校验拦下"]' title='第 124 讲 · 实战 03 · 邮件、PDF、Excel、Word 与图像视频' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -177,9 +177,9 @@ Jinja2 用 `{{ name }}`、`{% for %}` 与模板继承，`HTML` 场景必须开 `
 
 整批被拒、重复投递、凭证出现在 `git diff`、超大附件打满队列，都是缺少这些约束的典型信号。
 
-<Term word='smtplib / yagmail 与授权码' text='`email.message.EmailMessage` 自 3.6 起提供现代 API，构造时传 `policy=policy.SMTP` 会用 `CRLF` 作行分隔（`policy.default` 用 LF，发送场景要前者）。`msg.set_content(text)` 自动设 `Content-Type` ' />
+<Term word='smtplib / yagmail 与授权码' text='`email.message.EmailMessage` 自 3.6 起提供现代 API，构造时传 `policy=policy.SMTP` 会用 `CRLF` 作行分隔（`policy.default` 用 LF，发送场景要前者）。`msg.set_content(text)` 自动设 `Content-Type`…' />
 
-<Term word='pypdf 拆分合并' text='模板 + 数据 + 批量渲染是文档自动化的通用套路：不变的部分留在模板里，代码只填变化字段。标准库 `string.Template` 用 `$name` 或 `${name}` 作占位符，`$$` 表示字面量 `$`；`substitute(**row)` 用字典一次填满，缺键会抛 `KeyError`，`safe_' />
+<Term word='pypdf 拆分合并' text='模板 + 数据 + 批量渲染是文档自动化的通用套路：不变的部分留在模板里，代码只填变化字段。标准库 `string.Template` 用 `$name` 或 `${name}` 作占位符，`$$` 表示字面量 `$`；`substitute(**row)` 用字典一次填满，缺键会抛 `KeyError`…' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把 SMTP 授权码写死在脚本里并随代码提交：凭证进入版本库与日志，任何能看到仓库的人都能发信，且难以只吊销单个客户端' />
 
@@ -188,7 +188,7 @@ Jinja2 用 `{{ name }}`、`{% for %}` 与模板继承，`HTML` 场景必须开 `
 
 <CheckList id='P124b' title='上线前自检' :items='["能复现并解释「把 SMTP 授权码写死在脚本里并随代码提交」", "能复现并解释「用字符串拼 HTML 邮件正文」", "能复现并解释「只按文件名或客户端声明的 Content-Type 判附件」", "能用一条命令验证 smtplib / yagmail 与授权码", "关键路径有自动化测试与失败分支"]' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 SMTP 授权码写死在脚本里并随代码提交", "body": "凭证进入版本库与日志，任何能看到仓库的人都能发信，且难以只吊销单个客户端", "tip": "用 os.environ.get 或 .env（加入 .gitignore）读取，用后可轮换；缺失凭证时直接禁用发送"}, {"title": "第 2 步：用字符串拼 HTML 邮件正文", "body": "转义被破坏、姓名里的 &amp; 与 &lt; 截断标签、${amount} 占位符残留发给客户", "tip": "用 EmailMessage.set_content 与 add_alternative 构造 MIME，正文交给 string.Template.substitute 渲染，HTML 场景开 autoescape"}, {"title": "第 3 步：只按文件名或客户端声明的 Content-T", "body": "伪装的 .exe 或超大附件被放进队列，SMTP 拒收整批或带来存储型风险", "tip": "扩展名白名单 + len(data) 上限 + magic bytes（PDF 为 b&#39;%PDF-&#39;）三重校验，并给批量发送设限速与失败清单"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 SMTP 授权码写死在脚本里并随代码提交", "body": "凭证进入版本库与日志，任何能看到仓库的人都能发信，且难以只吊销单个客户端", "tip": "用 os.environ.get 或 .env（加入 .gitignore）读取，用后可轮换；缺失凭证时直接禁用发送"}, {"title": "第 2 步：用字符串拼 HTML 邮件正文", "body": "转义被破坏、姓名里的 &amp; 与 &lt; 截断标签、${amount} 占位符残留发给客户", "tip": "用 EmailMessage.set_content 与 add_alternative 构造 MIME，正文交给 string.Template.substitute 渲染，HTML 场景开 autoescape"}, {"title": "第 3 步：只按文件名或客户端声明的 Content-T…", "body": "伪装的 .exe 或超大附件被放进队列，SMTP 拒收整批或带来存储型风险", "tip": "扩展名白名单 + len(data) 上限 + magic bytes（PDF 为 b&#39;%PDF-&#39;）三重校验，并给批量发送设限速与失败清单"}]' />
 
 
 ## MIME 是一棵树：为什么 HTML part 必须放最后
@@ -205,9 +205,9 @@ Jinja2 用 `{{ name }}`、`{% for %}` 与模板继承，`HTML` 场景必须开 `
 
 授权码机制把主密码与第三方客户端隔离，泄漏时可单独吊销而不影响账号本身。
 
-<ConceptDiagram type='compare2' title='第 124 讲 · MIME 与 EmailMessage：把邮件构造交给协议实现' labels='MIME 与 EmailMessage：把邮|模板渲染：string.Template 与|凭证、附件校验、限速与失败清单' caption='串起办公文档的全套自动化流水线' />
+<ConceptDiagram type='compare2' title='第 124 讲 · MIME 与 EmailMessage：把邮件构造交给协议实现' labels='MIME 与 EmailMessage：把邮…|模板渲染：string.Template 与…|凭证、附件校验、限速与失败清单|moviepy 批处理' caption='串起办公文档的全套自动化流水线' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 办公文档批处理库、用途与风险
@@ -303,7 +303,7 @@ print('failed', failed)
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 smtplib / yagmail 与授权码 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 smtplib / yagmail 与授权码 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习、自测与一页纸速记
@@ -342,3 +342,16 @@ python -m compileall -q . && python -m pytest -q
 3. string.Template 用 $name / $&#123;name&#125;；substitute 缺键抛 KeyError、safe_substitute 保留占位符，发信选前者
 
 [下一讲：实战 04 · Selenium 表单自动化与定时任务](/projects/browser-auto)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/124-office-docs.py`
+
+```bash
+python3 examples/lessons/124-office-docs.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/124-office-docs.py) · [全部示例代码索引](/examples/)

@@ -70,7 +70,7 @@ db.close()
 
 <OutputBox title='主示例运行结果' output='normal [(&#39;alice&#39;, &#39;admin&#39;)]\nunsafe_rows 2\nsafe_rows 0' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE users (name TEXT, role TEXT)&#39;)\ndb.executemany(&#39;INSERT INTO users VALUES (?, ?)&#39;, [(&#39;alice&#39;, &#39;admin&#39;), (&#39;bob&#39;, &#39;user&#39;)])\n\ndef unsafe(uid):\n    q = &#39;SELECT name, role FROM users WHERE name = &#39; + chr(39) + uid + chr(39)\n    return db.execute(q).fetchall()\n\ndef safe(uid):\n    q = &#39;SELECT name, role FROM users WHERE name = ?&#39;\n    return db.execute(q, (uid,)).fetchall()\n\nprint(&#39;normal&#39;, safe(&#39;alice&#39;))\ninj = &#39;x&#39; + chr(39) + &#39; OR &#39; + chr(39) + &#39;1&#39; + chr(39) + &#39;=&#39; + chr(39) + &#39;1&#39;\nprint(&#39;unsafe_rows&#39;, len(unsafe(inj)))\nprint(&#39;safe_rows&#39;, len(safe(inj)))\ndb.close()' :notes='["导入 sqlite3，用内存库演示参数化", "创建仅存在于内存的数据库", "建表，含名字与角色两列", "用参数化 executemany 插入两条基线数据", "unsafe 演示拼接式查询", "用 chr(39) 拼单引号把 uid 直接嵌进语句，改变语法结构", "执行拼好的整条语句并返回所有行", "safe 使用占位符", "问号是值占位，不参与 SQL 解析", "把值作为绑定参数单独传入", "正常查询返回 alice 一条记录", "构造注入串 x&#39; OR &#39;1&#39;=&#39;1，chr(39) 规避引号转义", "拼接版条件恒真，泄漏全部 2 行", "参数化版把注入串当普通名字，匹配 0 行", "关闭数据库连接"]' title='第 113 讲 · 安全工程：依赖、注入、序列化与密钥' />
+<LineByLine code='import sqlite3\n\ndb = sqlite3.connect(&#39;:memory:&#39;)\ndb.execute(&#39;CREATE TABLE users (name TEXT, role TEXT)&#39;)\ndb.executemany(&#39;INSERT INTO users VALUES (?, ?)&#39;, [(&#39;alice&#39;, &#39;admin&#39;), (&#39;bob&#39;, &#39;user&#39;)])\n\ndef unsafe(uid):\n    q = &#39;SELECT name, role FROM users WHERE name = &#39; + chr(39) + uid + chr(39)\n    return db.execute(q).fetchall()\n\ndef safe(uid):\n    q = &#39;SELECT name, role FROM users WHERE name = ?&#39;\n    return db.execute(q, (uid,)).fetchall()\n\nprint(&#39;normal&#39;, safe(&#39;alice&#39;))\ninj = &#39;x&#39; + chr(39) + &#39; OR &#39; + chr(39) + &#39;1&#39; + chr(39) + &#39;=&#39; + chr(39) + &#39;1&#39;\nprint(&#39;unsafe_rows&#39;, len(unsafe(inj)))\nprint(&#39;safe_rows&#39;, len(safe(inj)))\ndb.close()' :notes='["导入 sqlite3，用内存库演示参数化", "空行，只用于分隔逻辑块，不影响执行结果。", "创建仅存在于内存的数据库", "建表，含名字与角色两列", "用参数化 executemany 插入两条基线数据", "空行，只用于分隔逻辑块，不影响执行结果。", "unsafe 演示拼接式查询", "用 chr(39) 拼单引号把 uid 直接嵌进语句，改变语法结构", "执行拼好的整条语句并返回所有行", "空行，只用于分隔逻辑块，不影响执行结果。", "safe 使用占位符", "问号是值占位，不参与 SQL 解析", "把值作为绑定参数单独传入", "空行，只用于分隔逻辑块，不影响执行结果。", "正常查询返回 alice 一条记录", "构造注入串 x&#39; OR &#39;1&#39;=&#39;1，chr(39) 规避引号转义", "拼接版条件恒真，泄漏全部 2 行", "参数化版把注入串当普通名字，匹配 0 行", "关闭数据库连接"]' title='第 113 讲 · 安全工程：依赖、注入、序列化与密钥' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -84,9 +84,9 @@ db.close()
 | 表达式 | eval / exec 处理外部串 | ast.literal_eval 或显式解析 |
 | 路径 | os.path.join(base, 用户输入) | 白名单或 basename 加前缀校验 |
 
-<ConceptDiagram type='hub4' title='第 113 讲 · 注入与参数化：SQL 与命令两条入口' labels='注入与参数化：SQL 与命令两条入口|不安全的反序列化与 Python 特有风险|依赖漏洞、密钥管理与纵深防御' caption='把安全做成默认行为而不是事后补丁' />
+<ConceptDiagram type='hub4' title='第 113 讲 · 注入与参数化：SQL 与命令两条入口' labels='注入与参数化：SQL 与命令两条入口|不安全的反序列化与 Python 特有风险|依赖漏洞、密钥管理与纵深防御|审计与应急响应' caption='把安全做成默认行为而不是事后补丁' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 对照：字符串拼接与占位符绑定的输出
@@ -134,7 +134,7 @@ print('hmac_equal', hmac.compare_digest(digest, hashlib.sha256(token.encode()).h
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用字符串拼接构造 WHERE 条件：输入里的引号与 OR 会改变 SQL 语法树，条件恒真导致拖库或越权' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用字符串拼接构造 WHERE 条件", "body": "输入里的引号与 OR 会改变 SQL 语法树，条件恒真导致拖库或越权", "tip": "一律用占位符加绑定参数；表名列名排序方向用白名单映射，不能靠参数代值"}, {"title": "第 2 步：对来自缓存或接口的字节直接 pickle.l", "body": "__reduce__ 可指定任意可调用对象，反序列化即执行构造逻辑，造成远程代码执行", "tip": "跨系统改用 json；必须用 pickle 时保证来源不可被外部写、对 blob 做 HMAC 签名并校验大小与深度"}, {"title": "第 3 步：把 .env 与 token 打进镜像或异常", "body": "镜像层与日志系统可被更广的人群读取，凭证长期泄露且难以轮换", "tip": "运行时注入密钥并支持轮换，日志打印前脱敏，CI 做镜像与依赖扫描，非 root 运行且权限最小化"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用字符串拼接构造 WHERE 条件", "body": "输入里的引号与 OR 会改变 SQL 语法树，条件恒真导致拖库或越权", "tip": "一律用占位符加绑定参数；表名列名排序方向用白名单映射，不能靠参数代值"}, {"title": "第 2 步：对来自缓存或接口的字节直接 pickle.l…", "body": "__reduce__ 可指定任意可调用对象，反序列化即执行构造逻辑，造成远程代码执行", "tip": "跨系统改用 json；必须用 pickle 时保证来源不可被外部写、对 blob 做 HMAC 签名并校验大小与深度"}, {"title": "第 3 步：把 .env 与 token 打进镜像或异常…", "body": "镜像层与日志系统可被更广的人群读取，凭证长期泄露且难以轮换", "tip": "运行时注入密钥并支持轮换，日志打印前脱敏，CI 做镜像与依赖扫描，非 root 运行且权限最小化"}]' />
 
 
 ## 不安全的反序列化与 Python 特有风险
@@ -169,9 +169,9 @@ CPython 明确把 pickle 标为不安全，协议 0 到 5 都保留 opcode 调�
 
 ### __reduce__ 为什么等于远程代码执行
 
-<Term word='依赖漏洞与 SBOM' text='SQL 注入的根因，是把数据与代码拼进同一个字符串：`sqlite3` 的 `execute` 收到一整条已拼好的语句，输入里的引号、OR、注释符会改变语法树。参数化查询用占位符把语句结构与值分开：sqlite3 用 `?` 占位、把值作为绑定参数传入，psycopg 与 PyMySQL 用 `%s`，驱动在协议层把值' />
+<Term word='依赖漏洞与 SBOM' text='SQL 注入的根因，是把数据与代码拼进同一个字符串：`sqlite3` 的 `execute` 收到一整条已拼好的语句，输入里的引号、OR、注释符会改变语法树。参数化查询用占位符把语句结构与值分开：sqlite3 用 `?` 占位、把值作为绑定参数传入，psycopg 与 PyMySQL 用 `%s`，驱动在协议层把值…' />
 
-<Term word='注入与参数化' text='pickle 不是数据格式，而是对象构造协议：`pickle.loads` 会执行 `__reduce__` 指定的可调用对象，攻击者构造一个 `__reduce__` 返回 `os.system` 加一串参数、或等价的可调用类，反序列化即触发任意代码执行，这正是 CPython 文档明确警告的「绝不对不可信数据 un' />
+<Term word='注入与参数化' text='pickle 不是数据格式，而是对象构造协议：`pickle.loads` 会执行 `__reduce__` 指定的可调用对象，攻击者构造一个 `__reduce__` 返回 `os.system` 加一串参数、或等价的可调用类，反序列化即触发任意代码执行，这正是 CPython 文档明确警告的「绝不对不可信数据 un…' />
 
 
 ## 依赖漏洞、密钥管理与纵深防御
@@ -244,7 +244,7 @@ print(r.write_once('k1', 'alice'), r.write_once('k1', 'alice'))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 依赖漏洞与 `SBOM` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 依赖漏洞与 `SBOM` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -294,7 +294,7 @@ print('native', pickle.loads(blob))
 
 <OutputBox title='扩展示例运行结果' output='opcodes [&#39;STACK_GLOBAL&#39;, &#39;REDUCE&#39;]\nsafe blocked\nnative 6' />
 
-<LineByLine code='import io, pickle, pickletools\n\nclass Payload:\n    def __reduce__(self):\n        return (sum, ([1, 2, 3],))\n\nblob = pickle.dumps(Payload(), protocol=4)\nops = [op[0].name for op in pickletools.genops(blob) if op[0].name in (&#39;GLOBAL&#39;, &#39;STACK_GLOBAL&#39;, &#39;REDUCE&#39;, &#39;BUILD&#39;)]\nprint(&#39;opcodes&#39;, ops)\n\nclass OnlyLen(pickle.Unpickler):\n    def find_class(self, module, name):\n        if module == &#39;builtins&#39; and name == &#39;len&#39;:\n            return len\n        raise pickle.UnpicklingError(&#39;blocked &#39; + module + &#39;.&#39; + name)\n\ntry:\n    OnlyLen(io.BytesIO(blob)).load()\n    print(&#39;safe&#39;, &#39;loaded&#39;)\nexcept pickle.UnpicklingError:\n    print(&#39;safe&#39;, &#39;blocked&#39;)\nprint(&#39;native&#39;, pickle.loads(blob))' :notes='["genops 产出 (opcode, arg, pos) 三元组，op[0].name 才是 opcode 名", "白名单 Unpickler 只放行 builtins.len，解析阶段即拦下未知名字", "原生 Unpickler 执行 sum([1,2,3]) 得到 6，印证反序列化即调用", "依赖用锁文件固定版本，CI 做 pip-audit 与镜像扫描，并产出 SBOM 记录组件版本", "密钥运行时注入、支持轮换、日志脱敏；令牌用 secrets，口令用 pbkdf2_hmac 加盐", "权限最小化：容器非 root、数据库最小授权、服务间短期凭证，并保留审计与应急轮换流程", "注入的根因是数据进入解析通道；SQL 用占位符、命令用列表参数且 shell=False", "pickle 是对象构造协议，__reduce__ 可致 RCE；外部数据一律用 json，eval 用 ast.literal_eval", "内部 pickle 需 HMAC 签名 + hmac.compare_digest 常量时间比较，并限制 blob 大小与嵌套深度", "依赖用锁文件固定版本，CI 做 pip-audit 与镜像扫描，并产出 SBOM 记录组件版本", "密钥运行时注入、支持轮换、日志脱敏；令牌用 secrets，口令用 pbkdf2_hmac 加盐", "权限最小化：容器非 root、数据库最小授权、服务间短期凭证，并保留审计与应急轮换流程", "注入的根因是数据进入解析通道；SQL 用占位符、命令用列表参数且 shell=False", "pickle 是对象构造协议，__reduce__ 可致 RCE；外部数据一律用 json，eval 用 ast.literal_eval", "内部 pickle 需 HMAC 签名 + hmac.compare_digest 常量时间比较，并限制 blob 大小与嵌套深度", "依赖用锁文件固定版本，CI 做 pip-audit 与镜像扫描，并产出 SBOM 记录组件版本", "密钥运行时注入、支持轮换、日志脱敏；令牌用 secrets，口令用 pbkdf2_hmac 加盐", "权限最小化：容器非 root、数据库最小授权、服务间短期凭证，并保留审计与应急轮换流程"]' title='扩展示例逐行讲解' />
+<LineByLine code='import io, pickle, pickletools\n\nclass Payload:\n    def __reduce__(self):\n        return (sum, ([1, 2, 3],))\n\nblob = pickle.dumps(Payload(), protocol=4)\nops = [op[0].name for op in pickletools.genops(blob) if op[0].name in (&#39;GLOBAL&#39;, &#39;STACK_GLOBAL&#39;, &#39;REDUCE&#39;, &#39;BUILD&#39;)]\nprint(&#39;opcodes&#39;, ops)\n\nclass OnlyLen(pickle.Unpickler):\n    def find_class(self, module, name):\n        if module == &#39;builtins&#39; and name == &#39;len&#39;:\n            return len\n        raise pickle.UnpicklingError(&#39;blocked &#39; + module + &#39;.&#39; + name)\n\ntry:\n    OnlyLen(io.BytesIO(blob)).load()\n    print(&#39;safe&#39;, &#39;loaded&#39;)\nexcept pickle.UnpicklingError:\n    print(&#39;safe&#39;, &#39;blocked&#39;)\nprint(&#39;native&#39;, pickle.loads(blob))' :notes='["genops 产出 (opcode, arg, pos) 三元组，op[0].name 才是 opcode 名", "空行，只用于分隔逻辑块，不影响执行结果。", "白名单 Unpickler 只放行 builtins.len，解析阶段即拦下未知名字", "原生 Unpickler 执行 sum([1,2,3]) 得到 6，印证反序列化即调用", "这一行 `return (sum, ([1, 2, 3],))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `blob = pickle.dumps(Payload(), protocol=4)` 的作用，可对照上方输出逐项核对。", "这一行 `ops = [op[0].name for op in pickletools.genops(blob)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;opcodes&#39;, ops)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class OnlyLen(pickle.Unpickler):` 的作用，可对照上方输出逐项核对。", "这一行 `def find_class(self, module, name):` 的作用，可对照上方输出逐项核对。", "这一行 `if module == &#39;builtins&#39; and name == &#39;len&#39;:` 的作用，可对照上方输出逐项核对。", "这一行 `return len` 的作用，可对照上方输出逐项核对。", "这一行 `raise pickle.UnpicklingError(&#39;blocked &#39; + module + &#39;` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `try:` 的作用，可对照上方输出逐项核对。", "这一行 `OnlyLen(io.BytesIO(blob)).load()` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;safe&#39;, &#39;loaded&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `except pickle.UnpicklingError:` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;safe&#39;, &#39;blocked&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;native&#39;, pickle.loads(blob))` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### find_class 白名单能挡住 STACK_GLOBAL 吗
@@ -396,3 +396,16 @@ for guess in ([0,0,0,0], [7,0,0,0], [7,3,0,0], [7,3,9,0], [7,3,9,1]):
 [下一讲：CPython 源码：对象、帧与求值循环](/advanced/cpython-source)
 
 <FillBlank no='113-6' tpl='___ sqlite3' :answers='["import"]' hint='回想本讲关于 依赖漏洞与 SBOM 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 注入与参数化：SQL 与命令两条入口 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/113-security.py`
+
+```bash
+python3 examples/lessons/113-security.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/113-security.py) · [全部示例代码索引](/examples/)

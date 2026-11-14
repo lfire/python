@@ -41,7 +41,7 @@ PEP 508 还统一了 extras 与环境标记：`uvicorn[standard]` 是带 extras 
 pytest; extra == 'test'
 ```
 
-<Callout type="tip" title='核心心智模型' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的 `[' />
+<Callout type="tip" title='核心心智模型' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的…' />
 
 
 ## PEP 440 版本规约与 PEP 508 标记怎么读
@@ -59,9 +59,9 @@ pytest; extra == 'test'
 | pkg; python_version >= '3.9' | PEP 508 环境标记 | 按解释器版本条件生效 |
 | uvicorn[standard] | extra 可选依赖 | 按需安装附加组 |
 
-<Term word='pyproject.toml 规范' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的 `[build-syst' />
+<Term word='pyproject.toml 规范' text='PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的…' />
 
-<Term word='直接与传递依赖' text='锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 `pip-compile` 从 `requirements.in` 生成），每行是 name==version 加一条 `--hash=sha256` 摘要。用 `--r' />
+<Term word='直接与传递依赖' text='锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 `pip-compile` 从 `requirements.in` 生成），每行是 name==version 加一条 `--hash=sha256` 摘要。用…' />
 
 
 ### 兼容发布 ~= 与 >= 的边界差在哪
@@ -119,7 +119,7 @@ print('unpinned upgrade rejected', not verify(lock[0], 'requests-2.33.0'))
 
 <OutputBox title='主示例运行结果' output='pinned [&#39;2.32.3&#39;, &#39;2024.8.30&#39;]\nhash bits 256\nexact match ok True\ntampered rejected True\nunpinned upgrade rejected True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\n\ndef digest(body):\n    return hashlib.sha256(body.encode()).hexdigest()\n\nlock = [\n    (&#39;requests&#39;, &#39;2.32.3&#39;, digest(&#39;requests-2.32.3&#39;)),\n    (&#39;certifi&#39;, &#39;2024.8.30&#39;, digest(&#39;certifi-2024.8.30&#39;)),\n]\n\ndef verify(pkg, payload):\n    return digest(payload) == pkg[2]\n\nprint(&#39;pinned&#39;, [v for _, v, _ in lock])\nprint(&#39;hash bits&#39;, len(lock[0][2]) * 4)\nprint(&#39;exact match ok&#39;, verify(lock[0], &#39;requests-2.32.3&#39;))\nprint(&#39;tampered rejected&#39;, not verify(lock[0], &#39;requests-2.32.3-tampered&#39;))\nprint(&#39;unpinned upgrade rejected&#39;, not verify(lock[0], &#39;requests-2.33.0&#39;))' :notes='["导入 hashlib 做 SHA-256 摘要，模拟锁文件的哈希校验", "定义 digest：对精确版本字节串算 256 位十六进制摘要", "返回十六进制摘要字符串，长度 64 字符", "lock 模拟锁文件：每项为 (包名, 精确版本, sha256)", "requests 钉在 2.32.3 并记录其摘要", "certifi 钉在 2024.8.30 并记录其摘要", "verify 比对下载件摘要与锁定摘要是否一致", "一致才允许安装，否则拒绝", "打印被钉死的精确版本，不含任何范围", "十六进制每位 4 bit，64 字符即 256 位", "字节完全相同的产物校验通过", "被篡改的产物摘要不同，校验失败被拒", "上游发新版也会因摘要不符被拒，复现性得以保证", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记"]' title='第 072 讲 · 依赖管理：venv、uv、锁文件与可复现构建' />
+<LineByLine code='import hashlib\n\ndef digest(body):\n    return hashlib.sha256(body.encode()).hexdigest()\n\nlock = [\n    (&#39;requests&#39;, &#39;2.32.3&#39;, digest(&#39;requests-2.32.3&#39;)),\n    (&#39;certifi&#39;, &#39;2024.8.30&#39;, digest(&#39;certifi-2024.8.30&#39;)),\n]\n\ndef verify(pkg, payload):\n    return digest(payload) == pkg[2]\n\nprint(&#39;pinned&#39;, [v for _, v, _ in lock])\nprint(&#39;hash bits&#39;, len(lock[0][2]) * 4)\nprint(&#39;exact match ok&#39;, verify(lock[0], &#39;requests-2.32.3&#39;))\nprint(&#39;tampered rejected&#39;, not verify(lock[0], &#39;requests-2.32.3-tampered&#39;))\nprint(&#39;unpinned upgrade rejected&#39;, not verify(lock[0], &#39;requests-2.33.0&#39;))' :notes='["导入 hashlib 做 SHA-256 摘要，模拟锁文件的哈希校验", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 digest：对精确版本字节串算 256 位十六进制摘要", "返回十六进制摘要字符串，长度 64 字符", "空行，只用于分隔逻辑块，不影响执行结果。", "lock 模拟锁文件：每项为 (包名, 精确版本, sha256)", "requests 钉在 2.32.3 并记录其摘要", "certifi 钉在 2024.8.30 并记录其摘要", "verify 比对下载件摘要与锁定摘要是否一致", "空行，只用于分隔逻辑块，不影响执行结果。", "一致才允许安装，否则拒绝", "打印被钉死的精确版本，不含任何范围", "空行，只用于分隔逻辑块，不影响执行结果。", "十六进制每位 4 bit，64 字符即 256 位", "字节完全相同的产物校验通过", "被篡改的产物摘要不同，校验失败被拒", "上游发新版也会因摘要不符被拒，复现性得以保证", "PEP 621 [project] + PEP 518 [build-system]；PEP 440 管版本，PEP 508 管 extras 与环境标记"]' title='第 072 讲 · 依赖管理：venv、uv、锁文件与可复现构建' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -194,7 +194,7 @@ with tempfile.TemporaryDirectory() as d:
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `pyproject.toml` 规范 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `pyproject.toml` 规范 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## pip 解析依赖：Requirement 对象与 Version 偏序
@@ -207,9 +207,9 @@ pip 解析依赖时把每个发行版的 `METADATA` 读成 Requirement 对象（
 
 SHA-256 把任意长度输入映射为 256 位摘要，输入改变一位输出约半数比特翻转，因此精确版本加摘要可作为「同一组字节」的可验证判据。
 
-<ConceptDiagram type='layers3' title='第 072 讲 · pyproject.toml、直接与传递依赖、版本规约' labels='pyproject.toml、直接与传递依赖|锁文件、约束与哈希校验|可复现构建与供应链安全' caption='让任意机器构建出相同的环境' />
+<ConceptDiagram type='layers3' title='第 072 讲 · pyproject.toml、直接与传递依赖、版本规约' labels='pyproject.toml、直接与传递依赖…|锁文件、约束与哈希校验|可复现构建与供应链安全|供应链安全' caption='让任意机器构建出相同的环境' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 可复现构建与供应链安全
@@ -224,7 +224,7 @@ CI 的最低要求：提交锁文件、用标准库或 uv 各建一个干净虚�
 
 判断环境是否可复现有个可测标准：删掉虚拟环境按锁文件从零装，跑出的 `importlib.metadata.version()` 集合与锁定值逐项一致，且 `pip check` 无输出。
 
-<FlowTimeline :steps='[{"title": "pyproject.toml、直接与传递依赖、版本规约", "desc": "PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[pro…", "tone": "blue"}, {"title": "锁文件、约束与哈希校验", "desc": "锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、…", "tone": "purple"}, {"title": "可复现构建与供应链安全", "desc": "CI 的最低要求：提交锁文件、用标准库或 uv 各建一个干净虚拟环境、按锁文件加 `…", "tone": "orange"}, {"title": "工程落地", "desc": "可复现构建清单：哈希校验与冲突自检", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "pyproject.toml、直接与传递依赖、版…", "desc": "PEP 621 把项目元数据集中到 `pyproject.toml` 的…", "tone": "blue"}, {"title": "锁文件、约束与哈希校验", "desc": "锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`…", "tone": "purple"}, {"title": "可复现构建与供应链安全", "desc": "CI 的最低要求：提交锁文件、用标准库或 uv 各建一个干净虚拟环境、按锁文件加…", "tone": "orange"}, {"title": "工程落地", "desc": "可复现构建清单：哈希校验与冲突自检", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 可复现构建清单：哈希校验与冲突自检
@@ -277,7 +277,7 @@ except ValueError as e:
 
 <Callout type="warn" title='本讲最容易踩的坑' text='只写 requests&gt;=2.28 不提交锁文件：传递依赖解析随时间变化，某天上游发版就让线上行为悄悄改变' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只写 requests&gt;=2.28 不提交锁", "body": "传递依赖解析随时间变化，某天上游发版就让线上行为悄悄改变", "tip": "提交 uv.lock / poetry.lock / pip-compile 生成的带哈希 requirements.txt，CI 用 --require-hashes 安装"}, {"title": "第 2 步：开发与运行依赖混在一张清单", "body": "生产镜像装上 pytest/mypy，体积膨胀且扩大攻击面", "tip": "用 [project.optional-dependencies] 或 PEP 735 dependency-groups 分组，生产只装运行依赖"}, {"title": "第 3 步：锁了版本却不校验哈希", "body": "能挡住发版漂移，挡不住下载件被替换或上游重传", "tip": "锁文件每行带 --hash=sha256:...，安装启用 --require-hashes，并用 pip-audit 定期审计 CVE"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只写 requests&gt;=2.28 不提交锁…", "body": "传递依赖解析随时间变化，某天上游发版就让线上行为悄悄改变", "tip": "提交 uv.lock / poetry.lock / pip-compile 生成的带哈希 requirements.txt，CI 用 --require-hashes 安装"}, {"title": "第 2 步：开发与运行依赖混在一张清单", "body": "生产镜像装上 pytest/mypy，体积膨胀且扩大攻击面", "tip": "用 [project.optional-dependencies] 或 PEP 735 dependency-groups 分组，生产只装运行依赖"}, {"title": "第 3 步：锁了版本却不校验哈希", "body": "能挡住发版漂移，挡不住下载件被替换或上游重传", "tip": "锁文件每行带 --hash=sha256:...，安装启用 --require-hashes，并用 pip-audit 定期审计 CVE"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -316,3 +316,16 @@ except ValueError as e:
 3. ~=1.4.5 等价 >=1.4.5, ==1.4.*；== 精确钉死，锁文件全部用精确版本
 
 [下一讲：代码规范：PEP 8、ruff、black 与 pre-commit](/engineering/style)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/072-deps.py`
+
+```bash
+python3 examples/lessons/072-deps.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/072-deps.py) · [全部示例代码索引](/examples/)

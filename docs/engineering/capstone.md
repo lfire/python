@@ -104,15 +104,15 @@ print('guarded', any(isinstance(n, ast.If) for n in tree.body))
 
 <OutputBox title='主示例运行结果' output='backend setuptools.build_meta\nname shortly version 0.3.0\ndeps [&#39;click&gt;=8&#39;, &#39;httpx&#39;]\nentry shortly.cli:main\nlegacy funcs [&#39;shorten&#39;, &#39;expand&#39;]\nguarded True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import tomllib\nimport ast\n\nPYPROJECT = chr(10).join([\n    &#39;[build-system]&#39;,\n    "requires = [&#39;setuptools&gt;=68&#39;]",\n    "build-backend = &#39;setuptools.build_meta&#39;",\n    &#39;&#39;,\n    &#39;[project]&#39;,\n    "name = &#39;shortly&#39;",\n    "version = &#39;0.3.0&#39;",\n    "requires-python = &#39;&gt;=3.9&#39;",\n    "dependencies = [&#39;click&gt;=8&#39;, &#39;httpx&#39;]",\n    &#39;&#39;,\n    &#39;[project.scripts]&#39;,\n    "shortly = &#39;shortly.cli:main&#39;",\n])\ncfg = tomllib.loads(PYPROJECT)\nprint(&#39;backend&#39;, cfg[&#39;build-system&#39;][&#39;build-backend&#39;])\nprint(&#39;name&#39;, cfg[&#39;project&#39;][&#39;name&#39;], &#39;version&#39;, cfg[&#39;project&#39;][&#39;version&#39;])\nprint(&#39;deps&#39;, cfg[&#39;project&#39;][&#39;dependencies&#39;])\nprint(&#39;entry&#39;, cfg[&#39;project&#39;][&#39;scripts&#39;][&#39;shortly&#39;])\n\nLEGACY = chr(10).join([\n    &#39;import sys&#39;,\n    &#39;def shorten(url): return url[-6:]&#39;,\n    "def expand(code): return &#39;https://x/&#39; + code",\n    "if __name__ == &#39;__main__&#39;: print(shorten(sys.argv[1]))",\n])\ntree = ast.parse(LEGACY)\nfuncs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]\nprint(&#39;legacy funcs&#39;, funcs)\nprint(&#39;guarded&#39;, any(isinstance(n, ast.If) for n in tree.body))' :notes='["导入 tomllib，3.11 起进入标准库的 TOML 解析器", "导入 ast，对重构前的源码做静态分析", "用 chr(10).join 构造 TOML 文本，源码里不出现反斜杠换行转义", "[build-system] 是 PEP 518 表，声明构建时依赖", "requires 指定 PEP 517 后端所需包及最低版本", "build-backend 指向可调用的构建后端入口", "空行分隔两个 TOML 表", "[project] 是 PEP 621 标准化的项目元数据表", "name 是发行名，pip 安装后由它索引", "version 遵循 PEP 440，发布后同版本不可覆盖", "requires-python 让 pip 拒绝不兼容的解释器", "dependencies 写兼容范围，精确值留给锁文件", "空行", "[project.scripts] 声明控制台入口点", "shortly 命令映射到 shortly.cli 模块的 main 函数", "join 结束，得到完整 TOML 字符串", "tomllib.loads 把 TOML 解析成嵌套 dict", "读出构建后端，确认是 setuptools.build_meta", "读出发行名与版本", "读出依赖列表，供锁文件生成", "读出入口点，安装后会生成可执行脚本", "用同样方式构造重构前的单文件脚本", "顶层 import，说明脚本依赖全局环境", "第一个业务函数，单文件里靠定义顺序组织", "第二个业务函数", "__main__ guard 让脚本既能直接运行又可被导入", "join 结束，得到脚本源码字符串", "ast.parse 把源码解析成 Module 节点树", "从顶层节点抽取函数定义名，作为迁移清单", "打印待迁移函数，重构时逐一搬进包模块", "检查顶层是否有 if 分支，即 __main__ guard 存在"]' title='第 081 讲 · 阶段综合：把脚本重构成可发布包' />
+<LineByLine code='import tomllib\nimport ast\n\nPYPROJECT = chr(10).join([\n    &#39;[build-system]&#39;,\n    "requires = [&#39;setuptools&gt;=68&#39;]",\n    "build-backend = &#39;setuptools.build_meta&#39;",\n    &#39;&#39;,\n    &#39;[project]&#39;,\n    "name = &#39;shortly&#39;",\n    "version = &#39;0.3.0&#39;",\n    "requires-python = &#39;&gt;=3.9&#39;",\n    "dependencies = [&#39;click&gt;=8&#39;, &#39;httpx&#39;]",\n    &#39;&#39;,\n    &#39;[project.scripts]&#39;,\n    "shortly = &#39;shortly.cli:main&#39;",\n])\ncfg = tomllib.loads(PYPROJECT)\nprint(&#39;backend&#39;, cfg[&#39;build-system&#39;][&#39;build-backend&#39;])\nprint(&#39;name&#39;, cfg[&#39;project&#39;][&#39;name&#39;], &#39;version&#39;, cfg[&#39;project&#39;][&#39;version&#39;])\nprint(&#39;deps&#39;, cfg[&#39;project&#39;][&#39;dependencies&#39;])\nprint(&#39;entry&#39;, cfg[&#39;project&#39;][&#39;scripts&#39;][&#39;shortly&#39;])\n\nLEGACY = chr(10).join([\n    &#39;import sys&#39;,\n    &#39;def shorten(url): return url[-6:]&#39;,\n    "def expand(code): return &#39;https://x/&#39; + code",\n    "if __name__ == &#39;__main__&#39;: print(shorten(sys.argv[1]))",\n])\ntree = ast.parse(LEGACY)\nfuncs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]\nprint(&#39;legacy funcs&#39;, funcs)\nprint(&#39;guarded&#39;, any(isinstance(n, ast.If) for n in tree.body))' :notes='["导入 tomllib，3.11 起进入标准库的 TOML 解析器", "导入 ast，对重构前的源码做静态分析", "空行，只用于分隔逻辑块，不影响执行结果。", "用 chr(10).join 构造 TOML 文本，源码里不出现反斜杠换行转义", "[build-system] 是 PEP 518 表，声明构建时依赖", "requires 指定 PEP 517 后端所需包及最低版本", "build-backend 指向可调用的构建后端入口", "空行分隔两个 TOML 表", "[project] 是 PEP 621 标准化的项目元数据表", "name 是发行名，pip 安装后由它索引", "version 遵循 PEP 440，发布后同版本不可覆盖", "requires-python 让 pip 拒绝不兼容的解释器", "dependencies 写兼容范围，精确值留给锁文件", "空行", "[project.scripts] 声明控制台入口点", "shortly 命令映射到 shortly.cli 模块的 main 函数", "join 结束，得到完整 TOML 字符串", "tomllib.loads 把 TOML 解析成嵌套 dict", "读出构建后端，确认是 setuptools.build_meta", "读出发行名与版本", "读出依赖列表，供锁文件生成", "读出入口点，安装后会生成可执行脚本", "空行，只用于分隔逻辑块，不影响执行结果。", "用同样方式构造重构前的单文件脚本", "顶层 import，说明脚本依赖全局环境", "第一个业务函数，单文件里靠定义顺序组织", "第二个业务函数", "__main__ guard 让脚本既能直接运行又可被导入", "join 结束，得到脚本源码字符串", "ast.parse 把源码解析成 Module 节点树", "从顶层节点抽取函数定义名，作为迁移清单", "打印待迁移函数，重构时逐一搬进包模块", "检查顶层是否有 if 分支，即 __main__ guard 存在"]' title='第 081 讲 · 阶段综合：把脚本重构成可发布包' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src l' />
+<Callout type="tip" title='核心心智模型' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src l…' />
 
-<ConceptDiagram type='flow4' title='第 081 讲 · src layout：让『能 import』成为被验证过的事实' labels='src layout：让『能 import』|依赖锁定与入口点：把『我这儿能跑』写成机器可|测试先行与 CI 矩阵：让重构可验证、发布可' caption='完整走一遍工程化闭环' />
+<ConceptDiagram type='flow4' title='第 081 讲 · src layout：让『能 import』成为被验证过的事实' labels='src layout：让『能 import』…|依赖锁定与入口点：把『我这儿能跑』写成机器可…|测试先行与 CI 矩阵：让重构可验证、发布可…|发布与回滚' caption='完整走一遍工程化闭环' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 依赖锁定、控制台入口点与发布产物
@@ -226,7 +226,7 @@ CI 矩阵用 `tox`、`nox` 或 GitHub Actions 的 matrix 覆盖 Python 3.9 到 3
 
 回滚不是覆盖：PyPI 拒绝同名同版本重传，紧急修复要发新版本；对已发布但有问题的版本可用 `yank`（PEP 592）阻止新解析命中，已 pin 的依赖仍能装。回滚路径是让下游 pin 回上一版本号，并在流水线里保留上一版产物与回滚脚本，发布后用 `python -I` 隔离模式跑一次导入冒烟。
 
-<FlowTimeline :steps='[{"title": "src layout：让『能 import』成为被验证过的事实", "desc": "单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`…", "tone": "blue"}, {"title": "依赖锁定与入口点：把『我这儿能跑』写成机器可校验的约束", "desc": "`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名…", "tone": "purple"}, {"title": "测试先行与 CI 矩阵：让重构可验证、发布可回滚", "desc": "顺序决定成败：先补特征测试（characterization test）锁住当前可观…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前门禁：把目录、元数据、导入写法做成可跑的检查", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "src layout：让『能 import』成为…", "desc": "单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根…", "tone": "blue"}, {"title": "依赖锁定与入口点：把『我这儿能跑』写成机器可校验…", "desc": "`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名…", "tone": "purple"}, {"title": "测试先行与 CI 矩阵：让重构可验证、发布可回滚", "desc": "顺序决定成败：先补特征测试（characterization test）锁住当前可观…", "tone": "orange"}, {"title": "工程落地", "desc": "发布前门禁：把目录、元数据、导入写法做成可跑的检查", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## PEP 517 前后端解耦与 wheel 为何可复现
@@ -243,9 +243,9 @@ sdist 则要求目标机器具备编译器与后端，失败率更高。
 
 可编辑安装（PEP 660）由后端写一个 `.pth` 或自定义 `MetaPathFinder`，把 src 目录挂进 `sys.path`，让改动无需重装即可见，这也是 src layout 下本地开发的常规姿势。
 
-<Term word='目录重构' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src layout 把源码收' />
+<Term word='目录重构' text='单文件脚本重构的第一步是目录布局。flat layout 把包目录直接放在仓库根（`report.py` 与 `tests/` 同级），`pytest` 从根目录启动时 `sys.path[0]` 就是仓库根，于是测试里 `import report` 总能成功——哪怕这个包根本没被安装。src layout 把源码收…' />
 
-<Term word='依赖锁定' text='`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖；`require' />
+<Term word='依赖锁定' text='`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖…' />
 
 
 ## 发布前门禁：把目录、元数据、导入写成可跑的检查
@@ -307,13 +307,13 @@ print('main guard', has_main_guard(CLI))
 
 <Callout type="idea" title='落地提示' text='按小步推进：行为保持的测试先行，再动结构，最后接 CI 与发布；保留回滚路径' />
 
-<CheckList id='P081b' title='上线前自检' :items='["能复现并解释「本机 pytest 全绿，别处 pip install 后 」", "能复现并解释「依赖只写 requirements.txt 里的包名，CI 」", "能复现并解释「线上出了 bug 想用同一版本号重新上传修复包」", "能用一条命令验证 目录重构", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P081b' title='上线前自检' :items='["能复现并解释「本机 pytest 全绿，别处 pip install 后…」", "能复现并解释「依赖只写 requirements.txt 里的包名，CI…」", "能复现并解释「线上出了 bug 想用同一版本号重新上传修复包」", "能用一条命令验证 目录重构", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 目录重构 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 目录重构 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -325,7 +325,7 @@ python -m compileall -q . && python -m pytest -q
 
 <Callout type="warn" title='本讲最容易踩的坑' text='本机 pytest 全绿，别处 pip install 后 import 报 ModuleNotFoundError：flat layout 下测试从仓库根启动，sys.path[0] 恰好是源码所在目录，import 命中的是未安装的源码而非发行产物' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：本机 pytest 全绿，别处 pip in", "body": "flat layout 下测试从仓库根启动，sys.path[0] 恰好是源码所在目录，import 命中的是未安装的源码而非发行产物", "tip": "改 src layout，把源码收进 src/pkgname/；CI 里先 pip install -e .，再用 python -I -c &#39;import pkg; print(pkg.__file__)&#39; 验证安装路径"}, {"title": "第 2 步：依赖只写 requirements.txt ", "body": "pip 每次按版本范围解析最新兼容版，httpx、pydantic 这类库的小版本也会改变行为", "tip": "用 uv pip compile 或 pip-compile --generate-hashes 生成带摘要的锁文件，CI 用 pip install --require-hashes -r requirements.lock 固定集合"}, {"title": "第 3 步：线上出了 bug 想用同一版本号重新上传修复", "body": "PyPI 拒绝同名同版本重复上传，版本号只增不退", "tip": "发递增的新版本修复；对问题版本执行 yank 阻止新解析命中，回滚时让下游 pin 回上一个可用版本号"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：本机 pytest 全绿，别处 pip in…", "body": "flat layout 下测试从仓库根启动，sys.path[0] 恰好是源码所在目录，import 命中的是未安装的源码而非发行产物", "tip": "改 src layout，把源码收进 src/pkgname/；CI 里先 pip install -e .，再用 python -I -c &#39;import pkg; print(pkg.__file__)&#39; 验证安装路径"}, {"title": "第 2 步：依赖只写 requirements.txt…", "body": "pip 每次按版本范围解析最新兼容版，httpx、pydantic 这类库的小版本也会改变行为", "tip": "用 uv pip compile 或 pip-compile --generate-hashes 生成带摘要的锁文件，CI 用 pip install --require-hashes -r requirements.lock 固定集合"}, {"title": "第 3 步：线上出了 bug 想用同一版本号重新上传修复…", "body": "PyPI 拒绝同名同版本重复上传，版本号只增不退", "tip": "发递增的新版本修复；对问题版本执行 yank 阻止新解析命中，回滚时让下游 pin 回上一个可用版本号"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -364,3 +364,16 @@ python -m compileall -q . && python -m pytest -q
 3. [project] 的 version 遵循 PEP 440 且发布后不可覆盖；requires-python 让 pip 拒绝不兼容解释器
 
 [下一讲：HTTP 协议与 WSGI / ASGI](/server/http-wsgi)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/081-capstone.py`
+
+```bash
+python3 examples/lessons/081-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/081-capstone.py) · [全部示例代码索引](/examples/)

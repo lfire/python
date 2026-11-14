@@ -49,11 +49,11 @@ executor 内部用一条无界的 `queue.SimpleQueue` 存待办，所以「无�
 | map | (*iterables, timeout=None, chunksize=1) | 按输入顺序 yield；失败在迭代到该项时抛出 |
 | shutdown | (wait=True, *, cancel_futures=False) | cancel_futures 3.9+ 丢弃未启动待办 |
 
-<Callout type="tip" title='核心心智模型' text='`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；用 with 包住 executor，退出时会自动调用 `shutd' />
+<Callout type="tip" title='核心心智模型' text='`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；用 with 包住 executor，退出时会自动调用…' />
 
-<ConceptDiagram type='hub4' title='第 063 讲 · Executor 抽象与默认并发度' labels='Executor 抽象与默认并发度|Future 状态机与取消语义|分池、背压与异常逐一暴露' caption='管理并发度、结果收集与失败传播' />
+<ConceptDiagram type='hub4' title='第 063 讲 · Executor 抽象与默认并发度' labels='Executor 抽象与默认并发度|Future 状态机与取消语义|分池、背压与异常逐一暴露|异常传播' caption='管理并发度、结果收集与失败传播' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## submit、map 与 as_completed 的返回差异
@@ -85,7 +85,7 @@ with cf.ThreadPoolExecutor(2) as ex:
 
 <OutputBox title='主示例运行结果' output='out [(0, 0), (1, 1), (2, &#39;job-2&#39;), (3, 9), (4, 16)]\nall done True\ncancelled True\nmap [0, 1, 9]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import concurrent.futures as cf\n\ndef job(i):\n    if i == 2:\n        raise ValueError(&#39;job-2&#39;)\n    return i * i\n\nwith cf.ThreadPoolExecutor(max_workers=3) as ex:\n    futs = {ex.submit(job, i): i for i in range(5)}\n    out = {}\n    for f in cf.as_completed(futs):\n        i = futs[f]\n        try:\n            out[i] = f.result()\n        except ValueError as e:\n            out[i] = str(e)\nprint(&#39;out&#39;, sorted(out.items()))\nprint(&#39;all done&#39;, all(f.done() for f in futs))\nprint(&#39;cancelled&#39;, all(not f.cancelled() for f in futs))\n\nwith cf.ThreadPoolExecutor(2) as ex:\n    print(&#39;map&#39;, list(ex.map(job, [0, 1, 3])))' :notes='["导入 concurrent.futures 使用 Executor 与 Future", "定义一个会失败的任务，验证异常传播", "编号为 2 时抛错", "抛出 ValueError", "其余返回平方", "with 退出时自动 shutdown(wait=True)", "字典把 Future 映射回输入编号", "out 收集每个编号的结果", "按完成先后 yield，最早暴露失败", "取回该 Future 对应的编号", "准备消费结果", "result 会重新抛出 worker 里的异常", "捕获失败项", "转成结构化字符串，不让异常丢失", "按编号排序，结果与提交顺序无关", "with 退出后所有 Future 都是 FINISHED", "没有任何一个被取消", "再用 map 演示按输入顺序", "map 跳过失败的 2，按序 yield"]' title='第 063 讲 · 线程池与 Future 模式' />
+<LineByLine code='import concurrent.futures as cf\n\ndef job(i):\n    if i == 2:\n        raise ValueError(&#39;job-2&#39;)\n    return i * i\n\nwith cf.ThreadPoolExecutor(max_workers=3) as ex:\n    futs = {ex.submit(job, i): i for i in range(5)}\n    out = {}\n    for f in cf.as_completed(futs):\n        i = futs[f]\n        try:\n            out[i] = f.result()\n        except ValueError as e:\n            out[i] = str(e)\nprint(&#39;out&#39;, sorted(out.items()))\nprint(&#39;all done&#39;, all(f.done() for f in futs))\nprint(&#39;cancelled&#39;, all(not f.cancelled() for f in futs))\n\nwith cf.ThreadPoolExecutor(2) as ex:\n    print(&#39;map&#39;, list(ex.map(job, [0, 1, 3])))' :notes='["导入 concurrent.futures 使用 Executor 与 Future", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个会失败的任务，验证异常传播", "编号为 2 时抛错", "抛出 ValueError", "其余返回平方", "空行，只用于分隔逻辑块，不影响执行结果。", "with 退出时自动 shutdown(wait=True)", "字典把 Future 映射回输入编号", "out 收集每个编号的结果", "按完成先后 yield，最早暴露失败", "取回该 Future 对应的编号", "准备消费结果", "result 会重新抛出 worker 里的异常", "捕获失败项", "转成结构化字符串，不让异常丢失", "按编号排序，结果与提交顺序无关", "with 退出后所有 Future 都是 FINISHED", "没有任何一个被取消", "空行，只用于分隔逻辑块，不影响执行结果。", "再用 map 演示按输入顺序", "map 跳过失败的 2，按序 yield"]' title='第 063 讲 · 线程池与 Future 模式' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -185,9 +185,9 @@ Future 是一个带 Condition 的状态机：`set_result` / `set_exception` 在�
 
 默认并发度的版本差异（3.13 起用 `os.process_cpu_count()` 取代 `os.cpu_count()`）已在上一节说过，它改变的是取哪个核数，不改变队列无界这一事实。
 
-<Term word='Executor 抽象' text='`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；用 with 包住 executor，退出时会自动调用 `shutdown(wait=T' />
+<Term word='Executor 抽象' text='`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；用 with 包住 executor，退出时会自动调用…' />
 
-<Term word='submit / map / as_completed' text='`concurrent.futures._base.Future` 有五个内部状态：`PENDING`、`RUNNING`、`CANCELLED`、`CANCELLED_AND_NOTIFIED`、`FINISHED`。`cancel()` 只在 `PENDING` 时有效——把状态置为 `CANCELLED` 并返回' />
+<Term word='submit / map / as_completed' text='`concurrent.futures._base.Future` 有五个内部状态：`PENDING`、`RUNNING`、`CANCELLED`、`CANCELLED_AND_NOTIFIED`、`FINISHED`。`cancel()` 只在 `PENDING` 时有效——把状态置为 `CANCELLED` 并返回…' />
 
 
 ## 分池、背压与异常逐一暴露
@@ -312,4 +312,17 @@ if __name__ == '__main__':
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Executor 抽象 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Executor 抽象 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/063-threadpool.py`
+
+```bash
+python3 examples/lessons/063-threadpool.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/063-threadpool.py) · [全部示例代码索引](/examples/)

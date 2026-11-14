@@ -34,11 +34,11 @@ description: 交付一个可发布的抽象工具集
 
 ## 整体蓝图：缓存、注册表与发布边界
 
-<Callout type="tip" title='核心心智模型' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 `(expire_at' />
+<Callout type="tip" title='核心心智模型' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存…' />
 
-<SequenceDiagram title='第 037 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "TTL 缓存：单调时钟、锁与", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "注册表与 entry_poi", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 037 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "TTL 缓存：单调时钟、锁与…", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "注册表与 entry_poi…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
-<FlowTimeline :steps='[{"title": "TTL 缓存：单调时钟、锁与异常处理", "desc": "`TTL` 必须用 `time.monotonic()` 而不是 `time.tim…", "tone": "blue"}, {"title": "注册表与 entry_points", "desc": "注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Regis…", "tone": "purple"}, {"title": "单元测试与可发布抽象", "desc": "可发布的抽象必须自带可测性。`TTL` 缓存把 `clock` 参数化，测试里传一个…", "tone": "orange"}, {"title": "工程落地", "desc": "把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "TTL 缓存：单调时钟、锁与异常处理", "desc": "`TTL` 必须用 `time.monotonic()` 而不是…", "tone": "blue"}, {"title": "注册表与 entry_points", "desc": "注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个…", "tone": "purple"}, {"title": "单元测试与可发布抽象", "desc": "可发布的抽象必须自带可测性。`TTL` 缓存把 `clock` 参数化，测试里传一个…", "tone": "orange"}, {"title": "工程落地", "desc": "把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## TTL 缓存：单调时钟、锁与异常处理
@@ -98,7 +98,7 @@ print(slow(3), calls['n'])
 
 <OutputBox title='主示例运行结果' output='6 6\n1 {&#39;hit&#39;: 1, &#39;miss&#39;: 1, &#39;size&#39;: 1}\n6 2' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import time, threading\nfrom functools import wraps\n\ndef cache(ttl, clock=time.monotonic):\n    def deco(fn):\n        store = {}\n        lock = threading.RLock()\n        hits = {&#39;hit&#39;: 0, &#39;miss&#39;: 0}\n        @wraps(fn)\n        def wrapper(*args, **kwargs):\n            key = (args, tuple(sorted(kwargs.items())))\n            now = clock()\n            with lock:\n                item = store.get(key)\n                if item and now &lt; item[0]:\n                    hits[&#39;hit&#39;] += 1\n                    return item[1]\n                hits[&#39;miss&#39;] += 1\n                value = fn(*args, **kwargs)\n                store[key] = (now + ttl, value)\n                return value\n        wrapper.cache_clear = store.clear\n        wrapper.cache_info = lambda: dict(hits, size=len(store))\n        return wrapper\n    return deco\n\ncalls = {&#39;n&#39;: 0}\n@cache(ttl=60)\ndef slow(x):\n    calls[&#39;n&#39;] += 1\n    return x * 2\n\nprint(slow(3), slow(3))\nprint(calls[&#39;n&#39;], slow.cache_info())\nslow.cache_clear()\nprint(slow(3), calls[&#39;n&#39;])' :notes='["导入 time 取单调时钟、threading 取可重入锁", "导入 wraps 保留被装饰函数的元数据", "外层收 ttl 与可注入的 clock，默认用 monotonic", "中层接收被装饰函数", "store 存 key 到 (expire_at, value) 的映射", "RLock 保护检查、计算、写入整段临界区", "命中与未命中计数器，供 cache_info 观测", "把名字、文档、__wrapped__ 搬到 wrapper", "内层接收每次调用的实参", "键由位置参数与排序后的关键字参数构成，须可哈希", "读取当前单调时钟值", "进入临界区，避免并发冷键重复计算", "查缓存，item 是 (过期时刻, 值) 或 None", "未过期才算命中", "命中计数加一", "直接返回缓存值，不执行底层函数", "未命中计数加一", "仅在未命中时调用底层函数", "把结果与过期时刻写入 store", "返回新计算的值", "暴露 cache_clear 供测试与热更新", "暴露 cache_info 返回命中统计与条目数", "中层必须返回 wrapper", "外层必须返回 deco", "用字典记录底层函数被真正执行的次数", "用 ttl=60 装饰一个模拟慢函数", "定义被装饰的模拟慢函数 slow", "每次真正执行就把计数加一", "返回计算结果", "两次调用只算一次，结果都是 6", "底层只执行 1 次，命中 1 次、未命中 1 次、缓存 1 条", "清空缓存，验证冷启动路径", "清空后重新计算，底层执行次数变 2"]' title='第 037 讲 · 阶段综合：缓存装饰器库与插件注册表' />
+<LineByLine code='import time, threading\nfrom functools import wraps\n\ndef cache(ttl, clock=time.monotonic):\n    def deco(fn):\n        store = {}\n        lock = threading.RLock()\n        hits = {&#39;hit&#39;: 0, &#39;miss&#39;: 0}\n        @wraps(fn)\n        def wrapper(*args, **kwargs):\n            key = (args, tuple(sorted(kwargs.items())))\n            now = clock()\n            with lock:\n                item = store.get(key)\n                if item and now &lt; item[0]:\n                    hits[&#39;hit&#39;] += 1\n                    return item[1]\n                hits[&#39;miss&#39;] += 1\n                value = fn(*args, **kwargs)\n                store[key] = (now + ttl, value)\n                return value\n        wrapper.cache_clear = store.clear\n        wrapper.cache_info = lambda: dict(hits, size=len(store))\n        return wrapper\n    return deco\n\ncalls = {&#39;n&#39;: 0}\n@cache(ttl=60)\ndef slow(x):\n    calls[&#39;n&#39;] += 1\n    return x * 2\n\nprint(slow(3), slow(3))\nprint(calls[&#39;n&#39;], slow.cache_info())\nslow.cache_clear()\nprint(slow(3), calls[&#39;n&#39;])' :notes='["导入 time 取单调时钟、threading 取可重入锁", "导入 wraps 保留被装饰函数的元数据", "空行，只用于分隔逻辑块，不影响执行结果。", "外层收 ttl 与可注入的 clock，默认用 monotonic", "中层接收被装饰函数", "store 存 key 到 (expire_at, value) 的映射", "RLock 保护检查、计算、写入整段临界区", "命中与未命中计数器，供 cache_info 观测", "把名字、文档、__wrapped__ 搬到 wrapper", "内层接收每次调用的实参", "键由位置参数与排序后的关键字参数构成，须可哈希", "读取当前单调时钟值", "进入临界区，避免并发冷键重复计算", "查缓存，item 是 (过期时刻, 值) 或 None", "未过期才算命中", "命中计数加一", "直接返回缓存值，不执行底层函数", "未命中计数加一", "仅在未命中时调用底层函数", "把结果与过期时刻写入 store", "返回新计算的值", "暴露 cache_clear 供测试与热更新", "暴露 cache_info 返回命中统计与条目数", "中层必须返回 wrapper", "外层必须返回 deco", "空行，只用于分隔逻辑块，不影响执行结果。", "用字典记录底层函数被真正执行的次数", "用 ttl=60 装饰一个模拟慢函数", "定义被装饰的模拟慢函数 slow", "每次真正执行就把计数加一", "返回计算结果", "空行，只用于分隔逻辑块，不影响执行结果。", "两次调用只算一次，结果都是 6", "底层只执行 1 次，命中 1 次、未命中 1 次、缓存 1 条", "清空缓存，验证冷启动路径", "清空后重新计算，底层执行次数变 2"]' title='第 037 讲 · 阶段综合：缓存装饰器库与插件注册表' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -171,9 +171,9 @@ print(build.calls['n'], build(1), build.__name__, inspect.signature(build))
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 打包配置 落在哪一层。
 
-<Term word='装饰器组合设计' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 `(expire_at, value)`，' />
+<Term word='装饰器组合设计' text='`TTL` 必须用 `time.monotonic()` 而不是 `time.time()`：前者由操作系统保证单调递增，不受 `NTP` 回拨或管理员手动改时影响，用墙上时钟存 `expire_at` 一旦回拨，就可能把刚写入的条目误判为过期、或把过期条目当成有效。缓存项存 `(expire_at, value)`…' />
 
-<Term word='注册表与入口点' text='注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Registry` 类提供 `register(name)` 装饰器、`get(name)`、`names()` 与 `clear()`，实例可注入，让每个测试拿到干净状态。重复注册要有明确约定——默认抛 `KeyError` 或显式覆盖，绝不能' />
+<Term word='注册表与入口点' text='注册表别写成模块级裸全局 `dict`，而要做成显式实例 API：一个 `Registry` 类提供 `register(name)` 装饰器、`get(name)`、`names()` 与 `clear()`，实例可注入，让每个测试拿到干净状态。重复注册要有明确约定——默认抛 `KeyError` 或显式覆盖，绝不能…' />
 
 
 ## 注册表与 entry_points
@@ -333,13 +333,13 @@ print(plugins.names())
 
 <Callout type="idea" title='落地提示' text='把注册表做成显式 API 并支持 entry_points，第三方才能在不改核心代码的前提下扩展能力' />
 
-<CheckList id='P037b' title='上线前自检' :items='["能复现并解释「装饰器里用全局 dict 缓存不加锁，多线程重复计算且状态竞」", "能复现并解释「TTL 用 time.time() 判断，NTP 回拨后缓存」", "能复现并解释「把异常结果也缓存，一次超时被返回整个 TTL」", "能用一条命令验证 装饰器组合设计", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P037b' title='上线前自检' :items='["能复现并解释「装饰器里用全局 dict 缓存不加锁，多线程重复计算且状态竞…」", "能复现并解释「TTL 用 time.time() 判断，NTP 回拨后缓存…」", "能复现并解释「把异常结果也缓存，一次超时被返回整个 TTL」", "能用一条命令验证 装饰器组合设计", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from functools import lru_cache; print(lru_cache(8)(lambda n:n)(1))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 装饰器组合设计 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 装饰器组合设计 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 全局 dict、NTP 回拨与缓存异常
@@ -354,7 +354,7 @@ python -c "from functools import lru_cache; print(lru_cache(8)(lambda n:n)(1))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='装饰器里用全局 dict 缓存不加锁，多线程重复计算且状态竞争：查 + 算 + 写跨多步，线程切换会让同一冷键被算多次，字典并发读写也不安全' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：装饰器里用全局 dict 缓存不加锁，多线程", "body": "查 + 算 + 写跨多步，线程切换会让同一冷键被算多次，字典并发读写也不安全", "tip": "用 threading.RLock 包住整段，或按键分锁；持锁期间不要回调本缓存"}, {"title": "第 2 步：TTL 用 time.time() 判断，N", "body": "墙上时钟可被回拨，expire_at 与 now 的比较失去单调性", "tip": "改用 time.monotonic() 存过期时间；测试里注入假时钟推进"}, {"title": "第 3 步：把异常结果也缓存，一次超时被返回整个 TTL", "body": "写入路径没有区分成功与失败，异常对象或失败值被存进缓存", "tip": "只在 fn 正常返回时写 store，异常直接抛出；必要时给失败单独设短 TTL"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：装饰器里用全局 dict 缓存不加锁，多线程…", "body": "查 + 算 + 写跨多步，线程切换会让同一冷键被算多次，字典并发读写也不安全", "tip": "用 threading.RLock 包住整段，或按键分锁；持锁期间不要回调本缓存"}, {"title": "第 2 步：TTL 用 time.time() 判断，N…", "body": "墙上时钟可被回拨，expire_at 与 now 的比较失去单调性", "tip": "改用 time.monotonic() 存过期时间；测试里注入假时钟推进"}, {"title": "第 3 步：把异常结果也缓存，一次超时被返回整个 TTL", "body": "写入路径没有区分成功与失败，异常对象或失败值被存进缓存", "tip": "只在 fn 正常返回时写 store，异常直接抛出；必要时给失败单独设短 TTL"}]' />
 
 
 ## 从练习到可发布清单
@@ -391,3 +391,16 @@ python -c "from functools import lru_cache; print(lru_cache(8)(lambda n:n)(1))"
 3. 异常不缓存：只在 fn 正常返回时写 store，否则一次失败被放大成整段 TTL
 
 [下一讲：类与实例：__init__、self 与属性](/oop/class-basics)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/037-capstone.py`
+
+```bash
+python3 examples/lessons/037-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/037-capstone.py) · [全部示例代码索引](/examples/)

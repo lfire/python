@@ -48,7 +48,7 @@ SSE 则是普通 `HTTP` 响应，`Content-Type` 设为 `text/event-stream`，体
 
 <Compare :panels='[{"label": "主示例", "code": "import hashlib\nimport base64\n\nGUID = &#39;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&#39;\nclient_key = &#39;dGhlIHNhbXBsZSBub25jZQ==&#39;\naccept = base64.b64encode(hashlib.sha1((client_key + GUID).encode()).digest()).decode()\nprint(&#39;Sec-WebSocket-Accept&#39;, accept)\nprint(&#39;GUID len&#39;, len(GUID))", "note": "三种通道：握手、帧与单向流"}, {"label": "对照 / 进阶", "code": "def sse_frame(event_id, event, data, retry_ms=3000):\n    lines = [&#39;id: &#39; + str(event_id), &#39;event: &#39; + event,\n             &#39;retry: &#39; + str(retry_ms), &#39;data: &#39; + data, &#39;&#39;, &#39;&#39;]\n    return chr(10).join(lines)\n\ndef resume(events, last_event_id):\n    return [e for e in events if e[&#39;id&#39;] &gt; last_event_id]\n\nevents = [{&#39;id&#39;: 1, &#39;data&#39;: &#39;a&#39;}, {&#39;id&#39;: 2, &#39;data&#39;: &#39;b&#39;}, {&#39;id&#39;: 3, &#39;data&#39;: &#39;c&#39;}]\nframe = sse_frame(3, &#39;tick&#39;, &#39;c&#39;)\nprint(&#39;frame lines&#39;, frame.split(chr(10)))\nprint(&#39;replay after id 1&#39;, resume(events, 1))", "note": "断线重连、消息补发与心跳背压"}]' title='两种写法对照' note='差异集中在 三种通道对比；先看输出，再找背后的规则。' />
 
-<Callout type="tip" title='核心心智模型' text='WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与 `Sec-WebSocket-Version: ' />
+<Callout type="tip" title='核心心智模型' text='WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与…' />
 
 
 ### WebSocket 帧的 opcode 与长度编码
@@ -80,7 +80,7 @@ print('GUID len', len(GUID))
 
 <OutputBox title='主示例运行结果' output='Sec-WebSocket-Accept s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\nGUID len 36' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\nimport base64\n\nGUID = &#39;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&#39;\nclient_key = &#39;dGhlIHNhbXBsZSBub25jZQ==&#39;\naccept = base64.b64encode(hashlib.sha1((client_key + GUID).encode()).digest()).decode()\nprint(&#39;Sec-WebSocket-Accept&#39;, accept)\nprint(&#39;GUID len&#39;, len(GUID))' :notes='["导入 hashlib，握手校验要用 SHA-1", "导入 base64，Sec-WebSocket-Accept 是 base64 编码结果", "RFC 6455 规定的固定 GUID，所有实现都用这一个常量", "客户端发来的 Sec-WebSocket-Key，值取自 RFC 示例", "把 key 与 GUID 拼接后取 SHA-1，再做 base64 得到 Accept", "打印计算结果，用于和客户端/服务端抓包比对", "GUID 长度 36，是标准 UUID 字符串形式"]' title='第 086 讲 · WebSocket / SSE / 长轮询与实时推送' />
+<LineByLine code='import hashlib\nimport base64\n\nGUID = &#39;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&#39;\nclient_key = &#39;dGhlIHNhbXBsZSBub25jZQ==&#39;\naccept = base64.b64encode(hashlib.sha1((client_key + GUID).encode()).digest()).decode()\nprint(&#39;Sec-WebSocket-Accept&#39;, accept)\nprint(&#39;GUID len&#39;, len(GUID))' :notes='["导入 hashlib，握手校验要用 SHA-1", "导入 base64，Sec-WebSocket-Accept 是 base64 编码结果", "空行，只用于分隔逻辑块，不影响执行结果。", "RFC 6455 规定的固定 GUID，所有实现都用这一个常量", "客户端发来的 Sec-WebSocket-Key，值取自 RFC 示例", "把 key 与 GUID 拼接后取 SHA-1，再做 base64 得到 Accept", "打印计算结果，用于和客户端/服务端抓包比对", "GUID 长度 36，是标准 UUID 字符串形式"]' title='第 086 讲 · WebSocket / SSE / 长轮询与实时推送' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -131,9 +131,9 @@ print('replay after id 1', resume(events, 1))
 
 正确做法是给每个连接设带上限的有界队列、超限就降级（丢弃低优先级消息或断开让客户端带 `id` 重连），并用 TCP 背压或应用层 `ack` 控制速率。连接清理要有空闲超时与总数上限，防止半开连接耗尽 `fd`。
 
-<ConceptDiagram type='flow4' title='第 086 讲 · 三种通道：握手、帧与单向流' labels='三种通道：握手、帧与单向流|断线重连、消息补发与心跳背压|水平扩展：跨实例广播与粘性会话' caption='为实时场景选对通道并管理连接状态' />
+<ConceptDiagram type='flow4' title='第 086 讲 · 三种通道：握手、帧与单向流' labels='三种通道：握手、帧与单向流|断线重连、消息补发与心跳背压|水平扩展：跨实例广播与粘性会话|水平扩展与粘性会话' caption='为实时场景选对通道并管理连接状态' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把 WebSocket 连接对象只存在单机内存，扩容后用户收不到别人发的消息：负载均衡把连接分散到不同实例，本机广播到不了其它实例持有的连接' />
 
@@ -158,12 +158,12 @@ print('replay after id 1', resume(events, 1))
 | 慢客户端拖垮服务 | 发送队列无界 | 有界队列 + 超限降级/断开 |
 | 广播成环放大 | 未标识来源实例 | 消息带 source_id，收到自产消息丢弃 |
 
-<ArchBlueprint title='第 086 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "三种通道：握手、帧与单向流", "protocol": "调用 / 请求", "items": [{"label": "三种通道：握手、帧与单向", "sub": "输入与前置", "detail": "WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与 `Sec-WebSocket-Version: ", "tone": "blue"}]}, {"name": "核心规则", "note": "断线重连、消息补发与心跳背压", "protocol": "语言 / 运行时协议", "items": [{"label": "断线重连、消息补发与心跳", "sub": "状态与边界", "detail": "实时系统的可靠性在断线之后。TCP 半开（一端已断、另一端未收到 `FIN`）靠应用层心跳发现：WebSocket 用 `ping` / `pong` 控制帧，SSE 用注释行 `: keep-alive` 定期写入，超过若干周期无响应即判定死亡并清理。重连要带偏移：SSE 用 `Last-Even", "tone": "purple"}]}, {"name": "落地与收尾", "note": "水平扩展：跨实例广播与粘性会话", "items": [{"label": "水平扩展：跨实例广播与粘", "sub": "工程处理", "detail": "单机内存里的连接表在扩容后必然失效：用户重连到另一实例，既拿不到旧连接的订阅关系，也收不到别的实例产生的消息。两条路线：一是让所有实例订阅同一个 Redis Pub/Sub 频道或 Kafka 主题，任意实例产生消息就广播到频道，每台实例收到后只推给本机持有的连接；消息日志同时用于重连补发（Redi", "tone": "green"}]}]' />
+<ArchBlueprint title='第 086 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "三种通道：握手、帧与单向流", "protocol": "调用 / 请求", "items": [{"label": "三种通道：握手、帧与单向…", "sub": "输入与前置", "detail": "WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与…", "tone": "blue"}]}, {"name": "核心规则", "note": "断线重连、消息补发与心跳背压", "protocol": "语言 / 运行时协议", "items": [{"label": "断线重连、消息补发与心跳…", "sub": "状态与边界", "detail": "实时系统的可靠性在断线之后。TCP 半开（一端已断、另一端未收到 `FIN`）靠应用层心跳发现：WebSocket 用 `ping` / `pong` 控制帧，SSE 用注释行 `: keep-alive` 定期写入，超过若干周期无响应即判定死亡并清理。重连要带偏移：SSE 用…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "水平扩展：跨实例广播与粘性会话", "items": [{"label": "水平扩展：跨实例广播与粘…", "sub": "工程处理", "detail": "单机内存里的连接表在扩容后必然失效：用户重连到另一实例，既拿不到旧连接的订阅关系，也收不到别的实例产生的消息。两条路线：一是让所有实例订阅同一个 Redis Pub/Sub 频道或 Kafka 主题，任意实例产生消息就广播到频道，每台实例收到后只推给本机持有的连接；消息日志同时用于重连补发（Redi…", "tone": "green"}]}]' />
 
 
 ### 半开连接为什么把文件描述符耗尽
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 WebSocket 连接对象只存在单机内", "body": "负载均衡把连接分散到不同实例，本机广播到不了其它实例持有的连接", "tip": "用 Redis Pub/Sub 或 Kafka 做跨实例广播，消息日志用 Redis Stream/Kafka 持久化并重连补发；实例收到自产消息按 source_id 丢弃"}, {"title": "第 2 步：用 SETNX 式的心跳但只靠 TCP 判断", "body": "一端断网不发 FIN，另一端内核无感知，连接表持续累积", "tip": "应用层 ping/pong 或 SSE 注释心跳，配合空闲超时与连接总数上限主动清理"}, {"title": "第 3 步：给每个慢客户端无界缓冲并同步 send，内存", "body": "发送队列没有上限，背压无法回传到生产者", "tip": "每连接用有界队列，超限丢弃低优先级消息或断开让客户端带 last_event_id 重连，并按订阅先过滤再扇出"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 WebSocket 连接对象只存在单机内…", "body": "负载均衡把连接分散到不同实例，本机广播到不了其它实例持有的连接", "tip": "用 Redis Pub/Sub 或 Kafka 做跨实例广播，消息日志用 Redis Stream/Kafka 持久化并重连补发；实例收到自产消息按 source_id 丢弃"}, {"title": "第 2 步：用 SETNX 式的心跳但只靠 TCP 判断…", "body": "一端断网不发 FIN，另一端内核无感知，连接表持续累积", "tip": "应用层 ping/pong 或 SSE 注释心跳，配合空闲超时与连接总数上限主动清理"}, {"title": "第 3 步：给每个慢客户端无界缓冲并同步 send，内存…", "body": "发送队列没有上限，背压无法回传到生产者", "tip": "每连接用有界队列，超限丢弃低优先级消息或断开让客户端带 last_event_id 重连，并按订阅先过滤再扇出"}]' />
 
 
 ## 帧、ping/pong 与背压的协议层来源
@@ -178,9 +178,9 @@ TCP 无法感知半开连接，因此心跳（`ping` / `pong` 或注释行）是
 
 跨实例广播用发布订阅把「消息产生」与「连接持有」解耦：共享日志负责可重放，本机连接表负责最后的扇出，这样任一实例宕机都能通过重连 + 按 `id` 补发恢复，而状态不在进程内存里丢掉。
 
-<Term word='三种通道对比' text='WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与 `Sec-WebSocket-Version: 13`；服务端把该 ' />
+<Term word='三种通道对比' text='WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端发 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Key`（16 字节随机值的 base64）与 `Sec-WebSocket-Version: 13`；服务端把该…' />
 
-<Term word='握手与帧' text='实时系统的可靠性在断线之后。TCP 半开（一端已断、另一端未收到 `FIN`）靠应用层心跳发现：WebSocket 用 `ping` / `pong` 控制帧，SSE 用注释行 `: keep-alive` 定期写入，超过若干周期无响应即判定死亡并清理。重连要带偏移：SSE 用 `Last-Event-ID`，WebS' />
+<Term word='握手与帧' text='实时系统的可靠性在断线之后。TCP 半开（一端已断、另一端未收到 `FIN`）靠应用层心跳发现：WebSocket 用 `ping` / `pong` 控制帧，SSE 用注释行 `: keep-alive` 定期写入，超过若干周期无响应即判定死亡并清理。重连要带偏移：SSE 用 `Last-Event-ID`，WebS…' />
 
 <FlowTimeline :steps='[{"title": "三种通道：握手、帧与单向流", "desc": "WebSocket（RFC 6455）从一次 HTTP Upgrade 开始：客户端…", "tone": "blue"}, {"title": "断线重连、消息补发与心跳背压", "desc": "实时系统的可靠性在断线之后。TCP 半开（一端已断、另一端未收到 `FIN`）靠应用…", "tone": "purple"}, {"title": "水平扩展：跨实例广播与粘性会话", "desc": "单机内存里的连接表在扩容后必然失效：用户重连到另一实例，既拿不到旧连接的订阅关系，也…", "tone": "orange"}, {"title": "工程落地", "desc": "带心跳、有界队列与重连补发的连接管理器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
@@ -243,13 +243,13 @@ print('dead after tick', hub.tick(now=11))
 
 <Callout type="idea" title='落地提示' text='用 Redis Pub/Sub 或消息中间件做跨实例广播，客户端带 last_event_id 重连，服务端做心跳与空闲清理' />
 
-<CheckList id='P086b' title='上线前自检' :items='["能复现并解释「把 WebSocket 连接对象只存在单机内存，扩容后用户收」", "能复现并解释「用 SETNX 式的心跳但只靠 TCP 判断存活，半开连接把」", "能复现并解释「给每个慢客户端无界缓冲并同步 send，内存随积压增长」", "能用一条命令验证 三种通道对比", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P086b' title='上线前自检' :items='["能复现并解释「把 WebSocket 连接对象只存在单机内存，扩容后用户收…」", "能复现并解释「用 SETNX 式的心跳但只靠 TCP 判断存活，半开连接把…」", "能复现并解释「给每个慢客户端无界缓冲并同步 send，内存随积压增长」", "能用一条命令验证 三种通道对比", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 三种通道对比 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 三种通道对比 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查
@@ -299,3 +299,16 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 3. SSE 是 text/event-stream 单向流，EventSource 自动带 Last-Event-ID 重连，适合通知/日志
 
 [下一讲：SQLAlchemy、连接池、事务与迁移](/server/orm)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/086-websocket.py`
+
+```bash
+python3 examples/lessons/086-websocket.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/086-websocket.py) · [全部示例代码索引](/examples/)

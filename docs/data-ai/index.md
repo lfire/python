@@ -28,7 +28,7 @@ description: 从数据处理到机器学习、深度学习与大模型应用工�
 
 NumPy / Pandas、可视化与统计、经典算法、集成学习、PyTorch、LLM / RAG / Agent。阶段划分不是按知识点罗列，而是按「学完能交付什么」倒推：前一阶段的输出正好是这一阶段的前置，跳过某一段往往会在后面某讲突然卡住，届时再回来补齐比按顺序学更费时。
 
-<ConceptDiagram type='compare2' title='阶段九 · 数据科学与 AI 工程 · 知识主线' labels='数据|特征|模型|服务' caption='从数据处理到机器学习、深度学习与大模型应用工程' />
+<ConceptDiagram type='layers3' title='阶段九 · 数据科学与 AI 工程 · 知识主线' labels='数据|特征|模型|服务' caption='从数据处理到机器学习、深度学习与大模型应用工程' />
 
 <Callout type="tip" title="怎么用这一阶段" text='先读导览确定出口能力，再逐讲打卡；遇到卡点优先回到对应讲的最小示例，而不是直接翻答案。共 12 讲，合计约 500 分钟。' />
 

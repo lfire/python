@@ -39,7 +39,7 @@ description: 构建可插拔的框架式代码
 | 一句话目标 | 构建可插拔的框架式代码 |
 | 为下一讲铺垫 | dataclass、attrs 与 pydantic 模型 |
 
-<Callout type="tip" title='核心心智模型' text='`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之，' />
+<Callout type="tip" title='核心心智模型' text='`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之…' />
 
 
 ## 属性查找链与 getattr / hasattr 的真实语义
@@ -75,7 +75,7 @@ print('dict keys', sorted(vars(svc).keys()))
 
 <OutputBox title='主示例运行结果' output='getattr 1.0 default\nhasattr True False\nsig (n: int, flag: bool = False) -&gt; str\nannotations {&#39;n&#39;: &lt;class &#39;int&#39;&gt;, &#39;flag&#39;: &lt;class &#39;bool&#39;&gt;, &#39;return&#39;: &lt;class &#39;str&#39;&gt;}\nmembers [&#39;run&#39;]\ndict keys []' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import inspect\n\nclass Service:\n    version = &#39;1.0&#39;\n    def run(self, n: int, flag: bool = False) -&gt; str:\n        return &#39;ok&#39;\n\nsvc = Service()\nprint(&#39;getattr&#39;, getattr(svc, &#39;version&#39;), getattr(svc, &#39;missing&#39;, &#39;default&#39;))\nprint(&#39;hasattr&#39;, hasattr(svc, &#39;run&#39;), hasattr(svc, &#39;missing&#39;))\nprint(&#39;sig&#39;, str(inspect.signature(svc.run)))\nprint(&#39;annotations&#39;, svc.run.__annotations__)\nprint(&#39;members&#39;, sorted(k for k, _ in inspect.getmembers(svc) if k == &#39;run&#39;))\nprint(&#39;dict keys&#39;, sorted(vars(svc).keys()))' :notes='["导入 inspect，用于签名与成员自省", "空行分隔导入与类定义", "定义服务类，集中演示反射入口", "类属性 version，实例属性查找时会回退到类字典", "带注解与默认值的方法，供 signature 与 __annotations__ 读取", "方法体返回固定值，本例聚焦元信息", "空行分隔定义与验证", "构造实例，注意 version 是类属性而非实例属性", "getattr 命中共读版本；未命中时返回提供的 default", "hasattr 对存在与不存在的名字分别给 True / False", "signature 对绑定方法自动去掉 self，展示剩余参数与注解", "__annotations__ 在无 future 注解时是真实类型对象"]' title='第 046 讲 · 反射与自省：getattr、inspect 与 __dict__' />
+<LineByLine code='import inspect\n\nclass Service:\n    version = &#39;1.0&#39;\n    def run(self, n: int, flag: bool = False) -&gt; str:\n        return &#39;ok&#39;\n\nsvc = Service()\nprint(&#39;getattr&#39;, getattr(svc, &#39;version&#39;), getattr(svc, &#39;missing&#39;, &#39;default&#39;))\nprint(&#39;hasattr&#39;, hasattr(svc, &#39;run&#39;), hasattr(svc, &#39;missing&#39;))\nprint(&#39;sig&#39;, str(inspect.signature(svc.run)))\nprint(&#39;annotations&#39;, svc.run.__annotations__)\nprint(&#39;members&#39;, sorted(k for k, _ in inspect.getmembers(svc) if k == &#39;run&#39;))\nprint(&#39;dict keys&#39;, sorted(vars(svc).keys()))' :notes='["导入 inspect，用于签名与成员自省", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与类定义", "定义服务类，集中演示反射入口", "类属性 version，实例属性查找时会回退到类字典", "带注解与默认值的方法，供 signature 与 __annotations__ 读取", "空行，只用于分隔逻辑块，不影响执行结果。", "方法体返回固定值，本例聚焦元信息", "空行分隔定义与验证", "构造实例，注意 version 是类属性而非实例属性", "getattr 命中共读版本；未命中时返回提供的 default", "hasattr 对存在与不存在的名字分别给 True / False", "signature 对绑定方法自动去掉 self，展示剩余参数与注解", "__annotations__ 在无 future 注解时是真实类型对象"]' title='第 046 讲 · 反射与自省：getattr、inspect 与 __dict__' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -167,9 +167,9 @@ print('hints:', get_type_hints(f))
 | Optional[int] | typing.Optional[int] | 展开为 typing.Optional[int] |
 | 3.10+ inspect.get_annotations | 可控制是否 eval 字符串 | 按 eval_str 参数决定 |
 
-<Term word='getattr / setattr / hasattr' text='`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之，最后才回退实例字典；' />
+<Term word='getattr / setattr / hasattr' text='`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之，最后才回退实例字典…' />
 
-<Term word='inspect.signature 与 getmembers' text='`inspect.signature` 返回一个 `Signature` 对象，它的 `parameters` 是按定义顺序排列的映射，每个 `Parameter` 带 `name`、`kind`（`POSITIONAL_ONLY` / `POSITIONAL_OR_KEYWORD` / `VAR_POSITIONAL' />
+<Term word='inspect.signature 与 getmembers' text='`inspect.signature` 返回一个 `Signature` 对象，它的 `parameters` 是按定义顺序排列的映射，每个 `Parameter` 带 `name`、`kind`（`POSITIONAL_ONLY` / `POSITIONAL_OR_KEYWORD`…' />
 
 
 ## 动态导入与反射的安全边界：白名单注册表
@@ -210,11 +210,11 @@ PEP 563 的延迟注解把所有注解存成字符串，正是它让直接读 `_
 | 导入不可信模块 | import_module 会执行模块顶层代码 | 模块名来自可信配置，配合白名单 |
 | 命令参数报错难定位 | 直接调用才在深处抛 TypeError | 先用 Signature.bind 预校验并转成友好错误 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对用户传入的字符串直接 getattr(ob", "body": "getattr 能取到对象任意公开方法，等于把清理、删除、重置等私有能力暴露成调用面", "tip": "用显式注册表把允许的名字映射到具体函数，dispatch 先查表；必要时再加前缀白名单与 callable 检查"}, {"title": "第 2 步：用 hasattr 判断 property ", "body": "hasattr 只捕获 AttributeError，property 内部抛出的 AttributeError 会被当成属性不存在，返回 False", "tip": "改用 inspect.getattr_static(obj, name) 做静态查找，或显式访问并用 try/except 区分异常来源"}, {"title": "第 3 步：把 func.__annotations__", "body": "from __future__ import annotations（PEP 563）下注解全是字符串，前向引用也需解析", "tip": "用 typing.get_type_hints(func) 或 3.10+ inspect.get_annotations 拿到可用的类型对象再绑定"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对用户传入的字符串直接 getattr(ob…", "body": "getattr 能取到对象任意公开方法，等于把清理、删除、重置等私有能力暴露成调用面", "tip": "用显式注册表把允许的名字映射到具体函数，dispatch 先查表；必要时再加前缀白名单与 callable 检查"}, {"title": "第 2 步：用 hasattr 判断 property…", "body": "hasattr 只捕获 AttributeError，property 内部抛出的 AttributeError 会被当成属性不存在，返回 False", "tip": "改用 inspect.getattr_static(obj, name) 做静态查找，或显式访问并用 try/except 区分异常来源"}, {"title": "第 3 步：把 func.__annotations__…", "body": "from __future__ import annotations（PEP 563）下注解全是字符串，前向引用也需解析", "tip": "用 typing.get_type_hints(func) 或 3.10+ inspect.get_annotations 拿到可用的类型对象再绑定"}]' />
 
-<ConceptDiagram type='flow4' title='第 046 讲 · 属性查找链与 getattr / hasattr 的真实语义' labels='属性查找链与 getattr / hasat|inspect 与注解：signature、|动态导入与反射的安全边界：白名单注册表' caption='构建可插拔的框架式代码' />
+<ConceptDiagram type='flow4' title='第 046 讲 · 属性查找链与 getattr / hasattr 的真实语义' labels='属性查找链与 getattr / hasat…|inspect 与注解：signature…|动态导入与反射的安全边界：白名单注册表|反射的边界' caption='构建可插拔的框架式代码' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## CLI 路由：注册表 + signature.bind 做安全分发
@@ -258,13 +258,13 @@ except KeyError:
 
 <Callout type="idea" title='落地提示' text='反射入口要配白名单与显式注册表，把「能被调用什么」收敛到可控集合' />
 
-<CheckList id='P046b' title='上线前自检' :items='["能复现并解释「对用户传入的字符串直接 getattr(obj, name)」", "能复现并解释「用 hasattr 判断 property 是否存在」", "能复现并解释「把 func.__annotations__ 直接当类型对象」", "能用一条命令验证 getattr / setattr / hasattr", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P046b' title='上线前自检' :items='["能复现并解释「对用户传入的字符串直接 getattr(obj, name)…」", "能复现并解释「用 hasattr 判断 property 是否存在」", "能复现并解释「把 func.__annotations__ 直接当类型对象…」", "能用一条命令验证 getattr / setattr / hasattr", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 getattr / setattr / hasattr 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 getattr / setattr / hasattr 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -276,7 +276,7 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='对用户传入的字符串直接 getattr(obj, name)() 调用：getattr 能取到对象任意公开方法，等于把清理、删除、重置等私有能力暴露成调用面' />
 
-<FlowTimeline :steps='[{"title": "属性查找链与 getattr / hasattr 的真实语义", "desc": "`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyOb…", "tone": "blue"}, {"title": "inspect 与注解：signature、getmembers、get_type_hints", "desc": "`inspect.signature` 返回一个 `Signature` 对象，它的…", "tone": "purple"}, {"title": "动态导入与反射的安全边界：白名单注册表", "desc": "`importlib.import_module(&#39;pkg.mod&#39;)` 按字符串动…", "tone": "orange"}, {"title": "工程落地", "desc": "CLI 路由：注册表 + signature.bind 做安全分发", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "属性查找链与 getattr / hasattr…", "desc": "`getattr` 本质是调用类型的 `tp_getattro`，也就是…", "tone": "blue"}, {"title": "inspect 与注解：signature、ge…", "desc": "`inspect.signature` 返回一个 `Signature` 对象，它的…", "tone": "purple"}, {"title": "动态导入与反射的安全边界：白名单注册表", "desc": "`importlib.import_module(&#39;pkg.mod&#39;)` 按字符串动…", "tone": "orange"}, {"title": "工程落地", "desc": "CLI 路由：注册表 + signature.bind 做安全分发", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 练到手熟
@@ -315,3 +315,16 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 3. vars(obj) 即 __dict__；无 __dict__ 抛 TypeError，__slots__ 类与内置类型常见
 
 [下一讲：dataclass、attrs 与 pydantic 模型](/oop/dataclass)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/046-introspection.py`
+
+```bash
+python3 examples/lessons/046-introspection.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/046-introspection.py) · [全部示例代码索引](/examples/)

@@ -91,7 +91,7 @@ print('audit', log_path.read_text(encoding='utf-8').splitlines())
 
 <OutputBox title='主示例运行结果' output='by ext [(&#39;.png&#39;, 2, 400), (&#39;.txt&#39;, 2, 160)]\nrename plan [(&#39;report.TXT&#39;, &#39;report.txt&#39;), (&#39;pic2.PNG&#39;, &#39;pic2.png&#39;)]\napplied 0\naudit [&#39;INFO|rename report.TXT -&gt; report.txt&#39;, &#39;INFO|rename pic2.PNG -&gt; pic2.png&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import logging, tempfile\nfrom pathlib import Path\nfrom collections import defaultdict\n\nroot = Path(tempfile.mkdtemp())\n(root / &#39;docs&#39;).mkdir()\n(root / &#39;docs&#39; / &#39;report.TXT&#39;).write_bytes(b&#39;x&#39; * 120)\n(root / &#39;notes.txt&#39;).write_bytes(b&#39;x&#39; * 40)\n(root / &#39;pic.png&#39;).write_bytes(b&#39;x&#39; * 300)\n(root / &#39;pic2.PNG&#39;).write_bytes(b&#39;x&#39; * 100)\n\nstat = defaultdict(lambda: [0, 0])\nfor p in sorted(root.rglob(&#39;*&#39;)):\n    if p.is_file():\n        stat[p.suffix.lower()][0] += 1\n        stat[p.suffix.lower()][1] += p.stat().st_size\nprint(&#39;by ext&#39;, sorted((k, v[0], v[1]) for k, v in stat.items()))\n\nplan = [(p.name, p.stem + p.suffix.lower())\n        for p in sorted(root.rglob(&#39;*&#39;))\n        if p.is_file() and p.suffix != p.suffix.lower()]\nprint(&#39;rename plan&#39;, plan)\nprint(&#39;applied&#39;, 0)\n\nlog_path = root / &#39;audit.log&#39;\nlogging.basicConfig(filename=str(log_path), level=logging.INFO, filemode=&#39;w&#39;,\n                    format=&#39;%(levelname)s|%(message)s&#39;, force=True)\nfor old, new in plan:\n    logging.info(&#39;rename %s -&gt; %s&#39;, old, new)\nprint(&#39;audit&#39;, log_path.read_text(encoding=&#39;utf-8&#39;).splitlines())' :notes='["导入 logging 写审计、tempfile 建隔离目录，避免污染真实文件", "从 pathlib 取 Path，所有路径用它拼而不是字符串相加", "defaultdict 存每个扩展名的 [文件数, 总字节数]", "建一个临时根目录，测试在隔离目录里进行", "用 / 运算符创建 docs 子目录，Path 负责分隔符", "写入 120 字节的 report.TXT，故意用大写扩展名", "写入 40 字节的 notes.txt", "写入 300 字节的 pic.png", "写入 100 字节的 pic2.PNG，同样是大写扩展名", "聚合表：键是扩展名，值是可变的 [计数, 字节]", "rglob(&#39;*&#39;) 递归遍历全部后代，排序保证输出确定", "只统计文件，跳过 docs 这类目录", "suffix.lower() 归一大小写，.TXT 与 .txt 归为同一类", "累加 st_size，即文件逻辑字节数", "打印按扩展名排序后的三元组，结果可核对", "dry-run 计划：列表推导收集 (原名, 目标名)，不执行任何改名", "对排序后的全部后代再做一次遍历", "仅当 suffix 不等于其小写形式时才纳入计划", "打印计划，人工核对条数与样例后才真正执行", "applied 固定为 0，明确表示本次没有任何副作用", "审计日志写到隔离目录内", "basicConfig 用 force=True（3.8 起）重置 root handler，避免重复日志", "format 指定级别与消息，filemode=&#39;w&#39; 每次重写", "遍历 dry-run 计划，逐条落到审计日志", "logging.info 用 %s 惰性插值，记录源名与目标名", "读回日志文件并打印，验证审计确实落盘"]' title='第 123 讲 · 实战 02 · 文件检索、日志与自动化办公' />
+<LineByLine code='import logging, tempfile\nfrom pathlib import Path\nfrom collections import defaultdict\n\nroot = Path(tempfile.mkdtemp())\n(root / &#39;docs&#39;).mkdir()\n(root / &#39;docs&#39; / &#39;report.TXT&#39;).write_bytes(b&#39;x&#39; * 120)\n(root / &#39;notes.txt&#39;).write_bytes(b&#39;x&#39; * 40)\n(root / &#39;pic.png&#39;).write_bytes(b&#39;x&#39; * 300)\n(root / &#39;pic2.PNG&#39;).write_bytes(b&#39;x&#39; * 100)\n\nstat = defaultdict(lambda: [0, 0])\nfor p in sorted(root.rglob(&#39;*&#39;)):\n    if p.is_file():\n        stat[p.suffix.lower()][0] += 1\n        stat[p.suffix.lower()][1] += p.stat().st_size\nprint(&#39;by ext&#39;, sorted((k, v[0], v[1]) for k, v in stat.items()))\n\nplan = [(p.name, p.stem + p.suffix.lower())\n        for p in sorted(root.rglob(&#39;*&#39;))\n        if p.is_file() and p.suffix != p.suffix.lower()]\nprint(&#39;rename plan&#39;, plan)\nprint(&#39;applied&#39;, 0)\n\nlog_path = root / &#39;audit.log&#39;\nlogging.basicConfig(filename=str(log_path), level=logging.INFO, filemode=&#39;w&#39;,\n                    format=&#39;%(levelname)s|%(message)s&#39;, force=True)\nfor old, new in plan:\n    logging.info(&#39;rename %s -&gt; %s&#39;, old, new)\nprint(&#39;audit&#39;, log_path.read_text(encoding=&#39;utf-8&#39;).splitlines())' :notes='["导入 logging 写审计、tempfile 建隔离目录，避免污染真实文件", "从 pathlib 取 Path，所有路径用它拼而不是字符串相加", "defaultdict 存每个扩展名的 [文件数, 总字节数]", "空行，只用于分隔逻辑块，不影响执行结果。", "建一个临时根目录，测试在隔离目录里进行", "用 / 运算符创建 docs 子目录，Path 负责分隔符", "写入 120 字节的 report.TXT，故意用大写扩展名", "写入 40 字节的 notes.txt", "写入 300 字节的 pic.png", "写入 100 字节的 pic2.PNG，同样是大写扩展名", "空行，只用于分隔逻辑块，不影响执行结果。", "聚合表：键是扩展名，值是可变的 [计数, 字节]", "rglob(&#39;*&#39;) 递归遍历全部后代，排序保证输出确定", "只统计文件，跳过 docs 这类目录", "suffix.lower() 归一大小写，.TXT 与 .txt 归为同一类", "累加 st_size，即文件逻辑字节数", "打印按扩展名排序后的三元组，结果可核对", "空行，只用于分隔逻辑块，不影响执行结果。", "dry-run 计划：列表推导收集 (原名, 目标名)，不执行任何改名", "对排序后的全部后代再做一次遍历", "仅当 suffix 不等于其小写形式时才纳入计划", "打印计划，人工核对条数与样例后才真正执行", "applied 固定为 0，明确表示本次没有任何副作用", "空行，只用于分隔逻辑块，不影响执行结果。", "审计日志写到隔离目录内", "basicConfig 用 force=True（3.8 起）重置 root handler，避免重复日志", "format 指定级别与消息，filemode=&#39;w&#39; 每次重写", "遍历 dry-run 计划，逐条落到审计日志", "logging.info 用 %s 惰性插值，记录源名与目标名", "读回日志文件并打印，验证审计确实落盘"]' title='第 123 讲 · 实战 02 · 文件检索、日志与自动化办公' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -155,9 +155,9 @@ print('still exists', (target / 'keep.txt').exists())
 
 三个报警信号：一次跑改动文件数远超预期、审计日志里出现 root 之外路径、以及没有任何 `dry-run` 就直接执行破坏性操作。
 
-<ConceptDiagram type='hub4' title='第 123 讲 · pathlib 遍历：PurePath、具体路径与 glob 的大小写边界' labels='pathlib 遍历：PurePath、具体|元数据、容量统计与 logging 落盘|批量操作安全：dry-run、回收站、路径校' caption='把重复的文件劳动变成一条可调度命令' />
+<ConceptDiagram type='hub4' title='第 123 讲 · pathlib 遍历：PurePath、具体路径与 glob 的大小写边界' labels='pathlib 遍历：PurePath、具体…|元数据、容量统计与 logging 落盘|批量操作安全：dry-run、回收站、路径校…|批量重命名安全' caption='把重复的文件劳动变成一条可调度命令' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## PurePath 的 flavour 决定大小写敏感
@@ -252,3 +252,16 @@ print('unchanged', sorted(p.name for p in root.iterdir()))
 <Predict no='123-4' q='对含 report.TXT 与 pic2.PNG 的目录跑 dry-run 重命名，最可能的输出组合是？' :options='["列出两条计划、applied 为 0、文件保持原样", "applied 为 2 且文件已改成小写", "抛 FileNotFoundError 因为目标不存在"]' answer='0' output='rename plan [(&#39;report.TXT&#39;, &#39;report.txt&#39;), (&#39;pic2.PNG&#39;, &#39;pic2.png&#39;)] 且 applied 0' explain='dry-run 只把 (源, 目标) 收集进计划并写审计日志，不调用 Path.rename；applied 恒为 0，磁盘状态不变，因此可以先人工核对计划再真正执行。' />
 
 <FillBlank no='123-5' tpl='___ logging, tempfile' :answers='["import"]' hint='回想本讲关于 pathlib 遍历与 glob 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 pathlib 遍历：PurePath、具体路径与 glob 的大小写边界 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/123-office-files.py`
+
+```bash
+python3 examples/lessons/123-office-files.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/123-office-files.py) · [全部示例代码索引](/examples/)

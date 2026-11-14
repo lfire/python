@@ -47,11 +47,11 @@ forkserver 是 Unix 专属：先起一个单线程服务进程，之后由它 fo
 | spawn | 全新解释器、重导入 __main__ | Windows 与 macOS 3.8+ 默认 | 对象必须可 pickle，入口要有 __main__ 守卫，启动最慢 |
 | forkserver | 单线程服务进程按需 fork | Unix 专属，可显式 get_context 选择 | 需要额外服务进程，Windows 不可用 |
 
-<Callout type="tip" title='核心心智模型' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上' />
+<Callout type="tip" title='核心心智模型' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上…' />
 
-<ConceptDiagram type='compare2' title='第 064 讲 · 三种启动方法与平台默认值' labels='三种启动方法与平台默认值|进程间不共享、pickle 成本与 Pool|共享内存、进程开销与选型阈值' caption='绕过 GIL 处理 CPU 密集任务' />
+<ConceptDiagram type='compare2' title='第 064 讲 · 三种启动方法与平台默认值' labels='三种启动方法与平台默认值|进程间不共享、pickle 成本与 Pool…|共享内存、进程开销与选型阈值|进程启动开销' caption='绕过 GIL 处理 CPU 密集任务' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 进程间不共享：pickle 边界与 Pool 参数
@@ -104,7 +104,7 @@ if __name__ == '__main__':
 
 <OutputBox title='主示例运行结果' output='start method spawn on darwin\nall methods [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]\ncpu count True\npool map [1, 4, 9, 16]\nimap chunksize [1, 4, 9, 16]\nexitcode 0\nshm byte 7 size_ge_16 True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import multiprocessing as mp\nimport os\nimport sys\nfrom multiprocessing import shared_memory as shm\n\ndef square(x):\n    return x * x\n\nif __name__ == &#39;__main__&#39;:\n    print(&#39;start method&#39;, mp.get_start_method(), &#39;on&#39;, sys.platform)\n    print(&#39;all methods&#39;, mp.get_all_start_methods())\n    print(&#39;cpu count&#39;, os.cpu_count() &gt; 0)\n    with mp.Pool(processes=2) as pool:\n        print(&#39;pool map&#39;, pool.map(square, [1, 2, 3, 4]))\n        print(&#39;imap chunksize&#39;, list(pool.imap(square, [1, 2, 3, 4], chunksize=2)))\n    p = mp.Process(target=square, args=(5,))\n    p.start()\n    p.join()\n    print(&#39;exitcode&#39;, p.exitcode)\n    sh = shm.SharedMemory(create=True, size=16)\n    sh.buf[0] = 7\n    print(&#39;shm byte&#39;, sh.buf[0], &#39;size_ge_16&#39;, sh.size &gt;= 16)\n    sh.close()\n    sh.unlink()' :notes='["导入 multiprocessing 使用 Pool 与 Process", "读取 CPU 核数，判断并行上限", "读取平台，start method 默认值随平台变化", "导入 shared_memory 演示零拷贝共享块", "顶层函数才能被 pickle 传给子进程", "返回平方，Process 不捕获返回值但 Pool 会", "spawn 平台必须写守卫，否则子进程递归导入", "打印默认启动方法，macOS 3.13 为 spawn", "打印该平台可用的全部启动方法", "多核是并行收益的前提", "Pool(2) 起两个 worker 进程，各自有独立 GIL", "map 按输入顺序返回结果列表", "imap 的 chunksize=2 把任务打包减少 IPC", "Process 显式创建子进程", "start 触发 spawn 重新导入主模块", "join 回收子进程，避免僵尸", "exitcode 为 0 表示正常退出", "create=True 新建一段 16 字节共享内存", "buf 是 memoryview，可直接读写字节", "打印写入值；macOS 上 size 会向上取整到页大小，故只断言 ≥16", "close 释放本进程的映射", "unlink 删除名字，漏掉会触发 resource_tracker 告警"]' title='第 064 讲 · multiprocessing：进程、Pool 与共享内存' />
+<LineByLine code='import multiprocessing as mp\nimport os\nimport sys\nfrom multiprocessing import shared_memory as shm\n\ndef square(x):\n    return x * x\n\nif __name__ == &#39;__main__&#39;:\n    print(&#39;start method&#39;, mp.get_start_method(), &#39;on&#39;, sys.platform)\n    print(&#39;all methods&#39;, mp.get_all_start_methods())\n    print(&#39;cpu count&#39;, os.cpu_count() &gt; 0)\n    with mp.Pool(processes=2) as pool:\n        print(&#39;pool map&#39;, pool.map(square, [1, 2, 3, 4]))\n        print(&#39;imap chunksize&#39;, list(pool.imap(square, [1, 2, 3, 4], chunksize=2)))\n    p = mp.Process(target=square, args=(5,))\n    p.start()\n    p.join()\n    print(&#39;exitcode&#39;, p.exitcode)\n    sh = shm.SharedMemory(create=True, size=16)\n    sh.buf[0] = 7\n    print(&#39;shm byte&#39;, sh.buf[0], &#39;size_ge_16&#39;, sh.size &gt;= 16)\n    sh.close()\n    sh.unlink()' :notes='["导入 multiprocessing 使用 Pool 与 Process", "读取 CPU 核数，判断并行上限", "读取平台，start method 默认值随平台变化", "导入 shared_memory 演示零拷贝共享块", "空行，只用于分隔逻辑块，不影响执行结果。", "顶层函数才能被 pickle 传给子进程", "返回平方，Process 不捕获返回值但 Pool 会", "空行，只用于分隔逻辑块，不影响执行结果。", "spawn 平台必须写守卫，否则子进程递归导入", "打印默认启动方法，macOS 3.13 为 spawn", "打印该平台可用的全部启动方法", "多核是并行收益的前提", "Pool(2) 起两个 worker 进程，各自有独立 GIL", "map 按输入顺序返回结果列表", "imap 的 chunksize=2 把任务打包减少 IPC", "Process 显式创建子进程", "start 触发 spawn 重新导入主模块", "join 回收子进程，避免僵尸", "exitcode 为 0 表示正常退出", "create=True 新建一段 16 字节共享内存", "buf 是 memoryview，可直接读写字节", "打印写入值；macOS 上 size 会向上取整到页大小，故只断言 ≥16", "close 释放本进程的映射", "unlink 删除名字，漏掉会触发 resource_tracker 告警"]' title='第 064 讲 · multiprocessing：进程、Pool 与共享内存' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -157,9 +157,9 @@ spawn 走 `_posixsubprocess` 起一个干净解释器，通过 preparation data 
 
 每个进程有独立 GIL 与独立堆，这才是 CPU 密集任务能随核数伸缩的根本，代价则是内存副本与序列化。
 
-<Term word='fork / spawn / forkserver' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上的 Linux 传统' />
+<Term word='fork / spawn / forkserver' text='`multiprocessing.get_all_start_methods()` 在 macOS 3.13 返回 [&#39;spawn&#39;, &#39;fork&#39;, &#39;forkserver&#39;]，`get_start_method()` 默认 &#39;spawn&#39;；Windows 只有 spawn，而 `POSIX` 上的 Linux 传统…' />
 
-<Term word='进程间不共享内存' text='进程地址空间隔离，父子各有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程的参数与返回值都要 pickle 序列化、再经管道传输，成本与字节数成正比。只有模块顶层、可 import 的函数能被 pickle：`lambda`、闭包、局部函数、打开的连接、线程锁都会报 `Pickli' />
+<Term word='进程间不共享内存' text='进程地址空间隔离，父子各有独立的 Python 堆与 GIL，所以 CPU 密集任务能真正并行；代价是任何跨进程的参数与返回值都要 pickle 序列化、再经管道传输，成本与字节数成正比。只有模块顶层、可 import 的函数能被 pickle：`lambda`、闭包、局部函数、打开的连接、线程锁都会报…' />
 
 
 ## 共享内存、进程开销与选型阈值
@@ -223,7 +223,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='大数组用 shared_memory / 内存映射，任务粒度用 chunksize 调平，避免在进程间传大对象' />
 
-<CheckList id='P064b' title='上线前自检' :items='["能复现并解释「spawn 平台把 lambda 或打开的连接传给子进程」", "能复现并解释「忘了 if __name__ == &#39;__main__&#39;: 」", "能复现并解释「多进程传 200MB 列表却埋怨没加速」", "能用一条命令验证 fork / spawn / forkserver", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P064b' title='上线前自检' :items='["能复现并解释「spawn 平台把 lambda 或打开的连接传给子进程」", "能复现并解释「忘了 if __name__ == &#39;__main__&#39;…」", "能复现并解释「多进程传 200MB 列表却埋怨没加速」", "能用一条命令验证 fork / spawn / forkserver", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -235,7 +235,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='spawn 平台把 lambda 或打开的连接传给子进程：spawn 要 pickle 参数，lambda/闭包/连接/锁没有可引用的顶层名' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：spawn 平台把 lambda 或打开的连", "body": "spawn 要 pickle 参数，lambda/闭包/连接/锁没有可引用的顶层名", "tip": "改成模块顶层函数；大对象用 SharedMemory 或内存映射，别塞进 args"}, {"title": "第 2 步：忘了 if __name__ == &#39;__m", "body": "spawn 子进程会重新导入主模块，模块顶层又创建 Pool，形成递归创建进程", "tip": "把 Process/Pool 的创建与启动全部放进守卫；模块顶层只放定义"}, {"title": "第 3 步：多进程传 200MB 列表却埋怨没加速", "body": "跨进程参数与返回值要 pickle，序列化与内存拷贝常超过并行收益", "tip": "用 SharedMemory / 内存映射，加大任务粒度与 chunksize，先量 CPU 时间与序列化时间之比"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：spawn 平台把 lambda 或打开的连…", "body": "spawn 要 pickle 参数，lambda/闭包/连接/锁没有可引用的顶层名", "tip": "改成模块顶层函数；大对象用 SharedMemory 或内存映射，别塞进 args"}, {"title": "第 2 步：忘了 if __name__ == &#39;__m…", "body": "spawn 子进程会重新导入主模块，模块顶层又创建 Pool，形成递归创建进程", "tip": "把 Process/Pool 的创建与启动全部放进守卫；模块顶层只放定义"}, {"title": "第 3 步：多进程传 200MB 列表却埋怨没加速", "body": "跨进程参数与返回值要 pickle，序列化与内存拷贝常超过并行收益", "tip": "用 SharedMemory / 内存映射，加大任务粒度与 chunksize，先量 CPU 时间与序列化时间之比"}]' />
 
 
 ## Pool._map_async 的 chunksize 推导公式
@@ -270,7 +270,7 @@ print('formula in pool.py', 'divmod' in inspect.getsource(pool_mod.Pool._map_asy
 
 <OutputBox title='扩展示例运行结果' output='12 workers 1000 21\n12 workers 10 1\n4 workers 100 7\nempty 0\nformula in pool.py True' />
 
-<LineByLine code='import multiprocessing.pool as pool_mod\nimport inspect\n\ndef chunksize(n, nproc):\n    if n == 0:\n        return 0\n    size, extra = divmod(n, nproc * 4)\n    return size + 1 if extra else size\n\nprint(&#39;12 workers 1000&#39;, chunksize(1000, 12))\nprint(&#39;12 workers 10&#39;, chunksize(10, 12))\nprint(&#39;4 workers 100&#39;, chunksize(100, 4))\nprint(&#39;empty&#39;, chunksize(0, 4))\nprint(&#39;formula in pool.py&#39;, &#39;divmod&#39; in inspect.getsource(pool_mod.Pool._map_async))\n' :notes='["导入 pool 模块，用来核对源码里的公式", "inspect.getsource 可以直接读回 _map_async 的源码文本", "复现 Pool._map_async 里的 chunksize 推导", "空的可迭代对象按源码置 0", "divmod 把任务数除以进程数的 4 倍", "余数非零就向上取整，保证任务不丢", "12 进程 1000 任务：1000 除 48 余 40，得 21", "任务数小于进程数 4 倍时，chunksize 退化为 1", "4 进程 100 任务：100 除 16 余 4，得 7", "空输入不产生任何任务包", "在真实源码里确认 divmod 确实存在，而不是凭记忆", "先量单任务 CPU 时间与序列化加启动时间之比；任务粒度太小或对象太大，加进程只会更慢"]' title='扩展示例逐行讲解' />
+<LineByLine code='import multiprocessing.pool as pool_mod\nimport inspect\n\ndef chunksize(n, nproc):\n    if n == 0:\n        return 0\n    size, extra = divmod(n, nproc * 4)\n    return size + 1 if extra else size\n\nprint(&#39;12 workers 1000&#39;, chunksize(1000, 12))\nprint(&#39;12 workers 10&#39;, chunksize(10, 12))\nprint(&#39;4 workers 100&#39;, chunksize(100, 4))\nprint(&#39;empty&#39;, chunksize(0, 4))\nprint(&#39;formula in pool.py&#39;, &#39;divmod&#39; in inspect.getsource(pool_mod.Pool._map_async))\n' :notes='["导入 pool 模块，用来核对源码里的公式", "inspect.getsource 可以直接读回 _map_async 的源码文本", "空行，只用于分隔逻辑块，不影响执行结果。", "复现 Pool._map_async 里的 chunksize 推导", "空的可迭代对象按源码置 0", "divmod 把任务数除以进程数的 4 倍", "余数非零就向上取整，保证任务不丢", "12 进程 1000 任务：1000 除 48 余 40，得 21", "空行，只用于分隔逻辑块，不影响执行结果。", "任务数小于进程数 4 倍时，chunksize 退化为 1", "4 进程 100 任务：100 除 16 余 4，得 7", "空输入不产生任何任务包", "在真实源码里确认 divmod 确实存在，而不是凭记忆", "这一行 `print(&#39;formula in pool.py&#39;, &#39;divmod&#39; in inspect.gets` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ## ForkingPickler 与 reduction.py 的跨进程对象注册
@@ -371,4 +371,17 @@ except Exception as e:
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 fork / spawn / forkserver 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 fork / spawn / forkserver 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/064-multiprocessing.py`
+
+```bash
+python3 examples/lessons/064-multiprocessing.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/064-multiprocessing.py) · [全部示例代码索引](/examples/)

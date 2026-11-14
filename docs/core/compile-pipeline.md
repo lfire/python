@@ -71,7 +71,7 @@ print('mode eval returns', eval(folded))
 
 <OutputBox title='主示例运行结果' output='type Module\nbody [&#39;Assign&#39;, &#39;Expr&#39;]\ntarget x\nop Add\nconsts (3, None)\nnames (&#39;x&#39;, &#39;print&#39;)\nfolded consts (3,)\nmode eval returns 3' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import ast\n\nsrc = &#39;x = 1 + 2&#39; + chr(10) + &#39;print(x)&#39;\ntree = ast.parse(src)\nprint(&#39;type&#39;, type(tree).__name__)\nprint(&#39;body&#39;, [type(n).__name__ for n in tree.body])\nprint(&#39;target&#39;, tree.body[0].targets[0].id)\nprint(&#39;op&#39;, type(tree.body[0].value.op).__name__)\ncode = compile(src, &#39;demo.py&#39;, &#39;exec&#39;)\nprint(&#39;consts&#39;, code.co_consts)\nprint(&#39;names&#39;, code.co_names)\nfolded = compile(&#39;1 + 2&#39;, &#39;f&#39;, &#39;eval&#39;)\nprint(&#39;folded consts&#39;, folded.co_consts)\nprint(&#39;mode eval returns&#39;, eval(folded))' :notes='["导入 ast 模块，全程只做解析与编译", "空行分隔导入与代码", "用 chr(10) 拼出两行源码，避免字符串里出现反斜杠转义", "ast.parse 默认 mode=&#39;exec&#39;，返回 ast.Module", "确认顶层节点类型", "打印 body 里每个语句节点的类型名", "取出 Assign 的目标名，验证结构可读", "取出右侧二元运算的运算符节点类型", "compile 以 &#39;exec&#39; 模式编成 code object，filename 进 traceback", "co_consts 里 1+2 已被折叠成 3，另含 None", "co_names 记录模块里用到的全局名字", "单独编译一个表达式，观察常量折叠", "折叠后 co_consts 只含结果 3，没有加法指令"]' title='第 049 讲 · CPython 编译流程：AST 到字节码' />
+<LineByLine code='import ast\n\nsrc = &#39;x = 1 + 2&#39; + chr(10) + &#39;print(x)&#39;\ntree = ast.parse(src)\nprint(&#39;type&#39;, type(tree).__name__)\nprint(&#39;body&#39;, [type(n).__name__ for n in tree.body])\nprint(&#39;target&#39;, tree.body[0].targets[0].id)\nprint(&#39;op&#39;, type(tree.body[0].value.op).__name__)\ncode = compile(src, &#39;demo.py&#39;, &#39;exec&#39;)\nprint(&#39;consts&#39;, code.co_consts)\nprint(&#39;names&#39;, code.co_names)\nfolded = compile(&#39;1 + 2&#39;, &#39;f&#39;, &#39;eval&#39;)\nprint(&#39;folded consts&#39;, folded.co_consts)\nprint(&#39;mode eval returns&#39;, eval(folded))' :notes='["导入 ast 模块，全程只做解析与编译", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔导入与代码", "用 chr(10) 拼出两行源码，避免字符串里出现反斜杠转义", "ast.parse 默认 mode=&#39;exec&#39;，返回 ast.Module", "确认顶层节点类型", "打印 body 里每个语句节点的类型名", "取出 Assign 的目标名，验证结构可读", "取出右侧二元运算的运算符节点类型", "compile 以 &#39;exec&#39; 模式编成 code object，filename 进 traceback", "co_consts 里 1+2 已被折叠成 3，另含 None", "co_names 记录模块里用到的全局名字", "单独编译一个表达式，观察常量折叠", "折叠后 co_consts 只含结果 3，没有加法指令"]' title='第 049 讲 · CPython 编译流程：AST 到字节码' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -86,7 +86,7 @@ print('mode eval returns', eval(folded))
 | dont_inherit | 默认 False | True 时不继承调用点的 __future__ 设置 |
 | optimize | -1 / 0 / 1 / 2 | -1 跟随 -O；1 移除 assert；2 再移除 docstring |
 
-<Callout type="tip" title='核心心智模型' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。`' />
+<Callout type="tip" title='核心心智模型' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。…' />
 
 **ast 模块 API 与安全边界**
 
@@ -99,9 +99,9 @@ print('mode eval returns', eval(folded))
 | ast.unparse | AST 还原源码 | 3.9+，改写后用来核对 |
 | ast.PyCF_ONLY_AST | 让 compile 返回 AST | 等价于 ast.parse |
 
-<Term word='词法与语法分析' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。`ast.dump` ' />
+<Term word='词法与语法分析' text='`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` 时返回 `Expression`，`mode=&#39;single&#39;` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。`ast.dump`…' />
 
-<Term word='ast 模块与 ast.dump' text='`compile` 把源码或 AST 编成 code object，`filename` 会进 traceback 与 `co_filename`，别写成空串。`mode` 三选一：`&#39;exec&#39;` 编译模块语句、`&#39;eval&#39;` 编译单个表达式并返回值、`&#39;single&#39;` 编译交互式单句（会打印表达式结果）。`fl' />
+<Term word='ast 模块与 ast.dump' text='`compile` 把源码或 AST 编成 code object，`filename` 会进 traceback 与 `co_filename`，别写成空串。`mode` 三选一：`&#39;exec&#39;` 编译模块语句、`&#39;eval&#39;` 编译单个表达式并返回值、`&#39;single&#39;` 编译交互式单句（会打印表达式结果）。…' />
 
 
 ## 编译器入口：词法、语法分析与 CPython 的 PEG parser
@@ -116,9 +116,9 @@ code object 是编译产物的不可变容器，`co_code` 存指令、`co_lineta
 
 `ast.literal_eval` 只递归处理字面量节点，遇到 `Call` / `Name` 抛 `ValueError`，从而在协议层杜绝代码执行。
 
-<ConceptDiagram type='compare2' title='第 049 讲 · 从源码到 AST：ast.parse、ast.dump 与字面量安全求值' labels='从源码到 AST：ast.parse、ast|compile 与 code object：|常量折叠与 AST 改写：优化发生在编译期，' caption='能读懂并操作 Python 的编译中间产物' />
+<ConceptDiagram type='compare2' title='第 049 讲 · 从源码到 AST：ast.parse、ast.dump 与字面量安全求值' labels='从源码到 AST：ast.parse、ast…|compile 与 code object…|常量折叠与 AST 改写：优化发生在编译期…|常量折叠' caption='能读懂并操作 Python 的编译中间产物' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## compile 与 code object：mode、flags、optimize 三个维度
@@ -201,9 +201,9 @@ print('result', eval(compile(new, 'r', 'eval')))
 
 ## 版本演进：co_code 与优化结论不能跨版本照搬
 
-<FlowTimeline :steps='[{"title": "从源码到 AST：ast.parse、ast.dump 与字面量安全求值", "desc": "`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;` …", "tone": "blue"}, {"title": "compile 与 code object：mode、flags、optimize 三个维度", "desc": "`compile` 把源码或 AST 编成 code object，`filenam…", "tone": "purple"}, {"title": "常量折叠与 AST 改写：优化发生在编译期，行号信息要保住", "desc": "常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 `BinOp` 会…", "tone": "orange"}, {"title": "工程落地", "desc": "用 AST 写一个「禁用 eval」的最小 lint", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "从源码到 AST：ast.parse、ast.d…", "desc": "`ast.parse` 返回 `ast.Module`（`mode=&#39;eval&#39;`…", "tone": "blue"}, {"title": "compile 与 code object：mo…", "desc": "`compile` 把源码或 AST 编成 code object…", "tone": "purple"}, {"title": "常量折叠与 AST 改写：优化发生在编译期，行号…", "desc": "常量折叠是 AST 到字节码阶段的编译期优化：`1 + 2` 的 `BinOp` 会…", "tone": "orange"}, {"title": "工程落地", "desc": "用 AST 写一个「禁用 eval」的最小 lint", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 eval / exec 解析外部传入的字", "body": "eval 会执行任意表达式，等于把上传内容变成代码执行入口", "tip": "解析字面量数据一律用 ast.literal_eval，它遇到非字面量节点抛 ValueError: malformed node or string"}, {"title": "第 2 步：NodeTransformer 改写后直接 ", "body": "新建节点没有 lineno / col_offset，行号表无法正确生成", "tip": "对替换节点用 ast.copy_location(new, old)，并在整棵树改写后调用 ast.fix_missing_locations(tree)"}, {"title": "第 3 步：把某一版本的 co_code 指令或优化结论", "body": "3.9 换 PEG parser、3.10 换行号表、3.11 换指令集与异常表，字节码持续变化", "tip": "在目标解释器上用 dis 现场验证，输出里注明版本范围，别把字节码写进跨版本断言"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 eval / exec 解析外部传入的字…", "body": "eval 会执行任意表达式，等于把上传内容变成代码执行入口", "tip": "解析字面量数据一律用 ast.literal_eval，它遇到非字面量节点抛 ValueError: malformed node or string"}, {"title": "第 2 步：NodeTransformer 改写后直接…", "body": "新建节点没有 lineno / col_offset，行号表无法正确生成", "tip": "对替换节点用 ast.copy_location(new, old)，并在整棵树改写后调用 ast.fix_missing_locations(tree)"}, {"title": "第 3 步：把某一版本的 co_code 指令或优化结论…", "body": "3.9 换 PEG parser、3.10 换行号表、3.11 换指令集与异常表，字节码持续变化", "tip": "在目标解释器上用 dis 现场验证，输出里注明版本范围，别把字节码写进跨版本断言"}]' />
 
 
 ## 用 AST 写一个「禁用 eval」的最小 lint
@@ -240,13 +240,13 @@ except ValueError:
 
 <Callout type="idea" title='落地提示' text='自定义 lint、代码生成、自动插桩都应基于 AST；产物要保留 lineno 与 col_offset' />
 
-<CheckList id='P049b' title='上线前自检' :items='["能复现并解释「用 eval / exec 解析外部传入的字符串当数据」", "能复现并解释「NodeTransformer 改写后直接 compile，」", "能复现并解释「把某一版本的 co_code 指令或优化结论当语言规范」", "能用一条命令验证 词法与语法分析", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P049b' title='上线前自检' :items='["能复现并解释「用 eval / exec 解析外部传入的字符串当数据」", "能复现并解释「NodeTransformer 改写后直接 compile…」", "能复现并解释「把某一版本的 co_code 指令或优化结论当语言规范」", "能用一条命令验证 词法与语法分析", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 词法与语法分析 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 词法与语法分析 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -295,3 +295,16 @@ python -c "import dis; dis.dis(lambda x: x+1)"
 3. compile 的 mode 三选 exec/eval/single；optimize 1 移除 assert、2 再移除 docstring
 
 [下一讲：字节码、栈式虚拟机与 dis 实战](/core/bytecode)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/049-compile-pipeline.py`
+
+```bash
+python3 examples/lessons/049-compile-pipeline.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/049-compile-pipeline.py) · [全部示例代码索引](/examples/)

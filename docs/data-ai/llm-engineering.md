@@ -29,19 +29,19 @@ prompt 把八块内容一股脑塞进上下文，关键条款被埋在中间；A
 
 把「召回了几块、各占多少 Token、被丢弃了几块」打进日志，才谈得上调优。
 
-**上下文预算表（以 8K 窗口为例）**
+**上下文预算表（以 8K 窗口为例，8192 Token 正好用满）**
 
 | 组成 | 预算上限 | 超限时的处理 |
 | --- | --- | --- |
 | 系统提示 + 输出格式约束 | 600 Token | 精简指令，移到系统消息 |
 | 对话历史 | 1200 Token | 摘要化或滑动窗口丢弃最早轮次 |
-| 检索片段 | 5000 Token | 按重排分数裁剪，并把最优块放首尾 |
+| 检索片段 | 4992 Token | 按重排分数裁剪，并把最优块放首尾 |
 | 用户问题 | 400 Token | 超长问题先做查询改写 |
 | 预留输出 | 1000 Token | 不足时直接降级，不强行截输出 |
 
-<ConceptDiagram type='compare2' title='第 104 讲 · 上下文预算与分块：先算账，再往里塞' labels='上下文预算与分块：先算账，再往里塞|检索质量：把「答非所问」拆成可测的指标|Agent 循环与成本：把不确定性关进笼子' caption='把大模型能力做成可靠、可控、可观测的应用' />
+<ConceptDiagram type='compare2' title='第 104 讲 · 上下文预算与分块：先算账，再往里塞' labels='上下文预算与分块：先算账，再往里塞|检索质量：把「答非所问」拆成可测的指标|Agent 循环与成本：把不确定性关进笼子|Token 成本与降级' caption='把大模型能力做成可靠、可控、可观测的应用' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 分块、去重与元数据：让检索拿得到完整语义
@@ -78,11 +78,11 @@ print([doc_id for doc_id, _ in picked])
 
 <OutputBox title='主示例运行结果' output='used 40 blocks 2\n[&#39;A-1&#39;, &#39;A-2&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections import Counter\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])' :notes='["导入 Counter 备用；本例用集合交集做关键词打分", "模拟文档库，每条带 doc_id 便于溯源", "三条文档分别是两个型号的参数", "文档 1：A100 路数与质保", "文档 2：A100 工作温度", "文档 3：B200 参数，用于检验是否会串型号", "定义极简 Token 估算：真实项目用 tiktoken 或服务端计数", "字符数加词数补偿，仅用于演示预算裁剪", "retrieve 接受 k（候选数）与 budget（Token 预算）两个独立约束", "把查询转成字符集合，演示关键词召回", "scored 存放 (分数, 文档号, 正文)", "逐条计算字符重合度作为相似度", "记录三元组", "按分数降序，模拟 Top-K 排序", "picked 保存最终入选块，used 累计已用预算", "遍历候选，关键是预算与 k 双重限制", "超预算就停止，宁可少给也不撑爆窗口", "入选并记录已用 Token", "返回块与用量，供日志与观测", "查询 A100 质保，k=3 但预算只够 2 块", "打印实际用量与块数", "打印溯源 ID，答案必须能指回这些块", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`"]' title='第 104 讲 · LLM 应用工程：Prompt、RAG、Agent 与成本' />
+<LineByLine code='from collections import Counter\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])' :notes='["导入 Counter 备用；本例用集合交集做关键词打分", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟文档库，每条带 doc_id 便于溯源", "三条文档分别是两个型号的参数", "文档 1：A100 路数与质保", "文档 2：A100 工作温度", "文档 3：B200 参数，用于检验是否会串型号", "空行，只用于分隔逻辑块，不影响执行结果。", "定义极简 Token 估算：真实项目用 tiktoken 或服务端计数", "字符数加词数补偿，仅用于演示预算裁剪", "空行，只用于分隔逻辑块，不影响执行结果。", "retrieve 接受 k（候选数）与 budget（Token 预算）两个独立约束", "把查询转成字符集合，演示关键词召回", "scored 存放 (分数, 文档号, 正文)", "逐条计算字符重合度作为相似度", "记录三元组", "按分数降序，模拟 Top-K 排序", "picked 保存最终入选块，used 累计已用预算", "遍历候选，关键是预算与 k 双重限制", "超预算就停止，宁可少给也不撑爆窗口", "入选并记录已用 Token", "返回块与用量，供日志与观测", "查询 A100 质保，k=3 但预算只够 2 块", "空行，只用于分隔逻辑块，不影响执行结果。", "打印实际用量与块数", "打印溯源 ID，答案必须能指回这些块", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`"]' title='第 104 讲 · LLM 应用工程：Prompt、RAG、Agent 与成本' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主' />
+<Callout type="tip" title='核心心智模型' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主…' />
 
 
 ### 对照：带溯源的答案组装
@@ -122,9 +122,9 @@ print(assemble(blocks, 'B200 质保多久？'))
 | 重试策略 | 仅幂等操作，指数退避 | 重复下单、重复扣款 |
 | 日志字段 | trace_id/工具/参数摘要/耗时/Token | 线上无法复盘，只能靠猜 |
 
-<Term word='Prompt 与结构化输出' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主题、向量被稀释。实践' />
+<Term word='Prompt 与结构化输出' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主题、向量被稀释。实践…' />
 
-<Term word='Embedding 与向量检索' text='检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更稳，向量检索对同义改' />
+<Term word='Embedding 与向量检索' text='检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更稳，向量检索对同义改…' />
 
 
 ## Agent 循环的四道闸
@@ -133,9 +133,9 @@ print(assemble(blocks, 'B200 质保多久？'))
 
 每一轮都要记录输入 / 输出 Token、耗时、工具名、参数摘要、返回状态与 `trace_id`；流式输出要同时处理连接中断与部分结果。降级路径也得提前设计：检索无结果时明确回答「资料中未找到」，而不是让模型用参数知识补全；模型超时时返回已生成的部分加一句提示，而不是空响应。这些约束与提示词措辞无关，属于工程契约。
 
-<FlowTimeline :steps='[{"title": "上下文预算与分块：先算账，再往里塞", "desc": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、…", "tone": "blue"}, {"title": "检索质量：把「答非所问」拆成可测的指标", "desc": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@…", "tone": "purple"}, {"title": "Agent 循环与成本：把不确定性关进笼子", "desc": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：…", "tone": "orange"}, {"title": "工程落地", "desc": "带预算、超时、幂等与可观测的调用封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "上下文预算与分块：先算账，再往里塞", "desc": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段…", "tone": "blue"}, {"title": "检索质量：把「答非所问」拆成可测的指标", "desc": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有…", "tone": "purple"}, {"title": "Agent 循环与成本：把不确定性关进笼子", "desc": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸…", "tone": "orange"}, {"title": "工程落地", "desc": "带预算、超时、幂等与可观测的调用封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<ConceptDiagram type='layers3' title='第 104 讲 · 分层视角' labels='上下文预算与分块：先算账，再往里塞|检索质量：把「答非所问」拆成可测的指标|Agent 循环与成本：把不确定性关进笼|Token 成本与降级' caption='Agent 循环与成本：把不确定性关进笼子' />
+<ConceptDiagram type='layers3' title='第 104 讲 · 分层视角' labels='上下文预算与分块：先算账，再往里塞|检索质量：把「答非所问」拆成可测的指标|Agent 循环与成本：把不确定性关进笼…|Token 成本与降级' caption='Agent 循环与成本：把不确定性关进笼子' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 Token 成本与降级 落在哪一层。
 
@@ -212,15 +212,15 @@ print(answer('未知型号？', []))
 
 <Callout type="idea" title='落地提示' text='为每次调用记录输入/输出/耗时/Token、设置步数与预算上限、工具调用做幂等与超时、关键结论要求可溯源引用' />
 
-<ArchBlueprint title='第 104 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "上下文预算与分块：先算账，再往里塞", "protocol": "调用 / 请求", "items": [{"label": "上下文预算与分块：先算账", "sub": "输入与前置", "detail": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主", "tone": "blue"}]}, {"name": "核心规则", "note": "检索质量：把「答非所问」拆成可测的指标", "protocol": "语言 / 运行时协议", "items": [{"label": "检索质量：把「答非所问」", "sub": "状态与边界", "detail": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更", "tone": "purple"}]}, {"name": "落地与收尾", "note": "Agent 循环与成本：把不确定性关进笼子", "items": [{"label": "Agent 循环与成本：", "sub": "工程处理", "detail": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作", "tone": "green"}]}]' />
+<ArchBlueprint title='第 104 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "上下文预算与分块：先算账，再往里塞", "protocol": "调用 / 请求", "items": [{"label": "上下文预算与分块：先算账…", "sub": "输入与前置", "detail": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主…", "tone": "blue"}]}, {"name": "核心规则", "note": "检索质量：把「答非所问」拆成可测的指标", "protocol": "语言 / 运行时协议", "items": [{"label": "检索质量：把「答非所问」…", "sub": "状态与边界", "detail": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "Agent 循环与成本：把不确定性关进笼子", "items": [{"label": "Agent 循环与成本…", "sub": "工程处理", "detail": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作…", "tone": "green"}]}]' />
 
 <CheckList id='P104b' title='上线前自检' :items='["能复现并解释「按固定字数切块，表格与条款被拦腰截断」", "能复现并解释「把 Top-K 结果直接拼进 prompt 不做去重」", "能复现并解释「工具调用无步数与预算上限」", "能用一条命令验证 Prompt 与结构化输出", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
-python -c "import math; print(round(1/(1+math.exp(0)),2))"
+python -c "import textwrap; print(textwrap.wrap('检索内容按语义切块再拼进提示词', 8))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Prompt 与结构化输出 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Prompt 与结构化输出 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查
@@ -235,7 +235,7 @@ python -c "import math; print(round(1/(1+math.exp(0)),2))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='按固定字数切块，表格与条款被拦腰截断：检索到的块语义不完整，模型只能看到半句话，进而用参数知识补全' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：按固定字数切块，表格与条款被拦腰截断", "body": "检索到的块语义不完整，模型只能看到半句话，进而用参数知识补全", "tip": "按文档结构切（标题/段落/表格整体），保留 section 与 page 元数据，再设目标 Token 与重叠"}, {"title": "第 2 步：把 Top-K 结果直接拼进 prompt ", "body": "页眉、目录、模板在不同页向量几乎相同，会挤占名额并稀释关键信息", "tip": "按 doc_id + 内容指纹去重，重排后把最相关块放在上下文首尾"}, {"title": "第 3 步：工具调用无步数与预算上限", "body": "模型遇到工具异常会反复重试，单次请求可能耗尽整日预算并占满连接池", "tip": "设最大步数、累计 Token/金额上限、超时与退避；写操作带幂等键并只对幂等调用重试"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：按固定字数切块，表格与条款被拦腰截断", "body": "检索到的块语义不完整，模型只能看到半句话，进而用参数知识补全", "tip": "按文档结构切（标题/段落/表格整体），保留 section 与 page 元数据，再设目标 Token 与重叠"}, {"title": "第 2 步：把 Top-K 结果直接拼进 prompt…", "body": "页眉、目录、模板在不同页向量几乎相同，会挤占名额并稀释关键信息", "tip": "按 doc_id + 内容指纹去重，重排后把最相关块放在上下文首尾"}, {"title": "第 3 步：工具调用无步数与预算上限", "body": "模型遇到工具异常会反复重试，单次请求可能耗尽整日预算并占满连接池", "tip": "设最大步数、累计 Token/金额上限、超时与退避；写操作带幂等键并只对幂等调用重试"}]' />
 
 
 ## 高维距离集中：余弦与内积的判别力退化
@@ -277,7 +277,7 @@ for d in (2, 16, 128, 1024):
 
 <OutputBox title='扩展示例运行结果' output='dim 2 dist_max/min 28.78 mean_abs_cos 0.6624\ndim 16 dist_max/min 2.2 mean_abs_cos 0.2005\ndim 128 dist_max/min 1.32 mean_abs_cos 0.0671\ndim 1024 dist_max/min 1.12 mean_abs_cos 0.0258' />
 
-<LineByLine code='import math, random\n\ndef l2(a, b):\n    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))\n\ndef cos_abs(a, b):\n    dot = sum(x * y for x, y in zip(a, b))\n    na = math.sqrt(sum(x * x for x in a))\n    nb = math.sqrt(sum(y * y for y in b))\n    return abs(dot / (na * nb))\n\ndef spread(dim, pairs, seed):\n    rng = random.Random(seed)\n    ds, cs = [], []\n    for _ in range(pairs):\n        a = [rng.gauss(0, 1) for _ in range(dim)]\n        b = [rng.gauss(0, 1) for _ in range(dim)]\n        ds.append(l2(a, b))\n        cs.append(cos_abs(a, b))\n    return round(max(ds) / min(ds), 2), round(sum(cs) / pairs, 4)\n\nfor d in (2, 16, 128, 1024):\n    ratio, mean_cos = spread(d, 120, 11)\n    print(&#39;dim&#39;, d, &#39;dist_max/min&#39;, ratio, &#39;mean_abs_cos&#39;, mean_cos)' :notes='["欧氏距离：2d 个独立项平方和的平方根", "余弦绝对值：单位向量下与内积、L2 互为单调变换", "固定种子保证输出可核对，返回 max/min 距离比与平均 |cos|", "遍历四个维度，观察相对标准差 sqrt(2/d) 的收缩", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`", "降级要显式：检索无结果答「资料中未找到」，超时返已生成部分；失败分支都可观测", "上下文窗口是硬预算：系统提示 + 检索片段 + 历史 + 问题 + 预留输出，先算账再往里塞", "分块按文档结构切，200-500 Token 加 10-15% 重叠，写 `section` / `page` / `doc_id` 元数据，主动去重页眉目录", "检索有独立口径：`Recall@K`、MRR、引用命中率；混合检索用 BM25 + 向量 + RRF，再重排", "lost in the middle：最相关的块放首尾；评估集要含无答案、跨块综合、含否定词的问题", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`", "降级要显式：检索无结果答「资料中未找到」，超时返已生成部分；失败分支都可观测", "上下文窗口是硬预算：系统提示 + 检索片段 + 历史 + 问题 + 预留输出，先算账再往里塞", "分块按文档结构切，200-500 Token 加 10-15% 重叠，写 `section` / `page` / `doc_id` 元数据，主动去重页眉目录", "检索有独立口径：`Recall@K`、MRR、引用命中率；混合检索用 BM25 + 向量 + RRF，再重排", "lost in the middle：最相关的块放首尾；评估集要含无答案、跨块综合、含否定词的问题", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`", "降级要显式：检索无结果答「资料中未找到」，超时返已生成部分；失败分支都可观测", "上下文窗口是硬预算：系统提示 + 检索片段 + 历史 + 问题 + 预留输出，先算账再往里塞", "分块按文档结构切，200-500 Token 加 10-15% 重叠，写 `section` / `page` / `doc_id` 元数据，主动去重页眉目录"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math, random\n\ndef l2(a, b):\n    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))\n\ndef cos_abs(a, b):\n    dot = sum(x * y for x, y in zip(a, b))\n    na = math.sqrt(sum(x * x for x in a))\n    nb = math.sqrt(sum(y * y for y in b))\n    return abs(dot / (na * nb))\n\ndef spread(dim, pairs, seed):\n    rng = random.Random(seed)\n    ds, cs = [], []\n    for _ in range(pairs):\n        a = [rng.gauss(0, 1) for _ in range(dim)]\n        b = [rng.gauss(0, 1) for _ in range(dim)]\n        ds.append(l2(a, b))\n        cs.append(cos_abs(a, b))\n    return round(max(ds) / min(ds), 2), round(sum(cs) / pairs, 4)\n\nfor d in (2, 16, 128, 1024):\n    ratio, mean_cos = spread(d, 120, 11)\n    print(&#39;dim&#39;, d, &#39;dist_max/min&#39;, ratio, &#39;mean_abs_cos&#39;, mean_cos)' :notes='["欧氏距离：2d 个独立项平方和的平方根", "空行，只用于分隔逻辑块，不影响执行结果。", "余弦绝对值：单位向量下与内积、L2 互为单调变换", "固定种子保证输出可核对，返回 max/min 距离比与平均 |cos|", "空行，只用于分隔逻辑块，不影响执行结果。", "遍历四个维度，观察相对标准差 sqrt(2/d) 的收缩", "这一行 `dot = sum(x * y for x, y in zip(a, b))` 的作用，可对照上方输出逐项核对。", "这一行 `na = math.sqrt(sum(x * x for x in a))` 的作用，可对照上方输出逐项核对。", "这一行 `nb = math.sqrt(sum(y * y for y in b))` 的作用，可对照上方输出逐项核对。", "这一行 `return abs(dot / (na * nb))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def spread(dim, pairs, seed):` 的作用，可对照上方输出逐项核对。", "这一行 `rng = random.Random(seed)` 的作用，可对照上方输出逐项核对。", "这一行 `ds, cs = [], []` 的作用，可对照上方输出逐项核对。", "这一行 `for _ in range(pairs):` 的作用，可对照上方输出逐项核对。", "这一行 `a = [rng.gauss(0, 1) for _ in range(dim)]` 的作用，可对照上方输出逐项核对。", "这一行 `b = [rng.gauss(0, 1) for _ in range(dim)]` 的作用，可对照上方输出逐项核对。", "这一行 `ds.append(l2(a, b))` 的作用，可对照上方输出逐项核对。", "这一行 `cs.append(cos_abs(a, b))` 的作用，可对照上方输出逐项核对。", "这一行 `return round(max(ds) / min(ds), 2), round(sum(cs) / ` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `for d in (2, 16, 128, 1024):` 的作用，可对照上方输出逐项核对。", "这一行 `ratio, mean_cos = spread(d, 120, 11)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;dim&#39;, d, &#39;dist_max/min&#39;, ratio, &#39;mean_abs_cos` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 104 讲 · 扩展图解' labels='norm(q-d)^2=2-2cos|相对标准差 sqrt(2/d)|max/min 趋近 1|Recall@K 抖动' caption='单位向量下 L2、内积、余弦互为单调变换；高维集中让排序失去判别力，换度量救不了召回' />
 
@@ -380,3 +380,16 @@ print('mixed_version_recall@5', recall(False))
 3. 检索有独立口径：`Recall@K`、MRR、引用命中率；混合检索用 BM25 + 向量 + RRF，再重排
 
 [下一讲：CAP / BASE 与一致性模型](/distributed/cap-base)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/104-llm-engineering.py`
+
+```bash
+python3 examples/lessons/104-llm-engineering.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/104-llm-engineering.py) · [全部示例代码索引](/examples/)

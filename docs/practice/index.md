@@ -14,6 +14,9 @@ description: 综合自测、语法速查、常见坑、FAQ、面试自评、生�
 - [Python 生态与选型地图](/practice/ecosystem) — 按领域整理的主流库、选型维度与版本现状
 - [术语表](/practice/glossary) — 全站出现的术语按字母与主题索引
 
+- [专题补遗](/topics/) — 回看最初 7 门参考课程后补齐的工程场景缺口（Scrapy 与反爬、自动化测试、PPT/GUI、深度学习项目、RAG 框架、Flask 实操等），以及[参考课程对照与学习路线](/topics/reference-map)。
+- [示例代码](/examples/) — 132 讲与 9 个专题的仓内可运行 `.py` 文件索引，每讲页尾也有直达链接。
+
 <ProgressTracker />
 
 ## 综合自测

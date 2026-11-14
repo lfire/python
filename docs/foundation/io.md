@@ -117,7 +117,7 @@ open(path, encoding='utf-8-sig')
 python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 print 的 sep / end / file 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 print 的 sep / end / file 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## with 与上下文协议：异常路径也保证关闭
@@ -149,9 +149,9 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 
 文件对象的 `__exit__` 最终调 `close` 释放操作系统文件描述符，这正是「保证关闭」的底层依据。理解这条协议，就知道 `finally` 为什么能省，以及 `__exit__` 为什么不该顺手把异常吞掉。
 
-<ConceptDiagram type='compare2' title='第 014 讲 · print 的参数与输出目标：sep / end / file / flush' labels='print 的参数与输出目标：sep / e|open 的模式、编码与 pathlib|with 与上下文协议：异常路径也保证关闭' caption='完成程序与外界的第一批数据交换' />
+<ConceptDiagram type='compare2' title='第 014 讲 · print 的参数与输出目标：sep / end / file / flush' labels='print 的参数与输出目标：sep / e…|open 的模式、编码与 pathlib|with 与上下文协议：异常路径也保证关闭|标准输入输出重定向' caption='完成程序与外界的第一批数据交换' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 逐行迭代为什么比 read() 全量载入更安全
@@ -160,9 +160,9 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 
 要按行处理用 `enumerate(f)` 边读边算，配生成器与 Counter 累计，内存只跟不同词数量走。后面的时间线把改成流式管道的迁移摊开。
 
-<FlowTimeline :steps='[{"title": "print 的参数与输出目标：sep / end / file / flush", "desc": "`print` 的完整签名里，`sep` 默认一个空格，`end` 默认是换行符（值…", "tone": "blue"}, {"title": "open 的模式、编码与 pathlib", "desc": "`open` 的 `mode` 决定是文本还是二进制：`r` 只读文本，`w` 写入…", "tone": "purple"}, {"title": "with 与上下文协议：异常路径也保证关闭", "desc": "`with` 表达式 `as` 变量并不是语法糖，而是把 `try/finally`…", "tone": "orange"}, {"title": "工程落地", "desc": "安全导出：显式编码、with 关闭、输出分流、逐行读回", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "print 的参数与输出目标：sep / end…", "desc": "`print` 的完整签名里，`sep` 默认一个空格，`end` 默认是换行符（值…", "tone": "blue"}, {"title": "open 的模式、编码与 pathlib", "desc": "`open` 的 `mode` 决定是文本还是二进制：`r` 只读文本，`w` 写入…", "tone": "purple"}, {"title": "with 与上下文协议：异常路径也保证关闭", "desc": "`with` 表达式 `as` 变量并不是语法糖，而是把 `try/finally`…", "tone": "orange"}, {"title": "工程落地", "desc": "安全导出：显式编码、with 关闭、输出分流、逐行读回", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：open 不写 encoding，或用系统默", "body": "文本模式省略 encoding 时依赖 locale 默认编码，Windows 与 Linux/macOS 可能读出不同中文", "tip": "一律 open(path, encoding=&#39;utf-8&#39;)；带 BOM 用 utf-8-sig；二进制数据用 rb"}, {"title": "第 2 步：用 f.read() 一次读入大文件，或把日", "body": "read() 全量载入会吃满内存；print 与数据混在同一条 stdout 会污染管道下游", "tip": "逐行 for line in f 迭代；日志改用 logging 或 print 的 file 参数指向 sys.stderr 分流"}, {"title": "第 3 步：手写 try/finally 关文件却漏了异", "body": "漏分支会泄漏文件描述符；__exit__ 返回真值会静默吞掉异常，让上层以为成功", "tip": "用 with open(...) 保证关闭；__exit__ 只在明确要抑制某类异常时才返回 True"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：open 不写 encoding，或用系统默…", "body": "文本模式省略 encoding 时依赖 locale 默认编码，Windows 与 Linux/macOS 可能读出不同中文", "tip": "一律 open(path, encoding=&#39;utf-8&#39;)；带 BOM 用 utf-8-sig；二进制数据用 rb"}, {"title": "第 2 步：用 f.read() 一次读入大文件，或把日…", "body": "read() 全量载入会吃满内存；print 与数据混在同一条 stdout 会污染管道下游", "tip": "逐行 for line in f 迭代；日志改用 logging 或 print 的 file 参数指向 sys.stderr 分流"}, {"title": "第 3 步：手写 try/finally 关文件却漏了异…", "body": "漏分支会泄漏文件描述符；__exit__ 返回真值会静默吞掉异常，让上层以为成功", "tip": "用 with open(...) 保证关闭；__exit__ 只在明确要抑制某类异常时才返回 True"}]' />
 
 
 ## 安全导出：显式编码、with 关闭、输出分流、逐行读回
@@ -241,3 +241,16 @@ print('cleaned', not p.exists())
 3. with 靠 __enter__ 与 __exit__ 保证异常路径也关闭；__exit__ 返回 True 会抑制异常
 
 [下一讲：异常：捕获、异常链与自定义异常](/foundation/exceptions)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/014-io.py`
+
+```bash
+python3 examples/lessons/014-io.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/014-io.py) · [全部示例代码索引](/examples/)

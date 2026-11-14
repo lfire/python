@@ -58,7 +58,7 @@ for a, b in pairs:
 
 <OutputBox title='主示例运行结果' output='(3, 1) + (1, 4) -&gt; (3, 4)\n(2, 3) + (3,) -&gt; (2, 3)\n(2, 3) + (2,) -&gt; None\n(5, 4) + (3, 4) -&gt; None' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def broadcast_shape(a, b):\n    out = []\n    i, j = len(a) - 1, len(b) - 1\n    while i &gt;= 0 or j &gt;= 0:\n        da = a[i] if i &gt;= 0 else 1\n        db = b[j] if j &gt;= 0 else 1\n        if da == db or da == 1 or db == 1:\n            out.append(max(da, db))\n        else:\n            return None\n        i -= 1; j -= 1\n    return tuple(reversed(out))\n\npairs = [((3, 1), (1, 4)), ((2, 3), (3,)), ((2, 3), (2,)), ((5, 4), (3, 4))]\nfor a, b in pairs:\n    print(a, &#39;+&#39;, b, &#39;-&gt;&#39;, broadcast_shape(a, b))' :notes='["定义函数模拟 NumPy 的广播形状推导，输入是两个 shape 元组", "out 按从右到左的顺序收集每一维的结果，最后再反转", "i、j 分别指向两个 shape 当前待比较的维度下标", "只要还有任一数组没比完就继续，缺失维度用 1 补齐", "a 该维越界就视为 1，对应短数组在左侧被补 1", "b 同理，缺失维度视为 1", "兼容条件：相等、或 a 为 1、或 b 为 1，三者满足其一即可", "结果维度取两者较大值，这就是广播的目标形状", "有一维既不相等又都不为 1，判定不兼容", "返回 None 代表真实 NumPy 里会抛的 ValueError", "两个下标同时左移一位，进入下一维比较", "out 是从右往左攒的，反转后才是正常的维度顺序", "四组测试覆盖：双向扩展、尾部补齐、维度冲突、首维冲突", "逐组打印，把抽象规则变成可核对的结果", "调用推导函数并输出目标形状或不兼容标记"]' title='第 093 讲 · NumPy 向量化、广播与内存布局' />
+<LineByLine code='def broadcast_shape(a, b):\n    out = []\n    i, j = len(a) - 1, len(b) - 1\n    while i &gt;= 0 or j &gt;= 0:\n        da = a[i] if i &gt;= 0 else 1\n        db = b[j] if j &gt;= 0 else 1\n        if da == db or da == 1 or db == 1:\n            out.append(max(da, db))\n        else:\n            return None\n        i -= 1; j -= 1\n    return tuple(reversed(out))\n\npairs = [((3, 1), (1, 4)), ((2, 3), (3,)), ((2, 3), (2,)), ((5, 4), (3, 4))]\nfor a, b in pairs:\n    print(a, &#39;+&#39;, b, &#39;-&gt;&#39;, broadcast_shape(a, b))' :notes='["定义函数模拟 NumPy 的广播形状推导，输入是两个 shape 元组", "out 按从右到左的顺序收集每一维的结果，最后再反转", "i、j 分别指向两个 shape 当前待比较的维度下标", "只要还有任一数组没比完就继续，缺失维度用 1 补齐", "a 该维越界就视为 1，对应短数组在左侧被补 1", "b 同理，缺失维度视为 1", "兼容条件：相等、或 a 为 1、或 b 为 1，三者满足其一即可", "结果维度取两者较大值，这就是广播的目标形状", "有一维既不相等又都不为 1，判定不兼容", "返回 None 代表真实 NumPy 里会抛的 ValueError", "两个下标同时左移一位，进入下一维比较", "out 是从右往左攒的，反转后才是正常的维度顺序", "空行，只用于分隔逻辑块，不影响执行结果。", "四组测试覆盖：双向扩展、尾部补齐、维度冲突、首维冲突", "逐组打印，把抽象规则变成可核对的结果", "调用推导函数并输出目标形状或不兼容标记"]' title='第 093 讲 · NumPy 向量化、广播与内存布局' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -134,9 +134,9 @@ ValueError: operands could not be broadcast together with shapes
 | np.uint8 | 无符号 8 位整数 | 1 | 加法超过 255 会回绕，不是报错 |
 | bool | 布尔 | 1 | 常被用作掩码，本身只占 1 字节 |
 
-<ConceptDiagram type='hub4' title='第 093 讲 · ndarray、dtype 与连续内存：快在哪里' labels='ndarray、dtype 与连续内存：快在|shape、stride 与视图：为什么切片|广播规则与向量化的边界' caption='写出比纯 Python 快一个量级的数值代码' />
+<ConceptDiagram type='hub4' title='第 093 讲 · ndarray、dtype 与连续内存：快在哪里' labels='ndarray、dtype 与连续内存：快在…|shape、stride 与视图：为什么切片…|广播规则与向量化的边界|ufunc 与聚合' caption='写出比纯 Python 快一个量级的数值代码' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 布尔索引取出后赋值，原数组为何纹丝不动
@@ -171,9 +171,9 @@ ndarray 反其道而行：PyArrayObject 只持有一个指向连续裸内存的 
 
 ufunc 内层循环只认固定 dtype，把类型判断提前到分发阶段一次完成。理解这套『元数据加裸内存加 stride』模型，就能推出为什么 dtype 固定、为什么视图廉价、为什么布尔索引必须复制、以及为什么 Python 层 for 循环会毁掉全部收益。
 
-<Term word='ndarray 与 dtype' text='ndarray 是一块固定元素类型、地址连续的内存，外加 shape、strides、dtype 三个元数据；数据区里存的是裸值，不是 PyObject。dtype 决定每个元素的字节数 itemsize：`np.int64`、`np.float64` 都是 8 字节，`np.float32`、`np.int32` 是' />
+<Term word='ndarray 与 dtype' text='ndarray 是一块固定元素类型、地址连续的内存，外加 shape、strides、dtype 三个元数据；数据区里存的是裸值，不是 PyObject。dtype 决定每个元素的字节数 itemsize：`np.int64`、`np.float64` 都是 8 字节，`np.float32`、`np.int32` 是…' />
 
-<Term word='shape / stride 与视图' text='strides 记录『某维度索引加 1 时，指针要跳过多少字节』。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base 加 i 乘 32 再加 j 乘 8。`reshape` 在多数' />
+<Term word='shape / stride 与视图' text='strides 记录『某维度索引加 1 时，指针要跳过多少字节』。一个 float64 的 (3, 4) C 连续数组 strides 是 (32, 8)：跨一行跳 4 乘 8 等于 32 字节，跨一列跳 8 字节；元素 (i, j) 的地址就是 base 加 i 乘 32 再加 j 乘 8。`reshape` 在多数…' />
 
 
 ### dtype 提升与 uint8 溢出回绕
@@ -295,7 +295,7 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 <OutputBox title='扩展示例运行结果' output='exact 10000.0\nnaive 10000.000000018848\npairwise 10000.0\nmath.fsum 10000.0\nnaive abs err 1.885e-08\npairwise abs err 0.000e+00\ncancellation naive 0.0\ncancellation pairwise 4.0\ncancellation fsum 10.0\nC (2,1) 72\nF (2,1) 40' />
 
-<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，用 fsum 作精确基准", "naive_sum 复刻顺序累加，对应误差界 O(n u)", "pairwise_sum 递归二分，树深 log2(n) 对应 O(u log n)", "block=8 时退化为朴素小段，整棵树仍是对数深度", "构造十万个 0.1，真值恰为 10000.0", "打印三种累加结果，观察朴素值的尾数漂移", "用科学计数法对比朴素与两两求和的绝对误差", "构造 1e16 加十个 1.0 再减的相消场景", "朴素累加把十个 1.0 全部吞掉得到 0.0", "两两求和保住部分精度得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "byte_offset 实现 offset 等于索引与 strides 的点积", "C 序 (3,4) float64 的 strides 是 (32, 8)，元素 (2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度", "ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节", "ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度", "ndarray = 连续裸内存 + shape/strides/dtype；int64/float64 8 字节、float32/int32 4 字节、uint8/bool 1 字节", "ufunc 与归约把循环放 C 层，一次调用处理整批；写出 Python for 循环就丢掉全部优势", "strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图", "基本切片返回视图、改了写回原数组；布尔与花式索引返回副本；a[a&gt;0]=0 是 __setitem__ 赋值语法才生效", "广播右对齐逐维比较：相等或为 1 或缺失即兼容，stride 置 0 零拷贝；不兼容抛 ValueError", "用 a*b+c 会生临时数组，大数组改 np.multiply(...,out=) 与就地 +=；keepdims=True 保住维度"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，用 fsum 作精确基准", "空行，只用于分隔逻辑块，不影响执行结果。", "naive_sum 复刻顺序累加，对应误差界 O(n u)", "pairwise_sum 递归二分，树深 log2(n) 对应 O(u log n)", "block=8 时退化为朴素小段，整棵树仍是对数深度", "构造十万个 0.1，真值恰为 10000.0", "打印三种累加结果，观察朴素值的尾数漂移", "空行，只用于分隔逻辑块，不影响执行结果。", "用科学计数法对比朴素与两两求和的绝对误差", "构造 1e16 加十个 1.0 再减的相消场景", "朴素累加把十个 1.0 全部吞掉得到 0.0", "两两求和保住部分精度得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "byte_offset 实现 offset 等于索引与 strides 的点积", "C 序 (3,4) float64 的 strides 是 (32, 8)，元素 (2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `xs = [0.1] * 100000` 的作用，可对照上方输出逐项核对。", "这一行 `exact = 10000.0` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;exact&#39;, exact)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;naive&#39;, repr(naive_sum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;pairwise&#39;, repr(pairwise_sum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;math.fsum&#39;, repr(math.fsum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - ex` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `xs2 = [1e16] + [1.0] * 10 + [-1e16]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation naive&#39;, naive_sum(xs2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation fsum&#39;, math.fsum(xs2))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def byte_offset(idx, strides):` 的作用，可对照上方输出逐项核对。", "这一行 `return sum(i * s for i, s in zip(idx, strides))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### np.sum 两两求和的误差界推导
@@ -364,3 +364,16 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 3. strides 记录每维加 1 跳过的字节数；reshape/基本切片/a.T 只改元数据、是 O(1) 视图
 
 [下一讲：Pandas 清洗、分组、透视与时间序列](/data-ai/pandas)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/093-numpy.py`
+
+```bash
+python3 examples/lessons/093-numpy.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/093-numpy.py) · [全部示例代码索引](/examples/)

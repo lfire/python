@@ -121,9 +121,9 @@ f-string 在编译期生成 `FORMAT_VALUE` 指令，运行时调用对应类型�
 
 理解「不可变加定宽存储」，就能推出拼接要 join、切片必是新对象、越界被夹断这些结论。
 
-<ConceptDiagram type='flow3' title='第 010 讲 · 索引与切片：越界不报错、负步长改变边界' labels='索引与切片：越界不报错、负步长改变边界|f-string 与格式规范：对齐、精度、千|不可变与方法选型：把清洗管道写对' caption='熟练处理文本清洗与格式化输出' />
+<ConceptDiagram type='flow3' title='第 010 讲 · 索引与切片：越界不报错、负步长改变边界' labels='索引与切片：越界不报错、负步长改变边界|f-string 与格式规范：对齐、精度、千…|不可变与方法选型：把清洗管道写对' caption='熟练处理文本清洗与格式化输出' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 监控报表：用格式规范与一次 join 生成对齐行
@@ -190,3 +190,16 @@ print('aligned', rows[0].startswith('INFO'))
 3. f-string（3.6 起，3.12 PEP 701 放宽引号）用 :>6d、:.2f、:,d 完成对齐、精度、千分位
 
 [下一讲：运算符与表达式：优先级、短路与真值](/foundation/operators)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/010-string-ops.py`
+
+```bash
+python3 examples/lessons/010-string-ops.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/010-string-ops.py) · [全部示例代码索引](/examples/)

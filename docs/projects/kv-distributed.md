@@ -86,7 +86,7 @@ print('quorum single', quorum_ok('a', {'n1'}, w=2))
 
 <OutputBox title='主示例运行结果' output='primary of a n2\nreplica set [&#39;n2&#39;, &#39;n3&#39;, &#39;n1&#39;]\nwrite ok True\nfailover to n3\nquorum after loss True\nquorum single False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib\n\nNODES = [&#39;n1&#39;, &#39;n2&#39;, &#39;n3&#39;]\nREPLICAS = 3\n\ndef h(s):\n    return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)\n\nring = sorted((h(nd + &#39;#&#39; + str(i)), nd) for nd in NODES for i in range(REPLICAS))\n\ndef primary(key):\n    x = h(key)\n    for slot, nd in ring:\n        if x &lt;= slot:\n            return nd\n    return ring[0][1]\n\ndef replica_set(key):\n    seen, out = [], []\n    for slot, nd in ring:\n        if nd not in seen:\n            seen.append(nd)\n            out.append(nd)\n    start = out.index(primary(key))\n    return out[start:] + out[:start]\n\ndef route(key, alive):\n    for nd in replica_set(key):\n        if nd in alive:\n            return nd\n    return None\n\ndef quorum_ok(key, alive, w=2):\n    return sum(1 for nd in replica_set(key) if nd in alive) &gt;= w\n\nprint(&#39;primary of a&#39;, primary(&#39;a&#39;))\nprint(&#39;replica set&#39;, replica_set(&#39;a&#39;))\nall_alive = set(NODES)\nprint(&#39;write ok&#39;, quorum_ok(&#39;a&#39;, all_alive, w=2))\none_down = all_alive - {primary(&#39;a&#39;)}\nprint(&#39;failover to&#39;, route(&#39;a&#39;, one_down))\nprint(&#39;quorum after loss&#39;, quorum_ok(&#39;a&#39;, one_down, w=2))\nprint(&#39;quorum single&#39;, quorum_ok(&#39;a&#39;, {&#39;n1&#39;}, w=2))' :notes='["导入 hashlib，用 md5 生成稳定可复现的环上位置", "三个节点构成集群", "每个节点映射 3 个虚拟节点，缓解数据倾斜", "h 把字符串映射成整数，md5 不受 PYTHONHASHSEED 随机化影响", "取前 8 位十六进制转整数，作为环坐标", "构造有序的 (槽位, 节点) 环，是一致性哈希的核心", "primary 按键哈希顺时针找第一个槽位", "算出键的环坐标", "按槽位升序扫描环", "键哈希小于等于槽位即命中该节点", "返回主副本节点", "越过最大槽位则回绕到环首节点", "replica_set 给出该键的副本顺序", "seen 去重、out 保存首次出现的节点顺序", "遍历环上的虚拟节点", "只记录每个物理节点第一次出现", "追加到去重集合", "追加到有序节点列表", "找到主副本在顺序表里的位置", "旋转列表，让副本顺序从主副本开始", "route 在存活节点里挑第一个可用副本", "按副本顺序逐个检查", "命中存活节点即返回，实现故障转移", "把存活副本作为本次路由结果返回", "全不可用时返回 None，由上层降级", "quorum_ok 判断存活副本数是否达到写确认数 W", "统计副本集合里存活的节点数并与 W 比较", "打印键 a 的主副本，验证路由确定性", "打印副本顺序，副本从主节点开始排列", "构造全存活集合", "三副本全在时 W=2 的写入通过", "模拟主副本宕机，从集合里移除它", "路由自动转到下一个存活副本", "失去一个节点后仍有两个存活副本，W=2 仍满足", "只剩单节点时达不到 W=2，写入被拒绝"]' title='第 132 讲 · 实战 11 · 分片复制、AI 网关与能力收束' />
+<LineByLine code='import hashlib\n\nNODES = [&#39;n1&#39;, &#39;n2&#39;, &#39;n3&#39;]\nREPLICAS = 3\n\ndef h(s):\n    return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)\n\nring = sorted((h(nd + &#39;#&#39; + str(i)), nd) for nd in NODES for i in range(REPLICAS))\n\ndef primary(key):\n    x = h(key)\n    for slot, nd in ring:\n        if x &lt;= slot:\n            return nd\n    return ring[0][1]\n\ndef replica_set(key):\n    seen, out = [], []\n    for slot, nd in ring:\n        if nd not in seen:\n            seen.append(nd)\n            out.append(nd)\n    start = out.index(primary(key))\n    return out[start:] + out[:start]\n\ndef route(key, alive):\n    for nd in replica_set(key):\n        if nd in alive:\n            return nd\n    return None\n\ndef quorum_ok(key, alive, w=2):\n    return sum(1 for nd in replica_set(key) if nd in alive) &gt;= w\n\nprint(&#39;primary of a&#39;, primary(&#39;a&#39;))\nprint(&#39;replica set&#39;, replica_set(&#39;a&#39;))\nall_alive = set(NODES)\nprint(&#39;write ok&#39;, quorum_ok(&#39;a&#39;, all_alive, w=2))\none_down = all_alive - {primary(&#39;a&#39;)}\nprint(&#39;failover to&#39;, route(&#39;a&#39;, one_down))\nprint(&#39;quorum after loss&#39;, quorum_ok(&#39;a&#39;, one_down, w=2))\nprint(&#39;quorum single&#39;, quorum_ok(&#39;a&#39;, {&#39;n1&#39;}, w=2))' :notes='["导入 hashlib，用 md5 生成稳定可复现的环上位置", "空行，只用于分隔逻辑块，不影响执行结果。", "三个节点构成集群", "每个节点映射 3 个虚拟节点，缓解数据倾斜", "空行，只用于分隔逻辑块，不影响执行结果。", "h 把字符串映射成整数，md5 不受 PYTHONHASHSEED 随机化影响", "取前 8 位十六进制转整数，作为环坐标", "空行，只用于分隔逻辑块，不影响执行结果。", "构造有序的 (槽位, 节点) 环，是一致性哈希的核心", "空行，只用于分隔逻辑块，不影响执行结果。", "primary 按键哈希顺时针找第一个槽位", "算出键的环坐标", "按槽位升序扫描环", "键哈希小于等于槽位即命中该节点", "返回主副本节点", "越过最大槽位则回绕到环首节点", "空行，只用于分隔逻辑块，不影响执行结果。", "replica_set 给出该键的副本顺序", "seen 去重、out 保存首次出现的节点顺序", "遍历环上的虚拟节点", "只记录每个物理节点第一次出现", "追加到去重集合", "追加到有序节点列表", "找到主副本在顺序表里的位置", "旋转列表，让副本顺序从主副本开始", "空行，只用于分隔逻辑块，不影响执行结果。", "route 在存活节点里挑第一个可用副本", "按副本顺序逐个检查", "命中存活节点即返回，实现故障转移", "把存活副本作为本次路由结果返回", "全不可用时返回 None，由上层降级", "空行，只用于分隔逻辑块，不影响执行结果。", "quorum_ok 判断存活副本数是否达到写确认数 W", "统计副本集合里存活的节点数并与 W 比较", "空行，只用于分隔逻辑块，不影响执行结果。", "打印键 a 的主副本，验证路由确定性", "打印副本顺序，副本从主节点开始排列", "构造全存活集合", "三副本全在时 W=2 的写入通过", "模拟主副本宕机，从集合里移除它", "路由自动转到下一个存活副本", "失去一个节点后仍有两个存活副本，W=2 仍满足", "只剩单节点时达不到 W=2，写入被拒绝"]' title='第 132 讲 · 实战 11 · 分片复制、AI 网关与能力收束' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -115,9 +115,9 @@ print('quorum R+W>N', 2 + 2 > 3)
 
 <OutputBox title='原理验证' output='distribution [111, 88, 101]\nbalanced True\nquorum R+W&gt;N True' />
 
-<Term word='分片与路由' text='分片把键空间分布到多节点。取模 `hash(key) % N` 最简单，但节点数一变，绝大多数键的归属都改变，扩缩容要全量迁移；一致性哈希把节点映射成环上多个虚拟节点（vnode，生产常取 100 到 200 个），键按哈希顺时针落到遇到的第一个节点，增删节点只影响相邻区间，迁移量约 `1/N`，虚拟节点还能缓解数据倾' />
+<Term word='分片与路由' text='分片把键空间分布到多节点。取模 `hash(key) % N` 最简单，但节点数一变，绝大多数键的归属都改变，扩缩容要全量迁移；一致性哈希把节点映射成环上多个虚拟节点（vnode，生产常取 100 到 200 个），键按哈希顺时针落到遇到的第一个节点，增删节点只影响相邻区间，迁移量约 `1/N`，虚拟节点还能缓解数据倾…' />
 
-<Term word='副本与读写 quorum' text='只分片不复制，节点一挂就是永久丢数据。每份数据写到 N 个副本，写入需 W 个确认、读取需 R 个；满足 `R + W &gt; N` 时读写集合必有交集，因此能读到最新写，`N=3`、`W=2`、`R=2` 是经典配置。`W=N` 最一致但任一副本故障就不可写，`W=1` 延迟最低但可能丢写，选型要在 `CAP` 约束下显' />
+<Term word='副本与读写 quorum' text='只分片不复制，节点一挂就是永久丢数据。每份数据写到 N 个副本，写入需 W 个确认、读取需 R 个；满足 `R + W &gt; N` 时读写集合必有交集，因此能读到最新写，`N=3`、`W=2`、`R=2` 是经典配置。`W=N` 最一致但任一副本故障就不可写，`W=1` 延迟最低但可能丢写，选型要在 `CAP` 约束下显…' />
 
 
 ## 副本、读写 quorum 与故障转移
@@ -195,7 +195,7 @@ print('timeout', gateway([(1, 'A'), (99, 'B')], budget=5, deadline=10))
 
 <OutputBox title='对照写法：先自己猜，再点开' output='frame count 2\nhas data prefix True\nhas newline True\nnormal ([&#39;你&#39;, &#39;好&#39;, &#39;！&#39;], 3)\nbudget ([&#39;你&#39;, &#39;好&#39;, &#39;[budget]&#39;], 2)\ntimeout ([&#39;A&#39;, &#39;[timeout]&#39;], 1)' guess="true" />
 
-<Callout type="tip" title='核心心智模型' text='分片把键空间分布到多节点。取模 `hash(key) % N` 最简单，但节点数一变，绝大多数键的归属都改变，扩缩容要全量迁移；一致性哈希把节点映射成环上多个虚拟节点（vnode，生产常取 100 到 200 个），键按哈希顺时针落到遇到的第一个节点，增删节点只影响相邻区间，迁移量约 `1/N`，虚' />
+<Callout type="tip" title='核心心智模型' text='分片把键空间分布到多节点。取模 `hash(key) % N` 最简单，但节点数一变，绝大多数键的归属都改变，扩缩容要全量迁移；一致性哈希把节点映射成环上多个虚拟节点（vnode，生产常取 100 到 200 个），键按哈希顺时针落到遇到的第一个节点，增删节点只影响相邻区间，迁移量约 `1/N`，虚…' />
 
 
 ## 演进过程中用契约测试与 ADR 锁住行为不变
@@ -260,7 +260,7 @@ print('cost', gw.cost())
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 分片与路由 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 分片与路由 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -312,7 +312,7 @@ print('tokens_after', round(bucket.tokens, 2))
 
 <OutputBox title='扩展示例运行结果' output='burst_accepted 5\ntail_rejected True\nrefilled_tokens 3.0\nallow_after_refill True\ntokens_after 2.0' />
 
-<LineByLine code='class TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self.tokens = float(capacity)\n    def allow(self, cost=1.0):\n        if self.tokens &gt;= cost:\n            self.tokens -= cost\n            return True\n        return False\n    def advance(self, seconds):\n        self.tokens = min(self.capacity, self.tokens + self.rate * seconds)\n        return self.tokens\n\nbucket = TokenBucket(rate=10.0, capacity=5.0)\nresults = [bucket.allow() for _ in range(7)]\nprint(&#39;burst_accepted&#39;, sum(results))\nprint(&#39;tail_rejected&#39;, results[5:] == [False, False])\nrefilled = bucket.advance(0.3)\nprint(&#39;refilled_tokens&#39;, round(refilled, 2))\nprint(&#39;allow_after_refill&#39;, bucket.allow())\nprint(&#39;tokens_after&#39;, round(bucket.tokens, 2))' :notes='["令牌桶：rate 是补充速率，capacity 是突发容量，初始满额", "推进虚拟时钟按 rate 补充但不超过容量", "容量内突发只放行前 5 个请求", "第 6、7 个被拒", "0.3 秒补 3 个令牌", "补后放行一个，剩余令牌降到 2.0", "取模分片扩缩容几乎全量迁移；一致性哈希只迁移约 1/N 区间，虚拟节点（100-200 个）缓解倾斜", "quorum 满足 R + W &gt; N 时读写集合必有交集；N=3、W=2、R=2 可容忍单点故障", "只分片不复制，节点一挂即永久丢数据；故障转移靠心跳租约 + 多数派/fencing 防脑裂", "SSE 用生成器逐块 yield 实现背压；首 token/总时长超时、Token/金额上限、并发连接上限缺一不可", "多供应商靠统一接口适配，重试只对幂等请求生效；每轮记 trace_id、Token、耗时，降级返回已生成部分", "四讲共用契约测试锁住命令语义不变；把分片迁移、quorum 级别、刷盘策略、超时阈值写成 ADR 并给回退方案", "取模分片扩缩容几乎全量迁移；一致性哈希只迁移约 1/N 区间，虚拟节点（100-200 个）缓解倾斜", "quorum 满足 R + W &gt; N 时读写集合必有交集；N=3、W=2、R=2 可容忍单点故障", "只分片不复制，节点一挂即永久丢数据；故障转移靠心跳租约 + 多数派/fencing 防脑裂", "SSE 用生成器逐块 yield 实现背压；首 token/总时长超时、Token/金额上限、并发连接上限缺一不可", "多供应商靠统一接口适配，重试只对幂等请求生效；每轮记 trace_id、Token、耗时，降级返回已生成部分", "四讲共用契约测试锁住命令语义不变；把分片迁移、quorum 级别、刷盘策略、超时阈值写成 ADR 并给回退方案", "取模分片扩缩容几乎全量迁移；一致性哈希只迁移约 1/N 区间，虚拟节点（100-200 个）缓解倾斜", "quorum 满足 R + W &gt; N 时读写集合必有交集；N=3、W=2、R=2 可容忍单点故障", "只分片不复制，节点一挂即永久丢数据；故障转移靠心跳租约 + 多数派/fencing 防脑裂"]' title='扩展示例逐行讲解' />
+<LineByLine code='class TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self.tokens = float(capacity)\n    def allow(self, cost=1.0):\n        if self.tokens &gt;= cost:\n            self.tokens -= cost\n            return True\n        return False\n    def advance(self, seconds):\n        self.tokens = min(self.capacity, self.tokens + self.rate * seconds)\n        return self.tokens\n\nbucket = TokenBucket(rate=10.0, capacity=5.0)\nresults = [bucket.allow() for _ in range(7)]\nprint(&#39;burst_accepted&#39;, sum(results))\nprint(&#39;tail_rejected&#39;, results[5:] == [False, False])\nrefilled = bucket.advance(0.3)\nprint(&#39;refilled_tokens&#39;, round(refilled, 2))\nprint(&#39;allow_after_refill&#39;, bucket.allow())\nprint(&#39;tokens_after&#39;, round(bucket.tokens, 2))' :notes='["令牌桶：rate 是补充速率，capacity 是突发容量，初始满额", "推进虚拟时钟按 rate 补充但不超过容量", "容量内突发只放行前 5 个请求", "第 6、7 个被拒", "0.3 秒补 3 个令牌", "补后放行一个，剩余令牌降到 2.0", "这一行 `if self.tokens &gt;= cost:` 的作用，可对照上方输出逐项核对。", "这一行 `self.tokens -= cost` 的作用，可对照上方输出逐项核对。", "这一行 `return True` 的作用，可对照上方输出逐项核对。", "这一行 `return False` 的作用，可对照上方输出逐项核对。", "这一行 `def advance(self, seconds):` 的作用，可对照上方输出逐项核对。", "这一行 `self.tokens = min(self.capacity, self.tokens + self.` 的作用，可对照上方输出逐项核对。", "这一行 `return self.tokens` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `bucket = TokenBucket(rate=10.0, capacity=5.0)` 的作用，可对照上方输出逐项核对。", "这一行 `results = [bucket.allow() for _ in range(7)]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;burst_accepted&#39;, sum(results))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tail_rejected&#39;, results[5:] == [False, False]` 的作用，可对照上方输出逐项核对。", "这一行 `refilled = bucket.advance(0.3)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;refilled_tokens&#39;, round(refilled, 2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;allow_after_refill&#39;, bucket.allow())` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tokens_after&#39;, round(bucket.tokens, 2))` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### 客户端断连时的取消传播与孤儿推理清理
@@ -338,7 +338,9 @@ print('tokens_after', round(bucket.tokens, 2))
 
 并发连接上限、每连接队列大小、单流最大 token 数共同构成准入控制，超限走 429 或降级到非流式摘要。
 
-收束处要把四讲的决定连成一条可复核的链：129 的窄接口与一组契约测试保证换实现不改命令语义，130 的刷盘方案、131 的 quorum 级别、132 的超时阈值全部写进 ADR 并标代价与回退，故障注入脚本随 CI 跑。能力图谱的终点不是会用多少框架，而是能否在信息不全时给出带假设、带可验证代价、带回退的方案。
+收束处要把四讲的决定连成一条可复核的链：129 的窄接口与契约测试保证换实现不改命令语义，130 的协议帧与网络层、131 的 WAL 刷盘策略、132 的 quorum 级别与超时阈值全部写进 ADR 并标代价与回退，故障注入脚本随 CI 跑。
+
+能力图谱的终点不是会用多少框架，而是能否在信息不全时给出带假设、带可验证代价、带回退的方案。
 
 
 ### TTFT 与 TPOT：流式网关该盯哪两个分位数
@@ -392,3 +394,16 @@ print('tokens_after', round(bucket.tokens, 2))
 3. 只分片不复制，节点一挂即永久丢数据；故障转移靠心跳租约 + 多数派/fencing 防脑裂
 
 [进入练习与速查](/practice/)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/132-kv-distributed.py`
+
+```bash
+python3 examples/lessons/132-kv-distributed.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/132-kv-distributed.py) · [全部示例代码索引](/examples/)

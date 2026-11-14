@@ -78,7 +78,7 @@ print('set_is_faster', (t3 - t2) < (t1 - t0))
 
 <OutputBox title='主示例运行结果' output='counts 667 667\nequal True\nset_is_faster True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import time\n\ndata = list(range(2000))\ntargets = list(range(0, 2000, 3))\n\ndef naive(xs, ys):\n    out = 0\n    for x in xs:\n        for y in ys:\n            if x == y:\n                out += 1\n                break\n    return out\n\ndef with_set(xs, ys):\n    s = set(ys)\n    return sum(1 for x in xs if x in s)\n\nt0 = time.perf_counter(); a = naive(data, targets); t1 = time.perf_counter()\nt2 = time.perf_counter(); b = with_set(data, targets); t3 = time.perf_counter()\nprint(&#39;counts&#39;, a, b)\nprint(&#39;equal&#39;, a == b)\nprint(&#39;set_is_faster&#39;, (t3 - t2) &lt; (t1 - t0))' :notes='["导入 time 用 perf_counter 计时", "构造 2000 个整数的待查数据", "构造 667 个目标值（0 到 1999 的 3 的倍数）", "naive 是双重循环的 O(n*m) 成员检测", "结果计数器归零", "外层遍历每个待查元素", "内层线性扫描目标列表", "逐个比较找到即计数", "命中后计数加一", "提前跳出内层，但最坏仍要扫到尾部", "返回命中总数", "with_set 先建集合再线性扫描", "把目标列表转成 set，查找平均 O(1)", "统计待查元素中落在集合里的个数", "测量双重循环耗时", "测量集合方案耗时", "两方案结果应一致，都是 667", "打印命中数，验证结果等价", "确认结果相等，优化不改变语义"]' title='第 119 讲 · 极致优化：从剖析到 C 扩展的十倍案例' />
+<LineByLine code='import time\n\ndata = list(range(2000))\ntargets = list(range(0, 2000, 3))\n\ndef naive(xs, ys):\n    out = 0\n    for x in xs:\n        for y in ys:\n            if x == y:\n                out += 1\n                break\n    return out\n\ndef with_set(xs, ys):\n    s = set(ys)\n    return sum(1 for x in xs if x in s)\n\nt0 = time.perf_counter(); a = naive(data, targets); t1 = time.perf_counter()\nt2 = time.perf_counter(); b = with_set(data, targets); t3 = time.perf_counter()\nprint(&#39;counts&#39;, a, b)\nprint(&#39;equal&#39;, a == b)\nprint(&#39;set_is_faster&#39;, (t3 - t2) &lt; (t1 - t0))' :notes='["导入 time 用 perf_counter 计时", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 2000 个整数的待查数据", "构造 667 个目标值（0 到 1999 的 3 的倍数）", "空行，只用于分隔逻辑块，不影响执行结果。", "naive 是双重循环的 O(n*m) 成员检测", "结果计数器归零", "外层遍历每个待查元素", "内层线性扫描目标列表", "逐个比较找到即计数", "命中后计数加一", "提前跳出内层，但最坏仍要扫到尾部", "返回命中总数", "空行，只用于分隔逻辑块，不影响执行结果。", "with_set 先建集合再线性扫描", "把目标列表转成 set，查找平均 O(1)", "统计待查元素中落在集合里的个数", "空行，只用于分隔逻辑块，不影响执行结果。", "测量双重循环耗时", "测量集合方案耗时", "两方案结果应一致，都是 667", "打印命中数，验证结果等价", "确认结果相等，优化不改变语义"]' title='第 119 讲 · 极致优化：从剖析到 C 扩展的十倍案例' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -91,9 +91,9 @@ print('set_is_faster', (t3 - t2) < (t1 - t0))
 | time.perf_counter | 单调高精度墙钟 | 分段计时与对比 |
 | tracemalloc | 按分配点 traceback | 定位内存分配热点 |
 
-<ConceptDiagram type='compare2' title='第 119 讲 · 先剖析再动手：cProfile、timeit 与 Amdahl 定律' labels='先剖析再动手：cProfile、timeit|算法、数据结构与批处理：数量级收益|向量化、C 扩展、原生并行与停止条件' caption='按层次系统性地压低延迟' />
+<ConceptDiagram type='compare2' title='第 119 讲 · 先剖析再动手：cProfile、timeit 与 Amdahl 定律' labels='先剖析再动手：cProfile、timeit…|算法、数据结构与批处理：数量级收益|向量化、C 扩展、原生并行与停止条件|缓存与异构卸载' caption='按层次系统性地压低延迟' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### Amdahl 上限怎么算
@@ -199,7 +199,7 @@ Cython 把带类型注解的 Python 编译成 C 扩展，C 扩展可直接用 C 
 
 <Callout type="warn" title='本讲最容易踩的坑' text='一上来用 Cython 重写热点函数：若瓶颈其实是数据库往返或 O(n^2) 算法，被优化部分占比很低，Amdahl 定律下整体收益极小' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：一上来用 Cython 重写热点函数", "body": "若瓶颈其实是数据库往返或 O(n^2) 算法，被优化部分占比很低，Amdahl 定律下整体收益极小", "tip": "先用 cProfile 找 cumtime 热点并估算占比 p，优先改算法与批处理，再考虑 C 扩展"}, {"title": "第 2 步：用 time.time 单次计时做微基准，且", "body": "系统时间可回拨、单次测量含调度噪声、3.11 起特化预热前后不同，结论不可复现", "tip": "用 time.perf_counter 或 timeit 重复多轮取最小，先预热；结论标注版本与输入分布"}, {"title": "第 3 步：优化后不留基准与回归测试", "body": "后续重构把写法改回去时没有任何测试拦截，性能悄悄退化且难以归因", "tip": "把基准脚本随代码提交，关键指标进 CI 设阈值；不可读优化隔离在小函数并写明基准数字与原因"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：一上来用 Cython 重写热点函数", "body": "若瓶颈其实是数据库往返或 O(n^2) 算法，被优化部分占比很低，Amdahl 定律下整体收益极小", "tip": "先用 cProfile 找 cumtime 热点并估算占比 p，优先改算法与批处理，再考虑 C 扩展"}, {"title": "第 2 步：用 time.time 单次计时做微基准，且…", "body": "系统时间可回拨、单次测量含调度噪声、3.11 起特化预热前后不同，结论不可复现", "tip": "用 time.perf_counter 或 timeit 重复多轮取最小，先预热；结论标注版本与输入分布"}, {"title": "第 3 步：优化后不留基准与回归测试", "body": "后续重构把写法改回去时没有任何测试拦截，性能悄悄退化且难以归因", "tip": "把基准脚本随代码提交，关键指标进 CI 设阈值；不可读优化隔离在小函数并写明基准数字与原因"}]' />
 
 
 ## 分层优化的可复现基准脚本
@@ -245,7 +245,7 @@ print('profile_has_loop', 'loop_version' in s.getvalue())
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 先算法后实现 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 先算法后实现 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -294,7 +294,7 @@ print('builtin_sum_traced', '{built-in method builtins.sum}' in text)
 
 <OutputBox title='扩展示例运行结果' output='amdahl_8pct_10x 1.078\namdahl_8pct_ceiling 1.087\nautorange_loops_ge_1 True\ncumtime_label True\nbuiltin_sum_traced True' />
 
-<LineByLine code='import timeit, cProfile, pstats, io\n\ndef amdahl(p, s):\n    return 1.0 / ((1.0 - p) + p / s)\n\nprint(&#39;amdahl_8pct_10x&#39;, round(amdahl(0.08, 10.0), 3))\nprint(&#39;amdahl_8pct_ceiling&#39;, round(amdahl(0.08, 1e12), 3))\n\ntimer = timeit.Timer(&#39;sum(range(50))&#39;)\nloops, _ = timer.autorange()\nprint(&#39;autorange_loops_ge_1&#39;, loops &gt;= 1)\n\npr = cProfile.Profile()\npr.enable()\nsum(range(1000))\npr.disable()\nbuf = io.StringIO()\npstats.Stats(pr, stream=buf).strip_dirs().sort_stats(&#39;cumtime&#39;).print_stats(2)\ntext = buf.getvalue()\nprint(&#39;cumtime_label&#39;, &#39;cumtime&#39; in text)\nprint(&#39;builtin_sum_traced&#39;, &#39;{built-in method builtins.sum}&#39; in text)' :notes='["Amdahl 公式 S = 1 / ((1-p) + p/s)", "占比 8%、加速 10 倍时整体只快约 1.078 倍", "即便 s 趋于无穷，上限也只有约 1.087 倍", "autorange 自动把循环次数翻倍到样本足够", "返回次数必大于等于 1，作为校准判据", "开启确定性 profiler 追踪一段内置求和", "按 cumtime 排序打印前两行", "cProfile 会追踪内置函数，输出 builtins.sum 一条", "换算法与数据结构（list→set、O(n^2)→O(n)）、合并批处理是数量级收益", "内置函数/NumPy 把循环下沉到 C；list 存分散 PyObject，密集数值转 ndarray", "C 扩展长计算释放 GIL；多进程绕过 GIL 但要算 pickle 与内存拷贝成本", "达到 SLO 即停；不可读优化隔离小函数，写清基准数字并留回归测试进 CI", "先剖析再动手：cProfile 找 cumtime 热点，timeit 精确计时，tracemalloc 定位分配", "Amdahl 定律 1/((1-p)+p/s) 给出上限，占比低的部分不值得用 C 重写", "换算法与数据结构（list→set、O(n^2)→O(n)）、合并批处理是数量级收益", "内置函数/NumPy 把循环下沉到 C；list 存分散 PyObject，密集数值转 ndarray", "C 扩展长计算释放 GIL；多进程绕过 GIL 但要算 pickle 与内存拷贝成本"]' title='扩展示例逐行讲解' />
+<LineByLine code='import timeit, cProfile, pstats, io\n\ndef amdahl(p, s):\n    return 1.0 / ((1.0 - p) + p / s)\n\nprint(&#39;amdahl_8pct_10x&#39;, round(amdahl(0.08, 10.0), 3))\nprint(&#39;amdahl_8pct_ceiling&#39;, round(amdahl(0.08, 1e12), 3))\n\ntimer = timeit.Timer(&#39;sum(range(50))&#39;)\nloops, _ = timer.autorange()\nprint(&#39;autorange_loops_ge_1&#39;, loops &gt;= 1)\n\npr = cProfile.Profile()\npr.enable()\nsum(range(1000))\npr.disable()\nbuf = io.StringIO()\npstats.Stats(pr, stream=buf).strip_dirs().sort_stats(&#39;cumtime&#39;).print_stats(2)\ntext = buf.getvalue()\nprint(&#39;cumtime_label&#39;, &#39;cumtime&#39; in text)\nprint(&#39;builtin_sum_traced&#39;, &#39;{built-in method builtins.sum}&#39; in text)' :notes='["Amdahl 公式 S = 1 / ((1-p) + p/s)", "空行，只用于分隔逻辑块，不影响执行结果。", "占比 8%、加速 10 倍时整体只快约 1.078 倍", "即便 s 趋于无穷，上限也只有约 1.087 倍", "空行，只用于分隔逻辑块，不影响执行结果。", "autorange 自动把循环次数翻倍到样本足够", "返回次数必大于等于 1，作为校准判据", "空行，只用于分隔逻辑块，不影响执行结果。", "开启确定性 profiler 追踪一段内置求和", "按 cumtime 排序打印前两行", "cProfile 会追踪内置函数，输出 builtins.sum 一条", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `pr = cProfile.Profile()` 的作用，可对照上方输出逐项核对。", "这一行 `pr.enable()` 的作用，可对照上方输出逐项核对。", "这一行 `sum(range(1000))` 的作用，可对照上方输出逐项核对。", "这一行 `pr.disable()` 的作用，可对照上方输出逐项核对。", "这一行 `buf = io.StringIO()` 的作用，可对照上方输出逐项核对。", "这一行 `pstats.Stats(pr, stream=buf).strip_dirs().sort_stats` 的作用，可对照上方输出逐项核对。", "这一行 `text = buf.getvalue()` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cumtime_label&#39;, &#39;cumtime&#39; in text)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;builtin_sum_traced&#39;, &#39;{built-in method builti` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### timeit.autorange 与 pyperf 的校准口径
@@ -364,3 +364,16 @@ print('builtin_sum_traced', '{built-in method builtins.sum}' in text)
 [下一讲：架构设计：领域分层、演进与重构](/advanced/architecture)
 
 <Predict no='119-6' q='naive 双重循环与 with_set 对同一批数据统计命中数，结果关系是？' :options='["两者都是 667 且 equal 为 True", "naive 更快且结果不同", "with_set 抛 TypeError"]' answer='0' output='counts 667 667，equal True，set_is_faster True' explain='两种写法统计的是同一集合关系，结果应一致；set 把成员检测从 O(n*m) 降到 O(n+m)，数量级更低，实测更快。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/119-optimization.py`
+
+```bash
+python3 examples/lessons/119-optimization.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/119-optimization.py) · [全部示例代码索引](/examples/)

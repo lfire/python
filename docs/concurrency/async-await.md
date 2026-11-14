@@ -39,7 +39,7 @@ description: 正确创建并驱动协程
 
 同一线程已有运行中的 loop 时再调用会抛 `RuntimeError`（提示 cannot be called from a running event loop），所以库代码只应暴露 async 函数，把 run 留给最外层入口调用一次。
 
-<Callout type="tip" title='核心心智模型' text='包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（值为 128），调用它并不执行函数体，只返回一个 `types.CoroutineType` 实例。`inspect.iscoroutinefunction(f)` 看函数、`inspect.iscoroutine(' />
+<Callout type="tip" title='核心心智模型' text='包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（值为 128），调用它并不执行函数体，只返回一个 `types.CoroutineType` 实例。`inspect.iscoroutinefunction(f)` 看函数…' />
 
 **协程标志、常量与判定 API**
 
@@ -97,13 +97,13 @@ asyncio.run(coro)
 
 <OutputBox title='主示例运行结果' output='is coroutine function True\ncalling returns coroutine True\nA:10\nB:45' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import asyncio\nimport inspect\n\nasync def work(name, n):\n    total = 0\n    for i in range(n):\n        total += i\n    await asyncio.sleep(0)\n    return name + &#39;:&#39; + str(total)\n\nasync def main():\n    a = asyncio.create_task(work(&#39;A&#39;, 5))\n    b = asyncio.create_task(work(&#39;B&#39;, 10))\n    results = await asyncio.gather(a, b)\n    for r in results:\n        print(r)\n\ncoro = main()\nprint(&#39;is coroutine function&#39;, inspect.iscoroutinefunction(main))\nprint(&#39;calling returns&#39;, type(coro).__name__, inspect.iscoroutine(coro))\nasyncio.run(coro)' :notes='["导入 asyncio 提供事件循环、任务与 gather", "导入 inspect 用于判定协程函数与协程对象", "定义原生协程 work，调用它只返回协程对象", "累加器初值为 0", "用 range 控制循环次数，结果可精确预测", "纯 Python 累加，不涉及阻塞 IO", "await asyncio.sleep(0) 显式让出事件循环", "把 name 与累加结果拼成字符串返回", "定义入口协程 main，负责创建并收集任务", "create_task 把 work(&#39;A&#39;,5) 包装成 Task 并调度", "create_task 把 work(&#39;B&#39;,10) 包装成第二个 Task", "gather 并发等待两个 Task，按传入顺序收集结果", "遍历结果列表", "逐个打印 A 与 B 的返回值", "调用 main() 只得到协程对象，函数体尚未执行", "iscoroutinefunction 对 async def 返回 True", "type 为 coroutine、iscoroutine 为 True，证明未执行", "asyncio.run 是唯一入口：建 loop、跑协程、收尾关闭"]' title='第 068 讲 · async / await 与协程对象' />
+<LineByLine code='import asyncio\nimport inspect\n\nasync def work(name, n):\n    total = 0\n    for i in range(n):\n        total += i\n    await asyncio.sleep(0)\n    return name + &#39;:&#39; + str(total)\n\nasync def main():\n    a = asyncio.create_task(work(&#39;A&#39;, 5))\n    b = asyncio.create_task(work(&#39;B&#39;, 10))\n    results = await asyncio.gather(a, b)\n    for r in results:\n        print(r)\n\ncoro = main()\nprint(&#39;is coroutine function&#39;, inspect.iscoroutinefunction(main))\nprint(&#39;calling returns&#39;, type(coro).__name__, inspect.iscoroutine(coro))\nasyncio.run(coro)' :notes='["导入 asyncio 提供事件循环、任务与 gather", "导入 inspect 用于判定协程函数与协程对象", "空行，只用于分隔逻辑块，不影响执行结果。", "定义原生协程 work，调用它只返回协程对象", "累加器初值为 0", "用 range 控制循环次数，结果可精确预测", "纯 Python 累加，不涉及阻塞 IO", "await asyncio.sleep(0) 显式让出事件循环", "把 name 与累加结果拼成字符串返回", "空行，只用于分隔逻辑块，不影响执行结果。", "定义入口协程 main，负责创建并收集任务", "create_task 把 work(&#39;A&#39;,5) 包装成 Task 并调度", "create_task 把 work(&#39;B&#39;,10) 包装成第二个 Task", "gather 并发等待两个 Task，按传入顺序收集结果", "遍历结果列表", "逐个打印 A 与 B 的返回值", "空行，只用于分隔逻辑块，不影响执行结果。", "调用 main() 只得到协程对象，函数体尚未执行", "iscoroutinefunction 对 async def 返回 True", "type 为 coroutine、iscoroutine 为 True，证明未执行", "asyncio.run 是唯一入口：建 loop、跑协程、收尾关闭"]' title='第 068 讲 · async / await 与协程对象' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Term word='coroutine 与 async function' text='包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（值为 128），调用它并不执行函数体，只返回一个 `types.CoroutineType` 实例。`inspect.iscoroutinefunction(f)` 看函数、`inspect.iscoroutine(obj)` 看调用结' />
+<Term word='coroutine 与 async function' text='包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（值为 128），调用它并不执行函数体，只返回一个 `types.CoroutineType` 实例。`inspect.iscoroutinefunction(f)` 看函数、`inspect.iscoroutine(obj)` 看调用结…' />
 
-<Term word='await 只能用在 async 内' text='`await` 的操作数必须满足 awaitable 协议，共三类：原生协程（`CO_COROUTINE`）、用 `types.coroutine` 装饰、带 `CO_ITERABLE_COROUTINE`（256）的生成器协程、以及任意实现了 `__await__` 且返回迭代器的对象，`inspect.isawai' />
+<Term word='await 只能用在 async 内' text='`await` 的操作数必须满足 awaitable 协议，共三类：原生协程（`CO_COROUTINE`）、用 `types.coroutine` 装饰、带 `CO_ITERABLE_COROUTINE`（256）的生成器协程、以及任意实现了 `__await__` 且返回迭代器的对象…' />
 
 
 ### __await__ 里 yield 出去的值交回给了谁
@@ -191,7 +191,7 @@ CPU 密集计算交给进程池或 C 扩展。
 | create_task 不保存强引用 | 任务可能被 GC 中途回收、异常无人读取 |
 | await 一个 int | TypeError: object int can't be used in 'await' expression |
 
-<FlowTimeline :steps='[{"title": "调用 async 函数只创建协程对象，不执行函数体", "desc": "包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（…", "tone": "blue"}, {"title": "awaitable 协议：三类可等待对象与暂停点", "desc": "`await` 的操作数必须满足 awaitable 协议，共三类：原生协程（`CO…", "tone": "purple"}, {"title": "同步异步边界：不要在协程里阻塞事件循环", "desc": "事件循环是单线程协作式调度器，一个协程不主动让出，其它任务就没有执行机会。`time…", "tone": "orange"}, {"title": "工程落地", "desc": "把同步阻塞计算安全下沉到线程池的边界封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "调用 async 函数只创建协程对象，不执行函数…", "desc": "包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志…", "tone": "blue"}, {"title": "awaitable 协议：三类可等待对象与暂停点", "desc": "`await` 的操作数必须满足 awaitable 协议，共三类：原生协程…", "tone": "purple"}, {"title": "同步异步边界：不要在协程里阻塞事件循环", "desc": "事件循环是单线程协作式调度器，一个协程不主动让出，其它任务就没有执行机会。…", "tone": "orange"}, {"title": "工程落地", "desc": "把同步阻塞计算安全下沉到线程池的边界封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## PyCoroObject 与 send 驱动协程的底层
@@ -206,9 +206,9 @@ async def 编译出的 code object 带 `CO_COROUTINE` 标志，调用时 CPython
 
 `asyncio.run` 借助 3.11 起的 `Runner` 管理循环生命周期，退出前跑 `_cancel_all_tasks` 与 `shutdown_asyncgens`，保证没有泄漏任务。
 
-<ConceptDiagram type='hub4' title='第 068 讲 · 调用 async 函数只创建协程对象，不执行函数体' labels='调用 async 函数只创建协程对象，不执行|awaitable 协议：三类可等待对象与暂|同步异步边界：不要在协程里阻塞事件循环' caption='正确创建并驱动协程' />
+<ConceptDiagram type='hub4' title='第 068 讲 · 调用 async 函数只创建协程对象，不执行函数体' labels='调用 async 函数只创建协程对象，不执行…|awaitable 协议：三类可等待对象与暂…|同步异步边界：不要在协程里阻塞事件循环|同步异步边界' caption='正确创建并驱动协程' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 把同步阻塞计算安全下沉到线程池的边界封装
@@ -242,7 +242,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='把阻塞调用放进 to_thread / run_in_executor，或换成原生异步库；入口统一用 asyncio.run' />
 
-<CheckList id='P068b' title='上线前自检' :items='["能复现并解释「调用 async 函数直接把返回值当结果用」", "能复现并解释「在协程里用 time.sleep 或同步 requests.」", "能复现并解释「顶层写 await 或在已有 loop 的线程里再调 asy」", "能用一条命令验证 coroutine 与 async function", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P068b' title='上线前自检' :items='["能复现并解释「调用 async 函数直接把返回值当结果用」", "能复现并解释「在协程里用 time.sleep 或同步 requests.…」", "能复现并解释「顶层写 await 或在已有 loop 的线程里再调 asy…」", "能用一条命令验证 coroutine 与 async function", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -254,13 +254,13 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='调用 async 函数直接把返回值当结果用：调用只创建 coroutine 对象、函数体不执行，还会触发 RuntimeWarning: coroutine was never awaited' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：调用 async 函数直接把返回值当结果用", "body": "调用只创建 coroutine 对象、函数体不执行，还会触发 RuntimeWarning: coroutine was never awaited", "tip": "用 await、asyncio.run 或 create_task 驱动；丢弃时显式 coro.close()"}, {"title": "第 2 步：在协程里用 time.sleep 或同步 r", "body": "同步阻塞不释放事件循环，整个 loop 上的并发任务一起停住", "tip": "改 await asyncio.sleep / aiohttp / httpx.AsyncClient，或 await asyncio.to_thread(fn, ...)"}, {"title": "第 3 步：顶层写 await 或在已有 loop 的线", "body": "前者编译期 SyntaxError: &#39;await&#39; outside function，后者 RuntimeError: cannot be called from a running event loop", "tip": "库代码只暴露 async 函数，把 asyncio.run 放在最外层同步入口且只调一次"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：调用 async 函数直接把返回值当结果用", "body": "调用只创建 coroutine 对象、函数体不执行，还会触发 RuntimeWarning: coroutine was never awaited", "tip": "用 await、asyncio.run 或 create_task 驱动；丢弃时显式 coro.close()"}, {"title": "第 2 步：在协程里用 time.sleep 或同步 r…", "body": "同步阻塞不释放事件循环，整个 loop 上的并发任务一起停住", "tip": "改 await asyncio.sleep / aiohttp / httpx.AsyncClient，或 await asyncio.to_thread(fn, ...)"}, {"title": "第 3 步：顶层写 await 或在已有 loop 的线…", "body": "前者编译期 SyntaxError: &#39;await&#39; outside function，后者 RuntimeError: cannot be called from a running event loop", "tip": "库代码只暴露 async 函数，把 asyncio.run 放在最外层同步入口且只调一次"}]' />
 
 ```bash
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 coroutine 与 async function 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 coroutine 与 async function 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习、自测与一页纸速记
@@ -299,3 +299,16 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 3. awaitable 三类：原生协程、types.coroutine 生成器协程、实现 __await__ 的对象；inspect.isawaitable 可判定
 
 [下一讲：asyncio 深入：Task、Future 与事件循环](/concurrency/asyncio)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/068-async-await.py`
+
+```bash
+python3 examples/lessons/068-async-await.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/068-async-await.py) · [全部示例代码索引](/examples/)

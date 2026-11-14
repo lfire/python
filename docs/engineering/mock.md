@@ -51,7 +51,7 @@ patch 在退出时用保存的原值还原，`patch.dict` 可对 `os.environ` �
 | from datetime import datetime | 当前模块的 datetime | 当前模块.datetime |
 | 读 os.environ['K'] | os.environ | patch.dict(os.environ, &#123;'K': 'v'&#125;) |
 
-<Callout type="tip" title='核心心智模型' text='`unittest.mock` 提供 Mock、MagicMock、`patch` / `patch.object` / `patch.dict`，可作装饰器或上下文管理器，常用参数 `return_value`、`side_effect`（异常或序列）、`autospec`、`spec`；断言用 ' />
+<Callout type="tip" title='核心心智模型' text='`unittest.mock` 提供 Mock、MagicMock、`patch` / `patch.object` / `patch.dict`，可作装饰器或上下文管理器，常用参数 `return_value`、`side_effect`（异常或序列）、`autospec`、`spec`；断言用…' />
 
 `unittest.mock.patch` 把目标字符串按最后一个点拆成「模块/对象 + 属性」，import 该模块后对其 setattr 保存原值并替换成 MagicMock，退出时用 `__exit__` 把原值写回；
 
@@ -65,9 +65,9 @@ freezegun 的做法是把 `sys.modules` 里的 datetime、date、time 等替换�
 
 `random.Random(seed)` 是独立的 Mersenne Twister 实例，同 seed 同调用序列可复现，因此注入它比 patch random 全局更隔离。
 
-<ConceptDiagram type='flow4' title='第 076 讲 · unittest.mock 与 patch 位置' labels='unittest.mock 与 patch |时间、随机、网络的可控注入|测试替身分类与 autospec 防呆' caption='让不可控依赖变得可测' />
+<ConceptDiagram type='flow4' title='第 076 讲 · unittest.mock 与 patch 位置' labels='unittest.mock 与 patch…|时间、随机、网络的可控注入|测试替身分类与 autospec 防呆|依赖注入' caption='让不可控依赖变得可测' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### 为什么 patch 定义处常常不生效
@@ -93,9 +93,9 @@ print('autospec call ok', safe.fetch('k'))
 
 <OutputBox title='原理验证' output='bare mock invents attr True\nautospec rejects typo True\nautospec call ok fake' />
 
-<Term word='unittest.mock 与 patch 位置' text='`unittest.mock` 提供 Mock、MagicMock、`patch` / `patch.object` / `patch.dict`，可作装饰器或上下文管理器，常用参数 `return_value`、`side_effect`（异常或序列）、`autospec`、`spec`；断言用 `assert_ca' />
+<Term word='unittest.mock 与 patch 位置' text='`unittest.mock` 提供 Mock、MagicMock、`patch` / `patch.object` / `patch.dict`，可作装饰器或上下文管理器，常用参数 `return_value`、`side_effect`（异常或序列）、`autospec`、`spec`；断言用…' />
 
-<Term word='monkeypatch' text='时间最稳的做法是依赖注入：把 now 这个 callable 作为函数参数或对象构造参数传入，测试传一个返回固定值的 FakeClock，而不是全局 patch `datetime.datetime.now`；`freezegun.freeze_time` 之所以方便，是因为它替换 `sys.modules` 里的 d' />
+<Term word='monkeypatch' text='时间最稳的做法是依赖注入：把 now 这个 callable 作为函数参数或对象构造参数传入，测试传一个返回固定值的 FakeClock，而不是全局 patch `datetime.datetime.now`；`freezegun.freeze_time` 之所以方便，是因为它替换 `sys.modules` 里的 d…' />
 
 
 ## 对照：patch 使用处与定义处的输出差
@@ -121,7 +121,7 @@ with tempfile.TemporaryDirectory() as d:
 
 <OutputBox title='主示例运行结果' output='baseline hi real\npatch definition site hi real\npatch use site hi FAKE' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, os, tempfile\nfrom unittest.mock import patch\n\nwith tempfile.TemporaryDirectory() as d:\n    open(os.path.join(d, &#39;clock.py&#39;), &#39;w&#39;).write(&#39;def now():&#39; + chr(10) + &#39;    return "real"&#39; + chr(10))\n    open(os.path.join(d, &#39;service.py&#39;), &#39;w&#39;).write(&#39;from clock import now&#39; + chr(10) + &#39;def greet():&#39; + chr(10) + &#39;    return "hi " + now()&#39; + chr(10))\n    sys.path.insert(0, d)\n    import service, clock\n    print(&#39;baseline&#39;, service.greet())\n\n    with patch.object(clock, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch definition site&#39;, service.greet())\n\n    with patch.object(service, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch use site&#39;, service.greet())\n    sys.path.remove(d)' :notes='["导入 sys/os/tempfile 建临时模块，patch 做替换", "从 unittest.mock 取 patch.object", "临时目录里造两个模块模拟业务与依赖", "clock.py 定义 now 返回 real", "service.py 用 from clock import now 绑定本地名字", "把临时目录加入 sys.path 以便 import", "导入两个模块，service.now 此刻指向原函数", "基线：greet 读到真实时间 real", "尝试在「定义处」clock 模块上 patch now", "service.greet 仍读自己的 service.now，故还是 real", "改在「使用处」service 模块上 patch now", "这次 greet 读到 FAKE，patch 生效", "移除临时路径，环境干净"]' title='第 076 讲 · Mock 与测试替身：时间、网络与随机' />
+<LineByLine code='import sys, os, tempfile\nfrom unittest.mock import patch\n\nwith tempfile.TemporaryDirectory() as d:\n    open(os.path.join(d, &#39;clock.py&#39;), &#39;w&#39;).write(&#39;def now():&#39; + chr(10) + &#39;    return "real"&#39; + chr(10))\n    open(os.path.join(d, &#39;service.py&#39;), &#39;w&#39;).write(&#39;from clock import now&#39; + chr(10) + &#39;def greet():&#39; + chr(10) + &#39;    return "hi " + now()&#39; + chr(10))\n    sys.path.insert(0, d)\n    import service, clock\n    print(&#39;baseline&#39;, service.greet())\n\n    with patch.object(clock, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch definition site&#39;, service.greet())\n\n    with patch.object(service, &#39;now&#39;, return_value=&#39;FAKE&#39;):\n        print(&#39;patch use site&#39;, service.greet())\n    sys.path.remove(d)' :notes='["导入 sys/os/tempfile 建临时模块，patch 做替换", "从 unittest.mock 取 patch.object", "空行，只用于分隔逻辑块，不影响执行结果。", "临时目录里造两个模块模拟业务与依赖", "clock.py 定义 now 返回 real", "service.py 用 from clock import now 绑定本地名字", "把临时目录加入 sys.path 以便 import", "导入两个模块，service.now 此刻指向原函数", "基线：greet 读到真实时间 real", "空行，只用于分隔逻辑块，不影响执行结果。", "尝试在「定义处」clock 模块上 patch now", "service.greet 仍读自己的 service.now，故还是 real", "空行，只用于分隔逻辑块，不影响执行结果。", "改在「使用处」service 模块上 patch now", "这次 greet 读到 FAKE，patch 生效", "移除临时路径，环境干净"]' title='第 076 讲 · Mock 与测试替身：时间、网络与随机' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -205,7 +205,7 @@ print('seeded reproducible', random.Random(7).randrange(100) == random.Random(7)
 python -m pytest -q --disable-warnings
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `unittest.mock` 与 patch 位置 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `unittest.mock` 与 patch 位置 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 依赖注入让时间、网络、随机全部可控
@@ -251,7 +251,7 @@ print('seeded reproducible', random.Random(7).randrange(1000) == random.Random(7
 
 <Callout type="idea" title='落地提示' text='把时间、随机、网络封装成可注入依赖，优先用假实现（fake）而不是深度断言调用次数' />
 
-<CheckList id='P076b' title='上线前自检' :items='["能复现并解释「patch 打在「定义处」而非「使用处」」", "能复现并解释「mock 了不存在的方法、或把断言方法名拼错」", "能复现并解释「全局 patch datetime.now / random」", "能用一条命令验证 unittest.mock 与 patch 位置", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P076b' title='上线前自检' :items='["能复现并解释「patch 打在「定义处」而非「使用处」」", "能复现并解释「mock 了不存在的方法、或把断言方法名拼错」", "能复现并解释「全局 patch datetime.now / random…」", "能用一条命令验证 unittest.mock 与 patch 位置", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -263,7 +263,7 @@ print('seeded reproducible', random.Random(7).randrange(1000) == random.Random(7
 
 <Callout type="warn" title='本讲最容易踩的坑' text='patch 打在「定义处」而非「使用处」：from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：patch 打在「定义处」而非「使用处」", "body": "from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它", "tip": "定位名字被查找的模块，patch service.now；写 import clock 时才 patch clock.now"}, {"title": "第 2 步：mock 了不存在的方法、或把断言方法名拼错", "body": "MagicMock.__getattr__ 为任意属性动态造子 Mock，assret_called_once_with 静默通过", "tip": "用 spec / autospec / create_autospec 按真实签名限制，或 seal() 冻结属性"}, {"title": "第 3 步：全局 patch datetime.now ", "body": "修改 sys.modules 级全局对象，跨用例串味、时区与异步任务互相干扰", "tip": "把 now / rng / http 作为依赖注入传入 Fake 实现；freezegun 必须限定 with 作用域"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：patch 打在「定义处」而非「使用处」", "body": "from clock import now 会在业务模块绑定独立名字，改 clock.now 不影响它", "tip": "定位名字被查找的模块，patch service.now；写 import clock 时才 patch clock.now"}, {"title": "第 2 步：mock 了不存在的方法、或把断言方法名拼错", "body": "MagicMock.__getattr__ 为任意属性动态造子 Mock，assret_called_once_with 静默通过", "tip": "用 spec / autospec / create_autospec 按真实签名限制，或 seal() 冻结属性"}, {"title": "第 3 步：全局 patch datetime.now…", "body": "修改 sys.modules 级全局对象，跨用例串味、时区与异步任务互相干扰", "tip": "把 now / rng / http 作为依赖注入传入 Fake 实现；freezegun 必须限定 with 作用域"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -302,3 +302,16 @@ print('seeded reproducible', random.Random(7).randrange(1000) == random.Random(7
 3. 时间/随机/网络优先依赖注入：FakeClock、random.Random(seed)、FakeHTTP，避免全局修改
 
 [下一讲：属性测试、基准测试与模糊测试](/engineering/property-testing)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/076-mock.py`
+
+```bash
+python3 examples/lessons/076-mock.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/076-mock.py) · [全部示例代码索引](/examples/)

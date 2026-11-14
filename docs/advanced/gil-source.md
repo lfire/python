@@ -22,7 +22,7 @@ GIL 的获取释放点、eval breaker、自适应特化与自由线程化是四�
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='微基准只跑一次就下性能结论：3.11 起热点指令预热后才特化，未预热走通用分派，单次测量把 quickening 噪声算进结果' />
 
-<Callout type="tip" title='核心心智模型' text='GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL ' />
+<Callout type="tip" title='核心心智模型' text='GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL…' />
 
 
 ## GIL 的获取释放点与 eval breaker
@@ -49,9 +49,9 @@ GIL 是保护解释器共享状态（引用计数、模块字典、类型系统�
 | 3.12 PEP 684 | 每解释器 GIL | 子解释器仍需 C 扩展配合 |
 | 3.13 PEP 703 | 实验性 --disable-gil 自由线程 | 单线程回退，扩展逐个验证 |
 
-<ConceptDiagram type='hub4' title='第 118 讲 · GIL 的获取释放点与 eval breaker' labels='GIL 的获取释放点与 eval break|3.11 自适应特化、内联缓存与预热|PEP 703 自由线程化与技术判断框架' caption='理解性能演进方向并做技术判断' />
+<ConceptDiagram type='hub4' title='第 118 讲 · GIL 的获取释放点与 eval breaker' labels='GIL 的获取释放点与 eval break…|3.11 自适应特化、内联缓存与预热|PEP 703 自由线程化与技术判断框架|对扩展的影响' caption='理解性能演进方向并做技术判断' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 引用计数、解释器状态与 switchinterval
@@ -66,9 +66,9 @@ C 扩展跑长计算时用 `Py_BEGIN_ALLOW_THREADS` 临时释放 GIL、结束后
 
 类型变化会去优化回退，因此同一段代码预热前后耗时不同。PEP 703 的自由线程构建把引用计数改为偏向线程局部加延迟合并、容器访问加细粒度同步，代价是单线程回退与巨大的扩展适配工作，所以它不是开关，而是一次需要按构建分别验证的全生态迁移。
 
-<Term word='GIL 的获取与释放点' text='GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL 的 C 扩展，会在进' />
+<Term word='GIL 的获取与释放点' text='GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL 的 C 扩展，会在进…' />
 
-<Term word='切换请求与 eval breaker' text='PEP 659（3.11）引入 specializing adaptive interpreter：解释器在运行时统计指令执行次数，代码对象预热（quickening）后把通用指令改写成带内联缓存的特化版本，缓存放在 `co_code` 后面的 `CACHE` 条目里，自适应字节码存于 code object 的 `_' />
+<Term word='切换请求与 eval breaker' text='PEP 659（3.11）引入 specializing adaptive interpreter：解释器在运行时统计指令执行次数，代码对象预热（quickening）后把通用指令改写成带内联缓存的特化版本，缓存放在 `co_code` 后面的 `CACHE` 条目里，自适应字节码存于 code object 的…' />
 
 
 ## 自适应特化、内联缓存与预热
@@ -108,7 +108,7 @@ dis.dis(hot, show_caches=True)
 
 <OutputBox title='主示例运行结果' output='gil_enabled True\nswitch_interval 0.005\nhas_adaptive True\nco_code_len 22\nboth_run True\n  6           RESUME                   0\n\n  7           LOAD_FAST_LOAD_FAST      0 (x, x)\n              BINARY_OP                0 (+)\n              CACHE                    0 (counter: 0)\n              LOAD_FAST                0 (x)\n              BINARY_OP                0 (+)\n              CACHE                    0 (counter: 0)\n              LOAD_FAST                0 (x)\n              BINARY_OP                0 (+)\n              CACHE                    0 (counter: 0)\n              RETURN_VALUE' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, dis, time\n\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\nprint(&#39;switch_interval&#39;, sys.getswitchinterval())\n\ndef hot(x):\n    return x + x + x + x\n\nprint(&#39;has_adaptive&#39;, hasattr(hot.__code__, &#39;_co_code_adaptive&#39;))\nprint(&#39;co_code_len&#39;, len(hot.__code__.co_code))\n\ndef bench():\n    t0 = time.perf_counter()\n    for i in range(200000):\n        hot(i)\n    return time.perf_counter() - t0\n\na = bench(); b = bench()\nprint(&#39;both_run&#39;, a &gt; 0 and b &gt; 0)\ndis.dis(hot, show_caches=True)' :notes='["导入 sys 查构建状态，dis 反汇编，time 计时", "查询当前构建是否启用 GIL", "读取线程切换请求间隔，默认 0.005 秒", "定义热点函数，用于观察内联缓存与预热", "多次加法制造可特化的 BINARY_OP", "3.11+ 的 code object 带自适应字节码", "打印未特化 co_code 的字节长度", "定义一轮基准，重复调用触发 quickening", "记录起点", "循环调用热点函数", "连续执行让指令达到特化阈值", "返回本轮耗时", "跑两轮，前一轮兼作预热", "两轮都记录到耗时，基准可用", "show_caches=True 显示 BINARY_OP 后的 CACHE 内联缓存槽"]' title='第 118 讲 · GIL 源码、自适应解释器与无 GIL 路线' />
+<LineByLine code='import sys, dis, time\n\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\nprint(&#39;switch_interval&#39;, sys.getswitchinterval())\n\ndef hot(x):\n    return x + x + x + x\n\nprint(&#39;has_adaptive&#39;, hasattr(hot.__code__, &#39;_co_code_adaptive&#39;))\nprint(&#39;co_code_len&#39;, len(hot.__code__.co_code))\n\ndef bench():\n    t0 = time.perf_counter()\n    for i in range(200000):\n        hot(i)\n    return time.perf_counter() - t0\n\na = bench(); b = bench()\nprint(&#39;both_run&#39;, a &gt; 0 and b &gt; 0)\ndis.dis(hot, show_caches=True)' :notes='["导入 sys 查构建状态，dis 反汇编，time 计时", "空行，只用于分隔逻辑块，不影响执行结果。", "查询当前构建是否启用 GIL", "读取线程切换请求间隔，默认 0.005 秒", "空行，只用于分隔逻辑块，不影响执行结果。", "定义热点函数，用于观察内联缓存与预热", "多次加法制造可特化的 BINARY_OP", "空行，只用于分隔逻辑块，不影响执行结果。", "3.11+ 的 code object 带自适应字节码", "打印未特化 co_code 的字节长度", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一轮基准，重复调用触发 quickening", "记录起点", "循环调用热点函数", "连续执行让指令达到特化阈值", "返回本轮耗时", "空行，只用于分隔逻辑块，不影响执行结果。", "跑两轮，前一轮兼作预热", "两轮都记录到耗时，基准可用", "show_caches=True 显示 BINARY_OP 后的 CACHE 内联缓存槽"]' title='第 118 讲 · GIL 源码、自适应解释器与无 GIL 路线' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -174,7 +174,7 @@ print('has_adaptive', hasattr(read_attr.__code__, '_co_code_adaptive'))
 
 <Callout type="warn" title='本讲最容易踩的坑' text='微基准只跑一次就下性能结论：3.11 起热点指令预热后才特化，未预热走通用分派，单次测量把 quickening 噪声算进结果' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：微基准只跑一次就下性能结论", "body": "3.11 起热点指令预热后才特化，未预热走通用分派，单次测量把 quickening 噪声算进结果", "tip": "用 timeit 的 repeat 或先丢弃前几轮预热；结论标注解释器版本与构建"}, {"title": "第 2 步：默认 3.13 已无 GIL，在 C 扩展里", "body": "标准构建仍启用 GIL，自由线程是实验性 --disable-gil 构建，且扩展假设持锁会在自由线程下崩溃", "tip": "用 sys._is_gil_enabled() 查询构建，按构建分别跑基准，逐个验证 C 扩展的线程安全"}, {"title": "第 3 步：把「多线程一定慢」当成定理", "body": "阻塞 IO 与释放 GIL 的 C 扩展能让线程真正重叠，纯 Python 计算才被 GIL 串行", "tip": "先分类热点是字节码、C 扩展还是 IO，再选进程、线程或 C 扩展路线，并实测而非套结论"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：微基准只跑一次就下性能结论", "body": "3.11 起热点指令预热后才特化，未预热走通用分派，单次测量把 quickening 噪声算进结果", "tip": "用 timeit 的 repeat 或先丢弃前几轮预热；结论标注解释器版本与构建"}, {"title": "第 2 步：默认 3.13 已无 GIL，在 C 扩展里…", "body": "标准构建仍启用 GIL，自由线程是实验性 --disable-gil 构建，且扩展假设持锁会在自由线程下崩溃", "tip": "用 sys._is_gil_enabled() 查询构建，按构建分别跑基准，逐个验证 C 扩展的线程安全"}, {"title": "第 3 步：把「多线程一定慢」当成定理", "body": "阻塞 IO 与释放 GIL 的 C 扩展能让线程真正重叠，纯 Python 计算才被 GIL 串行", "tip": "先分类热点是字节码、C 扩展还是 IO，再选进程、线程或 C 扩展路线，并实测而非套结论"}]' />
 
 
 ## PEP 659 到 PEP 703：自由线程化与技术判断框架
@@ -198,7 +198,7 @@ PEP 703 让 3.13 提供 `--disable-gil` 的实验性自由线程构建，`sys._i
 | 阻塞 IO | 线程池 / asyncio | 两者仍适用 |
 | 依赖 C API 的旧扩展 | 假设持锁可用 | 必须验证线程安全，否则可能崩溃 |
 
-<FlowTimeline :steps='[{"title": "GIL 的获取释放点与 eval breaker", "desc": "GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，…", "tone": "blue"}, {"title": "3.11 自适应特化、内联缓存与预热", "desc": "PEP 659（3.11）引入 specializing adaptive inte…", "tone": "purple"}, {"title": "PEP 703 自由线程化与技术判断框架", "desc": "PEP 703 让 3.13 提供 `--disable-gil` 的实验性自由线程…", "tone": "orange"}, {"title": "工程落地", "desc": "带构建探测与预热的基准封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "GIL 的获取释放点与 eval breaker", "desc": "GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范…", "tone": "blue"}, {"title": "3.11 自适应特化、内联缓存与预热", "desc": "PEP 659（3.11）引入 specializing adaptive inte…", "tone": "purple"}, {"title": "PEP 703 自由线程化与技术判断框架", "desc": "PEP 703 让 3.13 提供 `--disable-gil` 的实验性自由线程…", "tone": "orange"}, {"title": "工程落地", "desc": "带构建探测与预热的基准封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 默认 3.13 已无 GIL，在 C 扩展里假设一直持锁
@@ -249,7 +249,7 @@ bench()
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 GIL 的获取与释放点 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 GIL 的获取与释放点 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## ceval_gil.c 的 _gil_runtime_state 与 take_gil / drop_gil
@@ -295,7 +295,7 @@ print('load_attr_ops', sorted(set(o for o in ops if o.startswith('LOAD_ATTR'))))
 
 <OutputBox title='扩展示例运行结果' output='switch_ms 5.0\ngil_enabled True\nadaptive_len 26\nco_code_len 26\nload_attr_ops [&#39;LOAD_ATTR_INSTANCE_VALUE&#39;]' />
 
-<LineByLine code='import dis, sys\n\nprint(&#39;switch_ms&#39;, round(sys.getswitchinterval() * 1000, 1))\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\n\ndef read_attr(obj):\n    return obj.value\n\nclass Box:\n    def __init__(self):\n        self.value = 42\n\nbox = Box()\nco = read_attr.__code__\nprint(&#39;adaptive_len&#39;, len(co._co_code_adaptive))\nprint(&#39;co_code_len&#39;, len(co.co_code))\nfor _ in range(20000):\n    read_attr(box)\nops = [i.opname for i in dis.get_instructions(read_attr, adaptive=True)]\nprint(&#39;load_attr_ops&#39;, sorted(set(o for o in ops if o.startswith(&#39;LOAD_ATTR&#39;))))' :notes='["默认切换间隔 5ms，标准 3.13 构建仍启用 GIL", "定义只做属性读取的函数作为特化样本", "Box 实例字典里放一个 value 字段", "_co_code_adaptive 是 quickening 后的缓冲区", "co_code 是未特化原始字节码，两者长度相同", "循环两万次让 adaptive_counter 越过预热阈值", "adaptive=True 读取快速化后的指令名", "预热后 LOAD_ATTR 特化为带版本守卫的 INSTANCE_VALUE 变体", "3.11 PEP 659 自适应特化 + 内联缓存（_co_code_adaptive / CACHE），微基准必须预热", "dis.dis 用 show_caches=True 看缓存槽、adaptive=True 看预热后的特化指令", "3.12 PEP 684 每解释器 GIL；3.13 PEP 703 实验性自由线程，sys._is_gil_enabled() 可查", "性能结论按版本与构建分别测：先确认构建、再预热计时、再分类热点、最后选并发模型", "GIL 保护引用计数与解释器状态；阻塞 IO、sleep、释放 GIL 的 C 扩展能让线程重叠", "默认 switchinterval 0.005 秒，3.10+ 由 eval_breaker 在循环回边与调用处检查让出", "3.11 PEP 659 自适应特化 + 内联缓存（_co_code_adaptive / CACHE），微基准必须预热", "dis.dis 用 show_caches=True 看缓存槽、adaptive=True 看预热后的特化指令"]' title='扩展示例逐行讲解' />
+<LineByLine code='import dis, sys\n\nprint(&#39;switch_ms&#39;, round(sys.getswitchinterval() * 1000, 1))\nprint(&#39;gil_enabled&#39;, sys._is_gil_enabled())\n\ndef read_attr(obj):\n    return obj.value\n\nclass Box:\n    def __init__(self):\n        self.value = 42\n\nbox = Box()\nco = read_attr.__code__\nprint(&#39;adaptive_len&#39;, len(co._co_code_adaptive))\nprint(&#39;co_code_len&#39;, len(co.co_code))\nfor _ in range(20000):\n    read_attr(box)\nops = [i.opname for i in dis.get_instructions(read_attr, adaptive=True)]\nprint(&#39;load_attr_ops&#39;, sorted(set(o for o in ops if o.startswith(&#39;LOAD_ATTR&#39;))))' :notes='["默认切换间隔 5ms，标准 3.13 构建仍启用 GIL", "空行，只用于分隔逻辑块，不影响执行结果。", "定义只做属性读取的函数作为特化样本", "Box 实例字典里放一个 value 字段", "空行，只用于分隔逻辑块，不影响执行结果。", "_co_code_adaptive 是 quickening 后的缓冲区", "co_code 是未特化原始字节码，两者长度相同", "空行，只用于分隔逻辑块，不影响执行结果。", "循环两万次让 adaptive_counter 越过预热阈值", "adaptive=True 读取快速化后的指令名", "预热后 LOAD_ATTR 特化为带版本守卫的 INSTANCE_VALUE 变体", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `box = Box()` 的作用，可对照上方输出逐项核对。", "这一行 `co = read_attr.__code__` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;adaptive_len&#39;, len(co._co_code_adaptive))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;co_code_len&#39;, len(co.co_code))` 的作用，可对照上方输出逐项核对。", "这一行 `for _ in range(20000):` 的作用，可对照上方输出逐项核对。", "这一行 `read_attr(box)` 的作用，可对照上方输出逐项核对。", "这一行 `ops = [i.opname for i in dis.get_instructions(read_a` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;load_attr_ops&#39;, sorted(set(o for o in ops if ` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ## eval_breaker 位掩码与 CHECK_EVAL_BREAKER 的轮询点
@@ -399,3 +399,16 @@ setattr 改类属性会经 Objects/`typeobject.c` 的 type_modified 让该类型
 [下一讲：极致优化：从剖析到 C 扩展的十倍案例](/advanced/optimization)
 
 <FillBlank no='118-6' tpl='___ sys, dis, time' :answers='["import"]' hint='回想本讲关于 GIL 的获取与释放点 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 GIL 的获取释放点与 eval breaker 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/118-gil-source.py`
+
+```bash
+python3 examples/lessons/118-gil-source.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/118-gil-source.py) · [全部示例代码索引](/examples/)

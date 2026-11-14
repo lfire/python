@@ -80,13 +80,13 @@ print('fixed on late', fixed_wait(Page(ready_at=9), 2))
 
 <OutputBox title='主示例运行结果' output='explicit early (&#39;found&#39;, 3)\nexplicit late (&#39;found&#39;, 9)\nexplicit never (&#39;timeout&#39;, 4)\nfixed on early (True, 10)\nfixed on late (False, 2)' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Page:\n    def __init__(self, ready_at):\n        self.tick = 0\n        self.ready_at = ready_at\n    def poll(self):\n        self.tick += 1\n    def is_ready(self):\n        return self.tick &gt;= self.ready_at\n\ndef wait_for(page, timeout, poll):\n    waited = 0\n    while waited &lt; timeout:\n        if page.is_ready():\n            return &#39;found&#39;, waited\n        for _ in range(poll):\n            page.poll()\n        waited += poll\n    return &#39;timeout&#39;, waited\n\ndef fixed_wait(page, sleep):\n    for _ in range(sleep):\n        page.poll()\n    return page.is_ready(), sleep\n\nprint(&#39;explicit early&#39;, wait_for(Page(ready_at=3), timeout=10, poll=1))\nprint(&#39;explicit late&#39;, wait_for(Page(ready_at=9), timeout=10, poll=1))\nprint(&#39;explicit never&#39;, wait_for(Page(ready_at=99), timeout=4, poll=1))\nprint(&#39;fixed on early&#39;, fixed_wait(Page(ready_at=3), 10))\nprint(&#39;fixed on late&#39;, fixed_wait(Page(ready_at=9), 2))' :notes='["Page 模拟异步页面：tick 是逻辑时钟，ready_at 是元素出现的时刻", "构造接收 ready_at，表示元素在第几个 tick 就绪", "把逻辑时钟归零", "保存元素何时变为可用，模拟不同加载耗时", "poll 推进一个轮询间隔，对应一次 WebDriver 往返", "逻辑时钟加一", "谓词：显式等待每次轮询就检查它是否满足条件", "到达 ready_at 即视为元素已就绪", "wait_for 是显式等待模型：带 timeout 与 poll 两个参数", "已等待的逻辑 tick 计数", "循环上界由 timeout 决定，保证不会无限等待", "每轮先判条件再推进，条件满足立即返回", "返回状态与实际等待量，早出现就少等", "按 poll 推进逻辑时钟，模拟轮询间隔", "推进一 tick，等价于发一次 find_element 命令", "累计已等待 tick", "超过 timeout 仍未就绪，返回 timeout 而非抛未捕获异常", "fixed_wait 模拟固定 sleep：不管状态先等满", "无条件循环 sleep 次", "每次循环推进一 tick，不做条件判断", "返回是否满足与实际等待量，暴露白等成本", "元素第 3 tick 出现，显式等待只等 3 就返回", "元素第 9 tick 出现，同一超时下自动等到 9", "元素永不出现时，4 tick 超时后明确返回 timeout", "固定等 10 tick 虽成功，但比需要多等 7 个 tick", "固定只等 2 tick 而元素要 9 tick，直接失败"]' title='第 125 讲 · 实战 04 · Selenium 表单自动化与定时任务' />
+<LineByLine code='class Page:\n    def __init__(self, ready_at):\n        self.tick = 0\n        self.ready_at = ready_at\n    def poll(self):\n        self.tick += 1\n    def is_ready(self):\n        return self.tick &gt;= self.ready_at\n\ndef wait_for(page, timeout, poll):\n    waited = 0\n    while waited &lt; timeout:\n        if page.is_ready():\n            return &#39;found&#39;, waited\n        for _ in range(poll):\n            page.poll()\n        waited += poll\n    return &#39;timeout&#39;, waited\n\ndef fixed_wait(page, sleep):\n    for _ in range(sleep):\n        page.poll()\n    return page.is_ready(), sleep\n\nprint(&#39;explicit early&#39;, wait_for(Page(ready_at=3), timeout=10, poll=1))\nprint(&#39;explicit late&#39;, wait_for(Page(ready_at=9), timeout=10, poll=1))\nprint(&#39;explicit never&#39;, wait_for(Page(ready_at=99), timeout=4, poll=1))\nprint(&#39;fixed on early&#39;, fixed_wait(Page(ready_at=3), 10))\nprint(&#39;fixed on late&#39;, fixed_wait(Page(ready_at=9), 2))' :notes='["Page 模拟异步页面：tick 是逻辑时钟，ready_at 是元素出现的时刻", "构造接收 ready_at，表示元素在第几个 tick 就绪", "把逻辑时钟归零", "保存元素何时变为可用，模拟不同加载耗时", "poll 推进一个轮询间隔，对应一次 WebDriver 往返", "逻辑时钟加一", "谓词：显式等待每次轮询就检查它是否满足条件", "到达 ready_at 即视为元素已就绪", "空行，只用于分隔逻辑块，不影响执行结果。", "wait_for 是显式等待模型：带 timeout 与 poll 两个参数", "已等待的逻辑 tick 计数", "循环上界由 timeout 决定，保证不会无限等待", "每轮先判条件再推进，条件满足立即返回", "返回状态与实际等待量，早出现就少等", "按 poll 推进逻辑时钟，模拟轮询间隔", "推进一 tick，等价于发一次 find_element 命令", "累计已等待 tick", "超过 timeout 仍未就绪，返回 timeout 而非抛未捕获异常", "空行，只用于分隔逻辑块，不影响执行结果。", "fixed_wait 模拟固定 sleep：不管状态先等满", "无条件循环 sleep 次", "每次循环推进一 tick，不做条件判断", "返回是否满足与实际等待量，暴露白等成本", "空行，只用于分隔逻辑块，不影响执行结果。", "元素第 3 tick 出现，显式等待只等 3 就返回", "元素第 9 tick 出现，同一超时下自动等到 9", "元素永不出现时，4 tick 超时后明确返回 timeout", "固定等 10 tick 虽成功，但比需要多等 7 个 tick", "固定只等 2 tick 而元素要 9 tick，直接失败"]' title='第 125 讲 · 实战 04 · Selenium 表单自动化与定时任务' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='flow3' title='第 125 讲 · WebDriver 协议与等待策略：隐式、显式与固定 sleep' labels='WebDriver 协议与等待策略：隐式、显|定位器、Page Object 与异常截图|定时任务、凭证、频率与合规' caption='让浏览器完成可重复的网页操作' />
+<ConceptDiagram type='flow3' title='第 125 讲 · WebDriver 协议与等待策略：隐式、显式与固定 sleep' labels='WebDriver 协议与等待策略：隐式、显…|定位器、Page Object 与异常截图|定时任务、凭证、频率与合规' caption='让浏览器完成可重复的网页操作' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 定位器、Page Object 与异常截图
@@ -184,9 +184,9 @@ print('has jump backward', any(o.startswith('JUMP_BACKWARD') for o in ops))
 
 <OutputBox title='原理验证' output='found at 3 3\nfound at 9 9\ntimeout at 99 -1\nhas jump backward True' />
 
-<Term word='WebDriver 与等待策略' text='W3C `WebDriver` 是客户端—服务器协议，浏览器驱动暴露一组 `HTTP` 端点，`find_element`、`click`、`get_attribute` 每次都是一次 `POST` 往返，元素由服务端生成的 element id 引用。隐式等待用 `driver.implicitly_wait` 设置' />
+<Term word='WebDriver 与等待策略' text='W3C `WebDriver` 是客户端—服务器协议，浏览器驱动暴露一组 `HTTP` 端点，`find_element`、`click`、`get_attribute` 每次都是一次 `POST` 往返，元素由服务端生成的 element id 引用。隐式等待用 `driver.implicitly_wait` 设置…' />
 
-<Term word='元素定位 XPath / CSS' text='定位器优先选稳定的 `data-testid` 或 `id`：`By.CSS_SELECTOR` 用浏览器原生选择器、简洁且快，`By.XPATH` 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，`/html/body/div[3]` 这类绝对路径改一个区块就失效。Pag' />
+<Term word='元素定位 XPath / CSS' text='定位器优先选稳定的 `data-testid` 或 `id`：`By.CSS_SELECTOR` 用浏览器原生选择器、简洁且快，`By.XPATH` 支持文本匹配与轴（ancestor、following-sibling）但依赖 DOM 结构，`/html/body/div[3]` 这类绝对路径改一个区块就失效。Pag…' />
 
 
 ## 带限速、重试上限与审计的定时填表任务
@@ -256,7 +256,7 @@ print('audit events', events)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 time.sleep 硬等页面加载：不感知真实状态，只能按最坏情况设值，早出现白等、晚出现直接失败' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 time.sleep 硬等页面加载", "body": "不感知真实状态，只能按最坏情况设值，早出现白等、晚出现直接失败", "tip": "改用 WebDriverWait 配 expected_conditions 等特定状态，并把 implicitly_wait 设为 0 避免混用"}, {"title": "第 2 步：同时设隐式等待与显式等待", "body": "服务端内部重试与客户端轮询叠加，等待时间不可预测地变长", "tip": "只保留显式等待一种，隐式等待归零，用 timeout 单独控制上界"}, {"title": "第 3 步：账号密码写进脚本、失败无限重试、任务无频率约", "body": "凭证随代码与截图泄漏，重叠任务放大请求量触发限流与合规风险", "tip": "凭证走 os.environ 注入，重试带指数退避与最大次数，min_interval 加 max_instances 限制频率与重叠"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 time.sleep 硬等页面加载", "body": "不感知真实状态，只能按最坏情况设值，早出现白等、晚出现直接失败", "tip": "改用 WebDriverWait 配 expected_conditions 等特定状态，并把 implicitly_wait 设为 0 避免混用"}, {"title": "第 2 步：同时设隐式等待与显式等待", "body": "服务端内部重试与客户端轮询叠加，等待时间不可预测地变长", "tip": "只保留显式等待一种，隐式等待归零，用 timeout 单独控制上界"}, {"title": "第 3 步：账号密码写进脚本、失败无限重试、任务无频率约…", "body": "凭证随代码与截图泄漏，重叠任务放大请求量触发限流与合规风险", "tip": "凭证走 os.environ 注入，重试带指数退避与最大次数，min_interval 加 max_instances 限制频率与重叠"}]' />
 
 
 ## 动手练一练与自测
@@ -275,7 +275,7 @@ print('audit events', events)
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 WebDriver 与等待策略 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 WebDriver 与等待策略 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 <KnowledgeCard :points='["W3C WebDriver 每个命令一次 HTTP 往返，元素由服务端 element id 引用", "隐式等待是会话级全局、只等元素存在；显式等待 WebDriverWait 默认 poll_frequency=0.5，超时抛 TimeoutException", "隐式与显式混用会让等待时长叠加，要用显式就把 implicitly_wait 设为 0", "固定 time.sleep 不感知状态：早出现白等、晚出现失败，只能按最坏情况设值", "StaleElementReferenceException 源于 DOM 重建后旧 element id 失效，需重新定位；失败留截图、page_source、current_url", "调度用 max_instances 防重叠、coalesce 合并错过触发、misfire_grace_time 设补跑窗口；凭证走环境变量，重试带退避与频率约束"]' :pitfalls='["用 time.sleep 硬等页面加载", "同时设隐式等待与显式等待", "账号密码写进脚本、失败无限重试、任务无频率约束", "用 sleep 硬等、或把账号密码写进脚本，既不稳定也不安全"]' summary='浏览器自动化最容易挂在选择器上：页面异步加载时元素尚未出现，固定 sleep 只是把偶发失败变成偶发变慢' />
 
@@ -290,3 +290,16 @@ python -m compileall -q . && python -m pytest -q
 <Predict no='125-4' q='元素在第 3 个轮询 tick 出现、timeout=10、poll=1 时，显式等待 wait_for 返回什么？' :options='["(&#39;found&#39;, 3)", "(&#39;timeout&#39;, 10)", "(&#39;found&#39;, 10)"]' answer='0' output='(&#39;found&#39;, 3)' explain='显式等待每轮先判条件再推进，条件一满足就立刻返回并把实际等待量带出；固定 sleep 只能按最坏情况设成 10，元素早出现时白白多等 7 个 tick。' />
 
 <FillBlank no='125-5' tpl='___ __init__(self, ready_at):' :answers='["def"]' hint='回想本讲关于 WebDriver 与等待策略 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 WebDriver 协议与等待策略：隐式、显式与固定 sleep 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/125-browser-auto.py`
+
+```bash
+python3 examples/lessons/125-browser-auto.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/125-browser-auto.py) · [全部示例代码索引](/examples/)

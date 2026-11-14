@@ -59,7 +59,7 @@ Formatter 的格式串由 `%(asctime)s`、`%(levelname)s`、`%(name)s`、`%(mess
 | basicConfig(force=True) | 3.8+ 先清 root handler | 重复调用不再静默失效 |
 | NullHandler | 库代码添加 | 避免 No handlers could be found 告警 |
 
-<Callout type="tip" title='核心心智模型' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级，`' />
+<Callout type="tip" title='核心心智模型' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级…' />
 
 **Handler 与 Formatter 选型**
 
@@ -86,9 +86,9 @@ Formatter 的格式串由 `%(asctime)s`、`%(levelname)s`、`%(name)s`、`%(mess
 
 最后，自定义 `JSON` `Formatter` 覆盖 `format()` 生成结构化字段，脱敏则在 `format` / `filter` 阶段对长数字串做掩码，避免敏感值落地。
 
-<Term word='Logger / Handler / Formatter' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级，`app.db` 的祖' />
+<Term word='Logger / Handler / Formatter' text='logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`INFO=20`、`WARNING=30`、`ERROR=40`、`CRITICAL=50`，`logging.getLevelName(30)` 返回字符串 `&#39;WARNING&#39;`。Logger 按点分名字形成层级，`app.db` 的祖…' />
 
-<Term word='级别与传播' text='结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、`trace`、`event` 这类字段各自独立——而不是一句自然语言。做法大致三种：在自定义 `Formatter` 里对一条 `dict` 调 `json.dumps`；用 `extra={&#39;order_id&#39;: ...}` 给 `' />
+<Term word='级别与传播' text='结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、`trace`、`event` 这类字段各自独立——而不是一句自然语言。做法大致三种：在自定义 `Formatter` 里对一条 `dict` 调 `json.dumps`；用 `extra={&#39;order_id&#39;: ...}` 给…' />
 
 
 ### 子 logger 挂了 handler 为什么还会打两遍
@@ -148,7 +148,7 @@ print(stream.getvalue().strip())
 
 <OutputBox title='主示例运行结果' output='INFO shop.order t-123 order created A100\nWARNING shop.order t-123 stock low 3\nERROR shop.order t-456 payment failed card-xxxx' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import logging, io, json, contextvars\n\ntrace_id = contextvars.ContextVar(&#39;trace_id&#39;, default=&#39;-&#39;)\n\nclass ContextFilter(logging.Filter):\n    def filter(self, record):\n        record.trace_id = trace_id.get()\n        return True\n\nstream = io.StringIO()\nhandler = logging.StreamHandler(stream)\nhandler.setFormatter(logging.Formatter(&#39;%(levelname)s %(name)s %(trace_id)s %(message)s&#39;))\nhandler.addFilter(ContextFilter())\n\nlogger = logging.getLogger(&#39;shop.order&#39;)\nlogger.setLevel(logging.DEBUG)\nlogger.handlers = [handler]\nlogger.propagate = False\n\ntrace_id.set(&#39;t-123&#39;)\nlogger.info(&#39;order created %s&#39;, &#39;A100&#39;)\nlogger.warning(&#39;stock low %d&#39;, 3)\ntrace_id.set(&#39;t-456&#39;)\nlogger.error(&#39;payment failed %s&#39;, &#39;card-xxxx&#39;)\nprint(stream.getvalue().strip())' :notes='["导入 logging、StringIO 捕获、json 备用、contextvars 存 trace_id", "定义 ContextVar，默认值为占位符", "自定义 Filter 为每条记录注入当前 trace_id", "从 ContextVar 取当前请求标识写进 record", "返回 True 表示记录继续被处理", "用 StringIO 作为内存输出流，便于断言", "StreamHandler 绑定到该流", "Formatter 里引用 %(trace_id)s 这个注入字段", "把 Filter 挂到 handler 上", "取名为 shop.order 的子 logger", "级别设 DEBUG，允许所有级别通过", "直接指定 handlers，避免 root 重复", "propagate=False 阻止向 root 再传一份", "设置第一个请求的 trace_id", "%-style 惰性格式化，消息带订单号", "同一 trace 下再记一条 WARNING", "切换到另一个请求上下文", "错误日志自动带上 t-456 标识", "打印捕获到的三行结构化日志", "Logger 按点分层级，propagate=True 会把记录传给祖先；子与 root 都挂 handler 会重复输出"]' title='第 078 讲 · 日志：logging、结构化日志与追踪关联' />
+<LineByLine code='import logging, io, json, contextvars\n\ntrace_id = contextvars.ContextVar(&#39;trace_id&#39;, default=&#39;-&#39;)\n\nclass ContextFilter(logging.Filter):\n    def filter(self, record):\n        record.trace_id = trace_id.get()\n        return True\n\nstream = io.StringIO()\nhandler = logging.StreamHandler(stream)\nhandler.setFormatter(logging.Formatter(&#39;%(levelname)s %(name)s %(trace_id)s %(message)s&#39;))\nhandler.addFilter(ContextFilter())\n\nlogger = logging.getLogger(&#39;shop.order&#39;)\nlogger.setLevel(logging.DEBUG)\nlogger.handlers = [handler]\nlogger.propagate = False\n\ntrace_id.set(&#39;t-123&#39;)\nlogger.info(&#39;order created %s&#39;, &#39;A100&#39;)\nlogger.warning(&#39;stock low %d&#39;, 3)\ntrace_id.set(&#39;t-456&#39;)\nlogger.error(&#39;payment failed %s&#39;, &#39;card-xxxx&#39;)\nprint(stream.getvalue().strip())' :notes='["导入 logging、StringIO 捕获、json 备用、contextvars 存 trace_id", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 ContextVar，默认值为占位符", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义 Filter 为每条记录注入当前 trace_id", "从 ContextVar 取当前请求标识写进 record", "返回 True 表示记录继续被处理", "用 StringIO 作为内存输出流，便于断言", "空行，只用于分隔逻辑块，不影响执行结果。", "StreamHandler 绑定到该流", "Formatter 里引用 %(trace_id)s 这个注入字段", "把 Filter 挂到 handler 上", "取名为 shop.order 的子 logger", "空行，只用于分隔逻辑块，不影响执行结果。", "级别设 DEBUG，允许所有级别通过", "直接指定 handlers，避免 root 重复", "propagate=False 阻止向 root 再传一份", "设置第一个请求的 trace_id", "空行，只用于分隔逻辑块，不影响执行结果。", "%-style 惰性格式化，消息带订单号", "同一 trace 下再记一条 WARNING", "切换到另一个请求上下文", "错误日志自动带上 t-456 标识", "打印捕获到的三行结构化日志", "Logger 按点分层级，propagate=True 会把记录传给祖先；子与 root 都挂 handler 会重复输出"]' title='第 078 讲 · 日志：logging、结构化日志与追踪关联' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -220,14 +220,14 @@ print(buf.getvalue().strip())
 | 掩码 / SecretStr | 保留前 6 后 4、中间打星 | 避免卡号、密钥合规事故 |
 | W3C traceparent / OpenTelemetry | 跨服务传 trace_id/span_id | 日志与链路追踪互跳 |
 
-<ConceptDiagram type='layers3' title='第 078 讲 · 分层视角' labels='Logger / Handler / F|结构化日志、trace_id 与上下文注|采样、脱敏、性能与并发安全|与 OpenTelemetry 关联' caption='采样、脱敏、性能与并发安全' />
+<ConceptDiagram type='layers3' title='第 078 讲 · 分层视角' labels='Logger / Handler / F…|结构化日志、trace_id 与上下文注…|采样、脱敏、性能与并发安全|与 OpenTelemetry 关联' caption='采样、脱敏、性能与并发安全' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 与 OpenTelemetry 关联 落在哪一层。
 
 
 ### trace_id 怎么跨服务串起一次请求
 
-<FlowTimeline :steps='[{"title": "Logger / Handler / Formatter 与级别传播", "desc": "logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`、`IN…", "tone": "blue"}, {"title": "结构化日志、trace_id 与上下文注入", "desc": "结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`、…", "tone": "purple"}, {"title": "采样、脱敏、性能与并发安全", "desc": "采样与分级可以放在 `Filter.filter` 里：返回 `bool` 丢掉生产…", "tone": "orange"}, {"title": "工程落地", "desc": "带 trace_id、采样与脱敏的结构化日志装配", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "Logger / Handler / Forma…", "desc": "logging 的级别是整数常量：`NOTSET=0`、`DEBUG=10`…", "tone": "blue"}, {"title": "结构化日志、trace_id 与上下文注入", "desc": "结构化日志把一行记录做成可解析的 `JSON` 对象——`level`、`msg`…", "tone": "purple"}, {"title": "采样、脱敏、性能与并发安全", "desc": "采样与分级可以放在 `Filter.filter` 里：返回 `bool` 丢掉生产…", "tone": "orange"}, {"title": "工程落地", "desc": "带 trace_id、采样与脱敏的结构化日志装配", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 采样、脱敏、性能与多进程并发安全
@@ -258,7 +258,7 @@ print(buf.getvalue().strip())
 python -c "import logging; logging.basicConfig(level=logging.INFO); logging.info('hello')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Logger / Handler / Formatter 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Logger / Handler / Formatter 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 带 trace_id、采样与脱敏的结构化日志装配
@@ -311,7 +311,7 @@ for line in lines:
 
 <Callout type="idea" title='落地提示' text='统一日志格式、按级别采样、敏感字段默认脱敏，异常必须带上下文而不是只打一句 failed' />
 
-<CheckList id='P078b' title='上线前自检' :items='["能复现并解释「循环里打 INFO、把卡号/密钥写进日志」", "能复现并解释「子 logger 挂 handler 且 propagate」", "能复现并解释「多进程共写同一个 RotatingFileHandler」", "能用一条命令验证 Logger / Handler / Formatter", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P078b' title='上线前自检' :items='["能复现并解释「循环里打 INFO、把卡号/密钥写进日志」", "能复现并解释「子 logger 挂 handler 且 propagate…」", "能复现并解释「多进程共写同一个 RotatingFileHandler」", "能用一条命令验证 Logger / Handler / Formatter", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -321,7 +321,7 @@ for line in lines:
 | 子 logger 挂 handler 且 propagate 仍为 True | 记录先经子 handler 再传给 root handler，同一行打印两遍 | 设 logger.propagate = False，或统一只在 root 挂 handler |
 | 多进程共写同一个 RotatingFileHandler | 轮转时多个进程同时 rename/切割，日志被覆盖或丢失 | 改 QueueHandler + 单一 QueueListener 进程写文件，或用 concurrent-log-handler 这类进程安全实现 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：循环里打 INFO、把卡号/密钥写进日志", "body": "磁盘被洪泛压垮且制造合规事故，异常只打一句 failed 无上下文", "tip": "按 level 采样、敏感字段默认掩码、logger.exception 在 except 内带堆栈与上下文字段"}, {"title": "第 2 步：子 logger 挂 handler 且 p", "body": "记录先经子 handler 再传给 root handler，同一行打印两遍", "tip": "设 logger.propagate = False，或统一只在 root 挂 handler"}, {"title": "第 3 步：多进程共写同一个 RotatingFileH", "body": "轮转时多个进程同时 rename/切割，日志被覆盖或丢失", "tip": "改 QueueHandler + 单一 QueueListener 进程写文件，或用 concurrent-log-handler 这类进程安全实现"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：循环里打 INFO、把卡号/密钥写进日志", "body": "磁盘被洪泛压垮且制造合规事故，异常只打一句 failed 无上下文", "tip": "按 level 采样、敏感字段默认掩码、logger.exception 在 except 内带堆栈与上下文字段"}, {"title": "第 2 步：子 logger 挂 handler 且 p…", "body": "记录先经子 handler 再传给 root handler，同一行打印两遍", "tip": "设 logger.propagate = False，或统一只在 root 挂 handler"}, {"title": "第 3 步：多进程共写同一个 RotatingFileH…", "body": "轮转时多个进程同时 rename/切割，日志被覆盖或丢失", "tip": "改 QueueHandler + 单一 QueueListener 进程写文件，或用 concurrent-log-handler 这类进程安全实现"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -360,3 +360,16 @@ for line in lines:
 3. 结构化日志用 JSON Formatter + extra/Filter 字段；trace_id 用 contextvars.ContextVar 跨协程传播
 
 [下一讲：配置管理：环境变量、.env 与配置中心](/engineering/config)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/078-logging.py`
+
+```bash
+python3 examples/lessons/078-logging.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/078-logging.py) · [全部示例代码索引](/examples/)

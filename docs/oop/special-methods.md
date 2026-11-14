@@ -58,18 +58,18 @@ CPython 把每个特殊方法登记进 `PyTypeObject` 的槽（slot）：`__eq__
 
 理解槽表与单例，比背方法名更能解释为什么改一个方法会牵动一整组行为。
 
-<Callout type="tip" title='核心心智模型' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging' />
+<Callout type="tip" title='核心心智模型' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显…' />
 
 
 ### slotdefs、PyType_Ready 与 NotImplemented 单例
 
-<Term word='__repr__ 与 __str__' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging` 的 `%r`、`' />
+<Term word='__repr__ 与 __str__' text='`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f&#39;{obj}&#39;` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging` 的 `%r`…' />
 
-<Term word='__eq__ 与 __hash__ 联动' text='CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定义 `__hash__`，就把类的 `__hash__` 设成 `None`。于是 `hash(obj)` 抛 `TypeError: unhashable type: &#39;X&#39;`，`obj` 也进不了 `set`、当不了 ' />
+<Term word='__eq__ 与 __hash__ 联动' text='CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定义 `__hash__`，就把类的 `__hash__` 设成 `None`。于是 `hash(obj)` 抛 `TypeError: unhashable type: &#39;X&#39;`，`obj` 也进不了 `set`、当不了…' />
 
-<ConceptDiagram type='flow4' title='第 041 讲 · repr 与 str 是两条独立输出路径，容器强制走 repr' labels='repr 与 str 是两条独立输出路径，容|定义 __eq__ 会让类失去哈希，除非显式|容器与数值协议：len、bool、conta' caption='让自定义类型像内置类型一样自然' />
+<ConceptDiagram type='flow4' title='第 041 讲 · repr 与 str 是两条独立输出路径，容器强制走 repr' labels='repr 与 str 是两条独立输出路径，容…|定义 __eq__ 会让类失去哈希，除非显式…|容器与数值协议：len、bool、conta…|__bool__' caption='让自定义类型像内置类型一样自然' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## repr 与 str 是两条独立输出路径，容器强制走 repr
@@ -113,7 +113,7 @@ print('contains', 2 in a, 9 in a)
 
 <OutputBox title='主示例运行结果' output='Vec(1, 2) [Vec(1, 2)]\neq True ne True\nhash None\nbool True False len 2\ncontains True False' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Vec:\n    def __init__(self, x, y):\n        self.x, self.y = x, y\n    def __repr__(self):\n        return &#39;Vec(&#39; + repr(self.x) + &#39;, &#39; + repr(self.y) + &#39;)&#39;\n    def __eq__(self, other):\n        if not isinstance(other, Vec):\n            return NotImplemented\n        return (self.x, self.y) == (other.x, other.y)\n    def __len__(self):\n        return 2\n    def __bool__(self):\n        return bool(self.x or self.y)\n    def __contains__(self, v):\n        return v in (self.x, self.y)\n\na = Vec(1, 2)\nprint(repr(a), [a])\nprint(&#39;eq&#39;, a == Vec(1, 2), &#39;ne&#39;, a != Vec(1, 3))\nprint(&#39;hash&#39;, Vec.__hash__)\nprint(&#39;bool&#39;, bool(a), bool(Vec(0, 0)), &#39;len&#39;, len(a))\nprint(&#39;contains&#39;, 2 in a, 9 in a)' :notes='["定义值类 Vec，集中演示六条数据模型协议", "构造时把两个坐标绑定到实例", "元组解包一次赋值，注意实例此时带 __dict__", "__repr__ 面向开发者，容器打印元素时强制走它", "用 repr 拼字段，保证输出无歧义且可被 eval 复原", "__eq__ 定义后 type.__new__ 会把 __hash__ 置 None", "不认识的类型不能返回 False", "返回 NotImplemented，让解释器去试对方的反射方法", "只有同类才按坐标元组判等", "__len__ 参与 len() 与 bool() 的回退链", "必须返回非负 Py_ssize_t，这里固定为 2", "__bool__ 优先级高于 __len__，决定 if obj 的真假", "返回严格 bool：两个坐标全 0 时为假", "__contains__ 支撑 in 运算，优先于迭代回退", "把成员判断委托给坐标元组", "空行分隔类定义与验证代码", "构造实例 a", "repr(a) 与装进 list 的打印都走 __repr__", "__ne__ 由 object 对 __eq__ 取反，无需手写", "类属性 __hash__ 已被设为 None，实例不可哈希", "bool 走 __bool__，len 走 __len__"]' title='第 041 讲 · 特殊方法：repr、比较、算术与容器协议' />
+<LineByLine code='class Vec:\n    def __init__(self, x, y):\n        self.x, self.y = x, y\n    def __repr__(self):\n        return &#39;Vec(&#39; + repr(self.x) + &#39;, &#39; + repr(self.y) + &#39;)&#39;\n    def __eq__(self, other):\n        if not isinstance(other, Vec):\n            return NotImplemented\n        return (self.x, self.y) == (other.x, other.y)\n    def __len__(self):\n        return 2\n    def __bool__(self):\n        return bool(self.x or self.y)\n    def __contains__(self, v):\n        return v in (self.x, self.y)\n\na = Vec(1, 2)\nprint(repr(a), [a])\nprint(&#39;eq&#39;, a == Vec(1, 2), &#39;ne&#39;, a != Vec(1, 3))\nprint(&#39;hash&#39;, Vec.__hash__)\nprint(&#39;bool&#39;, bool(a), bool(Vec(0, 0)), &#39;len&#39;, len(a))\nprint(&#39;contains&#39;, 2 in a, 9 in a)' :notes='["定义值类 Vec，集中演示六条数据模型协议", "构造时把两个坐标绑定到实例", "元组解包一次赋值，注意实例此时带 __dict__", "__repr__ 面向开发者，容器打印元素时强制走它", "用 repr 拼字段，保证输出无歧义且可被 eval 复原", "__eq__ 定义后 type.__new__ 会把 __hash__ 置 None", "不认识的类型不能返回 False", "返回 NotImplemented，让解释器去试对方的反射方法", "只有同类才按坐标元组判等", "__len__ 参与 len() 与 bool() 的回退链", "必须返回非负 Py_ssize_t，这里固定为 2", "__bool__ 优先级高于 __len__，决定 if obj 的真假", "返回严格 bool：两个坐标全 0 时为假", "__contains__ 支撑 in 运算，优先于迭代回退", "把成员判断委托给坐标元组", "空行，只用于分隔逻辑块，不影响执行结果。", "空行分隔类定义与验证代码", "构造实例 a", "repr(a) 与装进 list 的打印都走 __repr__", "__ne__ 由 object 对 __eq__ 取反，无需手写", "类属性 __hash__ 已被设为 None，实例不可哈希", "bool 走 __bool__，len 走 __len__"]' title='第 041 讲 · 特殊方法：repr、比较、算术与容器协议' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -293,13 +293,13 @@ except AttributeError as e:
 
 <Callout type="idea" title='落地提示' text='值对象应设为 frozen dataclass 并哈希全部关键字段；可变对象明确设 __hash__ = None 表明意图' />
 
-<CheckList id='P041b' title='上线前自检' :items='["能复现并解释「定义 __eq__ 后实例无法作为 dict 键或 set 」", "能复现并解释「__eq__ 里对不认识的类型直接 return False」", "能复现并解释「__len__ 返回负数，或 __bool__ 返回整数 0」", "能用一条命令验证 __repr__ 与 __str__", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P041b' title='上线前自检' :items='["能复现并解释「定义 __eq__ 后实例无法作为 dict 键或 set…」", "能复现并解释「__eq__ 里对不认识的类型直接 return False…」", "能复现并解释「__len__ 返回负数，或 __bool__ 返回整数 0…」", "能用一条命令验证 __repr__ 与 __str__", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__repr__` 与 `__str__` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__repr__` 与 `__str__` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 定义 __eq__ 后无法进 set、返回 False 的错因速查
@@ -314,7 +314,7 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='定义 __eq__ 后实例无法作为 dict 键或 set 元素：type.__new__ 把未显式定义 __hash__ 的类设为 __hash__ = None，hash() 抛 TypeError: unhashable type' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：定义 __eq__ 后实例无法作为 dict", "body": "type.__new__ 把未显式定义 __hash__ 的类设为 __hash__ = None，hash() 抛 TypeError: unhashable type", "tip": "值对象用 frozen dataclass 或 NamedTuple，并写 __hash__ = hash((self.x, self.y))；可变对象显式写 __hash__ = None 表明意图"}, {"title": "第 2 步：__eq__ 里对不认识的类型直接 retu", "body": "返回 False 会阻断解释器尝试对方反射方法，破坏对称性，也让本可相等的比较永久失败", "tip": "对非本类类型返回 NotImplemented，让解释器回退到对方方法，最终再退化为 is 身份判断"}, {"title": "第 3 步：__len__ 返回负数，或 __bool_", "body": "__len__ 受 Py_ssize_t 约束，负数抛 ValueError: __len__() should return &gt;= 0；__bool__ 必须返回严格 bool，返回 int 抛 TypeError: __bool__ should return bool", "tip": "__len__ 写 return len(self._items)；__bool__ 写 return bool(self.x)，或直接省略让它回退 __len__"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：定义 __eq__ 后实例无法作为 dict…", "body": "type.__new__ 把未显式定义 __hash__ 的类设为 __hash__ = None，hash() 抛 TypeError: unhashable type", "tip": "值对象用 frozen dataclass 或 NamedTuple，并写 __hash__ = hash((self.x, self.y))；可变对象显式写 __hash__ = None 表明意图"}, {"title": "第 2 步：__eq__ 里对不认识的类型直接 retu…", "body": "返回 False 会阻断解释器尝试对方反射方法，破坏对称性，也让本可相等的比较永久失败", "tip": "对非本类类型返回 NotImplemented，让解释器回退到对方方法，最终再退化为 is 身份判断"}, {"title": "第 3 步：__len__ 返回负数，或 __bool_…", "body": "__len__ 受 Py_ssize_t 约束，负数抛 ValueError: __len__() should return &gt;= 0；__bool__ 必须返回严格 bool，返回 int 抛 TypeError: __bool__ should return bool", "tip": "__len__ 写 return len(self._items)；__bool__ 写 return bool(self.x)，或直接省略让它回退 __len__"}]' />
 
 
 ## 动手、自测与速记
@@ -353,3 +353,16 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 3. 值对象冻结并对全部 eq 字段求哈希；可变对象显式写 __hash__ = None
 
 [下一讲：上下文管理器与 with 协议](/oop/context)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/041-special-methods.py`
+
+```bash
+python3 examples/lessons/041-special-methods.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/041-special-methods.py) · [全部示例代码索引](/examples/)

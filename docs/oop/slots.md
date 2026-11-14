@@ -94,11 +94,11 @@ print('values', p.x, s.x)
 
 <OutputBox title='主示例运行结果' output='dict True False\nslot kind member_descriptor\nweakref True False\nAttributeError cannot add y\nvalues 1 1' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Plain:\n    def __init__(self, x):\n        self.x = x\nclass Slotted:\n    __slots__ = (&#39;x&#39;,)\n    def __init__(self, x):\n        self.x = x\n\np, s = Plain(1), Slotted(1)\nprint(&#39;dict&#39;, hasattr(p, &#39;__dict__&#39;), hasattr(s, &#39;__dict__&#39;))\nprint(&#39;slot kind&#39;, type(Slotted.x).__name__)\nprint(&#39;weakref&#39;, hasattr(p, &#39;__weakref__&#39;), hasattr(s, &#39;__weakref__&#39;))\ntry:\n    s.y = 2\nexcept AttributeError as e:\n    print(type(e).__name__, &#39;cannot add y&#39;)\nprint(&#39;values&#39;, p.x, s.x)' :notes='["普通类，实例默认带 __dict__ 与 __weakref__", "构造时绑定属性 x", "self.x = x 写进实例字典", "声明 __slots__ 的类，实例改用固定偏移布局", "槽名写成元组，避免被当成字符序列", "同样的构造签名", "这次赋值走槽描述符，而非实例字典", "同时构造两类实例，便于对比布局", "hasattr 检查 __dict__：普通类为 True、槽类为 False", "类属性 Slotted.x 是 member_descriptor，证明槽生效", "检查 __weakref__：槽类默认不支持弱引用", "尝试给槽类添加未在槽里声明的属性", "s.y = 2 会触发属性查找失败", "槽类没有 __dict__，赋值抛 AttributeError", "打印异常类型，避开版本相关的错误消息措辞", "两类实例的 x 都能照常读出，行为一致"]' title='第 043 讲 · __slots__、弱引用与对象内存布局' />
+<LineByLine code='class Plain:\n    def __init__(self, x):\n        self.x = x\nclass Slotted:\n    __slots__ = (&#39;x&#39;,)\n    def __init__(self, x):\n        self.x = x\n\np, s = Plain(1), Slotted(1)\nprint(&#39;dict&#39;, hasattr(p, &#39;__dict__&#39;), hasattr(s, &#39;__dict__&#39;))\nprint(&#39;slot kind&#39;, type(Slotted.x).__name__)\nprint(&#39;weakref&#39;, hasattr(p, &#39;__weakref__&#39;), hasattr(s, &#39;__weakref__&#39;))\ntry:\n    s.y = 2\nexcept AttributeError as e:\n    print(type(e).__name__, &#39;cannot add y&#39;)\nprint(&#39;values&#39;, p.x, s.x)' :notes='["普通类，实例默认带 __dict__ 与 __weakref__", "构造时绑定属性 x", "self.x = x 写进实例字典", "声明 __slots__ 的类，实例改用固定偏移布局", "槽名写成元组，避免被当成字符序列", "同样的构造签名", "这次赋值走槽描述符，而非实例字典", "空行，只用于分隔逻辑块，不影响执行结果。", "同时构造两类实例，便于对比布局", "hasattr 检查 __dict__：普通类为 True、槽类为 False", "类属性 Slotted.x 是 member_descriptor，证明槽生效", "检查 __weakref__：槽类默认不支持弱引用", "尝试给槽类添加未在槽里声明的属性", "s.y = 2 会触发属性查找失败", "槽类没有 __dict__，赋值抛 AttributeError", "打印异常类型，避开版本相关的错误消息措辞", "两类实例的 x 都能照常读出，行为一致"]' title='第 043 讲 · __slots__、弱引用与对象内存布局' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CP' />
+<Callout type="tip" title='核心心智模型' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CP…' />
 
 
 ### 普通实例与 __slots__ 实例对照
@@ -175,9 +175,9 @@ except ValueError as e:
 | 多继承两个非空槽基类 | TypeError: multiple bases have instance lay-out conflict | 只留一个数据槽基类，其余用空槽 |
 | 需要弱引用 | TypeError: cannot create weak reference | 槽里加入 '__weakref__' |
 
-<Term word='__dict__ 的开销' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CPython 为每个名' />
+<Term word='__dict__ 的开销' text='普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。定义 `__slots__ = (&#39;x&#39;, &#39;y&#39;)` 后，CPython 为每个名…' />
 
-<Term word='__slots__ 的约束' text='槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `__slots__`，其实例就带 `tp_dictoffset`；子类即便声明了槽，也只是在固定槽之外再挂一张 `__dict__`，优化失效。所以正确写法是给链上每个基类都写 `__slots__ = ()`（空元组，表示不占槽但也不给' />
+<Term word='__slots__ 的约束' text='槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `__slots__`，其实例就带 `tp_dictoffset`；子类即便声明了槽，也只是在固定槽之外再挂一张 `__dict__`，优化失效。所以正确写法是给链上每个基类都写 `__slots__ = ()`（空元组，表示不占槽但也不给…' />
 
 
 ## 弱引用适配、tracemalloc 观测与选型边界
@@ -241,9 +241,9 @@ CPython 的普通 heap type 实例在对象头之后带一个 `PyDictObject` 指
 
 弱引用依赖 `tp_weaklistoffset` 非零，槽类默认把它设成 0，显式加入 `'__weakref__'` 才重新开启。
 
-<ConceptDiagram type='hub4' title='第 043 讲 · __dict__ 的成本与 __slots__ 的固定偏移布局' labels='__dict__ 的成本与 __slots_|继承中的槽合并与三类冲突|弱引用适配、tracemalloc 观测与选' caption='理解实例内存成本并会做优化' />
+<ConceptDiagram type='hub4' title='第 043 讲 · __dict__ 的成本与 __slots__ 的固定偏移布局' labels='__dict__ 的成本与 __slots_…|继承中的槽合并与三类冲突|弱引用适配、tracemalloc 观测与选…|与 dataclass 组合' caption='理解实例内存成本并会做优化' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 **版本与观测工具**
 
@@ -255,7 +255,7 @@ CPython 的普通 heap type 实例在对象头之后带一个 `PyDictObject` 指
 | @dataclass(weakref_slot=True)（3.11+） | 给槽 dataclass 加 __weakref__ | 等价于手写保留槽名 |
 | 3.7+ dict 保序 | 类体 namespace 按定义顺序 | 槽声明顺序稳定可预期 |
 
-<FlowTimeline :steps='[{"title": "__dict__ 的成本与 __slots__ 的固定偏移布局", "desc": "普通 heap type 的实例用一张 `PyDictObject`（即 `__di…", "tone": "blue"}, {"title": "继承中的槽合并与三类冲突", "desc": "槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写 `_…", "tone": "purple"}, {"title": "弱引用适配、tracemalloc 观测与选型边界", "desc": "槽类要支持弱引用，把 `&#39;__weakref__&#39;` 显式写进 `__slots__…", "tone": "orange"}, {"title": "工程落地", "desc": "海量坐标点用 slots 省内存，并用弱引用缓存自动释放", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "__dict__ 的成本与 __slots__…", "desc": "普通 heap type 的实例用一张 `PyDictObject`（即…", "tone": "blue"}, {"title": "继承中的槽合并与三类冲突", "desc": "槽的收益只有在继承链上每一层都没有 `__dict__` 时才拿得到。基类没写…", "tone": "purple"}, {"title": "弱引用适配、tracemalloc 观测与选型边…", "desc": "槽类要支持弱引用，把 `&#39;__weakref__&#39;` 显式写进…", "tone": "orange"}, {"title": "工程落地", "desc": "海量坐标点用 slots 省内存，并用弱引用缓存自动释放", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 海量坐标点用 slots 省内存，并用弱引用缓存自动释放
@@ -295,13 +295,13 @@ tracemalloc.stop()
 
 <Callout type="idea" title='落地提示' text='海量小对象（图节点、坐标、事件记录）优先考虑 slots 或 NamedTuple，并用 tracemalloc 验证收益' />
 
-<CheckList id='P043b' title='上线前自检' :items='["能复现并解释「只给子类加 __slots__，内存几乎没降」", "能复现并解释「槽类放进 WeakValueDictionary 报 can」", "能复现并解释「多继承两个带非空槽的基类报 lay-out conflict」", "能用一条命令验证 __dict__ 的开销", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P043b' title='上线前自检' :items='["能复现并解释「只给子类加 __slots__，内存几乎没降」", "能复现并解释「槽类放进 WeakValueDictionary 报 can…」", "能复现并解释「多继承两个带非空槽的基类报 lay-out conflict」", "能用一条命令验证 __dict__ 的开销", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__dict__` 的开销 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__dict__` 的开销 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 只给子类加 __slots__、槽类进 WeakValueDictionary 的错因速查
@@ -316,7 +316,7 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='只给子类加 __slots__，内存几乎没降：基类没声明 __slots__，实例继承的 __dict__ 仍在，子类只是多了固定槽、字典没被去掉' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只给子类加 __slots__，内存几乎没降", "body": "基类没声明 __slots__，实例继承的 __dict__ 仍在，子类只是多了固定槽、字典没被去掉", "tip": "给继承链每个基类写 __slots__ = ()，只在需要字段的那一层声明具体槽名"}, {"title": "第 2 步：槽类放进 WeakValueDictiona", "body": "槽实例的 tp_weaklistoffset 为 0，默认不带 __weakref__ 槽", "tip": "把 &#39;__weakref__&#39; 显式写进 __slots__，或改用 @dataclass(slots=True, weakref_slot=True)（3.11+）"}, {"title": "第 3 步：多继承两个带非空槽的基类报 lay-out ", "body": "两份固定偏移的实例布局无法合并进同一 PyTypeObject 结构体", "tip": "只让一个基类持有数据槽，其余基类用空槽或改成组合持有，不要堆多套字段"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只给子类加 __slots__，内存几乎没降", "body": "基类没声明 __slots__，实例继承的 __dict__ 仍在，子类只是多了固定槽、字典没被去掉", "tip": "给继承链每个基类写 __slots__ = ()，只在需要字段的那一层声明具体槽名"}, {"title": "第 2 步：槽类放进 WeakValueDictiona…", "body": "槽实例的 tp_weaklistoffset 为 0，默认不带 __weakref__ 槽", "tip": "把 &#39;__weakref__&#39; 显式写进 __slots__，或改用 @dataclass(slots=True, weakref_slot=True)（3.11+）"}, {"title": "第 3 步：多继承两个带非空槽的基类报 lay-out…", "body": "两份固定偏移的实例布局无法合并进同一 PyTypeObject 结构体", "tip": "只让一个基类持有数据槽，其余基类用空槽或改成组合持有，不要堆多套字段"}]' />
 
 
 ## 自测题与速记卡
@@ -355,3 +355,16 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 3. 继承链每一层都要写 __slots__（空元组即可），漏一层子类仍带 __dict__
 
 [下一讲：鸭子类型、抽象基类与 Protocol](/oop/abc)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/043-slots.py`
+
+```bash
+python3 examples/lessons/043-slots.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/043-slots.py) · [全部示例代码索引](/examples/)

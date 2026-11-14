@@ -77,11 +77,11 @@ except ValueError as e:
 
 <OutputBox title='主示例运行结果' output='is iterator True True\nfirst pass [2, 1, 0]\nsecond pass []\nfile is its own iterator True\nlist iter gives new True\nread chunks [&#39;ab&#39;, &#39;cd&#39;, &#39;ef&#39;]\nislice [10, 11, 12, 13]\nchain [1, 2, 3]\ntakewhile [1, 3]\nzip strict ValueError' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import io\nfrom collections.abc import Iterator, Iterable\nimport itertools\n\nclass Countdown:\n    def __init__(self, n):\n        self.n = n\n    def __iter__(self):\n        return self\n    def __next__(self):\n        if self.n &lt;= 0:\n            raise StopIteration\n        self.n -= 1\n        return self.n\n\nc = Countdown(3)\nprint(&#39;is iterator&#39;, isinstance(c, Iterator), isinstance(c, Iterable))\nprint(&#39;first pass&#39;, list(c))\nprint(&#39;second pass&#39;, list(c))\n\nf = io.StringIO(&#39;a&#39; + chr(10) + &#39;b&#39; + chr(10))\nprint(&#39;file is its own iterator&#39;, iter(f) is f)\nlst = [1, 2]\nprint(&#39;list iter gives new&#39;, iter(lst) is not iter(lst))\n\ndef chunks(text, size):\n    src = io.StringIO(text)\n    return iter(lambda: src.read(size), &#39;&#39;)\nprint(&#39;read chunks&#39;, list(chunks(&#39;abcdef&#39;, 2)))\n\nprint(&#39;islice&#39;, list(itertools.islice(itertools.count(10), 4)))\nprint(&#39;chain&#39;, list(itertools.chain([1, 2], [3])))\nprint(&#39;takewhile&#39;, list(itertools.takewhile(lambda x: x &lt; 4, [1, 3, 5, 2])))\ntry:\n    print(list(zip([1, 2], [3], strict=True)))\nexcept ValueError as e:\n    print(&#39;zip strict&#39;, type(e).__name__)' :notes='["导入 io 构造内存文件，itertools 提供惰性工具", "导入抽象基类用于 isinstance 检查", "导入 itertools 工具集", "自定义一个倒计数迭代器", "记录当前剩余值", "__iter__ 返回 self，说明它本身就是迭代器", "__next__ 必须给出下一个值或抛 StopIteration", "n 归零时发出结束信号", "先自减再返回，产出 2、1、0", "返回本次的值", "构造实例，此时尚未消费", "两个 isinstance 都成立，Iterator 只抽象 __next__", "第一次 list 消耗全部三个值", "迭代器耗尽后第二次 list 得到空，且不报错", "内存文件对象模拟真实文件", "文件对象的 __iter__ 返回 self，只能读一遍", "同一个 list 每次 iter 都给出新的迭代器", "两次 iter 不是同一对象，故可反复遍历", "用两参数 iter 按固定大小读块", "lambda 每次读 size 个字符，返回空串时停止", "读到 &#39;ab&#39;、&#39;cd&#39;、&#39;ef&#39; 后遇空串结束", "count(10) 是无限迭代器，用 islice 只取 4 个", "chain 把两个列表串成一个迭代流", "takewhile 遇第一个不满足的元素即停，不再看后面的 2", "3.10+ 的 zip(strict=True) 对长度不等会抛异常", "长度不等，捕获 ValueError 而不是静默截断", "打印异常类型，验证严格对齐", "itertools 的 chain / islice / takewhile / groupby / tee 全部返回惰性迭代器，内存与单个元素相关", "3.7 起 PEP 479 把生成器内的 StopIteration 转成 RuntimeError；3.10 起 zip(strict=True) 长度不等抛 ValueError", "大文件、游标、分页 API 包成迭代器让调用方决定消费量；文件对象 iter(f) is f，只能读一遍", "迭代协议：iterable 实现 __iter__ 返回迭代器；iterator 实现 __next__，耗尽抛 StopIteration", "迭代器一次性带状态，耗尽后 list(it) 返回空且不报错；可迭代对象每次 iter 给新迭代器"]' title='第 025 讲 · 迭代协议：iterable、iterator 与惰性求值' />
+<LineByLine code='import io\nfrom collections.abc import Iterator, Iterable\nimport itertools\n\nclass Countdown:\n    def __init__(self, n):\n        self.n = n\n    def __iter__(self):\n        return self\n    def __next__(self):\n        if self.n &lt;= 0:\n            raise StopIteration\n        self.n -= 1\n        return self.n\n\nc = Countdown(3)\nprint(&#39;is iterator&#39;, isinstance(c, Iterator), isinstance(c, Iterable))\nprint(&#39;first pass&#39;, list(c))\nprint(&#39;second pass&#39;, list(c))\n\nf = io.StringIO(&#39;a&#39; + chr(10) + &#39;b&#39; + chr(10))\nprint(&#39;file is its own iterator&#39;, iter(f) is f)\nlst = [1, 2]\nprint(&#39;list iter gives new&#39;, iter(lst) is not iter(lst))\n\ndef chunks(text, size):\n    src = io.StringIO(text)\n    return iter(lambda: src.read(size), &#39;&#39;)\nprint(&#39;read chunks&#39;, list(chunks(&#39;abcdef&#39;, 2)))\n\nprint(&#39;islice&#39;, list(itertools.islice(itertools.count(10), 4)))\nprint(&#39;chain&#39;, list(itertools.chain([1, 2], [3])))\nprint(&#39;takewhile&#39;, list(itertools.takewhile(lambda x: x &lt; 4, [1, 3, 5, 2])))\ntry:\n    print(list(zip([1, 2], [3], strict=True)))\nexcept ValueError as e:\n    print(&#39;zip strict&#39;, type(e).__name__)' :notes='["导入 io 构造内存文件，itertools 提供惰性工具", "导入抽象基类用于 isinstance 检查", "导入 itertools 工具集", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义一个倒计数迭代器", "记录当前剩余值", "__iter__ 返回 self，说明它本身就是迭代器", "__next__ 必须给出下一个值或抛 StopIteration", "n 归零时发出结束信号", "先自减再返回，产出 2、1、0", "返回本次的值", "构造实例，此时尚未消费", "两个 isinstance 都成立，Iterator 只抽象 __next__", "第一次 list 消耗全部三个值", "空行，只用于分隔逻辑块，不影响执行结果。", "迭代器耗尽后第二次 list 得到空，且不报错", "内存文件对象模拟真实文件", "文件对象的 __iter__ 返回 self，只能读一遍", "同一个 list 每次 iter 都给出新的迭代器", "空行，只用于分隔逻辑块，不影响执行结果。", "两次 iter 不是同一对象，故可反复遍历", "用两参数 iter 按固定大小读块", "lambda 每次读 size 个字符，返回空串时停止", "读到 &#39;ab&#39;、&#39;cd&#39;、&#39;ef&#39; 后遇空串结束", "空行，只用于分隔逻辑块，不影响执行结果。", "count(10) 是无限迭代器，用 islice 只取 4 个", "chain 把两个列表串成一个迭代流", "takewhile 遇第一个不满足的元素即停，不再看后面的 2", "3.10+ 的 zip(strict=True) 对长度不等会抛异常", "空行，只用于分隔逻辑块，不影响执行结果。", "长度不等，捕获 ValueError 而不是静默截断", "打印异常类型，验证严格对齐", "itertools 的 chain / islice / takewhile / groupby / tee 全部返回惰性迭代器，内存与单个元素相关", "3.7 起 PEP 479 把生成器内的 StopIteration 转成 RuntimeError；3.10 起 zip(strict=True) 长度不等抛 ValueError", "大文件、游标、分页 API 包成迭代器让调用方决定消费量；文件对象 iter(f) is f，只能读一遍", "迭代协议：iterable 实现 __iter__ 返回迭代器；iterator 实现 __next__，耗尽抛 StopIteration", "迭代器一次性带状态，耗尽后 list(it) 返回空且不报错；可迭代对象每次 iter 给新迭代器"]' title='第 025 讲 · 迭代协议：iterable、iterator 与惰性求值' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现 `__next__()`，每次返回一个元素，耗尽时抛 `StopIteration`，并按约定实现 `__iter__()` 返回 self。`for x in obj` 展开后，先 `it = iter(obj)` 拿' />
+<Callout type="tip" title='核心心智模型' text='可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现 `__next__()`，每次返回一个元素，耗尽时抛 `StopIteration`，并按约定实现 `__iter__()` 返回 self。`for x in obj` 展开后，先 `it = iter(obj)` 拿…' />
 
 
 ## Iterable 与 Iterator 对照
@@ -101,9 +101,9 @@ except ValueError as e:
 
 ## 迭代器为什么是一次性的：状态存在哪
 
-<ConceptDiagram type='flow3' title='第 025 讲 · 两层协议：iterable 产出 iterator，iterator 记住位置' labels='两层协议：iterable 产出 itera|iter() 的两种形式与 StopIter|itertools、惰性求值与工程判据' caption='能自己实现一个惰性数据源' />
+<ConceptDiagram type='flow3' title='第 025 讲 · 两层协议：iterable 产出 iterator，iterator 记住位置' labels='两层协议：iterable 产出 itera…|iter() 的两种形式与 StopIter…|itertools、惰性求值与工程判据' caption='能自己实现一个惰性数据源' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 CPython 的迭代分两层：`iter(obj)` 先查 tp_iter 槽调用 `__iter__`，拿到的迭代器必须有 tp_iternext 槽（`__next__`）；
 
@@ -213,11 +213,11 @@ except RuntimeError as e:
 
 ## 惰性求值省下的是哪部分内存
 
-<FlowTimeline :steps='[{"title": "两层协议：iterable 产出 iterator，iterator 记住位置", "desc": "可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现 `_…", "tone": "blue"}, {"title": "iter() 的两种形式与 StopIteration 的版本约束", "desc": "`iter(obj)` 是单参数形式，调用 `obj.__iter__()`；`it…", "tone": "purple"}, {"title": "itertools、惰性求值与工程判据", "desc": "itertools 里几乎所有工具都基于迭代协议在 C 层实现、返回迭代器而不物化结…", "tone": "orange"}, {"title": "工程落地", "desc": "分页 API 客户端：把远端数据包装成惰性迭代器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "两层协议：iterable 产出 iterato…", "desc": "可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现…", "tone": "blue"}, {"title": "iter() 的两种形式与 StopIterat…", "desc": "`iter(obj)` 是单参数形式，调用 `obj.__iter__()`…", "tone": "purple"}, {"title": "itertools、惰性求值与工程判据", "desc": "itertools 里几乎所有工具都基于迭代协议在 C 层实现、返回迭代器而不物化结…", "tone": "orange"}, {"title": "工程落地", "desc": "分页 API 客户端：把远端数据包装成惰性迭代器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<Term word='__iter__ 与 __next__' text='可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现 `__next__()`，每次返回一个元素，耗尽时抛 `StopIteration`，并按约定实现 `__iter__()` 返回 self。`for x in obj` 展开后，先 `it = iter(obj)` 拿到迭代器，再反复 `' />
+<Term word='__iter__ 与 __next__' text='可迭代对象实现 `__iter__()`，调用后返回一个迭代器；迭代器必须实现 `__next__()`，每次返回一个元素，耗尽时抛 `StopIteration`，并按约定实现 `__iter__()` 返回 self。`for x in obj` 展开后，先 `it = iter(obj)` 拿到迭代器，再反复…' />
 
-<Term word='iter() 的两个参数形式' text='`iter(obj)` 是单参数形式，调用 `obj.__iter__()`；`iter(callable, sentinel)` 是两参数形式，反复调用一个无参 callable，返回值等于 sentinel 时停止，常用于按块读文件或读输入：`f.read(64)` 一直读到空串为止，完全不需要知道总共有多少字节。' />
+<Term word='iter() 的两个参数形式' text='`iter(obj)` 是单参数形式，调用 `obj.__iter__()`；`iter(callable, sentinel)` 是两参数形式，反复调用一个无参 callable，返回值等于 sentinel 时停止，常用于按块读文件或读输入：`f.read(64)` 一直读到空串为止，完全不需要知道总共有多少字节。…' />
 
 
 ## 惰性求值与工程判据
@@ -278,13 +278,13 @@ print('exhausted again', list(orders))
 
 <Callout type="idea" title='落地提示' text='大文件、数据库游标、分页 API 都该包成迭代器，让调用方决定消费多少，内存才不会随数据量线性增长' />
 
-<CheckList id='P025b' title='上线前自检' :items='["能复现并解释「把迭代器当列表用，第二次遍历拿到空结果」", "能复现并解释「对文件对象遍历两次，第二次什么都没有」", "能复现并解释「在生成器里手动 raise StopIteration 想结」", "能用一条命令验证 __iter__ 与 __next__", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P025b' title='上线前自检' :items='["能复现并解释「把迭代器当列表用，第二次遍历拿到空结果」", "能复现并解释「对文件对象遍历两次，第二次什么都没有」", "能复现并解释「在生成器里手动 raise StopIteration 想结…」", "能用一条命令验证 __iter__ 与 __next__", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__iter__` 与 `__next__` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__iter__` 与 `__next__` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 迭代器一次性之后的练习
@@ -297,7 +297,7 @@ python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))
 | 对文件对象遍历两次，第二次什么都没有 | 文件对象的 __iter__ 返回 self，本身就是迭代器，读完就耗尽 | 重新打开文件或先 seek(0)；要反复用就把行读进 list（注意内存） |
 | 在生成器里手动 raise StopIteration 想结束迭代 | 3.7 起 PEP 479 把生成器内意外抛出的 StopIteration 转成 RuntimeError，避免静默截断 | 结束生成器用 return，不要用 raise StopIteration；需要提前终止就让循环自然结束或 return |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把迭代器当列表用，第二次遍历拿到空结果", "body": "迭代器一次性、带状态，耗尽后 next 一直抛 StopIteration，for 与 list 会静默得到空", "tip": "需要多次遍历就重新 iter(容器) 或用 itertools.tee；要长度先 list(it) 物化或查 __length_hint__"}, {"title": "第 2 步：对文件对象遍历两次，第二次什么都没有", "body": "文件对象的 __iter__ 返回 self，本身就是迭代器，读完就耗尽", "tip": "重新打开文件或先 seek(0)；要反复用就把行读进 list（注意内存）"}, {"title": "第 3 步：在生成器里手动 raise StopIter", "body": "3.7 起 PEP 479 把生成器内意外抛出的 StopIteration 转成 RuntimeError，避免静默截断", "tip": "结束生成器用 return，不要用 raise StopIteration；需要提前终止就让循环自然结束或 return"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把迭代器当列表用，第二次遍历拿到空结果", "body": "迭代器一次性、带状态，耗尽后 next 一直抛 StopIteration，for 与 list 会静默得到空", "tip": "需要多次遍历就重新 iter(容器) 或用 itertools.tee；要长度先 list(it) 物化或查 __length_hint__"}, {"title": "第 2 步：对文件对象遍历两次，第二次什么都没有", "body": "文件对象的 __iter__ 返回 self，本身就是迭代器，读完就耗尽", "tip": "重新打开文件或先 seek(0)；要反复用就把行读进 list（注意内存）"}, {"title": "第 3 步：在生成器里手动 raise StopIter…", "body": "3.7 起 PEP 479 把生成器内意外抛出的 StopIteration 转成 RuntimeError，避免静默截断", "tip": "结束生成器用 return，不要用 raise StopIteration；需要提前终止就让循环自然结束或 return"}]' />
 
 <Exercise title='基础：自己实现一个可反复遍历的迭代器容器' task='定义一个类，__iter__ 每次返回新的迭代器（而不是 self），验证它能被 list() 遍历两次；再定义一个返回 self 的类，验证第二次为空。' solution='class Reusable:\n    def __init__(self, xs): self.xs = list(xs)\n    def __iter__(self): return iter(self.xs)\n\nclass OneShot:\n    def __init__(self, xs): self.it = iter(xs)\n    def __iter__(self): return self\n    def __next__(self): return next(self.it)\n\nr = Reusable([1, 2])\nprint(&#39;reusable&#39;, list(r), list(r))\no = OneShot([1, 2])\nprint(&#39;one shot&#39;, list(o), list(o))' explain='__iter__ 返回新迭代器时容器可反复遍历；返回 self 时对象本身就是迭代器、一次性。文件对象属于后一种，list 属于前一种。' />
 
@@ -333,3 +333,16 @@ python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))
 3. iter(callable, sentinel) 反复调用无参 callable 直到返回 sentinel，用于按块读文件
 
 [下一讲：生成器与 yield：send / throw / close](/containers/generator)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/025-iterator.py`
+
+```bash
+python3 examples/lessons/025-iterator.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/025-iterator.py) · [全部示例代码索引](/examples/)

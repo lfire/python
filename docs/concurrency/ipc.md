@@ -55,11 +55,11 @@ Queue 适合多对多，Pipe 适合确定的一对一双向对话。
 | Manager().dict() | 任意进程经代理访问 | 每次操作一次 IPC | 读—改—写非原子，自增会丢更新 |
 | Value / Array (ctypes) | 共享内存 | lock=True 自带进程锁 | 类型固定，仅标量/定长数组 |
 
-<Callout type="tip" title='核心心智模型' text='`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取，`' />
+<Callout type="tip" title='核心心智模型' text='`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取…' />
 
-<ConceptDiagram type='flow3' title='第 065 讲 · Queue / Pipe 的语义差别' labels='Queue / Pipe 的语义差别|Manager 代理、共享 ctypes 值|优雅退出、信号与僵尸回收' caption='构建可停止、可监控的多进程程序' />
+<ConceptDiagram type='flow3' title='第 065 讲 · Queue / Pipe 的语义差别' labels='Queue / Pipe 的语义差别|Manager 代理、共享 ctypes 值…|优雅退出、信号与僵尸回收' caption='构建可停止、可监控的多进程程序' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 对照：单向 Pipe 与双向 Pipe 的收发
@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
 <OutputBox title='主示例运行结果' output='queue got [0, 1, 2]\nevent set True\npipe recv {&#39;k&#39;: 1}\nmanager dict 1 DictProxy' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import multiprocessing as mp\n\ndef producer(q, ev):\n    for i in range(3):\n        q.put(i)\n    ev.set()\n\nif __name__ == &#39;__main__&#39;:\n    ctx = mp.get_context()\n    q = ctx.Queue()\n    ev = ctx.Event()\n    p = ctx.Process(target=producer, args=(q, ev))\n    p.start()\n    got = [q.get(timeout=5) for _ in range(3)]\n    print(&#39;queue got&#39;, got)\n    print(&#39;event set&#39;, ev.is_set())\n    p.join()\n\n    parent, child = ctx.Pipe(duplex=True)\n    parent.send({&#39;k&#39;: 1})\n    print(&#39;pipe recv&#39;, child.recv())\n    parent.close()\n    child.close()\n\n    with ctx.Manager() as mgr:\n        d = mgr.dict()\n        d[&#39;a&#39;] = 1\n        print(&#39;manager dict&#39;, d[&#39;a&#39;], type(d).__name__)' :notes='["导入 multiprocessing，全部用 ctx 显式取对象", "顶层函数才能被 spawn 子进程 pickle", "生产者放三条再置位 Event", "投递三个编号", "通知消费方数据已齐", "spawn 平台守卫，子进程重导入时不会执行入口", "用默认上下文创建统一的原语", "多生产者多消费者队列，内部是 Pipe + feeder 线程", "跨进程 Event，底层是 POSIX 信号量", "把 Queue 与 Event 作为可 pickle 参数交给子进程", "启动子进程", "get 带超时，避免父进程永久挂住", "按序取到三条", "Event 已置位，说明生产者跑到收尾", "join 回收子进程，防止僵尸", "Pipe(duplex=True) 返回两端都可收发", "send 把对象 pickle 后写入管道", "对端 recv 反序列化还原成 dict", "关闭父端", "关闭子端；对端关闭后 recv 会抛 EOFError", "Manager 起一个服务进程，with 负责收尾", "代理字典，操作走 IPC", "读取一次即一次进程间往返", "打印值与代理类型，确认不是普通 dict"]' title='第 065 讲 · 进程间通信：Queue、Pipe 与信号' />
+<LineByLine code='import multiprocessing as mp\n\ndef producer(q, ev):\n    for i in range(3):\n        q.put(i)\n    ev.set()\n\nif __name__ == &#39;__main__&#39;:\n    ctx = mp.get_context()\n    q = ctx.Queue()\n    ev = ctx.Event()\n    p = ctx.Process(target=producer, args=(q, ev))\n    p.start()\n    got = [q.get(timeout=5) for _ in range(3)]\n    print(&#39;queue got&#39;, got)\n    print(&#39;event set&#39;, ev.is_set())\n    p.join()\n\n    parent, child = ctx.Pipe(duplex=True)\n    parent.send({&#39;k&#39;: 1})\n    print(&#39;pipe recv&#39;, child.recv())\n    parent.close()\n    child.close()\n\n    with ctx.Manager() as mgr:\n        d = mgr.dict()\n        d[&#39;a&#39;] = 1\n        print(&#39;manager dict&#39;, d[&#39;a&#39;], type(d).__name__)' :notes='["导入 multiprocessing，全部用 ctx 显式取对象", "空行，只用于分隔逻辑块，不影响执行结果。", "顶层函数才能被 spawn 子进程 pickle", "生产者放三条再置位 Event", "投递三个编号", "通知消费方数据已齐", "空行，只用于分隔逻辑块，不影响执行结果。", "spawn 平台守卫，子进程重导入时不会执行入口", "用默认上下文创建统一的原语", "多生产者多消费者队列，内部是 Pipe + feeder 线程", "跨进程 Event，底层是 POSIX 信号量", "把 Queue 与 Event 作为可 pickle 参数交给子进程", "启动子进程", "get 带超时，避免父进程永久挂住", "按序取到三条", "Event 已置位，说明生产者跑到收尾", "join 回收子进程，防止僵尸", "空行，只用于分隔逻辑块，不影响执行结果。", "Pipe(duplex=True) 返回两端都可收发", "send 把对象 pickle 后写入管道", "对端 recv 反序列化还原成 dict", "关闭父端", "关闭子端；对端关闭后 recv 会抛 EOFError", "空行，只用于分隔逻辑块，不影响执行结果。", "Manager 起一个服务进程，with 负责收尾", "代理字典，操作走 IPC", "读取一次即一次进程间往返", "打印值与代理类型，确认不是普通 dict"]' title='第 065 讲 · 进程间通信：Queue、Pipe 与信号' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -144,9 +144,9 @@ Manager 起一个服务进程持有真实对象，代理把每次 `__getitem__` 
 
 `SIGTERM` 只在主进程主线程可注册 handler，容器里 PID 1 必须转发信号，否则子进程永远等不到通知。
 
-<Term word='Queue 与 Pipe 语义' text='`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取，`qsize()` 在' />
+<Term word='Queue 与 Pipe 语义' text='`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取，`qsize()` 在…' />
 
-<Term word='Manager 代理对象' text='`Manager()` 启动一个服务进程，返回 `DictProxy` / `ListProxy` / `Namespace` / `Lock` / `Event` / `Queue` 等代理对象；代理可以 pickle 后继续传给其它进程，但每一次 `d[&#39;k&#39;] += 1` 都是一次进程间调用（读、改、写至少三次往' />
+<Term word='Manager 代理对象' text='`Manager()` 启动一个服务进程，返回 `DictProxy` / `ListProxy` / `Namespace` / `Lock` / `Event` / `Queue` 等代理对象；代理可以 pickle 后继续传给其它进程，但每一次 `d[&#39;k&#39;] += 1` 都是一次进程间调用（读、改、写至少三次往…' />
 
 
 ### put 返回后消息一定进管道了吗
@@ -257,11 +257,11 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='明确 ack 语义、设置 join 超时、注册信号处理，并在容器环境里由 PID 1 负责转发信号' />
 
-<CheckList id='P065b' title='上线前自检' :items='["能复现并解释「对 multiprocessing.Queue 调 task」", "能复现并解释「主进程被 SIGTERM 强杀后消息丢失或重复」", "能复现并解释「用 Manager().dict() 高频自增计数，吞吐掉一」", "能用一条命令验证 Queue 与 Pipe 语义", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P065b' title='上线前自检' :items='["能复现并解释「对 multiprocessing.Queue 调 task…」", "能复现并解释「主进程被 SIGTERM 强杀后消息丢失或重复」", "能复现并解释「用 Manager().dict() 高频自增计数，吞吐掉一…」", "能用一条命令验证 Queue 与 Pipe 语义", "关键路径有自动化测试与失败分支"]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='对 multiprocessing.Queue 调 task_done()：task_done/join 是线程版 queue.Queue 的 API，进程版 Queue 没有' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对 multiprocessing.Queu", "body": "task_done/join 是线程版 queue.Queue 的 API，进程版 Queue 没有", "tip": "自建 ack 队列：消费者处理完 put 回 id，协调者只提交已 ack 位点"}, {"title": "第 2 步：主进程被 SIGTERM 强杀后消息丢失或重", "body": "容器 PID 1 未转发信号、队列 put 不保证送达、无 ack 与幂等键", "tip": "注册 SIGTERM handler 置 Event 停止投递，排空在途后 join；写操作带幂等键"}, {"title": "第 3 步：用 Manager().dict() 高频自", "body": "每次访问都是一次 IPC，且读—改—写非原子", "tip": "计数器改 Value(&#39;i&#39;, lock=True) 自带进程锁；只有任意嵌套对象才用 Manager"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：对 multiprocessing.Queu…", "body": "task_done/join 是线程版 queue.Queue 的 API，进程版 Queue 没有", "tip": "自建 ack 队列：消费者处理完 put 回 id，协调者只提交已 ack 位点"}, {"title": "第 2 步：主进程被 SIGTERM 强杀后消息丢失或重…", "body": "容器 PID 1 未转发信号、队列 put 不保证送达、无 ack 与幂等键", "tip": "注册 SIGTERM handler 置 Event 停止投递，排空在途后 join；写操作带幂等键"}, {"title": "第 3 步：用 Manager().dict() 高频自…", "body": "每次访问都是一次 IPC，且读—改—写非原子", "tip": "计数器改 Value(&#39;i&#39;, lock=True) 自带进程锁；只有任意嵌套对象才用 Manager"}]' />
 
 
 ## 错因速查与排查顺序
@@ -316,4 +316,17 @@ if __name__ == '__main__':
 python -c "from concurrent.futures import ThreadPoolExecutor as P; print(list(P(2).map(abs,[-1,-2])))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Queue 与 Pipe 语义 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Queue 与 Pipe 语义 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/065-ipc.py`
+
+```bash
+python3 examples/lessons/065-ipc.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/065-ipc.py) · [全部示例代码索引](/examples/)

@@ -45,7 +45,7 @@ description: 补齐服务端的外部依赖版图
 | 分片 | initiate → PUT part(ETag) → complete | 失败只重传某片 |
 | 续传 | 记录 uploadId / 已传 part 或 Range | 别整文件重传 |
 
-<Callout type="tip" title='核心心智模型' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-S' />
+<Callout type="tip" title='核心心智模型' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用…' />
 
 
 ## 主示例：给路径与有效期签一个不可篡改的名
@@ -128,9 +128,9 @@ print('expiry bound', a.split('Signature=')[1] != c.split('Signature=')[1])
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "import math\nfrom collections import defaultdict\nDOCS = {\n    1: &#39;short link redis cache&#39;,\n    2: &#39;redis cache penetration avalanche&#39;,\n    3: &#39;sqlalchemy connection pool&#39;,\n}\ndef tokenize(text):\n    return [w.lower() for w in text.split()]\npostings = defaultdict(list)\nfor doc_id, text in DOCS.items():\n    for term in set(tokenize(text)):\n        postings[term].append(doc_id)\nN = len(DOCS)\nidf = {t: math.log(1 + (N - len(ids) + 0.5) / (len(ids) + 0.5))\n       for t, ids in postings.items()}\ndef search(query, k=3):\n    scores = defaultdict(float)\n    for term in set(tokenize(query)):\n        for doc_id in postings.get(term, []):\n            tf = 1\n            scores[doc_id] += idf[term] * (tf * 2.2) / (tf + 1.2)\n    return [(d, round(s, 3)) for d, s in sorted(scores.items(), key=lambda kv: -kv[1])[:k]]\nprint(&#39;index terms&#39;, len(postings))\nprint(&#39;redis df&#39;, len(postings[&#39;redis&#39;]), &#39;idf&#39;, round(idf[&#39;redis&#39;], 4))\nprint(&#39;query redis cache&#39;, search(&#39;redis cache&#39;))\nprint(&#39;query sqlalchemy&#39;, search(&#39;sqlalchemy&#39;))", "note": "上传、断点续传与预签名直传"}, {"label": "对照 / 进阶", "code": "import hmac, hashlib\n\ndef presign(path, expires, now=1700000000):\n    sts = &#39;GET&#39; + chr(10) + path + chr(10) + str(now + expires)\n    sig = hmac.new(b&#39;secret&#39;, sts.encode(), hashlib.sha256).hexdigest()[:16]\n    return &#39;?X-Amz-Date=&#39; + str(now) + &#39;&amp;X-Amz-Expires=&#39; + str(expires) + &#39;&amp;X-Amz-Signature=&#39; + sig\n\na = presign(&#39;/uploads/a.bin&#39;, 900)\nb = presign(&#39;/uploads/b.bin&#39;, 900)\nc = presign(&#39;/uploads/a.bin&#39;, 3600)\nprint(&#39;a sig&#39;, a.split(&#39;Signature=&#39;)[1])\nprint(&#39;b sig&#39;, b.split(&#39;Signature=&#39;)[1])\nprint(&#39;c sig&#39;, c.split(&#39;Signature=&#39;)[1])\nprint(&#39;path bound&#39;, a.split(&#39;Signature=&#39;)[1] != b.split(&#39;Signature=&#39;)[1])\nprint(&#39;expiry bound&#39;, a.split(&#39;Signature=&#39;)[1] != c.split(&#39;Signature=&#39;)[1])", "note": "倒排索引与搜索打分"}]' title='两种写法切换看' />
 
-<ConceptDiagram type='flow4' title='第 091 讲 · 上传、断点续传与预签名直传' labels='上传、断点续传与预签名直传|倒排索引与搜索打分|gRPC、Protobuf 与跨服务错误传播' caption='补齐服务端的外部依赖版图' />
+<ConceptDiagram type='flow4' title='第 091 讲 · 上传、断点续传与预签名直传' labels='上传、断点续传与预签名直传|倒排索引与搜索打分|gRPC、Protobuf 与跨服务错误传播|跨服务错误传播' caption='补齐服务端的外部依赖版图' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 倒排索引与搜索打分
@@ -191,9 +191,9 @@ Protobuf 的 varint 用最高位作续位标志、每字节存 7 位有效数据
 
 gRPC 借 `HTTP/2` 的多路复用在一条连接上并发多个 stream，状态码把错误语义标准化，避免各服务自定义 body 错误。
 
-<Term word='上传与断点续传' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出' />
+<Term word='上传与断点续传' text='大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出…' />
 
-<Term word='预签名 URL' text='倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。查询时对多个 term 取 posting list 合并，用 `BM25` 打分' />
+<Term word='预签名 URL' text='倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。查询时对多个 term 取 posting list 合并，用 `BM25` 打分…' />
 
 
 ## 预签名直传加倒排检索的最小服务层
@@ -245,13 +245,13 @@ print('search redis cache', idx.search('redis cache'))
 
 <Callout type="idea" title='落地提示' text='对象存储配生命周期与 CDN、搜索用异步双写或 CDC 保持索引最终一致、内部 RPC 用 gRPC 并统一错误码' />
 
-<CheckList id='P091b' title='上线前自检' :items='["能复现并解释「把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失」", "能复现并解释「用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表」", "能复现并解释「内部服务把业务错误塞进 HTTP 200 的 body，字段」", "能用一条命令验证 上传与断点续传", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P091b' title='上线前自检' :items='["能复现并解释「把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失…」", "能复现并解释「用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表…」", "能复现并解释「内部服务把业务错误塞进 HTTP 200 的 body，字段…」", "能用一条命令验证 上传与断点续传", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 上传与断点续传 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 上传与断点续传 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 <FlowTimeline :steps='[{"title": "上传、断点续传与预签名直传", "desc": "大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签…", "tone": "blue"}, {"title": "倒排索引与搜索打分", "desc": "倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先…", "tone": "purple"}, {"title": "gRPC、Protobuf 与跨服务错误传播", "desc": "gRPC 基于 `HTTP/2` 多路复用与 Protobuf 二进制编码：在 .p…", "tone": "orange"}, {"title": "工程落地", "desc": "预签名直传 + 倒排检索的最小服务层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
@@ -265,7 +265,7 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失/读不到：本地磁盘是实例级、非共享且非持久，另一实例没有该文件' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把上传文件先落到应用服务器本地磁盘，容器重启", "body": "本地磁盘是实例级、非共享且非持久，另一实例没有该文件", "tip": "用预签名 URL 让客户端直传对象存储，服务端只存鉴权与元数据；必须落临时文件时用共享卷并尽快转存"}, {"title": "第 2 步：用 SQL 的 LIKE &#39;%词%&#39; 做搜索", "body": "前置通配符无法命中 B 树索引，只能逐行扫描，也没有相关度排序", "tip": "建倒排索引（ES/Lucene），用 BM25 打分；精确主键查询仍走数据库，检索与事务库分开"}, {"title": "第 3 步：内部服务把业务错误塞进 HTTP 200 的", "body": "JSON 无编译期契约，错误码各自定义，调用方无法统一处理", "tip": "用 gRPC + Protobuf 由 .proto 生成强类型 stub，错误走标准 status code，metadata 传 trace_id，并对非幂等调用禁止重试"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把上传文件先落到应用服务器本地磁盘，容器重启…", "body": "本地磁盘是实例级、非共享且非持久，另一实例没有该文件", "tip": "用预签名 URL 让客户端直传对象存储，服务端只存鉴权与元数据；必须落临时文件时用共享卷并尽快转存"}, {"title": "第 2 步：用 SQL 的 LIKE &#39;%词%&#39; 做搜索…", "body": "前置通配符无法命中 B 树索引，只能逐行扫描，也没有相关度排序", "tip": "建倒排索引（ES/Lucene），用 BM25 打分；精确主键查询仍走数据库，检索与事务库分开"}, {"title": "第 3 步：内部服务把业务错误塞进 HTTP 200 的…", "body": "JSON 无编译期契约，错误码各自定义，调用方无法统一处理", "tip": "用 gRPC + Protobuf 由 .proto 生成强类型 stub，错误走标准 status code，metadata 传 trace_id，并对非幂等调用禁止重试"}]' />
 
 
 ## 练习、自测与一页纸速记
@@ -304,3 +304,16 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 3. S3 自 2020-12 起 PUT/GET/DELETE/LIST 强一致 read-after-write；CDN 与跨区复制仍有延迟
 
 [下一讲：阶段综合：生产级短链服务](/server/capstone)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/091-storage.py`
+
+```bash
+python3 examples/lessons/091-storage.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/091-storage.py) · [全部示例代码索引](/examples/)

@@ -28,7 +28,7 @@ description: 独立交付一个生产可用的服务与数据访问层
 
 HTTP / ASGI、FastAPI / Flask / Django、ORM、Redis、MQ、认证、对象存储与可观测性。阶段划分不是按知识点罗列，而是按「学完能交付什么」倒推：前一阶段的输出正好是这一阶段的前置，跳过某一段往往会在后面某讲突然卡住，届时再回来补齐比按顺序学更费时。
 
-<ConceptDiagram type='hub4' title='阶段八 · 服务端与数据 · 知识主线' labels='客户端|路由|服务|存储' caption='独立交付一个生产可用的服务与数据访问层' />
+<ConceptDiagram type='flow4' title='阶段八 · 服务端与数据 · 知识主线' labels='客户端|路由|服务|存储' caption='独立交付一个生产可用的服务与数据访问层' />
 
 <Callout type="tip" title="怎么用这一阶段" text='先读导览确定出口能力，再逐讲打卡；遇到卡点优先回到对应讲的最小示例，而不是直接翻答案。共 11 讲，合计约 440 分钟。' />
 

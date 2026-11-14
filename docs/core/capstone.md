@@ -104,11 +104,11 @@ print('top cum > self', prof.stats['top'][2] > prof.stats['top'][1])
 
 <OutputBox title='主示例运行结果' output='top calls 1\nmiddle calls 1\nleaf calls 2\ntop cum &gt; self True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\nimport time\n\nclass MiniProfiler:\n    def __init__(self):\n        self.stack = []\n        self.stats = {}\n    def __call__(self, frame, event, arg):\n        name = frame.f_code.co_name\n        if event == &#39;call&#39;:\n            self.stack.append([name, time.perf_counter(), 0.0])\n        elif event == &#39;return&#39; and self.stack:\n            key, t0, child = self.stack.pop()\n            dt = time.perf_counter() - t0\n            rec = self.stats.setdefault(key, [0, 0.0, 0.0])\n            rec[0] += 1\n            rec[1] += dt - child\n            rec[2] += dt\n            if self.stack:\n                self.stack[-1][2] += dt\n        return self\n\ndef leaf(n):\n    return sum(i * i for i in range(n))\n\ndef middle():\n    return leaf(2000) + leaf(2000)\n\ndef top():\n    return middle()\n\nsys.setprofile(MiniProfiler())\ntop()\nprof = sys.getprofile()\nsys.setprofile(None)\nprint(&#39;top calls&#39;, prof.stats[&#39;top&#39;][0])\nprint(&#39;middle calls&#39;, prof.stats[&#39;middle&#39;][0])\nprint(&#39;leaf calls&#39;, prof.stats[&#39;leaf&#39;][0])\nprint(&#39;top cum &gt; self&#39;, prof.stats[&#39;top&#39;][2] &gt; prof.stats[&#39;top&#39;][1])' :notes='["导入 sys，使用 setprofile / getprofile", "导入 time，用 perf_counter 量每个帧的耗时", "把事件折叠成调用树的分析器", "初始化栈与统计表", "stack 保存 名称/起点/子耗时 三元组", "stats 按函数名累计 次数/自耗时/累计耗时", "回调签名固定为 (frame, event, arg)", "从 code object 取函数名作统计键", "只在 call 事件压栈", "记录高精度起点，第三位随后累加子耗时", "return 事件且栈非空才结算", "取出 名称、起点、已累计的子耗时", "dt 是本帧从进入到退出的墙钟", "每函数一条记录：调用数、self、cumulative", "累计调用次数", "self = dt 减去子帧耗时", "cumulative 直接累加 dt", "若还有父帧，把本帧耗时记到父账上", "父帧的 child 增加，父才算得出 self", "返回 self 对 setprofile 无害，返回值被丢弃", "定义最内层计算函数，制造两次子调用", "生成器求和，消耗真实 CPU", "中间层", "调用 leaf 两次", "顶层作为调用树根", "只委托给 middle", "安装 profiler，本线程调用都会触发回调", "执行被测调用树", "取回 profiler 实例以读取统计", "先关钩子再读结果，避免把读取本身计入", "top 只被调用一次", "middle 一次", "leaf 两次", "top 的 cumtime 含全部子调用，必大于其 self"]' title='第 059 讲 · 阶段综合：简易性能分析器与内存哨兵' />
+<LineByLine code='import sys\nimport time\n\nclass MiniProfiler:\n    def __init__(self):\n        self.stack = []\n        self.stats = {}\n    def __call__(self, frame, event, arg):\n        name = frame.f_code.co_name\n        if event == &#39;call&#39;:\n            self.stack.append([name, time.perf_counter(), 0.0])\n        elif event == &#39;return&#39; and self.stack:\n            key, t0, child = self.stack.pop()\n            dt = time.perf_counter() - t0\n            rec = self.stats.setdefault(key, [0, 0.0, 0.0])\n            rec[0] += 1\n            rec[1] += dt - child\n            rec[2] += dt\n            if self.stack:\n                self.stack[-1][2] += dt\n        return self\n\ndef leaf(n):\n    return sum(i * i for i in range(n))\n\ndef middle():\n    return leaf(2000) + leaf(2000)\n\ndef top():\n    return middle()\n\nsys.setprofile(MiniProfiler())\ntop()\nprof = sys.getprofile()\nsys.setprofile(None)\nprint(&#39;top calls&#39;, prof.stats[&#39;top&#39;][0])\nprint(&#39;middle calls&#39;, prof.stats[&#39;middle&#39;][0])\nprint(&#39;leaf calls&#39;, prof.stats[&#39;leaf&#39;][0])\nprint(&#39;top cum &gt; self&#39;, prof.stats[&#39;top&#39;][2] &gt; prof.stats[&#39;top&#39;][1])' :notes='["导入 sys，使用 setprofile / getprofile", "导入 time，用 perf_counter 量每个帧的耗时", "空行，只用于分隔逻辑块，不影响执行结果。", "把事件折叠成调用树的分析器", "初始化栈与统计表", "stack 保存 名称/起点/子耗时 三元组", "stats 按函数名累计 次数/自耗时/累计耗时", "回调签名固定为 (frame, event, arg)", "从 code object 取函数名作统计键", "只在 call 事件压栈", "记录高精度起点，第三位随后累加子耗时", "return 事件且栈非空才结算", "取出 名称、起点、已累计的子耗时", "dt 是本帧从进入到退出的墙钟", "每函数一条记录：调用数、self、cumulative", "累计调用次数", "self = dt 减去子帧耗时", "cumulative 直接累加 dt", "若还有父帧，把本帧耗时记到父账上", "父帧的 child 增加，父才算得出 self", "返回 self 对 setprofile 无害，返回值被丢弃", "空行，只用于分隔逻辑块，不影响执行结果。", "定义最内层计算函数，制造两次子调用", "生成器求和，消耗真实 CPU", "空行，只用于分隔逻辑块，不影响执行结果。", "中间层", "调用 leaf 两次", "空行，只用于分隔逻辑块，不影响执行结果。", "顶层作为调用树根", "只委托给 middle", "空行，只用于分隔逻辑块，不影响执行结果。", "安装 profiler，本线程调用都会触发回调", "执行被测调用树", "取回 profiler 实例以读取统计", "先关钩子再读结果，避免把读取本身计入", "top 只被调用一次", "middle 一次", "leaf 两次", "top 的 cumtime 含全部子调用，必大于其 self"]' title='第 059 讲 · 阶段综合：简易性能分析器与内存哨兵' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='layers3' title='第 059 讲 · 分层视角' labels='sys.setprofile 事件与调用|tracemalloc 快照差值与阈值告|开销量化与 sys.monitoring|开销量化' caption='开销量化与 sys.monitoring 迁移' />
+<ConceptDiagram type='layers3' title='第 059 讲 · 分层视角' labels='sys.setprofile 事件与调用…|tracemalloc 快照差值与阈值告…|开销量化与 sys.monitoring…|开销量化' caption='开销量化与 sys.monitoring 迁移' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 开销量化 落在哪一层。
 
@@ -169,14 +169,14 @@ print('overhead ratio > 1', profiled / plain > 1.0)
 | 峰值 peak | get_traced_memory()[1] | 一次性大对象 | 配合 reset_peak (3.9+) 分窗 |
 | Top-N 分配行 | statistics('lineno') 或 compare_to | nframe 过浅定位不准 | nframe 取 1-3，报告带完整 traceback 摘要 |
 
-<Callout type="tip" title='核心心智模型' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回' />
+<Callout type="tip" title='核心心智模型' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回…' />
 
 
 ## 按绝对内存设阈值为什么天天误报
 
 <Callout type="warn" title='本讲最容易踩的坑' text='多线程里用全局 setprofile，调用树对不上：setprofile 只作用于当前线程，但 profile 状态可被 threading.setprofile 传播到新线程，事件混在一起' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：多线程里用全局 setprofile，调用树", "body": "setprofile 只作用于当前线程，但 profile 状态可被 threading.setprofile 传播到新线程，事件混在一起", "tip": "按 threading.get_ident() 给每个线程单独建栈与 stats，报告时按线程分桶"}, {"title": "第 2 步：按 get_traced_memory() ", "body": "缓存预热、常量池、一次性大对象都会抬高绝对值，稳定后不再增长", "tip": "改用 compare_to 的 size_diff 增量，并要求连续 K 个窗口持续增长才告警"}, {"title": "第 3 步：在 profile 回调里做日志、格式化或加", "body": "回调本身是 Python 调用，会触发新事件、形成递归或把分析器自身耗时算进业务", "tip": "回调只做压栈/出栈与数值累加，日志与报告在 setprofile(None) 之后统一输出"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：多线程里用全局 setprofile，调用树…", "body": "setprofile 只作用于当前线程，但 profile 状态可被 threading.setprofile 传播到新线程，事件混在一起", "tip": "按 threading.get_ident() 给每个线程单独建栈与 stats，报告时按线程分桶"}, {"title": "第 2 步：按 get_traced_memory()…", "body": "缓存预热、常量池、一次性大对象都会抬高绝对值，稳定后不再增长", "tip": "改用 compare_to 的 size_diff 增量，并要求连续 K 个窗口持续增长才告警"}, {"title": "第 3 步：在 profile 回调里做日志、格式化或加…", "body": "回调本身是 Python 调用，会触发新事件、形成递归或把分析器自身耗时算进业务", "tip": "回调只做压栈/出栈与数值累加，日志与报告在 setprofile(None) 之后统一输出"}]' />
 
 
 ## 采样精度与侵入性：开销量化
@@ -250,9 +250,9 @@ tracemalloc 在 `_PyObject_Malloc` 层把分配大小与回溯压进哈希表，
 
 `sys.monitoring` 把事件检查内联进指令分派：解释器查「当前工具是否订阅了这一位」，命中才调用轻量回调，省去 frame 构造与通用事件分发，因此能低一个量级；事件位被独占的设计则避免多个工具互相踩踏。
 
-<Term word='sys.setprofile 采集' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回值、在异常时是三元组' />
+<Term word='sys.setprofile 采集' text='`sys.setprofile(func)` 给当前线程装一个回调，签名是 (frame, event, arg)：Python 函数进出发 &#39;call&#39; 与 &#39;return&#39;，C 函数发 &#39;c_call&#39; / &#39;c_return&#39; / &#39;c_exception&#39;，arg 在 return 时是返回值、在异常时是三元组…' />
 
-<Term word='调用树与自耗时' text='哨兵的关键不是采到数据，而是定一个不误报的阈值。`tracemalloc.start(nframe)` 的 nframe 决定保留几层回溯，越深信息越全、开销越大，典型取 1 到 3。做法是先在基线点 `take_snapshot()`，在检查点再 `take_snapshot()`，用 `compare_to` 对两' />
+<Term word='调用树与自耗时' text='哨兵的关键不是采到数据，而是定一个不误报的阈值。`tracemalloc.start(nframe)` 的 nframe 决定保留几层回溯，越深信息越全、开销越大，典型取 1 到 3。做法是先在基线点 `take_snapshot()`，在检查点再 `take_snapshot()`，用 `compare_to` 对两…' />
 
 
 ## 可灰度开启的简易性能分析器与内存哨兵
@@ -311,13 +311,13 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='提供按函数过滤、采样间隔与上下文开关，让工具能在生产灰度环境里安全开启' />
 
-<CheckList id='P059b' title='上线前自检' :items='["能复现并解释「多线程里用全局 setprofile，调用树对不上」", "能复现并解释「按 get_traced_memory() 的绝对值设内存告」", "能复现并解释「在 profile 回调里做日志、格式化或加锁」", "能用一条命令验证 sys.setprofile 采集", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P059b' title='上线前自检' :items='["能复现并解释「多线程里用全局 setprofile，调用树对不上」", "能复现并解释「按 get_traced_memory() 的绝对值设内存告…」", "能复现并解释「在 profile 回调里做日志、格式化或加锁」", "能用一条命令验证 sys.setprofile 采集", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `sys.setprofile` 采集 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `sys.setprofile` 采集 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查与排查顺序
@@ -371,7 +371,7 @@ print('tool ids', [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.m
 
 <OutputBox title='扩展示例运行结果' output='has monitoring True\nhas setprofile True\ncaptured leaf True\ncaptured cb False\ntool ids [0, 2, 5]' />
 
-<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["3.12 起 sys.monitoring 可用，旧 setprofile 仍保留", "setprofile 是历代都有的接口", "用列表收集 call 事件里的函数名", "回调签名固定为 frame、event、arg", "只记 call 事件，return 与 C 事件不进列表", "frame.f_code.co_name 就是被调函数的名字", "返回自身以维持回调，某些实现里可不写", "安装回调到当前线程", "定义一个极小函数，放大回调的相对开销", "调用一次 leaf，触发一次 call 与一次 return", "关闭回调，避免后续打印继续产生事件", "leaf 被采集到，证明回调确实看到了用户函数", "cb 自身没被采集，解释器在回调期间屏蔽了事件分发", "3.13 的保留槽位是 0 调试器、2 分析器、5 优化器", "tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销", "分析器自身有侵入性：回调里只做压栈与累加，日志在 setprofile(None) 之后输出，并用比值量化开销"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["3.12 起 sys.monitoring 可用，旧 setprofile 仍保留", "空行，只用于分隔逻辑块，不影响执行结果。", "setprofile 是历代都有的接口", "用列表收集 call 事件里的函数名", "回调签名固定为 frame、event、arg", "只记 call 事件，return 与 C 事件不进列表", "frame.f_code.co_name 就是被调函数的名字", "返回自身以维持回调，某些实现里可不写", "安装回调到当前线程", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个极小函数，放大回调的相对开销", "调用一次 leaf，触发一次 call 与一次 return", "关闭回调，避免后续打印继续产生事件", "leaf 被采集到，证明回调确实看到了用户函数", "cb 自身没被采集，解释器在回调期间屏蔽了事件分发", "3.13 的保留槽位是 0 调试器、2 分析器、5 优化器", "这一行 `print(&#39;captured cb&#39;, &#39;cb&#39; in seen)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.m` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 059 讲 · 扩展图解' labels='_PyInterpreterFrame 在数据栈|setprofile 回调|强制物化 PyFrameObject|f_back 链与 f_locals 填充' caption='旧式 profile 的开销不在回调逻辑，而在每次调用边界把轻量解释器帧物化成完整 frame 对象。' />
 
@@ -483,3 +483,16 @@ print('more calls than definition', len(calls) > 1)
 3. tracemalloc 用 compare_to 的 size_diff 净增量告警，比 get_traced_memory 绝对值少误报；nframe 取 1-3 控开销
 
 [下一讲：并发、并行与 IO 模型全景](/concurrency/concurrency-intro)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/059-capstone.py`
+
+```bash
+python3 examples/lessons/059-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/059-capstone.py) · [全部示例代码索引](/examples/)

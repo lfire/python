@@ -22,7 +22,7 @@ description: 为长期运行的系统建立稳定性闭环
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用固定 cron 时刻串接上下游，不做数据就绪检查：上游迟到时下游按点启动读到空分区，当天报表为空，且没有任何触发重算的机制' />
 
-<Callout type="tip" title='核心心智模型' text='生产调度把任务建模成 DAG：节点是作业，边是数据或时间依赖，执行前做拓扑排序得到可并行的层级；Airflow 用 Python 定义 DAG、靠 scheduler 触发 task instance，Temporal 用工作流代码把重试与状态持久化，适合长事务型编排。关键不在表达式而在依赖语义：任' />
+<Callout type="tip" title='核心心智模型' text='生产调度把任务建模成 DAG：节点是作业，边是数据或时间依赖，执行前做拓扑排序得到可并行的层级；Airflow 用 Python 定义 DAG、靠 scheduler 触发 task instance，Temporal 用工作流代码把重试与状态持久化，适合长事务型编排。关键不在表达式而在依赖语义：任…' />
 
 
 ## DAG 依赖调度、迟到数据与补数幂等
@@ -63,7 +63,7 @@ print('order', topo(dag))
 
 <OutputBox title='主示例运行结果' output='order [&#39;extract&#39;, &#39;clean&#39;, &#39;join&#39;, &#39;report&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections import deque\n\ndef topo(deps):\n    indeg = {k: len(pres) for k, pres in deps.items()}\n    ready = deque([k for k, d in indeg.items() if d == 0])\n    order = []\n    while ready:\n        n = ready.popleft()\n        order.append(n)\n        for k, pres in deps.items():\n            if n in pres:\n                indeg[k] -= 1\n                if indeg[k] == 0:\n                    ready.append(k)\n    return order\n\ndag = {\n    &#39;extract&#39;: [],\n    &#39;clean&#39;: [&#39;extract&#39;],\n    &#39;join&#39;: [&#39;extract&#39;],\n    &#39;report&#39;: [&#39;clean&#39;, &#39;join&#39;],\n}\nprint(&#39;order&#39;, topo(dag))' :notes='["导入 deque 作为拓扑排序的就绪队列", "topo 接收 节点到前驱列表 的字典", "入度等于每个节点的前驱数量", "入度为 0 的节点先入队", "order 保存最终执行顺序", "队列非空时持续取出可运行节点", "弹出一个就绪节点", "加入执行顺序", "扫描所有节点，谁的依赖包含刚完成的 n", "找到以 n 为前驱的后继节点", "后继入度减一", "入度归零说明依赖已全部就绪", "把后继加入就绪队列", "返回拓扑序，同层节点顺序由字典插入序决定", "定义一个菱形依赖的 DAG", "extract 无依赖，是唯一起点", "clean 依赖 extract", "join 同样依赖 extract，可与 clean 并行", "report 同时依赖 clean 与 join", "结束 DAG 字典的定义", "打印执行顺序，report 必在两个上游之后"]' title='第 112 讲 · 任务调度、SRE 与混沌工程' />
+<LineByLine code='from collections import deque\n\ndef topo(deps):\n    indeg = {k: len(pres) for k, pres in deps.items()}\n    ready = deque([k for k, d in indeg.items() if d == 0])\n    order = []\n    while ready:\n        n = ready.popleft()\n        order.append(n)\n        for k, pres in deps.items():\n            if n in pres:\n                indeg[k] -= 1\n                if indeg[k] == 0:\n                    ready.append(k)\n    return order\n\ndag = {\n    &#39;extract&#39;: [],\n    &#39;clean&#39;: [&#39;extract&#39;],\n    &#39;join&#39;: [&#39;extract&#39;],\n    &#39;report&#39;: [&#39;clean&#39;, &#39;join&#39;],\n}\nprint(&#39;order&#39;, topo(dag))' :notes='["导入 deque 作为拓扑排序的就绪队列", "空行，只用于分隔逻辑块，不影响执行结果。", "topo 接收 节点到前驱列表 的字典", "入度等于每个节点的前驱数量", "入度为 0 的节点先入队", "order 保存最终执行顺序", "队列非空时持续取出可运行节点", "弹出一个就绪节点", "加入执行顺序", "扫描所有节点，谁的依赖包含刚完成的 n", "找到以 n 为前驱的后继节点", "后继入度减一", "入度归零说明依赖已全部就绪", "把后继加入就绪队列", "返回拓扑序，同层节点顺序由字典插入序决定", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个菱形依赖的 DAG", "extract 无依赖，是唯一起点", "clean 依赖 extract", "join 同样依赖 extract，可与 clean 并行", "report 同时依赖 clean 与 join", "结束 DAG 字典的定义", "打印执行顺序，report 必在两个上游之后"]' title='第 112 讲 · 任务调度、SRE 与混沌工程' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -76,16 +76,16 @@ print('order', topo(dag))
 | 状态存储 | 元数据库记录 task 状态 | 事件历史持久化，工作流可重放 |
 | 迟到数据 | sensor / 数据感知触发 | signal 与等待条件 |
 
-<ConceptDiagram type='layers3' title='第 112 讲 · DAG 依赖调度、迟到数据与补数幂等' labels='DAG 依赖调度、迟到数据与补数幂等|SLI / SLO / 错误预算与告警降噪|混沌工程与故障注入的闭环' caption='为长期运行的系统建立稳定性闭环' />
+<ConceptDiagram type='layers3' title='第 112 讲 · DAG 依赖调度、迟到数据与补数幂等' labels='DAG 依赖调度、迟到数据与补数幂等|SLI / SLO / 错误预算与告警降噪|混沌工程与故障注入的闭环|故障注入与演练' caption='为长期运行的系统建立稳定性闭环' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 用固定 cron 时刻串接上下游，不做数据就绪检查
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用固定 cron 时刻串接上下游，不做数据就绪检查：上游迟到时下游按点启动读到空分区，当天报表为空，且没有任何触发重算的机制' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用固定 cron 时刻串接上下游，不做数据就", "body": "上游迟到时下游按点启动读到空分区，当天报表为空，且没有任何触发重算的机制", "tip": "声明数据分区依赖用 sensor 或事件触发，任务参数带 business_date 并支持 backfill 按分区重跑"}, {"title": "第 2 步：重跑脚本无条件追加结果", "body": "同一 business_date 被补数或重试执行两次时数据翻倍，指标虚高，且很难定位是哪次重复", "tip": "写结果前按分区 INSERT OVERWRITE 或用幂等键查去重表，保证重复执行收敛到同一终态"}, {"title": "第 3 步：告警阈值设成 CPU 超过 80%", "body": "批处理启动必然触发，值班被噪声淹没，真正的用户侧失败率飙升反而被忽略", "tip": "围绕用户旅程定义 SLI，用多窗口 burn rate 告警，CPU 仅作容量参考；紧急页必须有 runbook 与升级路径"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用固定 cron 时刻串接上下游，不做数据就…", "body": "上游迟到时下游按点启动读到空分区，当天报表为空，且没有任何触发重算的机制", "tip": "声明数据分区依赖用 sensor 或事件触发，任务参数带 business_date 并支持 backfill 按分区重跑"}, {"title": "第 2 步：重跑脚本无条件追加结果", "body": "同一 business_date 被补数或重试执行两次时数据翻倍，指标虚高，且很难定位是哪次重复", "tip": "写结果前按分区 INSERT OVERWRITE 或用幂等键查去重表，保证重复执行收敛到同一终态"}, {"title": "第 3 步：告警阈值设成 CPU 超过 80%", "body": "批处理启动必然触发，值班被噪声淹没，真正的用户侧失败率飙升反而被忽略", "tip": "围绕用户旅程定义 SLI，用多窗口 burn rate 告警，CPU 仅作容量参考；紧急页必须有 runbook 与升级路径"}]' />
 
 
 ## 对照：无条件追加与分区覆盖写的补数输出
@@ -227,7 +227,7 @@ print(s.run('clean', '2024-01-01'))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 定时与依赖调度 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 定时与依赖调度 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -274,3 +274,16 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 3. 补数与重试叠加要求幂等：分区覆盖写（INSERT OVERWRITE）或去重表，避免重复执行让指标翻倍
 
 [下一讲：安全工程：依赖、注入、序列化与密钥](/distributed/security)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/112-scheduling.py`
+
+```bash
+python3 examples/lessons/112-scheduling.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/112-scheduling.py) · [全部示例代码索引](/examples/)

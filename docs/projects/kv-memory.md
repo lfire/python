@@ -20,7 +20,7 @@ description: 为四讲演进线奠定可替换的接口
 
 这一讲先定义窄接口、命令模型与错误类型，再让内存实现通过同一组契约测试，为四讲演进线奠定可替换的地基。
 
-<Callout type="tip" title='核心心智模型' text='命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演' />
+<Callout type="tip" title='核心心智模型' text='命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演…' />
 
 
 ## 命令模型与窄接口：把变化挡在抽象后面
@@ -105,13 +105,13 @@ except ValueError as err:
 
 <OutputBox title='主示例运行结果' output='contract ok\nset/get None 2\ndel True\nbad op ValueError' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import threading\n\nclass KeyNotFound(KeyError):\n    pass\n\nclass MemoryEngine:\n    def __init__(self):\n        self.data, self.exp, self.now = {}, {}, 0\n        self.lock = threading.Lock()\n    def _live(self, key):\n        if self.exp.get(key, -1) != -1 and self.exp[key] &lt;= self.now:\n            del self.data[key]\n            del self.exp[key]\n            return False\n        return key in self.data\n    def get(self, key):\n        with self.lock:\n            if not self._live(key):\n                raise KeyNotFound(key)\n            return self.data[key]\n    def set(self, key, value, ttl=0):\n        with self.lock:\n            self.data[key] = value\n            self.exp[key] = self.now + ttl if ttl else -1\n    def delete(self, key):\n        with self.lock:\n            if not self._live(key):\n                raise KeyNotFound(key)\n            del self.data[key]\n            return True\n\ndef execute(eng, op, key, value=&#39;&#39;, ttl=0):\n    if op == &#39;SET&#39;: return eng.set(key, value, ttl)\n    if op == &#39;GET&#39;: return eng.get(key)\n    if op == &#39;DEL&#39;: return eng.delete(key)\n    raise ValueError(&#39;unknown op &#39; + op)\n\ndef contract(eng):\n    eng.set(&#39;k&#39;, &#39;v&#39;, ttl=3)\n    assert eng.get(&#39;k&#39;) == &#39;v&#39;\n    eng.now += 3\n    try:\n        eng.get(&#39;k&#39;)\n    except KeyNotFound:\n        return &#39;ok&#39;\n    return &#39;violation&#39;\n\ne = MemoryEngine()\nprint(&#39;contract&#39;, contract(e))\nprint(&#39;set/get&#39;, execute(e, &#39;SET&#39;, &#39;b&#39;, &#39;2&#39;), execute(e, &#39;GET&#39;, &#39;b&#39;))\nprint(&#39;del&#39;, execute(e, &#39;DEL&#39;, &#39;b&#39;))\ntry:\n    execute(e, &#39;PING&#39;, &#39;x&#39;)\nexcept ValueError as err:\n    print(&#39;bad op&#39;, type(err).__name__)' :notes='["导入 threading，为引擎准备并发安全所需的锁", "自定义 KeyNotFound 继承 KeyError，把业务错误与 dict 的裸 KeyError 区分开", "类体只有 pass，异常类型本身就承载了语义", "MemoryEngine 是第一版存储实现，后面会被网络版与 WAL 版替换", "构造时初始化三个状态容器与时钟", "data 存键值、exp 存绝对过期时刻、now 是可推进的逻辑时钟", "整把锁保护复合操作，避免读—检查—删之间被切换", "_live 判断键是否仍有效，并顺带做惰性删除", "有过期时刻且已到达当前时钟，判定为失效", "惰性删除：清掉值", "同时清掉过期表项，避免残留", "返回 False 表示该键已不可用", "其余情况以键是否在 data 中为准", "get 是读路径，也要在锁内完成检查与取值", "进入临界区，检查与返回不可被其它线程插入", "失效则抛业务异常，而不是返回 None 让调用方猜", "抛出 KeyNotFound，携带键名便于排查", "返回当前值", "set 写路径，ttl 为 0 表示永不过期", "写操作同样在锁内", "写入值", "记绝对过期时刻；无 ttl 时写 -1 作为哨兵", "delete 也要走 _live，过期键不能被当成成功删除", "锁内完成检查与删除", "失效则抛 KeyNotFound", "返回 False 分支已由 _live 处理，这里抛出异常", "删除键", "返回 True 表示确实删掉了一条记录", "execute 是命令分发层，只认识引擎的窄接口", "SET 转发三个参数，返回引擎的返回值", "GET 只转发键", "DEL 只转发键", "未知命令抛 ValueError，属于命令层错误语义", "contract 是一组对每个引擎都跑的契约断言", "带 ttl=3 写入一个键", "立即读取应拿到原值", "把逻辑时钟推进到过期时刻", "过期后再读应当失败", "尝试读取已过期键", "捕获 KeyNotFound 说明过期语义正确", "契约通过返回 ok", "若没抛异常则说明实现违约", "实例化内存引擎", "打印契约结果，ok 表示过期与错误语义达标", "SET 返回 None、GET 返回 &#39;2&#39;，命令层与引擎解耦", "DEL 返回 True", "未知命令触发命令层异常", "传入一个不存在的 op", "捕获 ValueError，验证错误语义可区分", "打印异常类型，确认是命令层错误而非数据层错误"]' title='第 129 讲 · 实战 08 · KV 贯穿线 ① 内存版与接口抽象' />
+<LineByLine code='import threading\n\nclass KeyNotFound(KeyError):\n    pass\n\nclass MemoryEngine:\n    def __init__(self):\n        self.data, self.exp, self.now = {}, {}, 0\n        self.lock = threading.Lock()\n    def _live(self, key):\n        if self.exp.get(key, -1) != -1 and self.exp[key] &lt;= self.now:\n            del self.data[key]\n            del self.exp[key]\n            return False\n        return key in self.data\n    def get(self, key):\n        with self.lock:\n            if not self._live(key):\n                raise KeyNotFound(key)\n            return self.data[key]\n    def set(self, key, value, ttl=0):\n        with self.lock:\n            self.data[key] = value\n            self.exp[key] = self.now + ttl if ttl else -1\n    def delete(self, key):\n        with self.lock:\n            if not self._live(key):\n                raise KeyNotFound(key)\n            del self.data[key]\n            return True\n\ndef execute(eng, op, key, value=&#39;&#39;, ttl=0):\n    if op == &#39;SET&#39;: return eng.set(key, value, ttl)\n    if op == &#39;GET&#39;: return eng.get(key)\n    if op == &#39;DEL&#39;: return eng.delete(key)\n    raise ValueError(&#39;unknown op &#39; + op)\n\ndef contract(eng):\n    eng.set(&#39;k&#39;, &#39;v&#39;, ttl=3)\n    assert eng.get(&#39;k&#39;) == &#39;v&#39;\n    eng.now += 3\n    try:\n        eng.get(&#39;k&#39;)\n    except KeyNotFound:\n        return &#39;ok&#39;\n    return &#39;violation&#39;\n\ne = MemoryEngine()\nprint(&#39;contract&#39;, contract(e))\nprint(&#39;set/get&#39;, execute(e, &#39;SET&#39;, &#39;b&#39;, &#39;2&#39;), execute(e, &#39;GET&#39;, &#39;b&#39;))\nprint(&#39;del&#39;, execute(e, &#39;DEL&#39;, &#39;b&#39;))\ntry:\n    execute(e, &#39;PING&#39;, &#39;x&#39;)\nexcept ValueError as err:\n    print(&#39;bad op&#39;, type(err).__name__)' :notes='["导入 threading，为引擎准备并发安全所需的锁", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义 KeyNotFound 继承 KeyError，把业务错误与 dict 的裸 KeyError 区分开", "类体只有 pass，异常类型本身就承载了语义", "空行，只用于分隔逻辑块，不影响执行结果。", "MemoryEngine 是第一版存储实现，后面会被网络版与 WAL 版替换", "构造时初始化三个状态容器与时钟", "data 存键值、exp 存绝对过期时刻、now 是可推进的逻辑时钟", "整把锁保护复合操作，避免读—检查—删之间被切换", "_live 判断键是否仍有效，并顺带做惰性删除", "有过期时刻且已到达当前时钟，判定为失效", "惰性删除：清掉值", "同时清掉过期表项，避免残留", "返回 False 表示该键已不可用", "其余情况以键是否在 data 中为准", "get 是读路径，也要在锁内完成检查与取值", "进入临界区，检查与返回不可被其它线程插入", "失效则抛业务异常，而不是返回 None 让调用方猜", "抛出 KeyNotFound，携带键名便于排查", "返回当前值", "set 写路径，ttl 为 0 表示永不过期", "写操作同样在锁内", "写入值", "记绝对过期时刻；无 ttl 时写 -1 作为哨兵", "delete 也要走 _live，过期键不能被当成成功删除", "锁内完成检查与删除", "失效则抛 KeyNotFound", "返回 False 分支已由 _live 处理，这里抛出异常", "删除键", "返回 True 表示确实删掉了一条记录", "空行，只用于分隔逻辑块，不影响执行结果。", "execute 是命令分发层，只认识引擎的窄接口", "SET 转发三个参数，返回引擎的返回值", "GET 只转发键", "DEL 只转发键", "未知命令抛 ValueError，属于命令层错误语义", "空行，只用于分隔逻辑块，不影响执行结果。", "contract 是一组对每个引擎都跑的契约断言", "带 ttl=3 写入一个键", "立即读取应拿到原值", "把逻辑时钟推进到过期时刻", "过期后再读应当失败", "尝试读取已过期键", "捕获 KeyNotFound 说明过期语义正确", "契约通过返回 ok", "若没抛异常则说明实现违约", "空行，只用于分隔逻辑块，不影响执行结果。", "实例化内存引擎", "打印契约结果，ok 表示过期与错误语义达标", "SET 返回 None、GET 返回 &#39;2&#39;，命令层与引擎解耦", "DEL 返回 True", "未知命令触发命令层异常", "传入一个不存在的 op", "捕获 ValueError，验证错误语义可区分", "打印异常类型，确认是命令层错误而非数据层错误"]' title='第 129 讲 · 实战 08 · KV 贯穿线 ① 内存版与接口抽象' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='compare2' title='第 129 讲 · 命令模型与窄接口：把变化挡在抽象后面' labels='命令模型与窄接口：把变化挡在抽象后面|内存实现与过期策略：惰性删除与逻辑时钟|并发安全、契约测试与替换点' caption='为四讲演进线奠定可替换的接口' />
+<ConceptDiagram type='compare2' title='第 129 讲 · 命令模型与窄接口：把变化挡在抽象后面' labels='命令模型与窄接口：把变化挡在抽象后面|内存实现与过期策略：惰性删除与逻辑时钟|并发安全、契约测试与替换点|错误语义' caption='为四讲演进线奠定可替换的接口' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 内存实现与过期策略：惰性删除与逻辑时钟
@@ -199,9 +199,9 @@ print('lock type', type(lock).__name__)
 
 <OutputBox title='原理验证' output='multi-bytecode True\nguarded count 500\nlock type lock' />
 
-<Term word='命令模型与协议设计' text='命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演进线里始终不变。错误' />
+<Term word='命令模型与协议设计' text='命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演进线里始终不变。错误…' />
 
-<Term word='存储引擎接口' text='内存引擎用两个字典：`data` 存键值、`exp` 存绝对过期时刻，逻辑时钟 `now` 由测试推进而不是直接读系统时间，这样过期行为可复现。TTL 记绝对时刻而非倒计时，才能避免时钟调整带来的漂移；生产里用 `time.monotonic()`（不受系统时间回拨影响）而不要用 `time.time()`。`ttl`' />
+<Term word='存储引擎接口' text='内存引擎用两个字典：`data` 存键值、`exp` 存绝对过期时刻，逻辑时钟 `now` 由测试推进而不是直接读系统时间，这样过期行为可复现。TTL 记绝对时刻而非倒计时，才能避免时钟调整带来的漂移；生产里用 `time.monotonic()`（不受系统时间回拨影响）而不要用 `time.time()`。`ttl`…' />
 
 
 ## 契约测试与替换点：四讲演进的同一组用例
@@ -334,7 +334,7 @@ print('structural_issubclass', issubclass(MemoryEngine, Engine))
 
 <OutputBox title='扩展示例运行结果' output='protocol_members [&#39;delete&#39;, &#39;get&#39;, &#39;set&#39;]\nis_protocol True\nisinstance_memory True\nstructural_issubclass True' />
 
-<LineByLine code='from typing import Protocol, runtime_checkable, get_protocol_members\n\n@runtime_checkable\nclass Engine(Protocol):\n    def get(self, key): ...\n    def set(self, key, value): ...\n    def delete(self, key): ...\n\nprint(&#39;protocol_members&#39;, sorted(get_protocol_members(Engine)))\nprint(&#39;is_protocol&#39;, Engine._is_protocol)\n\nclass MemoryEngine:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key)\n    def set(self, key, value):\n        self._d[key] = value\n    def delete(self, key):\n        self._d.pop(key, None)\n\nprint(&#39;isinstance_memory&#39;, isinstance(MemoryEngine(), Engine))\nprint(&#39;structural_issubclass&#39;, issubclass(MemoryEngine, Engine))' :notes='["声明为运行时可检查协议，方法体用占位符", "get_protocol_members 返回协议声明的成员集合", "_is_protocol 由 _ProtocolMeta 置为 True", "内存实现完全不继承 Engine", "runtime_checkable 的 isinstance 只查成员存在", "同理 issubclass 对未继承但成员齐全的类也返回 True", "命令用 frozen dataclass 表达 (op,key,value,ttl)；错误语义自定义 KVError 层级，别用裸 KeyError", "存储引擎窄接口只有 get/set/delete，用 typing.Protocol（PEP 544，3.8）声明，实现类靠结构化子类型满足", "TTL 记绝对过期时刻 + time.monotonic；惰性删除简单但冷键需定期抽样扫描，SET 时要清旧 exp", "GIL 只保证单条字节码原子，读—检查—删是多指令复合操作，必须 threading.Lock 整体包住", "高并发用 hash(key) % N 锁分片；内置 hash 随机化只影响分片选择，不影响正确性", "契约测试对每个实现跑同一组断言，是四讲演进中安全替换的唯一证据；基准要预热并记 p99", "命令用 frozen dataclass 表达 (op,key,value,ttl)；错误语义自定义 KVError 层级，别用裸 KeyError", "存储引擎窄接口只有 get/set/delete，用 typing.Protocol（PEP 544，3.8）声明，实现类靠结构化子类型满足", "TTL 记绝对过期时刻 + time.monotonic；惰性删除简单但冷键需定期抽样扫描，SET 时要清旧 exp", "GIL 只保证单条字节码原子，读—检查—删是多指令复合操作，必须 threading.Lock 整体包住", "高并发用 hash(key) % N 锁分片；内置 hash 随机化只影响分片选择，不影响正确性", "契约测试对每个实现跑同一组断言，是四讲演进中安全替换的唯一证据；基准要预热并记 p99", "命令用 frozen dataclass 表达 (op,key,value,ttl)；错误语义自定义 KVError 层级，别用裸 KeyError"]' title='扩展示例逐行讲解' />
+<LineByLine code='from typing import Protocol, runtime_checkable, get_protocol_members\n\n@runtime_checkable\nclass Engine(Protocol):\n    def get(self, key): ...\n    def set(self, key, value): ...\n    def delete(self, key): ...\n\nprint(&#39;protocol_members&#39;, sorted(get_protocol_members(Engine)))\nprint(&#39;is_protocol&#39;, Engine._is_protocol)\n\nclass MemoryEngine:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key)\n    def set(self, key, value):\n        self._d[key] = value\n    def delete(self, key):\n        self._d.pop(key, None)\n\nprint(&#39;isinstance_memory&#39;, isinstance(MemoryEngine(), Engine))\nprint(&#39;structural_issubclass&#39;, issubclass(MemoryEngine, Engine))' :notes='["声明为运行时可检查协议，方法体用占位符", "空行，只用于分隔逻辑块，不影响执行结果。", "get_protocol_members 返回协议声明的成员集合", "_is_protocol 由 _ProtocolMeta 置为 True", "内存实现完全不继承 Engine", "runtime_checkable 的 isinstance 只查成员存在", "同理 issubclass 对未继承但成员齐全的类也返回 True", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;protocol_members&#39;, sorted(get_protocol_member` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;is_protocol&#39;, Engine._is_protocol)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class MemoryEngine:` 的作用，可对照上方输出逐项核对。", "这一行 `def __init__(self):` 的作用，可对照上方输出逐项核对。", "这一行 `self._d = {}` 的作用，可对照上方输出逐项核对。", "这一行 `def get(self, key):` 的作用，可对照上方输出逐项核对。", "这一行 `return self._d.get(key)` 的作用，可对照上方输出逐项核对。", "这一行 `def set(self, key, value):` 的作用，可对照上方输出逐项核对。", "这一行 `self._d[key] = value` 的作用，可对照上方输出逐项核对。", "这一行 `def delete(self, key):` 的作用，可对照上方输出逐项核对。", "这一行 `self._d.pop(key, None)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;isinstance_memory&#39;, isinstance(MemoryEngine()` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;structural_issubclass&#39;, issubclass(MemoryEngi` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ## 窄接口、错误层级与四讲共用的契约测试
@@ -390,8 +390,21 @@ print('structural_issubclass', issubclass(MemoryEngine, Engine))
 python -m compileall -q . && python -m pytest -q
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 命令模型与协议设计 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 命令模型与协议设计 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 <Predict no='129-5' q='ttl=3 的键在逻辑时钟推进 3 后再 GET，契约测试最可能的结果是？' :options='["抛 KeyNotFound，契约返回 ok", "仍返回原值", "返回 None"]' answer='0' output='contract ok' explain='过期时刻是 now + ttl，推进到相等时按 &lt;= 判为失效；惰性删除在 get 里清掉键并抛 KeyNotFound，契约函数捕获它返回 ok。' />
 
 <FillBlank no='129-6' tpl='___ threading' :answers='["import"]' hint='回想本讲关于 命令模型与协议设计 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 命令模型与窄接口：把变化挡在抽象后面 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/129-kv-memory.py`
+
+```bash
+python3 examples/lessons/129-kv-memory.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/129-kv-memory.py) · [全部示例代码索引](/examples/)

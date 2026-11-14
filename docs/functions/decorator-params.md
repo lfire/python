@@ -33,7 +33,7 @@ description: 处理生产环境里的装饰器组合
 | 一句话目标 | 处理生产环境里的装饰器组合 |
 | 为下一讲铺垫 | 偏函数、可调用对象与函数式工具 |
 
-<Callout type="tip" title='核心心智模型' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用 `repeat(' />
+<Callout type="tip" title='核心心智模型' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用…' />
 
 
 ## 三层函数结构与少一层的报错
@@ -74,7 +74,7 @@ print(work.__name__)
 
 <OutputBox title='主示例运行结果' output='enter outer\nenter inner\nrun 1\nexit inner\nexit outer\n2\nwork' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from functools import wraps\n\ndef tag(label):\n    def deco(fn):\n        @wraps(fn)\n        def wrapper(*a, **k):\n            print(&#39;enter&#39;, label)\n            r = fn(*a, **k)\n            print(&#39;exit&#39;, label)\n            return r\n        return wrapper\n    return deco\n\n@tag(&#39;outer&#39;)\n@tag(&#39;inner&#39;)\ndef work(x):\n    print(&#39;run&#39;, x)\n    return x + 1\n\nprint(work(1))\nprint(work.__name__)' :notes='["导入 wraps，保证叠加后元数据仍指向原函数", "定义带参装饰器工厂，外层收标签配置", "中层接收被装饰函数", "用 wraps 把名字与 __wrapped__ 装到 wrapper", "内层接收每次调用的实参", "进入时打印标签，用于观察执行顺序", "调用下一层（可能是另一个 wrapper 或原函数）", "退出时再打印一条，finally 类清理会逆序", "把结果原样返回", "中层必须返回 wrapper，否则 f 会变成 None", "外层必须返回 deco，否则 @tag(...) 得到 None", "外层装饰器，定义时最后包装、成为最外层", "内层装饰器，定义时最先包装", "定义真正的业务函数", "打印一次运行标记", "返回结果值", "调用 work(1)：先看到各层 enter / exit，再打印返回值 2", "两层 wraps 传播后 __name__ 仍是 work"]' title='第 033 讲 · 带参装饰器、叠加顺序与类装饰器' />
+<LineByLine code='from functools import wraps\n\ndef tag(label):\n    def deco(fn):\n        @wraps(fn)\n        def wrapper(*a, **k):\n            print(&#39;enter&#39;, label)\n            r = fn(*a, **k)\n            print(&#39;exit&#39;, label)\n            return r\n        return wrapper\n    return deco\n\n@tag(&#39;outer&#39;)\n@tag(&#39;inner&#39;)\ndef work(x):\n    print(&#39;run&#39;, x)\n    return x + 1\n\nprint(work(1))\nprint(work.__name__)' :notes='["导入 wraps，保证叠加后元数据仍指向原函数", "空行，只用于分隔逻辑块，不影响执行结果。", "定义带参装饰器工厂，外层收标签配置", "中层接收被装饰函数", "用 wraps 把名字与 __wrapped__ 装到 wrapper", "内层接收每次调用的实参", "进入时打印标签，用于观察执行顺序", "调用下一层（可能是另一个 wrapper 或原函数）", "退出时再打印一条，finally 类清理会逆序", "把结果原样返回", "中层必须返回 wrapper，否则 f 会变成 None", "外层必须返回 deco，否则 @tag(...) 得到 None", "空行，只用于分隔逻辑块，不影响执行结果。", "外层装饰器，定义时最后包装、成为最外层", "内层装饰器，定义时最先包装", "定义真正的业务函数", "打印一次运行标记", "返回结果值", "空行，只用于分隔逻辑块，不影响执行结果。", "调用 work(1)：先看到各层 enter / exit，再打印返回值 2", "两层 wraps 传播后 __name__ 仍是 work"]' title='第 033 讲 · 带参装饰器、叠加顺序与类装饰器' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -207,13 +207,13 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 函数对象本身是非数据描述符（有 `__get__`），而普通类实例没有 `__get__`，所以把类装饰器实例放进类属性时不会自动绑定 self，这正是描述符协议（第 040 讲）要处理的问题。
 
-<SequenceDiagram title='第 033 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "三层函数结构与少一层的报错", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "叠加顺序：包装自下而上、执行", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
+<SequenceDiagram title='第 033 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "三层函数结构与少一层的报错", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "叠加顺序：包装自下而上、执行…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：带参装饰器少写一层 return，报 Typ", "body": "外层没返回 deco 或中层没返回 wrapper，得到 None 却被当函数调用", "tip": "牢记三层：外层 return deco、中层 return wrapper、内层 return fn(*a, **k)；逐层打印返回值定位断点"}, {"title": "第 2 步：@cache 写在 @auth 外面，未授权", "body": "最外层 cache 命中后直接返回，根本不会调用内层 auth", "tip": "把鉴权、限流这类早失败的装饰器放外层，缓存放内侧；用进入 / 退出打印验证顺序"}, {"title": "第 3 步：类装饰器实例放进类里当方法用，self 没自", "body": "普通实例没有 __get__，不是描述符，不会做方法绑定", "tip": "给类实现 __get__ 返回绑定方法，或改用闭包函数装饰器；理解函数描述符后再设计"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：带参装饰器少写一层 return，报 Typ…", "body": "外层没返回 deco 或中层没返回 wrapper，得到 None 却被当函数调用", "tip": "牢记三层：外层 return deco、中层 return wrapper、内层 return fn(*a, **k)；逐层打印返回值定位断点"}, {"title": "第 2 步：@cache 写在 @auth 外面，未授权…", "body": "最外层 cache 命中后直接返回，根本不会调用内层 auth", "tip": "把鉴权、限流这类早失败的装饰器放外层，缓存放内侧；用进入 / 退出打印验证顺序"}, {"title": "第 3 步：类装饰器实例放进类里当方法用，self 没自…", "body": "普通实例没有 __get__，不是描述符，不会做方法绑定", "tip": "给类实现 __get__ 返回绑定方法，或改用闭包函数装饰器；理解函数描述符后再设计"}]' />
 
-<Term word='三层函数结构' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用 `repeat(3)` 得到 dec' />
+<Term word='三层函数结构' text='带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。`@repeat(3)` 先调用 `repeat(3)` 得到 dec…' />
 
-<Term word='叠加顺序由近及远' text='`@d1` / `@d2` / `def f` 等价于 `f = d1(d2(f))`：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 `d1.wrapper` → `d2.wrapper` → f，也就是从上往下执行；返回时各层的 `finally` 清理再逆序退出。' />
+<Term word='叠加顺序由近及远' text='`@d1` / `@d2` / `def f` 等价于 `f = d1(d2(f))`：定义时离 def 最近的 d2 先包装，d1 后包装并成为最外层对象。调用时从最外层进入，顺序是 `d1.wrapper` → `d2.wrapper` → f，也就是从上往下执行；返回时各层的 `finally` 清理再逆序退出。…' />
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "from functools import wraps\n\ndef tag(label):\n    def deco(fn):\n        @wraps(fn)\n        def wrapper(*a, **k):\n            print(&#39;enter&#39;, label)\n            r = fn(*a, **k)\n            print(&#39;exit&#39;, label)\n            return r\n        return wrapper\n    return deco\n\n@tag(&#39;outer&#39;)\n@tag(&#39;inner&#39;)\ndef work(x):\n    print(&#39;run&#39;, x)\n    return x + 1\n\nprint(work(1))\nprint(work.__name__)", "note": "三层函数结构与少一层的报错"}, {"label": "对照 / 进阶", "code": "from functools import update_wrapper\n\nclass Count:\n    def __init__(self, fn):\n        self.fn = fn\n        self.calls = 0\n        update_wrapper(self, fn)\n    def __call__(self, *a, **k):\n        self.calls += 1\n        return self.fn(*a, **k)\n\n@Count\ndef add(a, b):\n    return a + b\n\nprint(add(1, 2), add(3, 4), add.calls, add.__name__)\n\ndef maybe(enabled):\n    def deco(fn):\n        return fn if not enabled else Count(fn)\n    return deco\n\n@maybe(False)\ndef raw(x):\n    return x\nprint(type(raw).__name__, raw(9), hasattr(raw, &#39;__wrapped__&#39;))", "note": "叠加顺序：包装自下而上、执行自上而下"}]' title='两种写法切换看' />
 
@@ -264,13 +264,13 @@ print(report.__name__)
 
 <Callout type="idea" title='落地提示' text='对外发布的装饰器要提供参数化开关与 bypass 路径，方便在测试与灰度环境里绕开' />
 
-<CheckList id='P033b' title='上线前自检' :items='["能复现并解释「带参装饰器少写一层 return，报 TypeError: 」", "能复现并解释「@cache 写在 @auth 外面，未授权结果被缓存」", "能复现并解释「类装饰器实例放进类里当方法用，self 没自动传入」", "能用一条命令验证 三层函数结构", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P033b' title='上线前自检' :items='["能复现并解释「带参装饰器少写一层 return，报 TypeError…」", "能复现并解释「@cache 写在 @auth 外面，未授权结果被缓存」", "能复现并解释「类装饰器实例放进类里当方法用，self 没自动传入」", "能用一条命令验证 三层函数结构", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print(f(4))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 三层函数结构 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 三层函数结构 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 少一层 return、顺序颠倒与 self 丢失
@@ -322,3 +322,16 @@ python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print
 3. @d1 / @d2 / def f 等价 f = d1(d2(f))：包装自下而上、调用进入自上而下、finally 逆序退出
 
 [下一讲：偏函数、可调用对象与函数式工具](/functions/partial)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/033-decorator-params.py`
+
+```bash
+python3 examples/lessons/033-decorator-params.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/033-decorator-params.py) · [全部示例代码索引](/examples/)

@@ -53,7 +53,7 @@ TypeError: Instance and class checks can only be used with @runtime_checkable pr
 | 能否提供默认实现 | 能，基类可写具体方法 | 不能，方法体通常是 ... |
 | 主要作用层 | 运行时分派与复用 | 静态检查（mypy / pyright） |
 
-<Callout type="tip" title='核心心智模型' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。`abc' />
+<Callout type="tip" title='核心心智模型' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。…' />
 
 
 ## 关键 API、版本与行为
@@ -69,9 +69,9 @@ TypeError: Instance and class checks can only be used with @runtime_checkable pr
 | @runtime_checkable | 开放 isinstance，仅查成员名 | 不校验签名与返回类型，别当校验器 |
 | @dataclass 结合 Protocol | 注解不产生运行时约束 | 脏数据校验交给 pydantic |
 
-<Term word='鸭子类型与 EAFP' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。`abc` 模块提供的是显式' />
+<Term word='鸭子类型与 EAFP' text='Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than Permission）：直接调用方法，失败再捕获 `AttributeError` / `TypeError`，而不是先做一串 `LBYL` 的 `isinstance` 检查。`abc` 模块提供的是显式…' />
 
-<Term word='abc.ABC 与 abstractmethod' text='`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 `Protocol` 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 `Typ' />
+<Term word='abc.ABC 与 abstractmethod' text='`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 `Protocol` 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛…' />
 
 
 ## 鸭子类型、EAFP 与 ABC 的显式契约
@@ -124,13 +124,13 @@ print('registered', isinstance(Duck(), Reader), 'has read:', hasattr(Duck(), 're
 
 <OutputBox title='主示例运行结果' output='TypeError abstract\nisinstance True\nprotocol isinstance True\nregistered True has read: True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from abc import ABC, abstractmethod\nfrom typing import Protocol, runtime_checkable\n\nclass Reader(ABC):\n    @abstractmethod\n    def read(self):\n        pass\nclass FileReader(Reader):\n    def read(self):\n        return &#39;file-data&#39;\n\ntry:\n    Reader()\nexcept TypeError as e:\n    print(type(e).__name__, &#39;abstract&#39;)\nprint(&#39;isinstance&#39;, isinstance(FileReader(), Reader))\n\n@runtime_checkable\nclass HasRead(Protocol):\n    def read(self) -&gt; str:\n        ...\nclass Duck:\n    def read(self):\n        return &#39;duck-data&#39;\nprint(&#39;protocol isinstance&#39;, isinstance(Duck(), HasRead))\nReader.register(Duck)\nprint(&#39;registered&#39;, isinstance(Duck(), Reader), &#39;has read:&#39;, hasattr(Duck(), &#39;read&#39;))' :notes='["导入 ABC 与 abstractmethod，建立显式契约", "导入 Protocol 与 runtime_checkable，建立结构化契约", "继承 ABC，元类为 ABCMeta", "@abstractmethod 把方法名写入 __abstractmethods__", "声明抽象方法 read", "方法体用 pass 占位", "具体子类必须实现 read 才能实例化", "实现 read", "返回固定数据，便于后续 isinstance 验证", "尝试直接实例化含抽象方法的类", "Reader() 会触发实例化检查", "含抽象方法时抛 TypeError", "打印异常类型，避开版本相关的完整消息", "具体子类是 Reader 的实例，isinstance 为 True", "@runtime_checkable 让协议可用于 isinstance", "声明结构化协议，只要求有 read 成员", "方法签名带返回注解，注解仅静态期生效", "方法体用 Ellipsis 占位", "Duck 完全不继承 Reader", "但结构上实现了 read", "返回固定数据，供运行时判定", "runtime_checkable 按成员名判定，结构兼容返回 True", "把 Duck 注册成 Reader 的虚拟子类", "注册后 isinstance 为 True；Duck 本来就有 read，hasattr 为 True"]' title='第 044 讲 · 鸭子类型、抽象基类与 Protocol' />
+<LineByLine code='from abc import ABC, abstractmethod\nfrom typing import Protocol, runtime_checkable\n\nclass Reader(ABC):\n    @abstractmethod\n    def read(self):\n        pass\nclass FileReader(Reader):\n    def read(self):\n        return &#39;file-data&#39;\n\ntry:\n    Reader()\nexcept TypeError as e:\n    print(type(e).__name__, &#39;abstract&#39;)\nprint(&#39;isinstance&#39;, isinstance(FileReader(), Reader))\n\n@runtime_checkable\nclass HasRead(Protocol):\n    def read(self) -&gt; str:\n        ...\nclass Duck:\n    def read(self):\n        return &#39;duck-data&#39;\nprint(&#39;protocol isinstance&#39;, isinstance(Duck(), HasRead))\nReader.register(Duck)\nprint(&#39;registered&#39;, isinstance(Duck(), Reader), &#39;has read:&#39;, hasattr(Duck(), &#39;read&#39;))' :notes='["导入 ABC 与 abstractmethod，建立显式契约", "导入 Protocol 与 runtime_checkable，建立结构化契约", "空行，只用于分隔逻辑块，不影响执行结果。", "继承 ABC，元类为 ABCMeta", "@abstractmethod 把方法名写入 __abstractmethods__", "声明抽象方法 read", "方法体用 pass 占位", "具体子类必须实现 read 才能实例化", "实现 read", "返回固定数据，便于后续 isinstance 验证", "空行，只用于分隔逻辑块，不影响执行结果。", "尝试直接实例化含抽象方法的类", "Reader() 会触发实例化检查", "含抽象方法时抛 TypeError", "打印异常类型，避开版本相关的完整消息", "具体子类是 Reader 的实例，isinstance 为 True", "空行，只用于分隔逻辑块，不影响执行结果。", "@runtime_checkable 让协议可用于 isinstance", "声明结构化协议，只要求有 read 成员", "方法签名带返回注解，注解仅静态期生效", "方法体用 Ellipsis 占位", "Duck 完全不继承 Reader", "但结构上实现了 read", "返回固定数据，供运行时判定", "runtime_checkable 按成员名判定，结构兼容返回 True", "把 Duck 注册成 Reader 的虚拟子类", "注册后 isinstance 为 True；Duck 本来就有 read，hasattr 为 True"]' title='第 044 讲 · 鸭子类型、抽象基类与 Protocol' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='compare2' title='第 044 讲 · 鸭子类型、EAFP 与 ABC 的显式契约' labels='鸭子类型、EAFP 与 ABC 的显式契约|Protocol 的结构化子类型与 runt|选型与运行时成本：两条契约各自落在哪一层' caption='在灵活与契约之间做出正确取舍' />
+<ConceptDiagram type='compare2' title='第 044 讲 · 鸭子类型、EAFP 与 ABC 的显式契约' labels='鸭子类型、EAFP 与 ABC 的显式契约|Protocol 的结构化子类型与 runt…|选型与运行时成本：两条契约各自落在哪一层|接口隔离' caption='在灵活与契约之间做出正确取舍' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## Protocol 的结构化子类型与 runtime_checkable 边界
@@ -209,7 +209,7 @@ print('is_protocol:', PlainProtocol._is_protocol)
 | ABC 实例化抛 TypeError | __abstractmethods__ 非空 | 实现全部抽象方法或去掉 @abstractmethod |
 | isinstance 变慢 | ABCMeta 缓存未命中 / Protocol 成员多 | 缓存预热后复测，缩减协议成员 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：为了规范给所有内部类型套一层 ABC", "body": "ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束", "tip": "内部类型直接用鸭子类型或 Protocol 描述最小需求；确需公共实现与 isinstance 分派时才引入 ABC"}, {"title": "第 2 步：用 register 让第三方类通过 isi", "body": "ABCMeta.register 只写 _abc_registry 改类型判定，不继承也不校验方法是否真实存在", "tip": "改用真实继承获得默认实现，或在调用前显式探测并捕获 AttributeError；register 仅用于让判定认识外部类型"}, {"title": "第 3 步：对未加 @runtime_checkable", "body": "默认协议只能静态检查；加了装饰器也只按成员名 hasattr 判定，不比对参数与返回类型", "tip": "需要运行时判定时加 @runtime_checkable，并补白名单或真实调用探测；签名一致性交给 mypy / pyright"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：为了规范给所有内部类型套一层 ABC", "body": "ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束", "tip": "内部类型直接用鸭子类型或 Protocol 描述最小需求；确需公共实现与 isinstance 分派时才引入 ABC"}, {"title": "第 2 步：用 register 让第三方类通过 isi…", "body": "ABCMeta.register 只写 _abc_registry 改类型判定，不继承也不校验方法是否真实存在", "tip": "改用真实继承获得默认实现，或在调用前显式探测并捕获 AttributeError；register 仅用于让判定认识外部类型"}, {"title": "第 3 步：对未加 @runtime_checkable…", "body": "默认协议只能静态检查；加了装饰器也只按成员名 hasattr 判定，不比对参数与返回类型", "tip": "需要运行时判定时加 @runtime_checkable，并补白名单或真实调用探测；签名一致性交给 mypy / pyright"}]' />
 
 
 ## 选型与运行时成本：两条契约各自落在哪一层
@@ -277,13 +277,13 @@ print('output:', registry['csv'].export([1, 2, 3]))
 
 <Callout type="idea" title='落地提示' text='对外部生态用 Protocol 描述最小需求，对框架内部用 ABC 提供默认实现与复用' />
 
-<CheckList id='P044b' title='上线前自检' :items='["能复现并解释「为了规范给所有内部类型套一层 ABC」", "能复现并解释「用 register 让第三方类通过 isinstance 」", "能复现并解释「对未加 @runtime_checkable 的 Proto」", "能用一条命令验证 鸭子类型与 EAFP", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P044b' title='上线前自检' :items='["能复现并解释「为了规范给所有内部类型套一层 ABC」", "能复现并解释「用 register 让第三方类通过 isinstance…」", "能复现并解释「对未加 @runtime_checkable 的 Proto…」", "能用一条命令验证 鸭子类型与 EAFP", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 鸭子类型与 `EAFP` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 鸭子类型与 `EAFP` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -295,7 +295,7 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='为了规范给所有内部类型套一层 ABC：ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束' />
 
-<FlowTimeline :steps='[{"title": "鸭子类型、EAFP 与 ABC 的显式契约", "desc": "Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Fo…", "tone": "blue"}, {"title": "Protocol 的结构化子类型与 runtime_checkable 边界", "desc": "`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类…", "tone": "purple"}, {"title": "选型与运行时成本：两条契约各自落在哪一层", "desc": "把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 `isi…", "tone": "orange"}, {"title": "工程落地", "desc": "插件平台用 Protocol 描述最小接口并配白名单准入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "鸭子类型、EAFP 与 ABC 的显式契约", "desc": "Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Fo…", "tone": "blue"}, {"title": "Protocol 的结构化子类型与 runtim…", "desc": "`typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类…", "tone": "purple"}, {"title": "选型与运行时成本：两条契约各自落在哪一层", "desc": "把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做…", "tone": "orange"}, {"title": "工程落地", "desc": "插件平台用 Protocol 描述最小接口并配白名单准入", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 把取舍写进练习与自检
@@ -334,3 +334,16 @@ python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 3. ABCMeta.register 建虚拟子类，只改 issubclass/isinstance，不继承方法体也不校验成员
 
 [下一讲：元类：__new__、type 与类创建过程](/oop/metaclass)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/044-abc.py`
+
+```bash
+python3 examples/lessons/044-abc.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/044-abc.py) · [全部示例代码索引](/examples/)

@@ -35,9 +35,9 @@ single 面向交互式解释器，表达式语句会额外触发 `PRINT_EXPR` �
 
 关键边界：编译以整个字符串或模块为单位，语法错误在生成任何字节码之前就抛出，哪怕那行位于 `if False` 分支。
 
-<ConceptDiagram type='hub4' title='第 003 讲 · compile()：三种 mode 与 code object 的字段' labels='compile()：三种 mode 与 co|常量折叠与名字绑定：co_consts 里藏|__pycache__ 与 pyc：缓存判据' caption='亲手验证解释执行的完整链路' />
+<ConceptDiagram type='hub4' title='第 003 讲 · compile()：三种 mode 与 code object 的字段' labels='compile()：三种 mode 与 co…|常量折叠与名字绑定：co_consts 里藏…|__pycache__ 与 pyc：缓存判据…|__pycache__ 与 pyc 缓存' caption='亲手验证解释执行的完整链路' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## compile() 的三种 mode 与 code object 的字段
@@ -173,7 +173,7 @@ python -X pycache_prefix
 | 关闭写缓存 | PYTHONDONTWRITEBYTECODE=1 | 调试导入时避免误判 |
 | 预编译 | python -m compileall -q | 只读文件系统上缩短冷启动 |
 
-<FlowTimeline :steps='[{"title": "compile()：三种 mode 与 code object 的字段", "desc": "`compile()` 把源码字符串编译成 code object，是「源码到字节码…", "tone": "blue"}, {"title": "常量折叠与名字绑定：co_consts 里藏着什么", "desc": "编译器在 AST 到字节码阶段会做常量折叠：只由字面量构成的表达式会直接算出结果写进…", "tone": "purple"}, {"title": "__pycache__ 与 pyc：缓存判据、失效信号与部署取舍", "desc": "包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目…", "tone": "orange"}, {"title": "工程落地", "desc": "部署前自检：给字节码缓存留下可核对的证据", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "compile()：三种 mode 与 code…", "desc": "`compile()` 把源码字符串编译成 code object，是「源码到字节码…", "tone": "blue"}, {"title": "常量折叠与名字绑定：co_consts 里藏着什…", "desc": "编译器在 AST 到字节码阶段会做常量折叠：只由字面量构成的表达式会直接算出结果写进…", "tone": "purple"}, {"title": "__pycache__ 与 pyc：缓存判据、失…", "desc": "包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目…", "tone": "orange"}, {"title": "工程落地", "desc": "部署前自检：给字节码缓存留下可核对的证据", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ### 部署时 pyc 该留还是该删
@@ -255,7 +255,7 @@ with tempfile.TemporaryDirectory() as d:
 
 <Callout type="warn" title='本讲最容易踩的坑' text='改了 .py 文件，重新导入后新代码没生效：import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：改了 .py 文件，重新导入后新代码没生效", "body": "import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变", "tip": "重启进程，或用 importlib.reload(mod)；调试时用 PYTHONDONTWRITEBYTECODE=1 并手动删 __pycache__"}, {"title": "第 2 步：把语法错误写进 if False 分支里，以", "body": "编译以整个模块为单位，语法分析在生成字节码之前完成，任何位置的语法错误都会让 compile 直接抛 SyntaxError", "tip": "用 compile(src, fname, &#39;exec&#39;) 单独编译实验片段，或把可疑代码拆到独立模块"}, {"title": "第 3 步：把 pyc 当成可独立分发的编译产物", "body": "pyc 与解释器 magic number、源码 mtime 或哈希绑定，且不含源码与第三方依赖，拷到别的机器或版本可能直接失效", "tip": "交付源码加锁定依赖；需要缩短冷启动时用 python -m compileall 现场生成"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：改了 .py 文件，重新导入后新代码没生效", "body": "import 先查 sys.modules 进程内缓存，命中直接复用模块对象；即便读 pyc，也靠 mtime 与大小判断，同秒同大小改动可能被判为未变", "tip": "重启进程，或用 importlib.reload(mod)；调试时用 PYTHONDONTWRITEBYTECODE=1 并手动删 __pycache__"}, {"title": "第 2 步：把语法错误写进 if False 分支里，以…", "body": "编译以整个模块为单位，语法分析在生成字节码之前完成，任何位置的语法错误都会让 compile 直接抛 SyntaxError", "tip": "用 compile(src, fname, &#39;exec&#39;) 单独编译实验片段，或把可疑代码拆到独立模块"}, {"title": "第 3 步：把 pyc 当成可独立分发的编译产物", "body": "pyc 与解释器 magic number、源码 mtime 或哈希绑定，且不含源码与第三方依赖，拷到别的机器或版本可能直接失效", "tip": "交付源码加锁定依赖；需要缩短冷启动时用 python -m compileall 现场生成"}]' />
 
 
 ## 从 compile 到 pyc：练习、自测与速记
@@ -283,3 +283,16 @@ with tempfile.TemporaryDirectory() as d:
 3. co_consts 含常量折叠结果（6 * 7 变 42）、co_names 放全局名、co_code 是字节码字节串
 
 [下一讲：工具链全景：写代码、查问题、验质量](/guide/toolchain)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/003-hello.py`
+
+```bash
+python3 examples/lessons/003-hello.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/003-hello.py) · [全部示例代码索引](/examples/)

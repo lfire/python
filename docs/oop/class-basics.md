@@ -86,7 +86,7 @@ print(vars(a))
 
 <OutputBox title='主示例运行结果' output='[&#39;book&#39;] [] [&#39;pen&#39;]\nfunction method\nTrue True\n{&#39;owner&#39;: &#39;a&#39;, &#39;items&#39;: [&#39;book&#39;]}' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Cart:\n    shared = []\n    def __new__(cls, owner):\n        return super().__new__(cls)\n    def __init__(self, owner):\n        self.owner = owner\n        self.items = []\n    def add(self, item):\n        self.items.append(item)\n        return self.items\n\na = Cart(&#39;a&#39;)\nb = Cart(&#39;b&#39;)\na.add(&#39;book&#39;)\na.shared.append(&#39;pen&#39;)\nprint(a.items, b.items, b.shared)\nprint(type(Cart.add).__name__, type(a.add).__name__)\nprint(a.add.__self__ is a, a.add.__func__ is Cart.add)\nprint(vars(a))' :notes='["定义一个购物车类", "类属性 shared 是可变列表，会被所有实例共享", "重写 __new__，演示对象在此阶段分配", "用 super().__new__(cls) 真正创建实例并返回", "__init__ 只做初始化，不负责创建", "把 owner 写进实例字典", "每个实例拿到独立的 items 列表", "定义实例方法，形参 self 由绑定自动传入", "把商品追加到实例自己的列表", "返回列表便于观察", "创建两个独立实例", "创建第二个实例", "只给 a 加一件商品", "改动类属性 shared，所有实例都会看到", "a 有商品、b 的 items 仍空，但 b.shared 已被改", "类上取到的是 function，实例上取到的是 bound method", "__self__ 绑定 a，__func__ 指回类里的原函数", "vars(a) 显示实例字典里只有 owner 与 items"]' title='第 038 讲 · 类与实例：__init__、self 与属性' />
+<LineByLine code='class Cart:\n    shared = []\n    def __new__(cls, owner):\n        return super().__new__(cls)\n    def __init__(self, owner):\n        self.owner = owner\n        self.items = []\n    def add(self, item):\n        self.items.append(item)\n        return self.items\n\na = Cart(&#39;a&#39;)\nb = Cart(&#39;b&#39;)\na.add(&#39;book&#39;)\na.shared.append(&#39;pen&#39;)\nprint(a.items, b.items, b.shared)\nprint(type(Cart.add).__name__, type(a.add).__name__)\nprint(a.add.__self__ is a, a.add.__func__ is Cart.add)\nprint(vars(a))' :notes='["定义一个购物车类", "类属性 shared 是可变列表，会被所有实例共享", "重写 __new__，演示对象在此阶段分配", "用 super().__new__(cls) 真正创建实例并返回", "__init__ 只做初始化，不负责创建", "把 owner 写进实例字典", "每个实例拿到独立的 items 列表", "定义实例方法，形参 self 由绑定自动传入", "把商品追加到实例自己的列表", "返回列表便于观察", "空行，只用于分隔逻辑块，不影响执行结果。", "创建两个独立实例", "创建第二个实例", "只给 a 加一件商品", "改动类属性 shared，所有实例都会看到", "a 有商品、b 的 items 仍空，但 b.shared 已被改", "类上取到的是 function，实例上取到的是 bound method", "__self__ 绑定 a，__func__ 指回类里的原函数", "vars(a) 显示实例字典里只有 owner 与 items"]' title='第 038 讲 · 类与实例：__init__、self 与属性' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -99,9 +99,9 @@ print(vars(a))
 | 入口 | type.__call__ | 串起 __new__ 与 __init__ | C() 的完整链路，元类可拦截 |
 | self | 只是约定名 | 指向正在初始化的实例 | 写成别的名字合法但不合约定 |
 
-<ConceptDiagram type='hub4' title='第 038 讲 · __new__ 与 __init__ 的分工' labels='__new__ 与 __init__ 的分工|实例字典、类属性与方法绑定|__slots__、dataclass 与属' caption='建立对象创建与属性存储的准确模型' />
+<ConceptDiagram type='hub4' title='第 038 讲 · __new__ 与 __init__ 的分工' labels='__new__ 与 __init__ 的分工|实例字典、类属性与方法绑定|__slots__、dataclass 与属…|self 的本质' caption='建立对象创建与属性存储的准确模型' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 实例字典、类属性与方法绑定
@@ -166,9 +166,9 @@ function.__get__(obj, type(obj))
 
 `__slots__` 把实例字典替换成一组固定偏移的槽描述符，槽本身是数据描述符，既省掉每张哈希表的内存，也把可赋属性名限制在声明集合内，代价是失去 `__dict__` 与依赖它的机制。
 
-<Term word='类对象与实例对象' text='真正创建实例的是 `__new__(cls, *args, **kwargs)`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`，返回其它值会抛 `T' />
+<Term word='类对象与实例对象' text='真正创建实例的是 `__new__(cls, *args, **kwargs)`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`，返回其它值会抛…' />
 
-<Term word='__init__ 不是构造函数' text='实例属性默认存 `instance.__dict__`（一张 `dict`），类属性存 `Class.__dict__`（`mappingproxy`，不能像普通 `dict` 那样直接赋值修改）；`vars(obj)` 等价于 `obj.__dict__`。属性查找先查实例 `__dict__`、再查类 `__dic' />
+<Term word='__init__ 不是构造函数' text='实例属性默认存 `instance.__dict__`（一张 `dict`），类属性存 `Class.__dict__`（`mappingproxy`，不能像普通 `dict` 那样直接赋值修改）；`vars(obj)` 等价于 `obj.__dict__`。属性查找先查实例 `__dict__`、再查类…' />
 
 
 ## __slots__、dataclass 与属性边界
@@ -273,7 +273,7 @@ except AttributeError as e:
 
 <Compare :panels='[{"label": "主示例", "code": "class Cart:\n    shared = []\n    def __new__(cls, owner):\n        return super().__new__(cls)\n    def __init__(self, owner):\n        self.owner = owner\n        self.items = []\n    def add(self, item):\n        self.items.append(item)\n        return self.items\n\na = Cart(&#39;a&#39;)\nb = Cart(&#39;b&#39;)\na.add(&#39;book&#39;)\na.shared.append(&#39;pen&#39;)\nprint(a.items, b.items, b.shared)\nprint(type(Cart.add).__name__, type(a.add).__name__)\nprint(a.add.__self__ is a, a.add.__func__ is Cart.add)\nprint(vars(a))", "note": "__new__ 与 __init__ 的分工"}, {"label": "对照 / 进阶", "code": "from dataclasses import dataclass\n\nclass BadInit:\n    def __init__(self):\n        self.x = 1\n        return self.x\ntry:\n    BadInit()\nexcept TypeError as e:\n    print(type(e).__name__, str(e))\n\nclass SlotPoint:\n    __slots__ = (&#39;x&#39;, &#39;y&#39;)\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\np = SlotPoint(1, 2)\nprint(p.x, p.y, hasattr(p, &#39;__dict__&#39;))\ntry:\n    p.z = 3\nexcept AttributeError as e:\n    print(type(e).__name__, str(e))\n\n@dataclass\nclass Point:\n    x: int\n    y: int = 0\nq = Point(3)\nprint(q, q.x, q.y)", "note": "实例字典、类属性与方法绑定"}]' title='两种写法对照' note='差异集中在 类对象与实例对象；先看输出，再找背后的规则。' />
 
-<Callout type="tip" title='核心心智模型' text='真正创建实例的是 `__new__(cls, *args, **kwargs)`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`，' />
+<Callout type="tip" title='核心心智模型' text='真正创建实例的是 `__new__(cls, *args, **kwargs)`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`…' />
 
 
 ## 对象创建与属性赋值错因速查
@@ -288,7 +288,7 @@ except AttributeError as e:
 
 <Callout type="warn" title='本讲最容易踩的坑' text='所有状态放类属性，多个实例共享同一份可变数据：可变类属性存在类 __dict__，实例通过查找链看到的是同一个 list / dict' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：所有状态放类属性，多个实例共享同一份可变数据", "body": "可变类属性存在类 __dict__，实例通过查找链看到的是同一个 list / dict", "tip": "把每个实例独立的状态放进 __init__ 里的 self.x = []；类属性只放不可变常量"}, {"title": "第 2 步：在 __init__ 里 return 一个", "body": "__init__ 的返回值会被 type.__call__ 丢弃，非 None 即报错", "tip": "__init__ 只做赋值、不写 return 值；需要计算后的对象用 __new__ 或工厂方法"}, {"title": "第 3 步：给 __slots__ 类的实例赋未声明属性", "body": "slots 去掉了实例 __dict__，可赋名字被限制在声明集合内", "tip": "把字段加进 __slots__，或去掉 slots；需要动态属性时在 slots 里显式加 &#39;__dict__&#39;"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：所有状态放类属性，多个实例共享同一份可变数据", "body": "可变类属性存在类 __dict__，实例通过查找链看到的是同一个 list / dict", "tip": "把每个实例独立的状态放进 __init__ 里的 self.x = []；类属性只放不可变常量"}, {"title": "第 2 步：在 __init__ 里 return 一个…", "body": "__init__ 的返回值会被 type.__call__ 丢弃，非 None 即报错", "tip": "__init__ 只做赋值、不写 return 值；需要计算后的对象用 __new__ 或工厂方法"}, {"title": "第 3 步：给 __slots__ 类的实例赋未声明属性…", "body": "slots 去掉了实例 __dict__，可赋名字被限制在声明集合内", "tip": "把字段加进 __slots__，或去掉 slots；需要动态属性时在 slots 里显式加 &#39;__dict__&#39;"}]' />
 
 <CheckList id='P038a' title='学完你应当能' :items='["能讲清 __new__ 与 __init__ 的分工", "能讲清 实例字典、类属性与方法绑定", "能讲清 __slots__、dataclass 与属性边界", "能在工程里处理 self 的本质"]' />
 
@@ -329,3 +329,16 @@ except AttributeError as e:
 3. 实例属性存 obj.__dict__，类属性存 Class.__dict__（mappingproxy）；查找先实例后类，实例同名键遮蔽类属性
 
 [下一讲：属性查找、MRO 与 super](/oop/mro)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/038-class-basics.py`
+
+```bash
+python3 examples/lessons/038-class-basics.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/038-class-basics.py) · [全部示例代码索引](/examples/)

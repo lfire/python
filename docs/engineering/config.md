@@ -82,7 +82,7 @@ print('bool trap', bool('false'))
 
 <OutputBox title='主示例运行结果' output='port 9100 debug True host prod\nenv var prod\nbool trap True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import os\n\ndef parse_bool(v):\n    return v.strip().lower() in (&#39;1&#39;, &#39;true&#39;, &#39;yes&#39;, &#39;on&#39;)\n\ndef load(env, dotenv_text=&#39;&#39;, overrides=None):\n    cfg = {&#39;PORT&#39;: &#39;8000&#39;, &#39;DEBUG&#39;: &#39;false&#39;, &#39;DB_HOST&#39;: &#39;localhost&#39;}\n    for line in dotenv_text.splitlines():\n        line = line.strip()\n        if line and not line.startswith(&#39;#&#39;) and &#39;=&#39; in line:\n            k, v = line.split(&#39;=&#39;, 1)\n            cfg[k.strip()] = v.strip()\n    for k in list(cfg):\n        if k in env:\n            cfg[k] = env[k]\n    if overrides:\n        cfg.update(overrides)\n    return {&#39;port&#39;: int(cfg[&#39;PORT&#39;]), &#39;debug&#39;: parse_bool(cfg[&#39;DEBUG&#39;]),\n            &#39;host&#39;: cfg[&#39;DB_HOST&#39;]}\n\nenv = {&#39;PORT&#39;: &#39;9100&#39;}\ndotenv = &#39;PORT=9000&#39; + chr(10) + &#39;DEBUG=true&#39; + chr(10)\nc = load(env, dotenv, overrides={&#39;DB_HOST&#39;: &#39;prod&#39;})\nprint(&#39;port&#39;, c[&#39;port&#39;], &#39;debug&#39;, c[&#39;debug&#39;], &#39;host&#39;, c[&#39;host&#39;])\nos.environ[&#39;APP_MODE&#39;] = &#39;prod&#39;\nprint(&#39;env var&#39;, os.environ[&#39;APP_MODE&#39;])\ndel os.environ[&#39;APP_MODE&#39;]\nprint(&#39;bool trap&#39;, bool(&#39;false&#39;))' :notes='["导入 os 读取进程环境变量", "定义布尔归一：只认 1/true/yes/on", "模拟 pydantic-settings 的分层加载函数", "默认值层：端口 8000、DEBUG 关、主机 localhost", "逐行解析 .env 文本", "去掉首尾空白", "跳过空行、注释行与无等号行", "按第一个等号拆键值", "用 .env 的值覆盖默认值", "进程环境变量层：只对已知键生效", "env 里有同名键就覆盖上一层", "显式覆盖层：优先级最高", "overrides 最后写入", "把 PORT 转 int、DEBUG 归一 bool，得到类型化配置", "模拟进程环境变量：PORT=9100", "模拟 .env 文件：PORT=9000、DEBUG=true", "按四层加载并覆盖 DB_HOST 为 prod", "PORT 最终取 env 的 9100、DEBUG 取 .env、host 取覆盖", "演示 os.environ 写入后立即生效", "读出刚写入的环境变量", "清理该键，保持环境干净", "揭示 bool(&#39;false&#39;) 为 True 的经典类型陷阱", "密钥用 SecretStr/掩码、托管服务轮换；.env 进 .gitignore、提交 .env.example 占位", "tomllib（3.11+）把 TOML 解析成原生 bool/int；配置漂移靠版本、校验和与启动摘要审计", "十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool(&#39;False&#39;) 为 True"]' title='第 079 讲 · 配置管理：环境变量、.env 与配置中心' />
+<LineByLine code='import os\n\ndef parse_bool(v):\n    return v.strip().lower() in (&#39;1&#39;, &#39;true&#39;, &#39;yes&#39;, &#39;on&#39;)\n\ndef load(env, dotenv_text=&#39;&#39;, overrides=None):\n    cfg = {&#39;PORT&#39;: &#39;8000&#39;, &#39;DEBUG&#39;: &#39;false&#39;, &#39;DB_HOST&#39;: &#39;localhost&#39;}\n    for line in dotenv_text.splitlines():\n        line = line.strip()\n        if line and not line.startswith(&#39;#&#39;) and &#39;=&#39; in line:\n            k, v = line.split(&#39;=&#39;, 1)\n            cfg[k.strip()] = v.strip()\n    for k in list(cfg):\n        if k in env:\n            cfg[k] = env[k]\n    if overrides:\n        cfg.update(overrides)\n    return {&#39;port&#39;: int(cfg[&#39;PORT&#39;]), &#39;debug&#39;: parse_bool(cfg[&#39;DEBUG&#39;]),\n            &#39;host&#39;: cfg[&#39;DB_HOST&#39;]}\n\nenv = {&#39;PORT&#39;: &#39;9100&#39;}\ndotenv = &#39;PORT=9000&#39; + chr(10) + &#39;DEBUG=true&#39; + chr(10)\nc = load(env, dotenv, overrides={&#39;DB_HOST&#39;: &#39;prod&#39;})\nprint(&#39;port&#39;, c[&#39;port&#39;], &#39;debug&#39;, c[&#39;debug&#39;], &#39;host&#39;, c[&#39;host&#39;])\nos.environ[&#39;APP_MODE&#39;] = &#39;prod&#39;\nprint(&#39;env var&#39;, os.environ[&#39;APP_MODE&#39;])\ndel os.environ[&#39;APP_MODE&#39;]\nprint(&#39;bool trap&#39;, bool(&#39;false&#39;))' :notes='["导入 os 读取进程环境变量", "空行，只用于分隔逻辑块，不影响执行结果。", "定义布尔归一：只认 1/true/yes/on", "模拟 pydantic-settings 的分层加载函数", "空行，只用于分隔逻辑块，不影响执行结果。", "默认值层：端口 8000、DEBUG 关、主机 localhost", "逐行解析 .env 文本", "去掉首尾空白", "跳过空行、注释行与无等号行", "按第一个等号拆键值", "用 .env 的值覆盖默认值", "进程环境变量层：只对已知键生效", "env 里有同名键就覆盖上一层", "显式覆盖层：优先级最高", "overrides 最后写入", "把 PORT 转 int、DEBUG 归一 bool，得到类型化配置", "模拟进程环境变量：PORT=9100", "模拟 .env 文件：PORT=9000、DEBUG=true", "按四层加载并覆盖 DB_HOST 为 prod", "空行，只用于分隔逻辑块，不影响执行结果。", "PORT 最终取 env 的 9100、DEBUG 取 .env、host 取覆盖", "演示 os.environ 写入后立即生效", "读出刚写入的环境变量", "清理该键，保持环境干净", "揭示 bool(&#39;false&#39;) 为 True 的经典类型陷阱", "密钥用 SecretStr/掩码、托管服务轮换；.env 进 .gitignore、提交 .env.example 占位", "tomllib（3.11+）把 TOML 解析成原生 bool/int；配置漂移靠版本、校验和与启动摘要审计", "十二要素：配置走环境变量与代码分离；os.environ 值全是 str，bool(&#39;False&#39;) 为 True"]' title='第 079 讲 · 配置管理：环境变量、.env 与配置中心' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -125,9 +125,9 @@ print('log-safe', str(token), 'real', token.reveal())
 
 `SecretStr` 通过重写 `__str__` / `__repr__` 返回掩码，避免敏感值被日志格式化函数取到；热更新通常用后台监听加原子替换配置对象，而非就地改字段。
 
-<ConceptDiagram type='compare2' title='第 079 讲 · 十二要素、环境变量与类型陷阱' labels='十二要素、环境变量与类型陷阱|分层覆盖与启动期失败|密钥、轮换与配置漂移' caption='把配置做成可验证、可覆盖、可审计的输入' />
+<ConceptDiagram type='compare2' title='第 079 讲 · 十二要素、环境变量与类型陷阱' labels='十二要素、环境变量与类型陷阱|分层覆盖与启动期失败|密钥、轮换与配置漂移|配置漂移' caption='把配置做成可验证、可覆盖、可审计的输入' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 分层覆盖、启动期失败与密钥轮换治理
@@ -224,3 +224,16 @@ print('secret never in public', 'SECRET' not in cfg.public())
 3. pydantic-settings BaseSettings 默认 case_sensitive=False，支持 env_prefix / env_nested_delimiter='__'
 
 [下一讲：打包与发布：pyproject、wheel 与 PyPI](/engineering/packaging)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/079-config.py`
+
+```bash
+python3 examples/lessons/079-config.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/079-config.py) · [全部示例代码索引](/examples/)

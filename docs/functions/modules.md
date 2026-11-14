@@ -67,7 +67,7 @@ print(demo.__dict__ is m.__dict__)
 
 <OutputBox title='主示例运行结果' output='True True\nmodule json\njson True\n42 True demo\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, importlib, types\n\nfirst = importlib.import_module(&#39;json&#39;)\nsecond = importlib.import_module(&#39;json&#39;)\nprint(first is second, &#39;json&#39; in sys.modules)\nprint(type(first).__name__, first.__name__)\nprint(first.__spec__.name, hasattr(first, &#39;__file__&#39;))\n\nm = types.ModuleType(&#39;demo&#39;)\nm.value = 42\nsys.modules[&#39;demo&#39;] = m\nimport demo\nprint(demo.value, demo is m, demo.__name__)\nprint(demo.__dict__ is m.__dict__)' :notes='["导入 sys 读缓存、importlib 做动态导入、types 造模块对象", "第一次导入 json 并触发加载", "第二次导入同名的 json", "两次拿到同一个对象，且 json 已在 sys.modules 里", "模块对象的类型是 module，__name__ 为 json", "__spec__.name 是 json，普通模块有 __file__", "手动造一个名为 demo 的模块对象", "给它写一个自定义属性 value", "提前把对象放进 sys.modules 模拟已被加载", "import demo 直接命中缓存、绑定到本地名字", "取到 value，且 demo 就是我们放进去的那个对象", "模块对象的 __dict__ 与手动对象完全相同"]' title='第 035 讲 · 模块与包：import 机制与循环导入' />
+<LineByLine code='import sys, importlib, types\n\nfirst = importlib.import_module(&#39;json&#39;)\nsecond = importlib.import_module(&#39;json&#39;)\nprint(first is second, &#39;json&#39; in sys.modules)\nprint(type(first).__name__, first.__name__)\nprint(first.__spec__.name, hasattr(first, &#39;__file__&#39;))\n\nm = types.ModuleType(&#39;demo&#39;)\nm.value = 42\nsys.modules[&#39;demo&#39;] = m\nimport demo\nprint(demo.value, demo is m, demo.__name__)\nprint(demo.__dict__ is m.__dict__)' :notes='["导入 sys 读缓存、importlib 做动态导入、types 造模块对象", "空行，只用于分隔逻辑块，不影响执行结果。", "第一次导入 json 并触发加载", "第二次导入同名的 json", "两次拿到同一个对象，且 json 已在 sys.modules 里", "模块对象的类型是 module，__name__ 为 json", "__spec__.name 是 json，普通模块有 __file__", "空行，只用于分隔逻辑块，不影响执行结果。", "手动造一个名为 demo 的模块对象", "给它写一个自定义属性 value", "提前把对象放进 sys.modules 模拟已被加载", "import demo 直接命中缓存、绑定到本地名字", "取到 value，且 demo 就是我们放进去的那个对象", "模块对象的 __dict__ 与手动对象完全相同"]' title='第 035 讲 · 模块与包：import 机制与循环导入' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -105,7 +105,7 @@ loader 把顶层名字写进 `module.__dict__`，`__spec__`（`ModuleSpec`）记
 
 ## 模块对象为什么是天然单例
 
-<Callout type="tip" title='核心心智模型' text='`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`、`PathFinde' />
+<Callout type="tip" title='核心心智模型' text='`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`…' />
 
 ```python
 import sys, importlib
@@ -119,11 +119,11 @@ print(sys.modules['json'] is mod, importlib.import_module('json') is mod)
 
 <OutputBox title='原理验证' output='SourceFileLoader json\nTrue\nTrue\nTrue True' />
 
-<FlowTimeline :steps='[{"title": "import 的执行链路与模块单例", "desc": "`import X` 先查 `sys.modules`（一张以完整模块名为键的 di…", "tone": "blue"}, {"title": "包、相对导入与命名空间包", "desc": "常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.…", "tone": "purple"}, {"title": "循环导入的成因与根治", "desc": "循环导入是 a 与 b 互相 `import`，且至少一方在顶层就要用到对方尚未定义…", "tone": "orange"}, {"title": "工程落地", "desc": "复现循环导入，并把共享类型下沉到独立模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "import 的执行链路与模块单例", "desc": "`import X` 先查 `sys.modules`（一张以完整模块名为键的 di…", "tone": "blue"}, {"title": "包、相对导入与命名空间包", "desc": "常规包是含 `__init__.py` 的目录，导入包时先执行…", "tone": "purple"}, {"title": "循环导入的成因与根治", "desc": "循环导入是 a 与 b 互相 `import`，且至少一方在顶层就要用到对方尚未定义…", "tone": "orange"}, {"title": "工程落地", "desc": "复现循环导入，并把共享类型下沉到独立模块", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<Term word='模块对象与 sys.modules' text='`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`、`PathFinder`），`PathF' />
+<Term word='模块对象与 sys.modules' text='`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`、`PathFinder`）…' />
 
-<Term word='搜索路径与 finder' text='常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.py`，它的顶层名字成为包的属性；`__all__` 是一个字符串列表，控制 `from pkg import *` 导出哪些名字，不定义时导出所有不以单下划线开头的名字。绝对导入 `import pkg.mod` 从 `sys.pat' />
+<Term word='搜索路径与 finder' text='常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.py`，它的顶层名字成为包的属性；`__all__` 是一个字符串列表，控制 `from pkg import *` 导出哪些名字，不定义时导出所有不以单下划线开头的名字。绝对导入 `import pkg.mod` 从…' />
 
 
 ## 包、相对导入与命名空间包
@@ -220,7 +220,7 @@ most likely due to a circular import
 | 修复一 | 共享类型下沉到第三个独立模块 | 让依赖关系变成单向 |
 | 修复二 / 三 / 四 | 函数内延迟导入 / TYPE_CHECKING / 相对导入 + src 布局 | src 布局避免同名包被加载两份 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只是 import 一下配置模块，却连了库、", "body": "模块顶层代码在导入时执行一次，副作用不受 main 守卫保护", "tip": "把可执行逻辑放进 if __name__ == &#39;__main__&#39;: 或函数里，顶层只留类、函数与常量定义"}, {"title": "第 2 步：a 与 b 互相导入，报 partially", "body": "模块对象先入 sys.modules 再执行，顶层取对方属性时对方还没定义完", "tip": "共享类型下沉到第三模块、把 import 延迟到函数内、仅类型用 TYPE_CHECKING，并用 src 布局统一相对导入"}, {"title": "第 3 步：包内脚本直接运行，相对导入报 attempt", "body": "直接运行时 __package__ 为空，相对导入没有解析基准", "tip": "用 python -m pkg.mod 运行以设置包上下文，或改成绝对导入"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只是 import 一下配置模块，却连了库…", "body": "模块顶层代码在导入时执行一次，副作用不受 main 守卫保护", "tip": "把可执行逻辑放进 if __name__ == &#39;__main__&#39;: 或函数里，顶层只留类、函数与常量定义"}, {"title": "第 2 步：a 与 b 互相导入，报 partially…", "body": "模块对象先入 sys.modules 再执行，顶层取对方属性时对方还没定义完", "tip": "共享类型下沉到第三模块、把 import 延迟到函数内、仅类型用 TYPE_CHECKING，并用 src 布局统一相对导入"}, {"title": "第 3 步：包内脚本直接运行，相对导入报 attempt…", "body": "直接运行时 __package__ 为空，相对导入没有解析基准", "tip": "用 python -m pkg.mod 运行以设置包上下文，或改成绝对导入"}]' />
 
 
 ## 复现循环导入，并把共享类型下沉到独立模块
@@ -261,9 +261,9 @@ print(importlib.import_module('m_a2').A2.peer.__name__)
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 模块对象与 `sys.modules` 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 模块对象与 `sys.modules` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<CheckList id='P035b' title='上线前自检' :items='["能复现并解释「只是 import 一下配置模块，却连了库、起了线程、进程不」", "能复现并解释「a 与 b 互相导入，报 partially initial」", "能复现并解释「包内脚本直接运行，相对导入报 attempted relat」", "能用一条命令验证 模块对象与 sys.modules", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P035b' title='上线前自检' :items='["能复现并解释「只是 import 一下配置模块，却连了库、起了线程、进程不…」", "能复现并解释「a 与 b 互相导入，报 partially initial…」", "能复现并解释「包内脚本直接运行，相对导入报 attempted relat…」", "能用一条命令验证 模块对象与 sys.modules", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 导入副作用与相对导入错因速查
@@ -315,3 +315,16 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 3. 顶层代码在导入时执行一次，副作用要收进 if __name__ == '__main__'；sys.path[0] 是入口脚本目录，同名文件会遮蔽标准库
 
 [下一讲：类型注解、typing 与渐进式类型](/functions/typing)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/035-modules.py`
+
+```bash
+python3 examples/lessons/035-modules.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/035-modules.py) · [全部示例代码索引](/examples/)

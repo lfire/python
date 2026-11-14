@@ -25,11 +25,11 @@ description: 能推导多继承下的方法解析顺序
 
 ## 先建模型：super 不是调用父类
 
-<Callout type="tip" title='核心心智模型' text='每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表，`inspect.getmro` 也能取到。`MRO` 由 `C3` 线性化在类创建时（`type.__new__`）算好：约束是子类优先于父类、保持基类声明顺序、并递归合并每个基类自身的 `MRO`，每步选出一个不在' />
+<Callout type="tip" title='核心心智模型' text='每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表，`inspect.getmro` 也能取到。`MRO` 由 `C3` 线性化在类创建时（`type.__new__`）算好：约束是子类优先于父类、保持基类声明顺序、并递归合并每个基类自身的 `MRO`，每步选出一个不在…' />
 
-<ConceptDiagram type='compare2' title='第 039 讲 · C3 线性化与 __mro__' labels='C3 线性化与 __mro__|super 的真实语义与零参数形式|属性查找链与 __getattribute_' caption='能推导多继承下的方法解析顺序' />
+<ConceptDiagram type='compare2' title='第 039 讲 · C3 线性化与 __mro__' labels='C3 线性化与 __mro__|super 的真实语义与零参数形式|属性查找链与 __getattribute_…|__getattribute__ 入口' caption='能推导多继承下的方法解析顺序' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 **本讲定位**
 
@@ -84,7 +84,7 @@ print(D.__mro__ == (D, B, C, A, object))
 
 <OutputBox title='主示例运行结果' output='[&#39;D&#39;, &#39;B&#39;, &#39;C&#39;, &#39;A&#39;, &#39;object&#39;]\nD\nB\nC\nA\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class A:\n    def __init__(self):\n        print(&#39;A&#39;)\n\nclass B(A):\n    def __init__(self):\n        print(&#39;B&#39;)\n        super().__init__()\n\nclass C(A):\n    def __init__(self):\n        print(&#39;C&#39;)\n        super().__init__()\n\nclass D(B, C):\n    def __init__(self):\n        print(&#39;D&#39;)\n        super().__init__()\n\nprint([c.__name__ for c in D.__mro__])\nd = D()\nprint(D.__mro__ == (D, B, C, A, object))' :notes='["菱形继承的公共基类 A", "A 的初始化只打印一行标记", "打印 A，用于观察它被调用的次数", "B 继承 A", "B 的初始化", "先打印 B", "用 super() 沿 MRO 找下一个实现", "C 也继承 A", "C 的初始化", "先打印 C", "继续用 super()，不是直接调 A", "D 同时继承 B 与 C", "D 的初始化", "先打印 D", "启动协作链", "打印 C3 线性化后的 MRO", "实例化 D，触发整条 super 链", "确认 MRO 恰为 D B C A object"]' title='第 039 讲 · 属性查找、MRO 与 super' />
+<LineByLine code='class A:\n    def __init__(self):\n        print(&#39;A&#39;)\n\nclass B(A):\n    def __init__(self):\n        print(&#39;B&#39;)\n        super().__init__()\n\nclass C(A):\n    def __init__(self):\n        print(&#39;C&#39;)\n        super().__init__()\n\nclass D(B, C):\n    def __init__(self):\n        print(&#39;D&#39;)\n        super().__init__()\n\nprint([c.__name__ for c in D.__mro__])\nd = D()\nprint(D.__mro__ == (D, B, C, A, object))' :notes='["菱形继承的公共基类 A", "A 的初始化只打印一行标记", "打印 A，用于观察它被调用的次数", "空行，只用于分隔逻辑块，不影响执行结果。", "B 继承 A", "B 的初始化", "先打印 B", "用 super() 沿 MRO 找下一个实现", "空行，只用于分隔逻辑块，不影响执行结果。", "C 也继承 A", "C 的初始化", "先打印 C", "继续用 super()，不是直接调 A", "空行，只用于分隔逻辑块，不影响执行结果。", "D 同时继承 B 与 C", "D 的初始化", "先打印 D", "启动协作链", "空行，只用于分隔逻辑块，不影响执行结果。", "打印 C3 线性化后的 MRO", "实例化 D，触发整条 super 链", "确认 MRO 恰为 D B C A object"]' title='第 039 讲 · 属性查找、MRO 与 super' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -199,7 +199,7 @@ print(C.__init__.__code__.co_freevars)
 
 全失败后才把控制权交给 `__getattr__`。这条优先级正是 `property` 能拦截赋值、而实例同名键能盖住方法的根本原因。
 
-<ConceptDiagram type='layers3' title='第 039 讲 · 分层视角' labels='C3 线性化与 __mro__|super 的真实语义与零参数形式|属性查找链与 __getattribut|__getattribute__ 入口' caption='属性查找链与 __getattribute__ 入口' />
+<ConceptDiagram type='layers3' title='第 039 讲 · 分层视角' labels='C3 线性化与 __mro__|super 的真实语义与零参数形式|属性查找链与 __getattribut…|__getattribute__ 入口' caption='属性查找链与 __getattribute__ 入口' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 `__getattribute__` 入口 落在哪一层。
 
@@ -234,16 +234,16 @@ object.__getattribute__(obj, 'attr')
 | 4 类属性 | Class.__dict__ | 沿 MRO 依次查找 |
 | 5 __getattr__ | 仅在以上都失败后调用 | 做懒加载 / 代理；__getattribute__ 每次访问都触发 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：以为 super() 是调用父类，菱形继承里", "body": "super 沿 MRO 找当前类之后的下一实现，C3 保证 A 在链尾只出现一次", "tip": "按 D.__mro__ 推导调用链；每个类统一用 super().__init__() 协作"}, {"title": "第 2 步：混用 super() 与显式 A.__ini", "body": "显式调用打断协作链，MRO 里后续类的 __init__ 不再被触及", "tip": "链上所有类都用 super().__init__() 并用 **kwargs 透传参数，Mixin 不持有状态"}, {"title": "第 3 步：重写 __getattribute__ 时忘", "body": "所有属性访问都会经过它，内部再访问 self.x 会再次触发自身", "tip": "只做前置拦截后 return super().__getattribute__(name)，懒加载改用 __getattr__"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：以为 super() 是调用父类，菱形继承里…", "body": "super 沿 MRO 找当前类之后的下一实现，C3 保证 A 在链尾只出现一次", "tip": "按 D.__mro__ 推导调用链；每个类统一用 super().__init__() 协作"}, {"title": "第 2 步：混用 super() 与显式 A.__ini…", "body": "显式调用打断协作链，MRO 里后续类的 __init__ 不再被触及", "tip": "链上所有类都用 super().__init__() 并用 **kwargs 透传参数，Mixin 不持有状态"}, {"title": "第 3 步：重写 __getattribute__ 时忘…", "body": "所有属性访问都会经过它，内部再访问 self.x 会再次触发自身", "tip": "只做前置拦截后 return super().__getattribute__(name)，懒加载改用 __getattr__"}]' />
 
 
 ## 从实例字典到描述符的查找全链
 
-<FlowTimeline :steps='[{"title": "C3 线性化与 __mro__", "desc": "每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表，`…", "tone": "blue"}, {"title": "super 的真实语义与零参数形式", "desc": "`super()` 不是调用父类，而是返回一个代理对象，沿 `type(self).…", "tone": "purple"}, {"title": "属性查找链与 __getattribute__ 入口", "desc": "`obj.attr` 的入口永远是 `object.__getattribute__…", "tone": "orange"}, {"title": "工程落地", "desc": "协作式 Mixin：让多个能力沿同一条 super 链组合", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "C3 线性化与 __mro__", "desc": "每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表…", "tone": "blue"}, {"title": "super 的真实语义与零参数形式", "desc": "`super()` 不是调用父类，而是返回一个代理对象，沿…", "tone": "purple"}, {"title": "属性查找链与 __getattribute__…", "desc": "`obj.attr` 的入口永远是…", "tone": "orange"}, {"title": "工程落地", "desc": "协作式 Mixin：让多个能力沿同一条 super 链组合", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
-<Term word='__mro__ 与 C3 线性化' text='每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表，`inspect.getmro` 也能取到。`MRO` 由 `C3` 线性化在类创建时（`type.__new__`）算好：约束是子类优先于父类、保持基类声明顺序、并递归合并每个基类自身的 `MRO`，每步选出一个不在任何候选序列尾部出现' />
+<Term word='__mro__ 与 C3 线性化' text='每个类都有 `__mro__` 元组，`Class.mro()` 返回等价的列表，`inspect.getmro` 也能取到。`MRO` 由 `C3` 线性化在类创建时（`type.__new__`）算好：约束是子类优先于父类、保持基类声明顺序、并递归合并每个基类自身的 `MRO`，每步选出一个不在任何候选序列尾部出现…' />
 
-<Term word='super 的真实语义' text='`super()` 不是调用父类，而是返回一个代理对象，沿 `type(self).__mro__` 里当前类之后的位置查找属性：`super(C, obj).m()` 从 `MRO` 中 `C` 的下一个类开始找 `m`。实例方法里的零参数 `super()` 等价于 `super(__class__, self)`' />
+<Term word='super 的真实语义' text='`super()` 不是调用父类，而是返回一个代理对象，沿 `type(self).__mro__` 里当前类之后的位置查找属性：`super(C, obj).m()` 从 `MRO` 中 `C` 的下一个类开始找 `m`。实例方法里的零参数 `super()` 等价于 `super(__class__, self)`…' />
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "class A:\n    def __init__(self):\n        print(&#39;A&#39;)\n\nclass B(A):\n    def __init__(self):\n        print(&#39;B&#39;)\n        super().__init__()\n\nclass C(A):\n    def __init__(self):\n        print(&#39;C&#39;)\n        super().__init__()\n\nclass D(B, C):\n    def __init__(self):\n        print(&#39;D&#39;)\n        super().__init__()\n\nprint([c.__name__ for c in D.__mro__])\nd = D()\nprint(D.__mro__ == (D, B, C, A, object))", "note": "C3 线性化与 __mro__"}, {"label": "对照 / 进阶", "code": "class A:\n    def __init__(self):\n        print(&#39;A&#39;)\n\nclass B(A):\n    def __init__(self):\n        print(&#39;B&#39;)\n        A.__init__(self)\n\nclass C(A):\n    def __init__(self):\n        print(&#39;C&#39;)\n        super().__init__()\n\nclass D(B, C):\n    def __init__(self):\n        super().__init__()\n\nprint([c.__name__ for c in D.__mro__])\nD()\nprint(&#39;__class__&#39; in B.__init__.__code__.co_freevars)\nprint(C.__init__.__code__.co_freevars)", "note": "super 的真实语义与零参数形式"}]' title='两种写法切换看' />
 
@@ -289,13 +289,13 @@ print(u.as_dict())
 
 <Callout type="idea" title='落地提示' text='Mixin 只做单一能力、全部用 super 协作、不持有状态，是多继承唯一稳妥的用法' />
 
-<CheckList id='P039b' title='上线前自检' :items='["能复现并解释「以为 super() 是调用父类，菱形继承里 A.__ini」", "能复现并解释「混用 super() 与显式 A.__init__(self」", "能复现并解释「重写 __getattribute__ 时忘了调 super」", "能用一条命令验证 __mro__ 与 C3 线性化", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P039b' title='上线前自检' :items='["能复现并解释「以为 super() 是调用父类，菱形继承里 A.__ini…」", "能复现并解释「混用 super() 与显式 A.__init__(self…」", "能复现并解释「重写 __getattribute__ 时忘了调 super…」", "能用一条命令验证 __mro__ 与 C3 线性化", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "print(type('Demo', (), {}).__mro__)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 `__mro__` 与 C3 线性化 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 `__mro__` 与 C3 线性化 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## super 与 __getattribute__ 错因速查
@@ -347,3 +347,16 @@ python -c "print(type('Demo', (), {}).__mro__)"
 3. super() 不是调父类，是沿 type(self).__mro__ 找当前类之后的下一实现；零参数形式依赖编译器塞入的 __class__ cell
 
 [下一讲：访问控制、property 与描述符协议](/oop/property)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/039-mro.py`
+
+```bash
+python3 examples/lessons/039-mro.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/039-mro.py) · [全部示例代码索引](/examples/)

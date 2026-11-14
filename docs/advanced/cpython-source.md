@@ -45,7 +45,7 @@ CPython 源码按职责分目录：`Include/` 放公共头文件（`object.h` �
 | Modules/ | C 实现的标准库模块 | _json.c、_io 等 |
 | Lib/ | 纯 Python 标准库 | importlib、asyncio |
 
-<ConceptDiagram type='layers3' title='第 114 讲 · 分层视角' labels='CPython 源码布局与 PyObje|code object、帧与 3.11 |ceval 求值循环、dis 与 3.1|调试构建与 gdb' caption='ceval 求值循环、dis 与 3.13 超级指令' />
+<ConceptDiagram type='layers3' title='第 114 讲 · 分层视角' labels='CPython 源码布局与 PyObje…|code object、帧与 3.11…|ceval 求值循环、dis 与 3.1…|调试构建与 gdb' caption='ceval 求值循环、dis 与 3.13 超级指令' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 调试构建与 gdb 落在哪一层。
 
@@ -66,9 +66,9 @@ PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通�
 
 `sys.getrefcount` 比真实引用多 1，是因为实参传入函数时形参持有一次临时引用，减去它才能看到对象自身的引用数，这正是对象头引用计数可直接观测的证据。
 
-<Term word='源码目录结构' text='CPython 源码按职责分目录：`Include/` 放公共头文件（`object.h` 定义 PyObject 与 PyTypeObject），`Objects/` 放各内置类型的实现（`dictobject.c`、`listobject.c`、`typeobject.c`），`Python/` 放解释器核心（`c' />
+<Term word='源码目录结构' text='CPython 源码按职责分目录：`Include/` 放公共头文件（`object.h` 定义 PyObject 与 PyTypeObject），`Objects/` 放各内置类型的实现（`dictobject.c`、`listobject.c`、`typeobject.c`），`Python/` 放解释器核心…' />
 
-<Term word='PyObject 与类型对象' text='编译产物是 PyCodeObject，字段可通过 `__code__` 读取：`co_code` 是字节码字节串，`co_consts` 是常量元组（含嵌套 code object），`co_names` 是全局与属性名元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`c' />
+<Term word='PyObject 与类型对象' text='编译产物是 PyCodeObject，字段可通过 `__code__` 读取：`co_code` 是字节码字节串，`co_consts` 是常量元组（含嵌套 code object），`co_names` 是全局与属性名元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度…' />
 
 
 ## code object、帧与 3.11 之后的帧重构
@@ -99,7 +99,7 @@ PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通�
 
 <Callout type="warn" title='本讲最容易踩的坑' text='照 3.9 的博客结论优化属性访问：3.11 起有自适应特化与内联缓存、3.13 有超级指令，指令序列与开销模型都变了，旧结论失效' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：照 3.9 的博客结论优化属性访问", "body": "3.11 起有自适应特化与内联缓存、3.13 有超级指令，指令序列与开销模型都变了，旧结论失效", "tip": "先确认解释器版本，用 dis.dis 在当前环境反汇编，必要时对预热前后分别计时，再决定改不改写法"}, {"title": "第 2 步：用 sys.getrefcount 的原始返", "body": "函数调用时实参本身持有一个临时引用，返回值比真实引用数多 1，直接解读会多算一个引用", "tip": "需要真实引用数时对结果减 1；观察别名增减用两次读数的差值更可靠"}, {"title": "第 3 步：以为每个函数调用都有一个常驻的 PyFram", "body": "3.11 起帧内联为 _PyInterpreterFrame，PyFrameObject 只在 sys._getframe 或回溯时懒创建", "tip": "读帧相关源码先确认版本；用 sys._getframe(depth) 取帧，理解 3.13 起 f_locals 由 PEP 667 改为写时同步"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：照 3.9 的博客结论优化属性访问", "body": "3.11 起有自适应特化与内联缓存、3.13 有超级指令，指令序列与开销模型都变了，旧结论失效", "tip": "先确认解释器版本，用 dis.dis 在当前环境反汇编，必要时对预热前后分别计时，再决定改不改写法"}, {"title": "第 2 步：用 sys.getrefcount 的原始返…", "body": "函数调用时实参本身持有一个临时引用，返回值比真实引用数多 1，直接解读会多算一个引用", "tip": "需要真实引用数时对结果减 1；观察别名增减用两次读数的差值更可靠"}, {"title": "第 3 步：以为每个函数调用都有一个常驻的 PyFram…", "body": "3.11 起帧内联为 _PyInterpreterFrame，PyFrameObject 只在 sys._getframe 或回溯时懒创建", "tip": "读帧相关源码先确认版本；用 sys._getframe(depth) 取帧，理解 3.13 起 f_locals 由 PEP 667 改为写时同步"}]' />
 
 
 ## ceval 求值循环、dis 与 3.13 超级指令
@@ -142,7 +142,7 @@ dis.dis(add)
 
 <OutputBox title='主示例运行结果' output='name add\nvarnames (&#39;a&#39;, &#39;b&#39;)\nconsts (None,)\nnames ()\nstacksize 2\nbytecode_len 10\ncaller &lt;module&gt;\nresult 5\n  3           RESUME                   0\n\n  4           LOAD_FAST_LOAD_FAST      1 (a, b)\n              BINARY_OP                0 (+)\n              RETURN_VALUE' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, dis\n\ndef add(a, b):\n    return a + b\n\nco = add.__code__\nprint(&#39;name&#39;, co.co_name)\nprint(&#39;varnames&#39;, co.co_varnames)\nprint(&#39;consts&#39;, co.co_consts)\nprint(&#39;names&#39;, co.co_names)\nprint(&#39;stacksize&#39;, co.co_stacksize)\nprint(&#39;bytecode_len&#39;, len(co.co_code))\n\ndef caller_name():\n    return sys._getframe(1).f_code.co_name\n\nprint(&#39;caller&#39;, caller_name())\nprint(&#39;result&#39;, add(2, 3))\ndis.dis(add)' :notes='["导入 sys 读取帧，dis 反汇编字节码", "定义最小函数用于观察 code object", "函数体只有一次加法与返回", "取出函数的 PyCodeObject", "co_name 是函数名", "co_varnames 列出局部变量名", "co_consts 只有隐式返回的 None，加法常量在指令里", "co_names 为空，函数未引用任何全局或属性名", "co_stacksize 为 2，两个操作数同时在栈上", "3.13 超级指令让 co_code 只有 10 字节", "sys._getframe(1) 取调用者帧", "返回调用者帧的函数名", "从模块级调用，调用者是 &lt;module&gt;", "执行函数确认结果为 5", "反汇编，3.13 把两个 LOAD_FAST 合成 LOAD_FAST_LOAD_FAST"]' title='第 114 讲 · CPython 源码：对象、帧与求值循环' />
+<LineByLine code='import sys, dis\n\ndef add(a, b):\n    return a + b\n\nco = add.__code__\nprint(&#39;name&#39;, co.co_name)\nprint(&#39;varnames&#39;, co.co_varnames)\nprint(&#39;consts&#39;, co.co_consts)\nprint(&#39;names&#39;, co.co_names)\nprint(&#39;stacksize&#39;, co.co_stacksize)\nprint(&#39;bytecode_len&#39;, len(co.co_code))\n\ndef caller_name():\n    return sys._getframe(1).f_code.co_name\n\nprint(&#39;caller&#39;, caller_name())\nprint(&#39;result&#39;, add(2, 3))\ndis.dis(add)' :notes='["导入 sys 读取帧，dis 反汇编字节码", "空行，只用于分隔逻辑块，不影响执行结果。", "定义最小函数用于观察 code object", "函数体只有一次加法与返回", "空行，只用于分隔逻辑块，不影响执行结果。", "取出函数的 PyCodeObject", "co_name 是函数名", "co_varnames 列出局部变量名", "co_consts 只有隐式返回的 None，加法常量在指令里", "co_names 为空，函数未引用任何全局或属性名", "co_stacksize 为 2，两个操作数同时在栈上", "3.13 超级指令让 co_code 只有 10 字节", "空行，只用于分隔逻辑块，不影响执行结果。", "sys._getframe(1) 取调用者帧", "返回调用者帧的函数名", "空行，只用于分隔逻辑块，不影响执行结果。", "从模块级调用，调用者是 &lt;module&gt;", "执行函数确认结果为 5", "反汇编，3.13 把两个 LOAD_FAST 合成 LOAD_FAST_LOAD_FAST"]' title='第 114 讲 · CPython 源码：对象、帧与求值循环' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -231,13 +231,13 @@ print('current_frame', sys._getframe().f_code.co_name)
 
 <Callout type="idea" title='落地提示' text='用调试构建加 gdb / lldb 单步跟踪一个小例子，配合 dis 输出对照，效率远高于通读' />
 
-<CheckList id='P114b' title='上线前自检' :items='["能复现并解释「照 3.9 的博客结论优化属性访问」", "能复现并解释「用 sys.getrefcount 的原始返回值当作对象引用」", "能复现并解释「以为每个函数调用都有一个常驻的 PyFrameObject」", "能用一条命令验证 源码目录结构", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P114b' title='上线前自检' :items='["能复现并解释「照 3.9 的博客结论优化属性访问」", "能复现并解释「用 sys.getrefcount 的原始返回值当作对象引用…」", "能复现并解释「以为每个函数调用都有一个常驻的 PyFrameObject」", "能用一条命令验证 源码目录结构", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 源码目录结构 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 源码目录结构 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -281,7 +281,7 @@ print('getsizeof', sys.getsizeof(x))
 
 <OutputBox title='扩展示例运行结果' output='refcnt_with_alias 2\nrefcnt_after_del 1\ntype_ptr_matches True\ngetsizeof 88' />
 
-<LineByLine code='import ctypes, sys\n\nclass Header(ctypes.Structure):\n    _fields_ = [(&#39;ob_refcnt&#39;, ctypes.c_ssize_t),\n                (&#39;ob_type&#39;, ctypes.c_void_p)]\n\nx = [1, 2, 3]\nalias = x\nhdr = Header.from_address(id(x))\nprint(&#39;refcnt_with_alias&#39;, hdr.ob_refcnt)\ndel alias\nprint(&#39;refcnt_after_del&#39;, hdr.ob_refcnt)\nprint(&#39;type_ptr_matches&#39;, hdr.ob_type == id(list))\nprint(&#39;getsizeof&#39;, sys.getsizeof(x))' :notes='["按 Include/object.h 的 PyObject 头定义 C 结构", "ob_refcnt 是 Py_ssize_t，占据起始 8 字节", "ob_type 指向 PyTypeObject，紧随其后", "用列表对象避免小整数缓存干扰计数", "加一个别名，引用计数应为 2", "id(x) 把对象地址映射成 Header 视图，不增加引用", "删除别名后计数回落到 1", "ob_type 指针数值应等于 id(list)，证明类型也是 PyObject", "PyCodeObject 字段 co_code/co_consts/co_names/co_varnames/co_stacksize；3.11+ 有 co_exceptiontable", "3.11 起帧内联为 _PyInterpreterFrame 并懒创建 PyFrameObject；3.13 PEP 667 改 f_locals 同步语义", "3.13 引入 LOAD_FAST_LOAD_FAST 等超级指令；dis.dis 加 show_caches=True 看内联缓存", "读源码用 --with-pydebug 构建加 gdb 在 _PyEval_EvalFrameDefault 断点对照 dis，结论必须标注版本"]' title='扩展示例逐行讲解' />
+<LineByLine code='import ctypes, sys\n\nclass Header(ctypes.Structure):\n    _fields_ = [(&#39;ob_refcnt&#39;, ctypes.c_ssize_t),\n                (&#39;ob_type&#39;, ctypes.c_void_p)]\n\nx = [1, 2, 3]\nalias = x\nhdr = Header.from_address(id(x))\nprint(&#39;refcnt_with_alias&#39;, hdr.ob_refcnt)\ndel alias\nprint(&#39;refcnt_after_del&#39;, hdr.ob_refcnt)\nprint(&#39;type_ptr_matches&#39;, hdr.ob_type == id(list))\nprint(&#39;getsizeof&#39;, sys.getsizeof(x))' :notes='["按 Include/object.h 的 PyObject 头定义 C 结构", "空行，只用于分隔逻辑块，不影响执行结果。", "ob_refcnt 是 Py_ssize_t，占据起始 8 字节", "ob_type 指向 PyTypeObject，紧随其后", "用列表对象避免小整数缓存干扰计数", "空行，只用于分隔逻辑块，不影响执行结果。", "加一个别名，引用计数应为 2", "id(x) 把对象地址映射成 Header 视图，不增加引用", "删除别名后计数回落到 1", "ob_type 指针数值应等于 id(list)，证明类型也是 PyObject", "这一行 `del alias` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;refcnt_after_del&#39;, hdr.ob_refcnt)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;type_ptr_matches&#39;, hdr.ob_type == id(list))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;getsizeof&#39;, sys.getsizeof(x))` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### PyTypeObject 的三张槽表与 PyNumberMethods 字段布局
@@ -342,3 +342,16 @@ print('getsizeof', sys.getsizeof(x))
 [下一讲：内存分配器 pymalloc 与 GC 源码](/advanced/allocator)
 
 <Predict no='114-6' q='dis.dis(add) 在 3.13 下最可能看到哪组指令？' :options='["RESUME / LOAD_FAST_LOAD_FAST / BINARY_OP / RETURN_VALUE", "LOAD_FAST / LOAD_FAST / BINARY_OP / RETURN_VALUE", "单条 JIT_ADD 指令"]' answer='0' output='RESUME / LOAD_FAST_LOAD_FAST / BINARY_OP 0 (+) / RETURN_VALUE' explain='3.13 用超级指令把两个 LOAD_FAST 合成 LOAD_FAST_LOAD_FAST，随后 BINARY_OP 0 做加法、RETURN_VALUE 返回；RESUME 是函数入口的内部指令。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/114-cpython-source.py`
+
+```bash
+python3 examples/lessons/114-cpython-source.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/114-cpython-source.py) · [全部示例代码索引](/examples/)

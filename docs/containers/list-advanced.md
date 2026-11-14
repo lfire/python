@@ -76,13 +76,13 @@ print('safe removal', nums)
 
 <OutputBox title='主示例运行结果' output='sort returns None\nafter sort [(&#39;a&#39;, 1), (&#39;a&#39;, 3), (&#39;b&#39;, 2), (&#39;b&#39;, 1)]\nstable for equal keys [1, 3]\nsorted new list [(&#39;y&#39;, 1), (&#39;z&#39;, 2), (&#39;x&#39;, 3)] src intact [(&#39;x&#39;, 3), (&#39;y&#39;, 1), (&#39;z&#39;, 2)]\nkey calls 3 equals len True\nslice assign changes length [0, &#39;a&#39;, &#39;b&#39;, &#39;c&#39;, 3, 4]\nextended slice error ValueError\nshared rows True [[9, 0, 0], [9, 0, 0], [9, 0, 0]]\nfixed rows False [9, 0, 0]\nsafe removal [1, 3, 5]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from operator import itemgetter\n\npairs = [(&#39;b&#39;, 2), (&#39;a&#39;, 1), (&#39;a&#39;, 3), (&#39;b&#39;, 1)]\nprint(&#39;sort returns&#39;, pairs.sort(key=itemgetter(0)))\nprint(&#39;after sort&#39;, pairs)\nprint(&#39;stable for equal keys&#39;, [p[1] for p in pairs if p[0] == &#39;a&#39;])\n\nsrc = [(&#39;x&#39;, 3), (&#39;y&#39;, 1), (&#39;z&#39;, 2)]\nnew = sorted(src, key=itemgetter(1))\nprint(&#39;sorted new list&#39;, new, &#39;src intact&#39;, src)\n\ncalls = []\ndef key_count(record):\n    calls.append(record)\n    return record[1]\nsorted(src, key=key_count)\nprint(&#39;key calls&#39;, len(calls), &#39;equals len&#39;, len(calls) == len(src))\n\na = [0, 1, 2, 3, 4]\na[1:3] = [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nprint(&#39;slice assign changes length&#39;, a)\ntry:\n    a[::2] = [1, 2]\nexcept ValueError as e:\n    print(&#39;extended slice error&#39;, type(e).__name__)\n\ngrid = [[0] * 3] * 3\ngrid[0][0] = 9\nprint(&#39;shared rows&#39;, grid[0] is grid[1], grid)\nfixed = [[0] * 3 for _ in range(3)]\nfixed[0][0] = 9\nprint(&#39;fixed rows&#39;, fixed[0] is fixed[1], fixed[0])\n\nnums = [1, 2, 3, 4, 5]\nfor x in nums[:]:\n    if x % 2 == 0:\n        nums.remove(x)\nprint(&#39;safe removal&#39;, nums)' :notes='["导入 itemgetter，C 层按位置取字段作为排序键", "四组记录，两组 key 相同用于检验稳定性", "list.sort 是原地方法，按约定返回 None", "排序结果按第一个字段升序，同 key 保持原相对顺序", "同为 &#39;a&#39; 的两条记录仍保持 1、3 的原始次序", "构造另一组记录，对比 sort 与 sorted 的差别", "sorted 返回新列表，按第二个字段升序", "原 src 未被修改，证明 sorted 不改动输入", "用列表记录 key 函数被调用的元素", "自定义 key 函数，每次调用留痕", "把当前元素追加到 calls", "返回第二个字段作为排序键", "对 3 个元素排序，观察 key 调用次数", "key 对每个元素恰好求值一次，次数等于元素数", "构造长度为 5 的列表演示切片赋值", "普通切片赋值右侧长度可不同，列表变长", "打印替换后的结果，长度由 5 变为 6", "扩展切片赋值长度不符会抛异常", "a[::2] 选中 3 个元素却只给 2 个值", "捕获预期的 ValueError 并打印类型", "用 * 重复同一个行对象三次", "只改第一行的第一格", "三行是同一对象，改一格等于改三行", "列表推导每次迭代新建一个独立的行 list", "只改第一行第一格", "各行 id 不同，只有第一行变成 9", "演示遍历时修改的安全写法", "遍历副本 nums[:]，原列表可安全删除", "删除偶数元素", "副本迭代不会跳项，结果为 [1, 3, 5]", "list.sort 原地返回 None；sorted 返回新列表且接受任意可迭代对象，两者 key / reverse 都是仅关键字参数", "TimSort 稳定、最坏 O(n log n)、已排序输入近 O(n)、minrun 取 32；reverse 不破坏稳定性"]' title='第 019 讲 · list 进阶：切片赋值、排序与常见陷阱' />
+<LineByLine code='from operator import itemgetter\n\npairs = [(&#39;b&#39;, 2), (&#39;a&#39;, 1), (&#39;a&#39;, 3), (&#39;b&#39;, 1)]\nprint(&#39;sort returns&#39;, pairs.sort(key=itemgetter(0)))\nprint(&#39;after sort&#39;, pairs)\nprint(&#39;stable for equal keys&#39;, [p[1] for p in pairs if p[0] == &#39;a&#39;])\n\nsrc = [(&#39;x&#39;, 3), (&#39;y&#39;, 1), (&#39;z&#39;, 2)]\nnew = sorted(src, key=itemgetter(1))\nprint(&#39;sorted new list&#39;, new, &#39;src intact&#39;, src)\n\ncalls = []\ndef key_count(record):\n    calls.append(record)\n    return record[1]\nsorted(src, key=key_count)\nprint(&#39;key calls&#39;, len(calls), &#39;equals len&#39;, len(calls) == len(src))\n\na = [0, 1, 2, 3, 4]\na[1:3] = [&#39;a&#39;, &#39;b&#39;, &#39;c&#39;]\nprint(&#39;slice assign changes length&#39;, a)\ntry:\n    a[::2] = [1, 2]\nexcept ValueError as e:\n    print(&#39;extended slice error&#39;, type(e).__name__)\n\ngrid = [[0] * 3] * 3\ngrid[0][0] = 9\nprint(&#39;shared rows&#39;, grid[0] is grid[1], grid)\nfixed = [[0] * 3 for _ in range(3)]\nfixed[0][0] = 9\nprint(&#39;fixed rows&#39;, fixed[0] is fixed[1], fixed[0])\n\nnums = [1, 2, 3, 4, 5]\nfor x in nums[:]:\n    if x % 2 == 0:\n        nums.remove(x)\nprint(&#39;safe removal&#39;, nums)' :notes='["导入 itemgetter，C 层按位置取字段作为排序键", "空行，只用于分隔逻辑块，不影响执行结果。", "四组记录，两组 key 相同用于检验稳定性", "list.sort 是原地方法，按约定返回 None", "排序结果按第一个字段升序，同 key 保持原相对顺序", "同为 &#39;a&#39; 的两条记录仍保持 1、3 的原始次序", "空行，只用于分隔逻辑块，不影响执行结果。", "构造另一组记录，对比 sort 与 sorted 的差别", "sorted 返回新列表，按第二个字段升序", "原 src 未被修改，证明 sorted 不改动输入", "空行，只用于分隔逻辑块，不影响执行结果。", "用列表记录 key 函数被调用的元素", "自定义 key 函数，每次调用留痕", "把当前元素追加到 calls", "返回第二个字段作为排序键", "对 3 个元素排序，观察 key 调用次数", "key 对每个元素恰好求值一次，次数等于元素数", "空行，只用于分隔逻辑块，不影响执行结果。", "构造长度为 5 的列表演示切片赋值", "普通切片赋值右侧长度可不同，列表变长", "打印替换后的结果，长度由 5 变为 6", "扩展切片赋值长度不符会抛异常", "a[::2] 选中 3 个元素却只给 2 个值", "捕获预期的 ValueError 并打印类型", "用 * 重复同一个行对象三次", "空行，只用于分隔逻辑块，不影响执行结果。", "只改第一行的第一格", "三行是同一对象，改一格等于改三行", "列表推导每次迭代新建一个独立的行 list", "只改第一行第一格", "各行 id 不同，只有第一行变成 9", "演示遍历时修改的安全写法", "空行，只用于分隔逻辑块，不影响执行结果。", "遍历副本 nums[:]，原列表可安全删除", "删除偶数元素", "副本迭代不会跳项，结果为 [1, 3, 5]", "list.sort 原地返回 None；sorted 返回新列表且接受任意可迭代对象，两者 key / reverse 都是仅关键字参数", "TimSort 稳定、最坏 O(n log n)、已排序输入近 O(n)、minrun 取 32；reverse 不破坏稳定性"]' title='第 019 讲 · list 进阶：切片赋值、排序与常见陷阱' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='compare2' title='第 019 讲 · 切片赋值：普通切片可变长，扩展切片必须等长' labels='切片赋值：普通切片可变长，扩展切片必须等长|TimSort：稳定性、key 只算一次与 |引用陷阱：列表乘法、遍历修改与内存预分配' caption='写出正确且高效的列表处理代码' />
+<ConceptDiagram type='compare2' title='第 019 讲 · 切片赋值：普通切片可变长，扩展切片必须等长' labels='切片赋值：普通切片可变长，扩展切片必须等长|TimSort：稳定性、key 只算一次与…|引用陷阱：列表乘法、遍历修改与内存预分配|内存预分配' caption='写出正确且高效的列表处理代码' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ### sort 原地排序，sorted 返回新列表
@@ -142,7 +142,7 @@ CPython 的排序用 `TimSort`：先线性扫描切出连续有序的 natural ru
 
 步长大于 1 的扩展切片无法靠平移吸收长度差，因此强制要求右侧长度等于选中元素数，否则抛 `ValueError`。列表乘法 `[x] * k` 复制的是已求值对象的引用，这是共享行问题的根源；`for` 迭代 `list` 使用内部递增索引，循环体内改变长度会让索引与内容错位。
 
-<Callout type="tip" title='核心心智模型' text='切片不只是读取，写在赋值号左边就是原地替换。`a[i:j] = seq` 会把 i 到 j 这一段整体换成 `seq` 的元素，左右长度可以不同，因此能同时完成删除、插入与替换，列表长度随之改变；`a[:] = []` 等价于 `a.clear()`（3.3+），是原地清空且所有指向该列表的别名都能' />
+<Callout type="tip" title='核心心智模型' text='切片不只是读取，写在赋值号左边就是原地替换。`a[i:j] = seq` 会把 i 到 j 这一段整体换成 `seq` 的元素，左右长度可以不同，因此能同时完成删除、插入与替换，列表长度随之改变；`a[:] = []` 等价于 `a.clear()`（3.3+），是原地清空且所有指向该列表的别名都能…' />
 
 
 ## 排序规则与可验证结论
@@ -203,9 +203,9 @@ print('prealloc no larger', sys.getsizeof(a) <= sys.getsizeof(b))
 
 内存方面，列表推导与 `[None] * n` 一次成型，比先建空列表再循环 `append` 少若干次 `realloc`；大列表处理优先用生成器与推导式一次成型，而不是边遍历边改。
 
-<Term word='切片赋值与步长' text='切片不只是读取，写在赋值号左边就是原地替换。`a[i:j] = seq` 会把 i 到 j 这一段整体换成 `seq` 的元素，左右长度可以不同，因此能同时完成删除、插入与替换，列表长度随之改变；`a[:] = []` 等价于 `a.clear()`（3.3+），是原地清空且所有指向该列表的别名都能看到变化，而 `a ' />
+<Term word='切片赋值与步长' text='切片不只是读取，写在赋值号左边就是原地替换。`a[i:j] = seq` 会把 i 到 j 这一段整体换成 `seq` 的元素，左右长度可以不同，因此能同时完成删除、插入与替换，列表长度随之改变；`a[:] = []` 等价于 `a.clear()`（3.3+），是原地清空且所有指向该列表的别名都能看到变化，而…' />
 
-<Term word='sort 与 sorted' text='CPython 的排序是 `TimSort`：先扫描输入找出连续有序的 natural run，短 run 用二分插入排序补到 minrun（CPython 取 32），再把相邻 run 按规则压栈合并。最坏 `O(n log n)`，已排序或部分有序输入接近 `O(n)`，空间 `O(n)`。归并时相等元素优先取左侧' />
+<Term word='sort 与 sorted' text='CPython 的排序是 `TimSort`：先扫描输入找出连续有序的 natural run，短 run 用二分插入排序补到 minrun（CPython 取 32），再把相邻 run 按规则压栈合并。最坏 `O(n log n)`，已排序或部分有序输入接近 `O(n)`，空间 `O(n)`。归并时相等元素优先取左侧…' />
 
 
 ### 遍历时删除为什么跳过元素
@@ -265,13 +265,13 @@ print('slice shrink', len(buf), buf)
 
 <Callout type="idea" title='落地提示' text='大列表优先用生成器与推导式一次成型；排序键用 operator.itemgetter / attrgetter 比 lambda 更快更清晰' />
 
-<CheckList id='P019b' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改一格变成改一整行」", "能复现并解释「遍历列表时删除元素，某些项被跳过」", "能复现并解释「result = a.sort(key=...) 后 res」", "能用一条命令验证 切片赋值与步长", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P019b' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改一格变成改一整行」", "能复现并解释「遍历列表时删除元素，某些项被跳过」", "能复现并解释「result = a.sort(key=...) 后 res…」", "能用一条命令验证 切片赋值与步长", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 切片赋值与步长 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 切片赋值与步长 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 错因速查与修复
@@ -284,7 +284,7 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 | 遍历列表时删除元素，某些项被跳过 | for 循环维护递增下标，删除当前项后后面元素整体前移，下一次迭代跨过一个元素 | 遍历副本 for x in a[:]、用列表推导重建，或从后往前删除 |
 | result = a.sort(key=...) 后 result 是 None | list.sort 原地排序并返回 None，这是刻意的 API 约定，避免调用方误以为得到新列表 | 需要新列表用 sorted(a)；要么先 a.sort() 再直接使用 a 本身 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：[[0] * 3] * 3 改一格变成改一整", "body": "* 对 list 做的是引用重复，三行指向同一个 list 对象", "tip": "用列表推导 [[0] * 3 for _ in range(3)] 生成独立行；用 id 集合大小断言各行不同"}, {"title": "第 2 步：遍历列表时删除元素，某些项被跳过", "body": "for 循环维护递增下标，删除当前项后后面元素整体前移，下一次迭代跨过一个元素", "tip": "遍历副本 for x in a[:]、用列表推导重建，或从后往前删除"}, {"title": "第 3 步：result = a.sort(key=..", "body": "list.sort 原地排序并返回 None，这是刻意的 API 约定，避免调用方误以为得到新列表", "tip": "需要新列表用 sorted(a)；要么先 a.sort() 再直接使用 a 本身"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：[[0] * 3] * 3 改一格变成改一整…", "body": "* 对 list 做的是引用重复，三行指向同一个 list 对象", "tip": "用列表推导 [[0] * 3 for _ in range(3)] 生成独立行；用 id 集合大小断言各行不同"}, {"title": "第 2 步：遍历列表时删除元素，某些项被跳过", "body": "for 循环维护递增下标，删除当前项后后面元素整体前移，下一次迭代跨过一个元素", "tip": "遍历副本 for x in a[:]、用列表推导重建，或从后往前删除"}, {"title": "第 3 步：result = a.sort(key=..…", "body": "list.sort 原地排序并返回 None，这是刻意的 API 约定，避免调用方误以为得到新列表", "tip": "需要新列表用 sorted(a)；要么先 a.sort() 再直接使用 a 本身"}]' />
 
 
 ## 列表处理练习与自测
@@ -323,3 +323,16 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 3. key 对每个元素只求值一次（DSU 缓存）；itemgetter / attrgetter 在 C 层实现，多列排序比 lambda 少一次 Python 调用
 
 [下一讲：tuple 与具名元组：不可变性的价值](/containers/tuple)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/019-list-advanced.py`
+
+```bash
+python3 examples/lessons/019-list-advanced.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/019-list-advanced.py) · [全部示例代码索引](/examples/)

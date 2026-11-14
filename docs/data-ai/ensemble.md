@@ -45,7 +45,7 @@ XGBoost 在 `GBDT` 之上补了二阶泰勒展开（同时用一阶梯度与二�
 | 样本权重 | 有放回重采样 | AdaBoost 提权错分 / GBDT 拟合残差 |
 | 过拟合来源 | 树太深 | 树数量太多、无早停 |
 
-<Callout type="tip" title='核心心智模型' text='两者都把多棵树组合起来，方向却相反。Bagging（随机森林）用有放回重采样并行训练一批互不相关的深树，再取平均或投票，平均主要压低方差，偏差基本与单棵树相当、并不会因为求平均而下降，所以单棵树可以长得很深。Boosting 反过来，串行训练一串弱学习器（通常是浅树），每一棵都去拟合前面所有树加总后' />
+<Callout type="tip" title='核心心智模型' text='两者都把多棵树组合起来，方向却相反。Bagging（随机森林）用有放回重采样并行训练一批互不相关的深树，再取平均或投票，平均主要压低方差，偏差基本与单棵树相当、并不会因为求平均而下降，所以单棵树可以长得很深。Boosting 反过来，串行训练一串弱学习器（通常是浅树），每一棵都去拟合前面所有树加总后…' />
 
 
 ## 梯度提升到底在拟合什么
@@ -176,7 +176,7 @@ XGBoost 在此基础上对目标做二阶泰勒展开，用一阶梯度 g_i 与�
 
 学习率 η 是每一步的收缩系数，M 与 η 一起决定总共走了多远；走过了头，验证误差就会在某个 M 之后回升，早停正是在那一点把它截断。
 
-<ConceptDiagram type='layers3' title='第 100 讲 · 分层视角' labels='Bagging 与 Boosting：并|残差拟合、学习率与早停的判据|XGBoost / LightGBM 的|模型复杂度成本' caption='XGBoost / LightGBM 的工程差异与成本' />
+<ConceptDiagram type='layers3' title='第 100 讲 · 分层视角' labels='Bagging 与 Boosting：并…|残差拟合、学习率与早停的判据|XGBoost / LightGBM 的…|模型复杂度成本' caption='XGBoost / LightGBM 的工程差异与成本' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 模型复杂度成本 落在哪一层。
 
@@ -229,7 +229,7 @@ print('best round', best_round, 'best val', round(best_val, 3))
 python -c "from collections import Counter; print(Counter([0,0,1]).most_common(1))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 Bagging 与 Boosting 差异 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 Bagging 与 Boosting 差异 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 二阶泰勒展开下的叶子权重闭式解
@@ -288,7 +288,7 @@ print('left_allowed', HL >= 3.0, 'right_allowed', HR >= 3.0)
 
 <OutputBox title='扩展示例运行结果' output='G 0.0 H 4.0 w_star 0.0\nGL HL -3.0 2.0 GR HR 3.0 2.0\ngain 3.0\nobj_before 0.0 obj_after -3.0\nleft_allowed False right_allowed False' />
 
-<LineByLine code='def leaf_weight(G, H, lam):\n    return (0.0 - G) / (H + lam)\n\ndef gain(GL, HL, GR, HR, lam, gamma):\n    return 0.5 * (GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam) - (GL + GR) ** 2 / (HL + HR + lam)) - gamma\n\nsamples = [(-2.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (2.0, 1.0)]\nG = sum(g for g, h in samples)\nH = sum(h for g, h in samples)\nlam, gamma = 1.0, 0.0\nw = leaf_weight(G, H, lam)\nprint(&#39;G&#39;, G, &#39;H&#39;, H, &#39;w_star&#39;, round(w, 4))\nobj_before = -0.5 * G ** 2 / (H + lam) + gamma\nleft = [s for s in samples if s[0] &lt; 0]\nright = [s for s in samples if s[0] &gt;= 0]\nGL = sum(g for g, h in left)\nHL = sum(h for g, h in left)\nGR = sum(g for g, h in right)\nHR = sum(h for g, h in right)\ng_split = gain(GL, HL, GR, HR, lam, gamma)\nprint(&#39;GL HL&#39;, GL, HL, &#39;GR HR&#39;, GR, HR)\nprint(&#39;gain&#39;, round(g_split, 4))\nprint(&#39;obj_before&#39;, round(obj_before, 4), &#39;obj_after&#39;, round(obj_before - g_split, 4))\nprint(&#39;left_allowed&#39;, HL &gt;= 3.0, &#39;right_allowed&#39;, HR &gt;= 3.0)' :notes='["w_j* 闭式解：G 是叶子内一阶梯度之和，H 是二阶梯度之和", "Gain 公式里 gamma 作为新增叶子的固定成本被减去", "四个样本，平方损失下 h=1；父节点 G=0 但分裂增益未必为 0", "打印闭式解、目标下降量与按 H 的准入判断", "直方图把候选点从 n-1 压到 bins-1，复杂度 `O(n·d)` 降到 `O(bins·d)`", "高基数类别用 `categorical_feature` / `enable_categorical`，缺失当独立分支；成本落在树数量、`num_leaves` 与特征维度", "Boosting 串行拟合残差、降偏差；Bagging 并行平均、降方差，平均不改变偏差", "平方损失下负梯度就是残差；`F_m = F_{m-1} + η·h_m(x)`，η 与树数量 M 必须成对调", "早停盯独立验证集，`early_stopping_rounds` 配 `best_iteration`，上线只保留最佳轮之前的树", "XGBoost 用二阶泰勒 + 正则 + level-wise，默认 `eta=0.3`、`max_depth=6`；LightGBM 用直方图 + leaf-wise，默认学习率 0.1", "直方图把候选点从 n-1 压到 bins-1，复杂度 `O(n·d)` 降到 `O(bins·d)`", "高基数类别用 `categorical_feature` / `enable_categorical`，缺失当独立分支；成本落在树数量、`num_leaves` 与特征维度", "Boosting 串行拟合残差、降偏差；Bagging 并行平均、降方差，平均不改变偏差", "平方损失下负梯度就是残差；`F_m = F_{m-1} + η·h_m(x)`，η 与树数量 M 必须成对调", "早停盯独立验证集，`early_stopping_rounds` 配 `best_iteration`，上线只保留最佳轮之前的树", "XGBoost 用二阶泰勒 + 正则 + level-wise，默认 `eta=0.3`、`max_depth=6`；LightGBM 用直方图 + leaf-wise，默认学习率 0.1", "直方图把候选点从 n-1 压到 bins-1，复杂度 `O(n·d)` 降到 `O(bins·d)`", "高基数类别用 `categorical_feature` / `enable_categorical`，缺失当独立分支；成本落在树数量、`num_leaves` 与特征维度", "Boosting 串行拟合残差、降偏差；Bagging 并行平均、降方差，平均不改变偏差", "平方损失下负梯度就是残差；`F_m = F_{m-1} + η·h_m(x)`，η 与树数量 M 必须成对调", "早停盯独立验证集，`early_stopping_rounds` 配 `best_iteration`，上线只保留最佳轮之前的树", "XGBoost 用二阶泰勒 + 正则 + level-wise，默认 `eta=0.3`、`max_depth=6`；LightGBM 用直方图 + leaf-wise，默认学习率 0.1"]' title='扩展示例逐行讲解' />
+<LineByLine code='def leaf_weight(G, H, lam):\n    return (0.0 - G) / (H + lam)\n\ndef gain(GL, HL, GR, HR, lam, gamma):\n    return 0.5 * (GL ** 2 / (HL + lam) + GR ** 2 / (HR + lam) - (GL + GR) ** 2 / (HL + HR + lam)) - gamma\n\nsamples = [(-2.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (2.0, 1.0)]\nG = sum(g for g, h in samples)\nH = sum(h for g, h in samples)\nlam, gamma = 1.0, 0.0\nw = leaf_weight(G, H, lam)\nprint(&#39;G&#39;, G, &#39;H&#39;, H, &#39;w_star&#39;, round(w, 4))\nobj_before = -0.5 * G ** 2 / (H + lam) + gamma\nleft = [s for s in samples if s[0] &lt; 0]\nright = [s for s in samples if s[0] &gt;= 0]\nGL = sum(g for g, h in left)\nHL = sum(h for g, h in left)\nGR = sum(g for g, h in right)\nHR = sum(h for g, h in right)\ng_split = gain(GL, HL, GR, HR, lam, gamma)\nprint(&#39;GL HL&#39;, GL, HL, &#39;GR HR&#39;, GR, HR)\nprint(&#39;gain&#39;, round(g_split, 4))\nprint(&#39;obj_before&#39;, round(obj_before, 4), &#39;obj_after&#39;, round(obj_before - g_split, 4))\nprint(&#39;left_allowed&#39;, HL &gt;= 3.0, &#39;right_allowed&#39;, HR &gt;= 3.0)' :notes='["w_j* 闭式解：G 是叶子内一阶梯度之和，H 是二阶梯度之和", "Gain 公式里 gamma 作为新增叶子的固定成本被减去", "空行，只用于分隔逻辑块，不影响执行结果。", "四个样本，平方损失下 h=1；父节点 G=0 但分裂增益未必为 0", "打印闭式解、目标下降量与按 H 的准入判断", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `samples = [(-2.0, 1.0), (-1.0, 1.0), (1.0, 1.0), (2.` 的作用，可对照上方输出逐项核对。", "这一行 `G = sum(g for g, h in samples)` 的作用，可对照上方输出逐项核对。", "这一行 `H = sum(h for g, h in samples)` 的作用，可对照上方输出逐项核对。", "这一行 `lam, gamma = 1.0, 0.0` 的作用，可对照上方输出逐项核对。", "这一行 `w = leaf_weight(G, H, lam)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;G&#39;, G, &#39;H&#39;, H, &#39;w_star&#39;, round(w, 4))` 的作用，可对照上方输出逐项核对。", "这一行 `obj_before = -0.5 * G ** 2 / (H + lam) + gamma` 的作用，可对照上方输出逐项核对。", "这一行 `left = [s for s in samples if s[0] &lt; 0]` 的作用，可对照上方输出逐项核对。", "这一行 `right = [s for s in samples if s[0] &gt;= 0]` 的作用，可对照上方输出逐项核对。", "这一行 `GL = sum(g for g, h in left)` 的作用，可对照上方输出逐项核对。", "这一行 `HL = sum(h for g, h in left)` 的作用，可对照上方输出逐项核对。", "这一行 `GR = sum(g for g, h in right)` 的作用，可对照上方输出逐项核对。", "这一行 `HR = sum(h for g, h in right)` 的作用，可对照上方输出逐项核对。", "这一行 `g_split = gain(GL, HL, GR, HR, lam, gamma)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;GL HL&#39;, GL, HL, &#39;GR HR&#39;, GR, HR)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;gain&#39;, round(g_split, 4))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;obj_before&#39;, round(obj_before, 4), &#39;obj_after` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;left_allowed&#39;, HL &gt;= 3.0, &#39;right_allowed&#39;, HR` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### 结构增益公式里 min_child_weight 的真实含义
@@ -375,3 +375,16 @@ for row in diagnose(3800, [(31, 20), (31, 200), (7, 200), (15, 100)]):
 3. 早停盯独立验证集，`early_stopping_rounds` 配 `best_iteration`，上线只保留最佳轮之前的树
 
 [下一讲：无监督学习：KMeans、DBSCAN、PCA 与异常检测](/data-ai/unsupervised)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/100-ensemble.py`
+
+```bash
+python3 examples/lessons/100-ensemble.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/100-ensemble.py) · [全部示例代码索引](/examples/)

@@ -53,7 +53,7 @@ PEP 479 自 3.7 起默认生效（3.5 与 3.6 要显式启用 `generator_stop` �
 | gen.close() | 在暂停点抛 GeneratorExit | 若此时再 yield 触发 RuntimeError: generator ignored GeneratorExit |
 | GEN_CREATED/SUSPENDED/CLOSED | getgeneratorstate 的四种状态之一（另有 RUNNING） | CLOSED 后不可再 send |
 
-<Callout type="tip" title='核心心智模型' text='包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 `yield`，否则直接 `gen.send(5)` 会抛 TypeError，提示 can&#39;t send non-None val' />
+<Callout type="tip" title='核心心智模型' text='包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 `yield`，否则直接 `gen.send(5)` 会抛 TypeError，提示 can&#39;t send non-None val…' />
 
 
 ## 对照：第一次就 send(5) 为什么报错
@@ -79,7 +79,7 @@ except StopIteration as e:
 
 <OutputBox title='主示例运行结果' output='prime 0\nsend 10 10\nsend 5 15\nreturn value 15' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            return total\n        total += value\n\nacc = accumulator()\nprint(&#39;prime&#39;, next(acc))\nprint(&#39;send 10&#39;, acc.send(10))\nprint(&#39;send 5&#39;, acc.send(5))\ntry:\n    acc.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)' :notes='["定义生成器函数，含 yield 故调用时不执行", "累加器初值为 0", "无限循环，暂停点就是 yield total", "value 接住 send 的值，同时产出当前 total", "约定 send(None) 表示结束", "return 把 total 挂到 StopIteration.value", "否则累加后回到循环顶部再次 yield", "调用生成器函数只得到生成器对象", "首次必须 next 或 send(None) 启动", "send(10) 使 value=10，yield 出 10", "send(5) 后 total=15，yield 出 15", "准备捕获结束信号", "发送 None 触发 return", "return 以 StopIteration 形式冒出", "从 e.value 取回 return 值 15"]' title='第 067 讲 · 生成器协程：send、yield from 与调度器' />
+<LineByLine code='def accumulator():\n    total = 0\n    while True:\n        value = yield total\n        if value is None:\n            return total\n        total += value\n\nacc = accumulator()\nprint(&#39;prime&#39;, next(acc))\nprint(&#39;send 10&#39;, acc.send(10))\nprint(&#39;send 5&#39;, acc.send(5))\ntry:\n    acc.send(None)\nexcept StopIteration as e:\n    print(&#39;return value&#39;, e.value)' :notes='["定义生成器函数，含 yield 故调用时不执行", "累加器初值为 0", "无限循环，暂停点就是 yield total", "value 接住 send 的值，同时产出当前 total", "约定 send(None) 表示结束", "return 把 total 挂到 StopIteration.value", "否则累加后回到循环顶部再次 yield", "空行，只用于分隔逻辑块，不影响执行结果。", "调用生成器函数只得到生成器对象", "首次必须 next 或 send(None) 启动", "send(10) 使 value=10，yield 出 10", "send(5) 后 total=15，yield 出 15", "准备捕获结束信号", "发送 None 触发 return", "return 以 StopIteration 形式冒出", "从 e.value 取回 return 值 15"]' title='第 067 讲 · 生成器协程：send、yield from 与调度器' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -167,9 +167,9 @@ except RuntimeError as e:
 
 ### 指令指针为什么停在 YIELD_VALUE 之后
 
-<Term word='生成器双向通信' text='包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 `yield`，否则直接 `gen.send(5)` 会抛 TypeError，提示 can&#39;t send non-None value to a ju' />
+<Term word='生成器双向通信' text='包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 `yield`，否则直接 `gen.send(5)` 会抛 TypeError，提示 can&#39;t send non-None value to a ju…' />
 
-<Term word='yield from 委托' text='`yield from expr`（PEP 380，3.3 起）不只是「逐个产出子迭代器的值」：它建立一条透明通道，调用方 `send` 的值、`throw` 的异常、`close` 的关闭信号都转发给子生成器（只要子生成器有对应方法），子生成器 `return value` 时，整个 `yield from` 表达式' />
+<Term word='yield from 委托' text='`yield from expr`（PEP 380，3.3 起）不只是「逐个产出子迭代器的值」：它建立一条透明通道，调用方 `send` 的值、`throw` 的异常、`close` 的关闭信号都转发给子生成器（只要子生成器有对应方法），子生成器 `return value` 时，整个 `yield from` 表达式…' />
 
 
 ## yield from 的委托语义与 StopIteration.value
@@ -215,12 +215,12 @@ asyncio 里 `Task` 是「被事件循环驱动的协程」，`Future` 是「结�
 | PEP 492 / 3.5 | async def / await、CO_COROUTINE 原生协程 | Task 与 Future 的分工 |
 | 3.11 | 移除 asyncio.coroutine | 生成器协程退出历史主线 |
 
-<FlowTimeline :steps='[{"title": "生成器双向通信：send / throw / close 与状态机", "desc": "包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次…", "tone": "blue"}, {"title": "yield from 委托与 StopIteration.value", "desc": "`yield from expr`（PEP 380，3.3 起）不只是「逐个产出子迭…", "tone": "purple"}, {"title": "从生成器调度器到 PEP 492 的原生协程", "desc": "用生成器写协程调度器的最小骨架是：一个 `deque` 就绪队列，每个生成器在 IO…", "tone": "orange"}, {"title": "工程落地", "desc": "用生成器写一个协作式轮转调度器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "生成器双向通信：send / throw / c…", "desc": "包含 `yield` 的函数是生成器函数，调用它只返回生成器对象、一行都不执行。首次…", "tone": "blue"}, {"title": "yield from 委托与 StopItera…", "desc": "`yield from expr`（PEP 380，3.3 起）不只是「逐个产出子迭…", "tone": "purple"}, {"title": "从生成器调度器到 PEP 492 的原生协程", "desc": "用生成器写协程调度器的最小骨架是：一个 `deque` 就绪队列，每个生成器在 IO…", "tone": "orange"}, {"title": "工程落地", "desc": "用生成器写一个协作式轮转调度器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 栈-less 协程与回调写法的调用栈
 
-<ConceptDiagram type='layers3' title='第 067 讲 · 分层视角' labels='生成器双向通信：send / throw|yield from 委托与 StopI|从生成器调度器到 PEP 492 的原生|PEP 380 / 492' caption='从生成器调度器到 PEP 492 的原生协程' />
+<ConceptDiagram type='layers3' title='第 067 讲 · 分层视角' labels='生成器双向通信：send / throw…|yield from 委托与 StopI…|从生成器调度器到 PEP 492 的原生…|PEP 380 / 492' caption='从生成器调度器到 PEP 492 的原生协程' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 PEP 380 / 492 落在哪一层。
 
@@ -269,11 +269,11 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱' />
 
-<CheckList id='P067b' title='上线前自检' :items='["能复现并解释「第一次就 gen.send(5) 驱动生成器」", "能复现并解释「在生成器里 raise StopIteration 想结束循」", "能复现并解释「把 yield from 当成普通遍历，无视委托语义」", "能用一条命令验证 生成器双向通信", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P067b' title='上线前自检' :items='["能复现并解释「第一次就 gen.send(5) 驱动生成器」", "能复现并解释「在生成器里 raise StopIteration 想结束循…」", "能复现并解释「把 yield from 当成普通遍历，无视委托语义」", "能用一条命令验证 生成器双向通信", "关键路径有自动化测试与失败分支"]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='第一次就 gen.send(5) 驱动生成器：生成器尚未启动到第一个 yield，没有表达式可接收值' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：第一次就 gen.send(5) 驱动生成器", "body": "生成器尚未启动到第一个 yield，没有表达式可接收值", "tip": "先 next(gen) 或 gen.send(None)  priming，再 send 非 None 值"}, {"title": "第 2 步：在生成器里 raise StopIterat", "body": "PEP 479（3.7+ 默认）把漏出的 StopIteration 转成 RuntimeError: generator raised StopIteration", "tip": "用 return value 正常结束；手动驱动时在 try/except StopIteration 里读 e.value"}, {"title": "第 3 步：把 yield from 当成普通遍历，无视", "body": "它还会转发 send/throw/close，并以子生成器 return 值作为表达式结果", "tip": "需要接收结果时写 r = yield from sub()；只遍历用 for x in sub() 即可"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：第一次就 gen.send(5) 驱动生成器", "body": "生成器尚未启动到第一个 yield，没有表达式可接收值", "tip": "先 next(gen) 或 gen.send(None)  priming，再 send 非 None 值"}, {"title": "第 2 步：在生成器里 raise StopIterat…", "body": "PEP 479（3.7+ 默认）把漏出的 StopIteration 转成 RuntimeError: generator raised StopIteration", "tip": "用 return value 正常结束；手动驱动时在 try/except StopIteration 里读 e.value"}, {"title": "第 3 步：把 yield from 当成普通遍历，无视…", "body": "它还会转发 send/throw/close，并以子生成器 return 值作为表达式结果", "tip": "需要接收结果时写 r = yield from sub()；只遍历用 for x in sub() 即可"}]' />
 
 
 ## 错因速查与排查顺序
@@ -326,7 +326,7 @@ print('iterable coroutine flag', bool(legacy.__code__.co_flags & inspect.CO_ITER
 
 <OutputBox title='扩展示例运行结果' output='send opcode True\nyield opcode True\ngenerator flag True\niterable coroutine flag True' />
 
-<LineByLine code='import dis\nimport inspect\nimport types\n\ndef inner():\n    yield 1\n    return 9\n\ndef outer():\n    r = yield from inner()\n    return r\n\nops = [i.opname for i in dis.get_instructions(outer)]\nprint(&#39;send opcode&#39;, &#39;SEND&#39; in ops)\nprint(&#39;yield opcode&#39;, &#39;YIELD_VALUE&#39; in ops)\nprint(&#39;generator flag&#39;, bool(outer.__code__.co_flags &amp; inspect.CO_GENERATOR))\n\n@types.coroutine\ndef legacy():\n    yield\nprint(&#39;iterable coroutine flag&#39;, bool(legacy.__code__.co_flags &amp; inspect.CO_ITERABLE_COROUTINE))\n' :notes='["dis 读出函数编译后的指令名列表", "3.11 起 yield from 编译出 SEND 指令", "types.coroutine 给生成器打上 0x100 让 Awaitable 放行", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 generator ignored GeneratorExit", "inspect.getgeneratorstate 四态 GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR 为 32", "演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动", "生成器函数调用只返回对象；首次用 next(gen) 或 gen.send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值", "yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）", "生成器 return value 挂在 StopIteration.value；PEP 479（3.7 起默认）把漏出的 StopIteration 转成 RuntimeError", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 generator ignored GeneratorExit", "inspect.getgeneratorstate 四态 GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR 为 32", "演进线 PEP 342 → 380 → 492；asyncio 里 Task 调度、Future 占位，Task.__step 用 send(None) 驱动", "生成器函数调用只返回对象；首次用 next(gen) 或 gen.send(None) 启动，send(v) 把 v 作为当前 yield 表达式的值", "yield from 透明转发 send/throw/close，并以子生成器 return 的 value 作为表达式结果（PEP 380）", "生成器 return value 挂在 StopIteration.value；PEP 479（3.7 起默认）把漏出的 StopIteration 转成 RuntimeError", "gen.throw 在暂停点抛异常可被接住；gen.close 抛 GeneratorExit，此时再 yield 会报 generator ignored GeneratorExit", "inspect.getgeneratorstate 四态 GEN_CREATED/RUNNING/SUSPENDED/CLOSED；CO_GENERATOR 为 32"]' title='扩展示例逐行讲解' />
+<LineByLine code='import dis\nimport inspect\nimport types\n\ndef inner():\n    yield 1\n    return 9\n\ndef outer():\n    r = yield from inner()\n    return r\n\nops = [i.opname for i in dis.get_instructions(outer)]\nprint(&#39;send opcode&#39;, &#39;SEND&#39; in ops)\nprint(&#39;yield opcode&#39;, &#39;YIELD_VALUE&#39; in ops)\nprint(&#39;generator flag&#39;, bool(outer.__code__.co_flags &amp; inspect.CO_GENERATOR))\n\n@types.coroutine\ndef legacy():\n    yield\nprint(&#39;iterable coroutine flag&#39;, bool(legacy.__code__.co_flags &amp; inspect.CO_ITERABLE_COROUTINE))\n' :notes='["dis 读出函数编译后的指令名列表", "3.11 起 yield from 编译出 SEND 指令", "types.coroutine 给生成器打上 0x100 让 Awaitable 放行", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def inner():` 的作用，可对照上方输出逐项核对。", "这一行 `yield 1` 的作用，可对照上方输出逐项核对。", "这一行 `return 9` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def outer():` 的作用，可对照上方输出逐项核对。", "这一行 `r = yield from inner()` 的作用，可对照上方输出逐项核对。", "这一行 `return r` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `ops = [i.opname for i in dis.get_instructions(outer)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;send opcode&#39;, &#39;SEND&#39; in ops)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;yield opcode&#39;, &#39;YIELD_VALUE&#39; in ops)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;generator flag&#39;, bool(outer.__code__.co_flags` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `@types.coroutine` 的作用，可对照上方输出逐项核对。", "这一行 `def legacy():` 的作用，可对照上方输出逐项核对。", "这一行 `yield` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;iterable coroutine flag&#39;, bool(legacy.__code_` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### PyGenObject 的 gi_yieldfrom 与 frame 状态
@@ -454,4 +454,17 @@ except RuntimeError as e:
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 生成器双向通信 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 生成器双向通信 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/067-generator-coroutine.py`
+
+```bash
+python3 examples/lessons/067-generator-coroutine.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/067-generator-coroutine.py) · [全部示例代码索引](/examples/)

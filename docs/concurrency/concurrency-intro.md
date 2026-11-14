@@ -53,9 +53,9 @@ Little's Law 给出容量关系：并发数约等于吞吐乘以平均延迟，2
 
 <ConceptDiagram type='flow3' title='第 060 讲 · 并发、并行与两组易混术语' labels='并发、并行与两组易混术语|五种 IO 模型与 C10K 的由来|三条路线的判据与吞吐/延迟口径' caption='为不同负载选对并发模型' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-<Callout type="tip" title='核心心智模型' text='并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；并行（parallelism）是「同时做多件事」，必须有多个执行单元（多核、多台机器）。CPython 在默认构建里受 GIL 约束，同一时刻只有一个线程执行 Python 字节码，因此多线程是并发而非并行。同步/异' />
+<Callout type="tip" title='核心心智模型' text='并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；并行（parallelism）是「同时做多件事」，必须有多个执行单元（多核、多台机器）。CPython 在默认构建里受 GIL 约束，同一时刻只有一个线程执行 Python 字节码，因此多线程是并发而非并行。同步/异…' />
 
 
 ## 三条路线的判据：按等待类型决定
@@ -100,7 +100,7 @@ asyncio 的 `BaseSelectorEventLoop` 正是把协程的 await 点映射到 select
 
 Little's Law（L = λW）在稳定系统里给出在途请求数与吞吐、延迟的约束，是容量规划而非性能调优的结论：不降延迟又要提吞吐，就必须抬高在途并发数，而每个并发单位都要付出栈内存或事件循环调度的成本。
 
-<FlowTimeline :steps='[{"title": "并发、并行与两组易混术语", "desc": "并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发；…", "tone": "blue"}, {"title": "五种 IO 模型与 C10K 的由来", "desc": "按 Stevens 在《UNIX Network Programming》里的划分，…", "tone": "purple"}, {"title": "三条路线的判据与吞吐/延迟口径", "desc": "动手前先测：用 `perf_counter` 与 `process_time` 求 …", "tone": "orange"}, {"title": "工程落地", "desc": "按负载类型自动选路的小型任务分发器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "并发、并行与两组易混术语", "desc": "并发（concurrency）指「同时面对多件事」的结构，单核上靠交错执行也能并发…", "tone": "blue"}, {"title": "五种 IO 模型与 C10K 的由来", "desc": "按 Stevens 在《UNIX Network Programming》里的划分…", "tone": "purple"}, {"title": "三条路线的判据与吞吐/延迟口径", "desc": "动手前先测：用 `perf_counter` 与 `process_time` 求…", "tone": "orange"}, {"title": "工程落地", "desc": "按负载类型自动选路的小型任务分发器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 对照：同一负载下线程、进程与协程的实测
@@ -140,7 +140,7 @@ print('cores >= 2', os.cpu_count() >= 2)
 
 <OutputBox title='主示例运行结果' output='io route thread-or-asyncio\ncpu route process-or-cext\nio waits more True\nlittle law 10.0\ncores &gt;= 2 True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import time\nimport os\n\ndef io_bound():\n    time.sleep(0.02)\n\ndef cpu_bound():\n    return sum(i * i for i in range(2000000))\n\ndef measure(fn):\n    t0 = time.perf_counter()\n    c0 = time.process_time()\n    fn()\n    wall = time.perf_counter() - t0\n    cpu = time.process_time() - c0\n    return wall, cpu\n\ndef route(fn):\n    wall, cpu = measure(fn)\n    wait = max(wall - cpu, 0.0)\n    if wait &gt; cpu * 2:\n        return &#39;thread-or-asyncio&#39;\n    return &#39;process-or-cext&#39;\n\nprint(&#39;io route&#39;, route(io_bound))\nprint(&#39;cpu route&#39;, route(cpu_bound))\nwall, cpu = measure(io_bound)\nprint(&#39;io waits more&#39;, wall - cpu &gt; cpu)\nprint(&#39;little law&#39;, round(200 * 0.05, 1))\nprint(&#39;cores &gt;= 2&#39;, os.cpu_count() &gt;= 2)' :notes='["导入 time，用两种时钟区分等待与计算", "导入 os，读取可用逻辑核数", "模拟等待型任务", "time.sleep 释放 GIL 但不消耗 CPU 时间", "模拟计算型任务", "两百万次循环，让 CPU 时间远大于计时噪声", "测量函数：同时采集墙钟与 CPU 时间", "记录墙钟起点", "记录 CPU 时间起点", "执行被测函数", "墙钟含全部等待", "CPU 时间只含真正占用处理器的部分", "返回两个读数供上层判定", "按等待与 CPU 时间的关系选路线", "取两个读数", "wall - cpu 近似等待，用 max 截掉计时抖动", "等待超过 CPU 两倍才判等待主导", "等待主导走线程池或 asyncio", "否则走多进程或释放 GIL 的 C 扩展", "等待型任务应判为 thread-or-asyncio", "计算型任务应判为 process-or-cext", "再次测量等待型任务", "验证差值确实大于 CPU 时间本身", "Little&#39;s Law：并发数约等于吞吐乘延迟", "多核是并行路线能生效的前提"]' title='第 060 讲 · 并发、并行与 IO 模型全景' />
+<LineByLine code='import time\nimport os\n\ndef io_bound():\n    time.sleep(0.02)\n\ndef cpu_bound():\n    return sum(i * i for i in range(2000000))\n\ndef measure(fn):\n    t0 = time.perf_counter()\n    c0 = time.process_time()\n    fn()\n    wall = time.perf_counter() - t0\n    cpu = time.process_time() - c0\n    return wall, cpu\n\ndef route(fn):\n    wall, cpu = measure(fn)\n    wait = max(wall - cpu, 0.0)\n    if wait &gt; cpu * 2:\n        return &#39;thread-or-asyncio&#39;\n    return &#39;process-or-cext&#39;\n\nprint(&#39;io route&#39;, route(io_bound))\nprint(&#39;cpu route&#39;, route(cpu_bound))\nwall, cpu = measure(io_bound)\nprint(&#39;io waits more&#39;, wall - cpu &gt; cpu)\nprint(&#39;little law&#39;, round(200 * 0.05, 1))\nprint(&#39;cores &gt;= 2&#39;, os.cpu_count() &gt;= 2)' :notes='["导入 time，用两种时钟区分等待与计算", "导入 os，读取可用逻辑核数", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟等待型任务", "time.sleep 释放 GIL 但不消耗 CPU 时间", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟计算型任务", "两百万次循环，让 CPU 时间远大于计时噪声", "空行，只用于分隔逻辑块，不影响执行结果。", "测量函数：同时采集墙钟与 CPU 时间", "记录墙钟起点", "记录 CPU 时间起点", "执行被测函数", "墙钟含全部等待", "CPU 时间只含真正占用处理器的部分", "返回两个读数供上层判定", "空行，只用于分隔逻辑块，不影响执行结果。", "按等待与 CPU 时间的关系选路线", "取两个读数", "wall - cpu 近似等待，用 max 截掉计时抖动", "等待超过 CPU 两倍才判等待主导", "等待主导走线程池或 asyncio", "否则走多进程或释放 GIL 的 C 扩展", "空行，只用于分隔逻辑块，不影响执行结果。", "等待型任务应判为 thread-or-asyncio", "计算型任务应判为 process-or-cext", "再次测量等待型任务", "验证差值确实大于 CPU 时间本身", "Little&#39;s Law：并发数约等于吞吐乘延迟", "多核是并行路线能生效的前提"]' title='第 060 讲 · 并发、并行与 IO 模型全景' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -226,7 +226,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='先量化等待时间与 CPU 占比，再决定 thread / process / async，别凭框架偏好拍脑袋' />
 
-<CheckList id='P060b' title='上线前自检' :items='["能复现并解释「把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨」", "能复现并解释「在 asyncio 里用 time.sleep / 同步 r」", "能复现并解释「用平均延迟评估并发效果」", "能用一条命令验证 并发与并行的区别", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P060b' title='上线前自检' :items='["能复现并解释「把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨」", "能复现并解释「在 asyncio 里用 time.sleep / 同步 r…」", "能复现并解释「用平均延迟评估并发效果」", "能用一条命令验证 并发与并行的区别", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -238,7 +238,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='把 IO 密集服务写成 200 个进程，内存爆了吞吐没涨：多进程为隔离 CPU 而生，等待型任务并不需要独立地址空间，反而为每个解释器与依赖副本付内存' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 IO 密集服务写成 200 个进程，内存", "body": "多进程为隔离 CPU 而生，等待型任务并不需要独立地址空间，反而为每个解释器与依赖副本付内存", "tip": "先测 wall - cpu 占比；等待主导用线程池或 asyncio，只把计算段下放进进程池"}, {"title": "第 2 步：在 asyncio 里用 time.slee", "body": "同步阻塞不释放事件循环，整个 loop 上的任务一起停住，p99 被拉高", "tip": "改用 asyncio.sleep / aiohttp，或把阻塞调用放进 asyncio.to_thread / run_in_executor"}, {"title": "第 3 步：用平均延迟评估并发效果", "body": "长尾被平均值掩盖，一个慢调用能把 p99 拉高一个量级", "tip": "同时报 p50/p95/p99 与吞吐；按 Little&#39;s Law 估算所需在途并发数并设上限"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 IO 密集服务写成 200 个进程，内存…", "body": "多进程为隔离 CPU 而生，等待型任务并不需要独立地址空间，反而为每个解释器与依赖副本付内存", "tip": "先测 wall - cpu 占比；等待主导用线程池或 asyncio，只把计算段下放进进程池"}, {"title": "第 2 步：在 asyncio 里用 time.slee…", "body": "同步阻塞不释放事件循环，整个 loop 上的任务一起停住，p99 被拉高", "tip": "改用 asyncio.sleep / aiohttp，或把阻塞调用放进 asyncio.to_thread / run_in_executor"}, {"title": "第 3 步：用平均延迟评估并发效果", "body": "长尾被平均值掩盖，一个慢调用能把 p99 拉高一个量级", "tip": "同时报 p50/p95/p99 与吞吐；按 Little&#39;s Law 估算所需在途并发数并设上限"}]' />
 
 
 ## 练习、自测与速记
@@ -277,3 +277,16 @@ if __name__ == '__main__':
 3. 五种 IO 模型：阻塞、非阻塞轮询、多路复用、信号驱动、异步 IO；epoll 是反应器，IOCP 是前摄器
 
 [下一讲：threading：线程生命周期与共享状态](/concurrency/threading)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/060-concurrency-intro.py`
+
+```bash
+python3 examples/lessons/060-concurrency-intro.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/060-concurrency-intro.py) · [全部示例代码索引](/examples/)

@@ -50,11 +50,11 @@ timeit 内部把 stmt 编译成函数循环执行，所以多行语句要正确�
 | time.perf_counter_ns() 3.7+ | 同上，整数纳秒 | 含 | 避免浮点累计误差 |
 | timeit.repeat(...) | 固定 number 下多轮总耗时 | 含 | 微基准，取 min(samples) |
 
-<Callout type="tip" title='核心心智模型' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮' />
+<Callout type="tip" title='核心心智模型' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮…' />
 
-<ConceptDiagram type='hub4' title='第 058 讲 · 计时口径：墙钟、CPU 时间与 timeit 的正确姿势' labels='计时口径：墙钟、CPU 时间与 timeit|cProfile / pstats：把耗时拆|tracemalloc 快照与可复现基准' caption='用数据而不是直觉做优化' />
+<ConceptDiagram type='hub4' title='第 058 讲 · 计时口径：墙钟、CPU 时间与 timeit 的正确姿势' labels='计时口径：墙钟、CPU 时间与 timeit…|cProfile / pstats：把耗时拆…|tracemalloc 快照与可复现基准|基准的可复现性' caption='用数据而不是直觉做优化' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 微基准：正确姿势与被带偏的对照
@@ -80,7 +80,7 @@ print('rounds', len(samples), 'min_le_mean', min(samples) <= sum(samples) / len(
 
 <OutputBox title='主示例运行结果' output='wall &gt; cpu True\nsleep dominates True\nrounds 5 min_le_mean True' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import time\nimport timeit\n\ndef mixed():\n    time.sleep(0.05)\n    return sum(range(1000))\n\nt0 = time.perf_counter()\nc0 = time.process_time()\nmixed()\nwall = time.perf_counter() - t0\ncpu = time.process_time() - c0\nprint(&#39;wall &gt; cpu&#39;, wall &gt; cpu)\nprint(&#39;sleep dominates&#39;, wall - cpu &gt; cpu)\nsamples = timeit.repeat(&#39;sum(range(1000))&#39;, number=500, repeat=5)\nprint(&#39;rounds&#39;, len(samples), &#39;min_le_mean&#39;, min(samples) &lt;= sum(samples) / len(samples))' :notes='["导入 time，使用 perf_counter 与 process_time 两种口径", "导入 timeit 做可重复微基准", "构造一个含休眠与少量计算的函数", "time.sleep 会释放 GIL 但不消耗 CPU 时间", "少量计算用于体现 CPU 时间不为零", "记录墙钟起点", "记录 CPU 时间起点", "执行被测函数", "墙钟增量包含全部休眠等待", "CPU 增量只含真正占用处理器的时间", "墙钟必然大于 CPU 时间", "差值远大于 CPU 时间，判定为 IO/等待主导", "timeit.repeat 返回 5 轮各自的总耗时", "校验轮数，并用 min &lt;= mean 说明取最小值的意义"]' title='第 058 讲 · 性能剖析：timeit、cProfile 与 tracemalloc' />
+<LineByLine code='import time\nimport timeit\n\ndef mixed():\n    time.sleep(0.05)\n    return sum(range(1000))\n\nt0 = time.perf_counter()\nc0 = time.process_time()\nmixed()\nwall = time.perf_counter() - t0\ncpu = time.process_time() - c0\nprint(&#39;wall &gt; cpu&#39;, wall &gt; cpu)\nprint(&#39;sleep dominates&#39;, wall - cpu &gt; cpu)\nsamples = timeit.repeat(&#39;sum(range(1000))&#39;, number=500, repeat=5)\nprint(&#39;rounds&#39;, len(samples), &#39;min_le_mean&#39;, min(samples) &lt;= sum(samples) / len(samples))' :notes='["导入 time，使用 perf_counter 与 process_time 两种口径", "导入 timeit 做可重复微基准", "空行，只用于分隔逻辑块，不影响执行结果。", "构造一个含休眠与少量计算的函数", "time.sleep 会释放 GIL 但不消耗 CPU 时间", "少量计算用于体现 CPU 时间不为零", "空行，只用于分隔逻辑块，不影响执行结果。", "记录墙钟起点", "记录 CPU 时间起点", "执行被测函数", "墙钟增量包含全部休眠等待", "CPU 增量只含真正占用处理器的时间", "墙钟必然大于 CPU 时间", "差值远大于 CPU 时间，判定为 IO/等待主导", "timeit.repeat 返回 5 轮各自的总耗时", "校验轮数，并用 min &lt;= mean 说明取最小值的意义"]' title='第 058 讲 · 性能剖析：timeit、cProfile 与 tracemalloc' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -159,9 +159,9 @@ tracemalloc.stop()
 | SortKey.CUMULATIVE (3.7+) | 按累计耗时排序，值为 cumulative | 按 tottime 排会漏掉包装层 |
 | pstats.Stats.print_stats(10) | 只打印前 10 行 | 不看 strip_dirs 会让路径刷屏 |
 
-<Term word='测量优先于猜测' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。判断任务类型' />
+<Term word='测量优先于猜测' text='`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。判断任务类型…' />
 
-<Term word='timeit 的正确姿势' text='`cProfile.Profile()` 是 C 扩展实现的确定性 profiler，通过 `sys.setprofile` 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 `profile` 模块。常用 `pr.enable()` 跑代码再用 `pr.disable()`' />
+<Term word='timeit 的正确姿势' text='`cProfile.Profile()` 是 C 扩展实现的确定性 profiler，通过 `sys.setprofile` 接收每个 Python 函数的 call/return 事件，开销远低于纯 Python 的 `profile` 模块。常用 `pr.enable()` 跑代码再用 `pr.disable()`…' />
 
 
 ## tracemalloc 快照差值与可复现基线
@@ -246,7 +246,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='把关键基准写进 CI 并设回归阈值；优化前后保留同一组数据与同一台机器' />
 
-<CheckList id='P058b' title='上线前自检' :items='["能复现并解释「用 perf_counter 量含 sleep 的逻辑，得出」", "能复现并解释「微基准只跑一次、且把数据构造写在被测语句里」", "能复现并解释「看 cProfile 的 tottime 找热点，结果优化了」", "能用一条命令验证 测量优先于猜测", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P058b' title='上线前自检' :items='["能复现并解释「用 perf_counter 量含 sleep 的逻辑，得出…」", "能复现并解释「微基准只跑一次、且把数据构造写在被测语句里」", "能复现并解释「看 cProfile 的 tottime 找热点，结果优化了…」", "能用一条命令验证 测量优先于猜测", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -258,7 +258,7 @@ if __name__ == '__main__':
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 perf_counter 量含 sleep 的逻辑，得出「该上多进程」：墙钟把等待时间也算进去，误判成 CPU 密集' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 perf_counter 量含 slee", "body": "墙钟把等待时间也算进去，误判成 CPU 密集", "tip": "同时测 process_time，用 wall - cpu 估等待占比；IO 主导用线程池或 asyncio"}, {"title": "第 2 步：微基准只跑一次、且把数据构造写在被测语句里", "body": "缓存预热、GC、哈希随机化与构造开销混进结果，数字不可复现", "tip": "用 timeit.repeat 取 min，数据放 setup，固定 PYTHONHASHSEED，必要时 gc.disable()"}, {"title": "第 3 步：看 cProfile 的 tottime 找", "body": "tottime 不含子调用，真正的耗时常集中在被调用的下层或被 cumtime 掩盖", "tip": "先按 SortKey.CUMULATIVE 排序定位调用树，再对具体函数看 tottime 与 ncalls"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 perf_counter 量含 slee…", "body": "墙钟把等待时间也算进去，误判成 CPU 密集", "tip": "同时测 process_time，用 wall - cpu 估等待占比；IO 主导用线程池或 asyncio"}, {"title": "第 2 步：微基准只跑一次、且把数据构造写在被测语句里", "body": "缓存预热、GC、哈希随机化与构造开销混进结果，数字不可复现", "tip": "用 timeit.repeat 取 min，数据放 setup，固定 PYTHONHASHSEED，必要时 gc.disable()"}, {"title": "第 3 步：看 cProfile 的 tottime 找…", "body": "tottime 不含子调用，真正的耗时常集中在被调用的下层或被 cumtime 掩盖", "tip": "先按 SortKey.CUMULATIVE 排序定位调用树，再对具体函数看 tottime 与 ncalls"}]' />
 
 
 ## 练习、自测与速记
@@ -302,4 +302,17 @@ if __name__ == '__main__':
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 测量优先于猜测 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 测量优先于猜测 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/058-profiling.py`
+
+```bash
+python3 examples/lessons/058-profiling.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/058-profiling.py) · [全部示例代码索引](/examples/)

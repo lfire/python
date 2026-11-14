@@ -45,16 +45,16 @@ Snowflake 类算法把 64 位整数切成几段：最高位固定 0 留符号，
 | 毫秒内序列 | 12 | 0 到 4095 | 单节点单毫秒超 4096 需自旋等下一毫秒 |
 | 时钟回拨保护 | 无 | 当前时间小于 last_ts | 拒绝发号并告警，不能静默继续 |
 
-<ConceptDiagram type='hub4' title='第 108 讲 · 自增 ID 的局限与雪花算法的位布局' labels='自增 ID 的局限与雪花算法的位布局|范围分片、哈希分片与一致性哈希的迁移量|热点、倾斜与再平衡的工程判据' caption='设计可水平扩展的数据布局' />
+<ConceptDiagram type='hub4' title='第 108 讲 · 自增 ID 的局限与雪花算法的位布局' labels='自增 ID 的局限与雪花算法的位布局|范围分片、哈希分片与一致性哈希的迁移量|热点、倾斜与再平衡的工程判据|扩容与再平衡' caption='设计可水平扩展的数据布局' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 雪花生成器遇到时钟回拨仍继续发号
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用随机 ID 做分片键却按时间范围查询：哈希分布没有任何时间局部性，范围条件无法定位到少数片，只能对全部分片各查一次再归并' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用随机 ID 做分片键却按时间范围查询", "body": "哈希分布没有任何时间局部性，范围条件无法定位到少数片，只能对全部分片各查一次再归并", "tip": "按主查询维度选键；确需时间查询就改用范围分片加预分区，或另建按时间组织的索引表"}, {"title": "第 2 步：hash(key) % N 分片的集群直接扩", "body": "取模落点几乎全变，约 N/(N+1) 的数据要搬迁，八扩九接近九成，迁移期间双写与校验压力巨大", "tip": "改用一致性哈希加虚拟节点，把迁移量压到约 1/(N+1)，并限速可回滚地再平衡"}, {"title": "第 3 步：雪花生成器遇到时钟回拨仍继续发号", "body": "当前时间小于 last_ts 时，同一毫秒段可能重放已用过的序列，生成与几秒前重复的 ID 触发主键冲突", "tip": "记录 last_ts，检测到回拨即拒绝服务并告警，超过阈值直接熔断，等待追平后再恢复"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用随机 ID 做分片键却按时间范围查询", "body": "哈希分布没有任何时间局部性，范围条件无法定位到少数片，只能对全部分片各查一次再归并", "tip": "按主查询维度选键；确需时间查询就改用范围分片加预分区，或另建按时间组织的索引表"}, {"title": "第 2 步：hash(key) % N 分片的集群直接扩…", "body": "取模落点几乎全变，约 N/(N+1) 的数据要搬迁，八扩九接近九成，迁移期间双写与校验压力巨大", "tip": "改用一致性哈希加虚拟节点，把迁移量压到约 1/(N+1)，并限速可回滚地再平衡"}, {"title": "第 3 步：雪花生成器遇到时钟回拨仍继续发号", "body": "当前时间小于 last_ts 时，同一毫秒段可能重放已用过的序列，生成与几秒前重复的 ID 触发主键冲突", "tip": "记录 last_ts，检测到回拨即拒绝服务并告警，超过阈值直接熔断，等待追平后再恢复"}]' />
 
 
 ## 范围分片、哈希分片与一致性哈希的迁移量
@@ -101,7 +101,7 @@ print('ideal', round(1 / 4, 3))
 
 <OutputBox title='主示例运行结果' output='total 2000\nmoved 546\nratio 0.273\nideal 0.25' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import hashlib, bisect\n\ndef hkey(s):\n    return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)\n\nclass Ring:\n    def __init__(self, nodes, replicas=100):\n        self.replicas = replicas\n        self.keys = []\n        self.map = {}\n        for n in nodes:\n            self.add(n)\n    def add(self, n):\n        for i in range(self.replicas):\n            k = hkey(n + &#39;#&#39; + str(i))\n            bisect.insort(self.keys, k)\n            self.map[k] = n\n    def node_for(self, key):\n        k = hkey(key)\n        i = bisect.bisect_left(self.keys, k) % len(self.keys)\n        return self.map[self.keys[i]]\n\nkeys = [&#39;user:&#39; + str(i) for i in range(2000)]\nr = Ring([&#39;n1&#39;, &#39;n2&#39;, &#39;n3&#39;])\nbefore = {k: r.node_for(k) for k in keys}\nr.add(&#39;n4&#39;)\nmoved = sum(1 for k in keys if r.node_for(k) != before[k])\nprint(&#39;total&#39;, len(keys))\nprint(&#39;moved&#39;, moved)\nprint(&#39;ratio&#39;, round(moved / len(keys), 3))\nprint(&#39;ideal&#39;, round(1 / 4, 3))' :notes='["导入 hashlib 做稳定散列、bisect 维护有序环坐标", "hkey 把任意字符串映射为环上整数坐标", "取 md5 前 8 位十六进制转整数，落在 32 位范围", "定义一致性哈希环", "构造器接收初始节点与每节点虚拟点数，默认 100", "保存虚拟节点副本数", "keys 是有序坐标数组，供二分查找", "map 把坐标映射回物理节点名", "逐个把初始节点加入环", "调用 add 展开虚拟节点", "add 把单个物理节点展开为 replicas 个虚拟点", "为每个副本生成一个坐标", "用节点名加序号散列，避免不同节点坐标冲突", "insort 维持坐标升序，插入 O(V)", "登记该虚拟点所属的物理节点", "node_for 求某个 key 的归属节点", "先算 key 在环上的坐标", "bisect_left 找顺时针第一个虚拟点，取模实现回绕到环首", "返回该坐标对应的物理节点", "构造 2000 个 key 用于统计迁移量", "三节点冷启动，每节点 100 个虚拟点", "记录加节点前每个 key 的归属", "加入第四节点，只影响环上一段区间", "统计落点发生变化的 key 数", "打印 key 总数", "打印实际迁移数，虚拟节点使其接近理论值", "打印实际迁移比例", "打印理论迁移比例 1/4 作为对照"]' title='第 108 讲 · 分布式 ID、一致性哈希与分片' />
+<LineByLine code='import hashlib, bisect\n\ndef hkey(s):\n    return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)\n\nclass Ring:\n    def __init__(self, nodes, replicas=100):\n        self.replicas = replicas\n        self.keys = []\n        self.map = {}\n        for n in nodes:\n            self.add(n)\n    def add(self, n):\n        for i in range(self.replicas):\n            k = hkey(n + &#39;#&#39; + str(i))\n            bisect.insort(self.keys, k)\n            self.map[k] = n\n    def node_for(self, key):\n        k = hkey(key)\n        i = bisect.bisect_left(self.keys, k) % len(self.keys)\n        return self.map[self.keys[i]]\n\nkeys = [&#39;user:&#39; + str(i) for i in range(2000)]\nr = Ring([&#39;n1&#39;, &#39;n2&#39;, &#39;n3&#39;])\nbefore = {k: r.node_for(k) for k in keys}\nr.add(&#39;n4&#39;)\nmoved = sum(1 for k in keys if r.node_for(k) != before[k])\nprint(&#39;total&#39;, len(keys))\nprint(&#39;moved&#39;, moved)\nprint(&#39;ratio&#39;, round(moved / len(keys), 3))\nprint(&#39;ideal&#39;, round(1 / 4, 3))' :notes='["导入 hashlib 做稳定散列、bisect 维护有序环坐标", "空行，只用于分隔逻辑块，不影响执行结果。", "hkey 把任意字符串映射为环上整数坐标", "取 md5 前 8 位十六进制转整数，落在 32 位范围", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一致性哈希环", "构造器接收初始节点与每节点虚拟点数，默认 100", "保存虚拟节点副本数", "keys 是有序坐标数组，供二分查找", "map 把坐标映射回物理节点名", "逐个把初始节点加入环", "调用 add 展开虚拟节点", "add 把单个物理节点展开为 replicas 个虚拟点", "为每个副本生成一个坐标", "用节点名加序号散列，避免不同节点坐标冲突", "insort 维持坐标升序，插入 O(V)", "登记该虚拟点所属的物理节点", "node_for 求某个 key 的归属节点", "先算 key 在环上的坐标", "bisect_left 找顺时针第一个虚拟点，取模实现回绕到环首", "返回该坐标对应的物理节点", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 2000 个 key 用于统计迁移量", "三节点冷启动，每节点 100 个虚拟点", "记录加节点前每个 key 的归属", "加入第四节点，只影响环上一段区间", "统计落点发生变化的 key 数", "打印 key 总数", "打印实际迁移数，虚拟节点使其接近理论值", "打印实际迁移比例", "打印理论迁移比例 1/4 作为对照"]' title='第 108 讲 · 分布式 ID、一致性哈希与分片' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -221,7 +221,7 @@ print('migration_ratio', round(changed / len(keys), 3))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 自增 ID 的局限 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 自增 ID 的局限 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -257,3 +257,16 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 <Predict no='108-4' q='三节点一致性哈希环加一个节点后，2000 个 key 的迁移比例最可能是？' :options='["约 0.27，接近理论值 0.25", "约 0.89，与取模分片相同", "0，加节点不影响已有 key"]' answer='0' output='0.273（moved 546，ratio 0.273）' explain='新节点只接管环上它与前驱之间的一段弧，理论迁移量 1/(N+1) = 1/4 = 0.25；虚拟节点数量有限带来少量偏差，实测 0.273。' />
 
 <FillBlank no='108-5' tpl='___ hashlib, bisect' :answers='["import"]' hint='回想本讲关于 自增 ID 的局限 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 自增 ID 的局限与雪花算法的位布局 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/108-sharding.py`
+
+```bash
+python3 examples/lessons/108-sharding.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/108-sharding.py) · [全部示例代码索引](/examples/)

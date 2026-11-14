@@ -44,9 +44,9 @@ MySQL 的 XA 与 PostgreSQL 的 `PREPARE TRANSACTION` 提供这套接口，后�
 
 CAP 定理下 2PC 选的是 CP：网络分区时宁可阻塞也不放行，因此跨机房的长事务几乎不会用它；微服务的强一致通常只落在同一个库内部，用唯一索引与本地事务解决。
 
-<ConceptDiagram type='layers3' title='第 107 讲 · 本地事务的 ACID 边界与 2PC 为何阻塞' labels='本地事务的 ACID 边界与 2PC 为何阻|TCC 预留与 Saga 逆序补偿：用业务逻|outbox、事务消息与至少一次投递下的幂等' caption='按业务代价选择事务方案' />
+<ConceptDiagram type='layers3' title='第 107 讲 · 本地事务的 ACID 边界与 2PC 为何阻塞' labels='本地事务的 ACID 边界与 2PC 为何阻…|TCC 预留与 Saga 逆序补偿：用业务逻…|outbox、事务消息与至少一次投递下的幂等|对账与人工兜底' caption='按业务代价选择事务方案' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## prepare 到 commit 之间，2PC 的阻塞点在哪
@@ -144,7 +144,7 @@ print('duplicate_comp', s.compensate('stock'))
 
 <OutputBox title='主示例运行结果' output='step_failed order RuntimeError\nstate {&#39;stock&#39;: 5, &#39;balance&#39;: 100, &#39;order&#39;: 0}\ncompensated [&#39;balance&#39;, &#39;stock&#39;]\nduplicate_comp skip-duplicate' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class Saga:\n    def __init__(self):\n        self.done = []\n        self.compensated = set()\n    def run(self, name, forward, backward):\n        try:\n            forward()\n        except RuntimeError as err:\n            print(&#39;step_failed&#39;, name, type(err).__name__)\n            return False\n        self.done.append((name, backward))\n        return True\n    def compensate(self, name):\n        if name in self.compensated:\n            return &#39;skip-duplicate&#39;\n        self.compensated.add(name)\n        return &#39;compensated&#39;\n    def rollback(self):\n        for name, backward in reversed(self.done):\n            backward()\n            self.compensated.add(name)\n\nstate = {&#39;stock&#39;: 5, &#39;balance&#39;: 100, &#39;order&#39;: 0}\ndef dec_stock(): state[&#39;stock&#39;] -= 1\ndef inc_stock(): state[&#39;stock&#39;] += 1\ndef dec_balance(): state[&#39;balance&#39;] -= 10\ndef inc_balance(): state[&#39;balance&#39;] += 10\ndef make_order(): raise RuntimeError(&#39;payment timeout&#39;)\ndef drop_order(): state[&#39;order&#39;] = 0\n\ns = Saga()\nfor name, fwd, back in [\n    (&#39;stock&#39;, dec_stock, inc_stock),\n    (&#39;balance&#39;, dec_balance, inc_balance),\n    (&#39;order&#39;, make_order, drop_order),\n]:\n    if not s.run(name, fwd, back):\n        s.rollback()\n        break\nprint(&#39;state&#39;, state)\nprint(&#39;compensated&#39;, sorted(s.compensated))\nprint(&#39;duplicate_comp&#39;, s.compensate(&#39;stock&#39;))' :notes='["定义 Saga 编排器，负责正向步骤与逆序补偿", "构造器初始化已完成步骤与补偿登记", "done 保存步骤名与补偿函数，供回滚逆序遍历", "compensated 集合实现补偿幂等去重", "run 执行单个本地事务步骤并登记其补偿", "try 包裹正向操作，隔离业务失败", "执行正向动作，例如扣库存", "只捕获预期的业务异常类型", "打印失败步骤名与异常类型，便于对账", "返回 False 通知调用方触发回滚", "成功后把步骤与补偿登记进 done", "返回 True 表示本步骤已提交", "compensate 供外部显式触发单步补偿", "已补偿过则直接跳过，保证幂等", "重复调用返回 skip-duplicate 而不重复执行", "登记步骤名为已补偿", "首次补偿返回 compensated", "rollback 在整体失败时逆序调用补偿", "reversed(done) 是 Saga 核心：后提交的先补偿", "执行该步骤的补偿函数恢复状态", "同时登记进 compensated，防止与显式补偿冲突", "共享状态模拟三个服务的资源", "扣减库存的正向操作", "补偿：把库存加回去", "扣减账户余额", "补偿：退还余额", "模拟下单失败，抛出业务异常", "下单补偿为空操作，仅占位", "创建 Saga 实例", "按业务顺序声明三个步骤及各自补偿", "第一步：库存预留", "第二步：余额扣减", "第三步：创建订单，会失败", "结束步骤列表", "任一步失败即触发回滚", "逆序执行已完成步骤的补偿", "跳出循环，不再继续后续步骤", "打印最终状态，验证库存与余额已恢复", "打印实际被补偿的步骤名，不含失败的 order", "再次补偿已完成步骤，验证幂等返回 skip-duplicate"]' title='第 107 讲 · 分布式事务：2PC / TCC / Saga / 消息最终一致' />
+<LineByLine code='class Saga:\n    def __init__(self):\n        self.done = []\n        self.compensated = set()\n    def run(self, name, forward, backward):\n        try:\n            forward()\n        except RuntimeError as err:\n            print(&#39;step_failed&#39;, name, type(err).__name__)\n            return False\n        self.done.append((name, backward))\n        return True\n    def compensate(self, name):\n        if name in self.compensated:\n            return &#39;skip-duplicate&#39;\n        self.compensated.add(name)\n        return &#39;compensated&#39;\n    def rollback(self):\n        for name, backward in reversed(self.done):\n            backward()\n            self.compensated.add(name)\n\nstate = {&#39;stock&#39;: 5, &#39;balance&#39;: 100, &#39;order&#39;: 0}\ndef dec_stock(): state[&#39;stock&#39;] -= 1\ndef inc_stock(): state[&#39;stock&#39;] += 1\ndef dec_balance(): state[&#39;balance&#39;] -= 10\ndef inc_balance(): state[&#39;balance&#39;] += 10\ndef make_order(): raise RuntimeError(&#39;payment timeout&#39;)\ndef drop_order(): state[&#39;order&#39;] = 0\n\ns = Saga()\nfor name, fwd, back in [\n    (&#39;stock&#39;, dec_stock, inc_stock),\n    (&#39;balance&#39;, dec_balance, inc_balance),\n    (&#39;order&#39;, make_order, drop_order),\n]:\n    if not s.run(name, fwd, back):\n        s.rollback()\n        break\nprint(&#39;state&#39;, state)\nprint(&#39;compensated&#39;, sorted(s.compensated))\nprint(&#39;duplicate_comp&#39;, s.compensate(&#39;stock&#39;))' :notes='["定义 Saga 编排器，负责正向步骤与逆序补偿", "构造器初始化已完成步骤与补偿登记", "done 保存步骤名与补偿函数，供回滚逆序遍历", "compensated 集合实现补偿幂等去重", "run 执行单个本地事务步骤并登记其补偿", "try 包裹正向操作，隔离业务失败", "执行正向动作，例如扣库存", "只捕获预期的业务异常类型", "打印失败步骤名与异常类型，便于对账", "返回 False 通知调用方触发回滚", "成功后把步骤与补偿登记进 done", "返回 True 表示本步骤已提交", "compensate 供外部显式触发单步补偿", "已补偿过则直接跳过，保证幂等", "重复调用返回 skip-duplicate 而不重复执行", "登记步骤名为已补偿", "首次补偿返回 compensated", "rollback 在整体失败时逆序调用补偿", "reversed(done) 是 Saga 核心：后提交的先补偿", "执行该步骤的补偿函数恢复状态", "同时登记进 compensated，防止与显式补偿冲突", "空行，只用于分隔逻辑块，不影响执行结果。", "共享状态模拟三个服务的资源", "扣减库存的正向操作", "补偿：把库存加回去", "扣减账户余额", "补偿：退还余额", "模拟下单失败，抛出业务异常", "下单补偿为空操作，仅占位", "空行，只用于分隔逻辑块，不影响执行结果。", "创建 Saga 实例", "按业务顺序声明三个步骤及各自补偿", "第一步：库存预留", "第二步：余额扣减", "第三步：创建订单，会失败", "结束步骤列表", "任一步失败即触发回滚", "逆序执行已完成步骤的补偿", "跳出循环，不再继续后续步骤", "打印最终状态，验证库存与余额已恢复", "打印实际被补偿的步骤名，不含失败的 order", "再次补偿已完成步骤，验证幂等返回 skip-duplicate"]' title='第 107 讲 · 分布式事务：2PC / TCC / Saga / 消息最终一致' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -256,7 +256,7 @@ print('reconcile', len(b.delivered), len(b.consumed))
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 本地事务边界 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 本地事务边界 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -268,7 +268,7 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 
 <Callout type="warn" title='本讲最容易踩的坑' text='先提交本地事务再发 MQ 消息：两次写之间没有事务保护，进程在提交后发送前崩溃就永久丢消息；反向先发消息则本地回滚后消息已不可撤回' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：先提交本地事务再发 MQ 消息", "body": "两次写之间没有事务保护，进程在提交后发送前崩溃就永久丢消息；反向先发消息则本地回滚后消息已不可撤回", "tip": "把消息写进与业务表同库的 outbox 表，用同一个本地事务提交，再由独立投递进程读取发送"}, {"title": "第 2 步：Saga 只写正向流程，把补偿当成 undo", "body": "补偿是一次新的业务写，也可能超时或失败；网络重试还会让同一补偿到达多次，重复退款会造成资损", "tip": "为每个补偿定义幂等键、可重试队列与终态，保留对账任务扫描未完成补偿并告警"}, {"title": "第 3 步：用 2PC 跨公网服务追求强一致", "body": "prepare 到 commit 之间长时间持锁，任一参与者抖动整链阻塞，协调者宕机留下 in-doubt 事务", "tip": "强一致收缩到单库内，跨服务改用 outbox 或 Saga；必须使用时监控长事务与 prepared 事务数量"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：先提交本地事务再发 MQ 消息", "body": "两次写之间没有事务保护，进程在提交后发送前崩溃就永久丢消息；反向先发消息则本地回滚后消息已不可撤回", "tip": "把消息写进与业务表同库的 outbox 表，用同一个本地事务提交，再由独立投递进程读取发送"}, {"title": "第 2 步：Saga 只写正向流程，把补偿当成 undo…", "body": "补偿是一次新的业务写，也可能超时或失败；网络重试还会让同一补偿到达多次，重复退款会造成资损", "tip": "为每个补偿定义幂等键、可重试队列与终态，保留对账任务扫描未完成补偿并告警"}, {"title": "第 3 步：用 2PC 跨公网服务追求强一致", "body": "prepare 到 commit 之间长时间持锁，任一参与者抖动整链阻塞，协调者宕机留下 in-doubt 事务", "tip": "强一致收缩到单库内，跨服务改用 outbox 或 Saga；必须使用时监控长事务与 prepared 事务数量"}]' />
 
 
 ## FLP 不可能性与 2PC 的终止性缺口
@@ -304,7 +304,7 @@ print('crash', two_pc(['stock', 'balance', 'order'], True))
 
 <OutputBox title='扩展示例运行结果' output='normal (&#39;all_committed&#39;, 0, 0)\ncrash (&#39;coordinator_crashed_before_decision&#39;, 3, 18)' />
 
-<LineByLine code='def two_pc(participants, crash, ticks=6):\n    state = {p: &#39;prepared&#39; for p in participants}\n    locks = {p: 1 for p in participants}\n    if not crash:\n        for p in state:\n            state[p] = &#39;committed&#39;\n            locks[p] = 0\n        return &#39;all_committed&#39;, 0, 0\n    in_doubt = sum(1 for s in state.values() if s == &#39;prepared&#39;)\n    for p in state:\n        if state[p] == &#39;prepared&#39;:\n            state[p] = &#39;committed&#39;\n    return &#39;coordinator_crashed_before_decision&#39;, in_doubt, sum(locks.values()) * ticks\n\nprint(&#39;normal&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], False))\nprint(&#39;crash&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], True))' :notes='["prepare 阶段把所有参与者置为 prepared 并上锁", "正常路径写 commit 决定、释放全部锁，无 in-doubt", "故障注入：协调者崩溃，统计 prepared 数与累计锁持有 tick", "正常路径 0 个 in-doubt；崩溃路径 3 个参与者各持锁 6 tick 共 18", "outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复", "最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额", "本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点", "2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0", "TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等", "Saga 为每个本地事务配补偿、失败逆序执行，补偿是新的业务写、缺隔离性；编排式与协同式各有权衡", "outbox 把业务表与消息放进同一次本地事务，投递 at-least-once，消费端用唯一索引收敛重复", "最终一致成立条件 = 至少一次投递 + 幂等消费 + 可观测对账，缺一就留人工修补的差额", "本地事务靠单资源管理器的 undo/redo 日志与锁；跨 MQ / Redis / 多库就没有共享提交点", "2PC 的 prepare 锁行到 commit，协调者宕机让参与者卡在 in-doubt；`PREPARE TRANSACTION` 受 `max_prepared_transactions` 限制，默认常为 0", "TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等"]' title='扩展示例逐行讲解' />
+<LineByLine code='def two_pc(participants, crash, ticks=6):\n    state = {p: &#39;prepared&#39; for p in participants}\n    locks = {p: 1 for p in participants}\n    if not crash:\n        for p in state:\n            state[p] = &#39;committed&#39;\n            locks[p] = 0\n        return &#39;all_committed&#39;, 0, 0\n    in_doubt = sum(1 for s in state.values() if s == &#39;prepared&#39;)\n    for p in state:\n        if state[p] == &#39;prepared&#39;:\n            state[p] = &#39;committed&#39;\n    return &#39;coordinator_crashed_before_decision&#39;, in_doubt, sum(locks.values()) * ticks\n\nprint(&#39;normal&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], False))\nprint(&#39;crash&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;], True))' :notes='["prepare 阶段把所有参与者置为 prepared 并上锁", "正常路径写 commit 决定、释放全部锁，无 in-doubt", "故障注入：协调者崩溃，统计 prepared 数与累计锁持有 tick", "正常路径 0 个 in-doubt；崩溃路径 3 个参与者各持锁 6 tick 共 18", "这一行 `for p in state:` 的作用，可对照上方输出逐项核对。", "这一行 `state[p] = &#39;committed&#39;` 的作用，可对照上方输出逐项核对。", "这一行 `locks[p] = 0` 的作用，可对照上方输出逐项核对。", "这一行 `return &#39;all_committed&#39;, 0, 0` 的作用，可对照上方输出逐项核对。", "这一行 `in_doubt = sum(1 for s in state.values() if s == &#39;pr` 的作用，可对照上方输出逐项核对。", "这一行 `for p in state:` 的作用，可对照上方输出逐项核对。", "这一行 `if state[p] == &#39;prepared&#39;:` 的作用，可对照上方输出逐项核对。", "这一行 `state[p] = &#39;committed&#39;` 的作用，可对照上方输出逐项核对。", "这一行 `return &#39;coordinator_crashed_before_decision&#39;, in_dou` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;normal&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;crash&#39;, two_pc([&#39;stock&#39;, &#39;balance&#39;, &#39;order&#39;],` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 107 讲 · 扩展图解' labels='prepare ready|写全局提交日志|commit 广播|in-doubt 窗口' caption='协调者崩溃落在两条日志之间时，参与者既不能提交也不能回滚，锁一直持有到恢复进程裁决' />
 
@@ -401,3 +401,16 @@ print('persisted', broker_check(db_persisted, 'ORDER-9'))
 3. TCC 用 Try / Confirm / Cancel 把锁搬到业务字段，要防空回滚、悬挂与幂等
 
 [下一讲：分布式 ID、一致性哈希与分片](/distributed/sharding)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/107-dist-tx.py`
+
+```bash
+python3 examples/lessons/107-dist-tx.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/107-dist-tx.py) · [全部示例代码索引](/examples/)

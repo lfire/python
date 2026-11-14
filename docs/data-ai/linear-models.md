@@ -61,7 +61,7 @@ print('scaled', knn_predict(strain, labels, scale(q)))
 
 <OutputBox title='主示例运行结果' output='raw B\nscaled A' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import math\n\ndef knn_predict(train, labels, q, k=3):\n    dists = []\n    for row, lab in zip(train, labels):\n        dists.append((math.dist(row, q), lab))\n    dists.sort()\n    votes = {}\n    for _, lab in dists[:k]:\n        votes[lab] = votes.get(lab, 0) + 1\n    return max(votes, key=votes.get)\n\ntrain = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]\nlabels = [&#39;A&#39;, &#39;A&#39;, &#39;A&#39;, &#39;B&#39;, &#39;B&#39;, &#39;B&#39;]\nq = [0.12, 5000]\nprint(&#39;raw&#39;, knn_predict(train, labels, q))\ncols = list(zip(*train))\nmeans = [sum(c) / len(c) for c in cols]\nstds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 for m, c in zip(means, cols)]\ndef scale(row):\n    return [(x - m) / s for x, m, s in zip(row, means, stds)]\nstrain = [scale(r) for r in train]\nprint(&#39;scaled&#39;, knn_predict(strain, labels, scale(q)))' :notes='["导入 math 使用 math.dist 计算欧氏距离", "定义 KNN 预测函数，k 默认 3，惰性学习无训练阶段", "dists 收集每个训练点到查询点的距离与标签", "逐条计算距离，特征未缩放时大尺度列主导差值", "math.dist 默认 L2 欧氏距离，对绝对尺度敏感", "按距离升序排序，最近的排在最前", "votes 统计 k 个近邻里各类别票数", "只取前 k 个近邻参与投票", "累加类别票数，多数类胜出", "返回票数最多的类别，等价于多数表决", "第一列是有判别力的小尺度特征、第二列是大尺度噪声", "前三条为 A 类、后三条为 B 类，仅第一列真正区分类别", "查询点第一列 0.12 明显属 A，第二列 5000 却更靠 B", "未缩放时距离被第二列主导，预测被带偏成 B", "按列转置，准备逐列计算均值与标准差", "每列均值，标准化 z=(x-均值)/标准差 的分子", "每列总体标准差，作为缩放的分母", "定义标准化函数，让两列等权参与距离", "逐列做 z-score，尺度差异被消除", "对训练集整体做同样的标准化", "对查询点用训练集的参数标准化后再预测，结果回到 A"]' title='第 098 讲 · 经典算法：KNN、线性与逻辑回归' />
+<LineByLine code='import math\n\ndef knn_predict(train, labels, q, k=3):\n    dists = []\n    for row, lab in zip(train, labels):\n        dists.append((math.dist(row, q), lab))\n    dists.sort()\n    votes = {}\n    for _, lab in dists[:k]:\n        votes[lab] = votes.get(lab, 0) + 1\n    return max(votes, key=votes.get)\n\ntrain = [[0.1, 100], [0.2, 9000], [0.15, 300], [0.9, 8000], [0.8, 200], [0.85, 9500]]\nlabels = [&#39;A&#39;, &#39;A&#39;, &#39;A&#39;, &#39;B&#39;, &#39;B&#39;, &#39;B&#39;]\nq = [0.12, 5000]\nprint(&#39;raw&#39;, knn_predict(train, labels, q))\ncols = list(zip(*train))\nmeans = [sum(c) / len(c) for c in cols]\nstds = [(sum((x - m) ** 2 for x in c) / len(c)) ** 0.5 for m, c in zip(means, cols)]\ndef scale(row):\n    return [(x - m) / s for x, m, s in zip(row, means, stds)]\nstrain = [scale(r) for r in train]\nprint(&#39;scaled&#39;, knn_predict(strain, labels, scale(q)))' :notes='["导入 math 使用 math.dist 计算欧氏距离", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 KNN 预测函数，k 默认 3，惰性学习无训练阶段", "dists 收集每个训练点到查询点的距离与标签", "逐条计算距离，特征未缩放时大尺度列主导差值", "math.dist 默认 L2 欧氏距离，对绝对尺度敏感", "按距离升序排序，最近的排在最前", "votes 统计 k 个近邻里各类别票数", "只取前 k 个近邻参与投票", "累加类别票数，多数类胜出", "返回票数最多的类别，等价于多数表决", "空行，只用于分隔逻辑块，不影响执行结果。", "第一列是有判别力的小尺度特征、第二列是大尺度噪声", "前三条为 A 类、后三条为 B 类，仅第一列真正区分类别", "查询点第一列 0.12 明显属 A，第二列 5000 却更靠 B", "未缩放时距离被第二列主导，预测被带偏成 B", "按列转置，准备逐列计算均值与标准差", "每列均值，标准化 z=(x-均值)/标准差 的分子", "每列总体标准差，作为缩放的分母", "定义标准化函数，让两列等权参与距离", "逐列做 z-score，尺度差异被消除", "对训练集整体做同样的标准化", "对查询点用训练集的参数标准化后再预测，结果回到 A"]' title='第 098 讲 · 经典算法：KNN、线性与逻辑回归' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -99,7 +99,7 @@ print('L1 after 10', round(w1[-1], 4))
 
 线性模型的价值不只在预测，更在可解释性——系数直接表示『其余特征固定时，该特征每增一个单位对 y 的影响』，是任何复杂模型之前必须建立的基线。
 
-<Callout type="tip" title='核心心智模型' text='KNN 是惰性学习：没有显式的训练阶段，预测时才计算测试点到所有训练点的距离，取距离最小的 k 个邻居投票（分类取多数类）或平均（回归），因此训练是 `O(1)`、单次预测是 `O(n*d)`，n 是样本数、d 是特征数，大数据要靠 KD-tree 或 Ball-tree 加速，但维度升高后这类索引' />
+<Callout type="tip" title='核心心智模型' text='KNN 是惰性学习：没有显式的训练阶段，预测时才计算测试点到所有训练点的距离，取距离最小的 k 个邻居投票（分类取多数类）或平均（回归），因此训练是 `O(1)`、单次预测是 `O(n*d)`，n 是样本数、d 是特征数，大数据要靠 KD-tree 或 Ball-tree 加速，但维度升高后这类索引…' />
 
 
 ## 梯度下降：学习率与收敛的临界点
@@ -161,9 +161,9 @@ L2（Ridge）在损失里加 λ 乘权重平方和，梯度多出 `2*lambda*w`�
 
 可解释性上，逻辑回归系数取指数 `exp(w)` 就是优势比（odds ratio）：某特征加一单位，事件发生的赔率乘以这个数，这是它比黑箱模型更适合风控、医疗等场景的原因。
 
-<ConceptDiagram type='hub4' title='第 098 讲 · KNN、距离度量与特征缩放' labels='KNN、距离度量与特征缩放|最小二乘、梯度下降与多项式过拟合|逻辑回归、决策边界与 L1/L2 正则' caption='从最简模型理解偏差方差与优化' />
+<ConceptDiagram type='hub4' title='第 098 讲 · KNN、距离度量与特征缩放' labels='KNN、距离度量与特征缩放|最小二乘、梯度下降与多项式过拟合|逻辑回归、决策边界与 L1/L2 正则|可解释性' caption='从最简模型理解偏差方差与优化' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## L1 与 L2 正则：稀疏解还是平滑解
@@ -195,7 +195,7 @@ L2（Ridge）在损失里加 λ 乘权重平方和，梯度多出 `2*lambda*w`�
 | 学习率设得过大，损失震荡溢出成 inf | η 超过 2/λ_max 时迭代矩阵谱半径大于 1，误差逐轮指数放大 | 先用较小学习率（如 0.05）或做学习率搜索，监控损失是否单调下降；必要时先标准化特征 |
 | 多项式回归次数越加越高，训练集满分线上很差 | 高次项把噪声也拟合进去，方差急剧增大，属于典型过拟合 | 用验证曲线选次数，加 L2 正则或限制次数，先与线性基线比较增益再决定 |
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：KNN / 梯度下降不缩放，结果被大尺度特征", "body": "欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大", "tip": "训练前对每列做 z-score 标准化或 [0,1] 归一化，并把同样的参数用于验证与线上推理"}, {"title": "第 2 步：学习率设得过大，损失震荡溢出成 inf", "body": "η 超过 2/λ_max 时迭代矩阵谱半径大于 1，误差逐轮指数放大", "tip": "先用较小学习率（如 0.05）或做学习率搜索，监控损失是否单调下降；必要时先标准化特征"}, {"title": "第 3 步：多项式回归次数越加越高，训练集满分线上很差", "body": "高次项把噪声也拟合进去，方差急剧增大，属于典型过拟合", "tip": "用验证曲线选次数，加 L2 正则或限制次数，先与线性基线比较增益再决定"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：KNN / 梯度下降不缩放，结果被大尺度特征…", "body": "欧氏距离与平方损失都按数值平方累加，量纲大的列贡献压倒其它列，且条件数变大", "tip": "训练前对每列做 z-score 标准化或 [0,1] 归一化，并把同样的参数用于验证与线上推理"}, {"title": "第 2 步：学习率设得过大，损失震荡溢出成 inf", "body": "η 超过 2/λ_max 时迭代矩阵谱半径大于 1，误差逐轮指数放大", "tip": "先用较小学习率（如 0.05）或做学习率搜索，监控损失是否单调下降；必要时先标准化特征"}, {"title": "第 3 步：多项式回归次数越加越高，训练集满分线上很差", "body": "高次项把噪声也拟合进去，方差急剧增大，属于典型过拟合", "tip": "用验证曲线选次数，加 L2 正则或限制次数，先与线性基线比较增益再决定"}]' />
 
 
 ## 流失预测基线：把缩放固化进推理管道
@@ -273,3 +273,16 @@ print('predictions', [knn(train, labels, transform(q)) for q in queries])
 3. 标准化 z=(x-mean)/std 或归一化到 [0,1] 是硬要求，缩放后才能用更大学习率
 
 [下一讲：SVM、核方法、决策树与随机森林](/data-ai/svm-trees)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/098-linear-models.py`
+
+```bash
+python3 examples/lessons/098-linear-models.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/098-linear-models.py) · [全部示例代码索引](/examples/)

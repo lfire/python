@@ -24,7 +24,7 @@ description: 用函数组合代替重复循环
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='reduce 对空批次抛 TypeError: reduce() of empty iterable with no initial value：没给 initializer 时 reduce 需要至少一个元素作起点，而线上空输入是常态' />
 
-<Callout type="tip" title='核心心智模型' text='Python 2 的 map、filter 返回 list，Python 3 起返回迭代器（map 对象 / filter 对象），惰性求值、只能消费一次；只有 `list(...)` 或 `for` 循环才真正物化结果。时间复杂度 `O(n)`、额外空间 `O(1)`（不含输出），而列表推导式立即' />
+<Callout type="tip" title='核心心智模型' text='Python 2 的 map、filter 返回 list，Python 3 起返回迭代器（map 对象 / filter 对象），惰性求值、只能消费一次；只有 `list(...)` 或 `for` 循环才真正物化结果。时间复杂度 `O(n)`、额外空间 `O(1)`（不含输出），而列表推导式立即…' />
 
 **本讲定位**
 
@@ -72,7 +72,7 @@ except TypeError as e:
 
 <OutputBox title='主示例运行结果' output='[3, -2, 0, 4] [3, 4]\n[3, -2, 0, 4] []\n12\n1\nTypeError reduce() of empty iterable with no initial value' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from functools import reduce\nfrom operator import mul\n\nraw = [&#39;3&#39;, &#39;-2&#39;, &#39;0&#39;, &#39;4&#39;]\nnums = list(map(int, raw))\npos = list(filter(lambda x: x &gt; 0, nums))\nprint(nums, pos)\nm = map(int, raw)\nprint(list(m), list(m))\nprint(reduce(mul, [3, 4], 1))\nprint(reduce(mul, [], 1))\ntry:\n    print(reduce(mul, []))\nexcept TypeError as e:\n    print(type(e).__name__, str(e))' :notes='["从 functools 导入 reduce：Python 3 起它不再是内建", "从 operator 导入 C 实现的乘法函数 mul", "准备含负数、零与非数字字符的原始批次", "map(int, raw) 惰性转换，list 才物化成整数列表", "filter 配合短 lambda 只保留正数", "打印转换结果与过滤结果", "再次构造一个 map 迭代器，用于验证一次性", "第一次 list 消费完，第二次 list 得到空列表", "带 initializer=1 的累积：1*3*4 得 12", "空序列带 initializer 时直接返回 1，不报错", "准备捕获不带初值的空序列异常", "无 initializer 且序列为空，reduce 找不到起点", "捕获预期的 TypeError", "打印异常类型与消息"]' title='第 031 讲 · 高阶函数、lambda 与 map / filter / reduce' />
+<LineByLine code='from functools import reduce\nfrom operator import mul\n\nraw = [&#39;3&#39;, &#39;-2&#39;, &#39;0&#39;, &#39;4&#39;]\nnums = list(map(int, raw))\npos = list(filter(lambda x: x &gt; 0, nums))\nprint(nums, pos)\nm = map(int, raw)\nprint(list(m), list(m))\nprint(reduce(mul, [3, 4], 1))\nprint(reduce(mul, [], 1))\ntry:\n    print(reduce(mul, []))\nexcept TypeError as e:\n    print(type(e).__name__, str(e))' :notes='["从 functools 导入 reduce：Python 3 起它不再是内建", "从 operator 导入 C 实现的乘法函数 mul", "空行，只用于分隔逻辑块，不影响执行结果。", "准备含负数、零与非数字字符的原始批次", "map(int, raw) 惰性转换，list 才物化成整数列表", "filter 配合短 lambda 只保留正数", "打印转换结果与过滤结果", "再次构造一个 map 迭代器，用于验证一次性", "第一次 list 消费完，第二次 list 得到空列表", "带 initializer=1 的累积：1*3*4 得 12", "空序列带 initializer 时直接返回 1，不报错", "准备捕获不带初值的空序列异常", "无 initializer 且序列为空，reduce 找不到起点", "捕获预期的 TypeError", "打印异常类型与消息"]' title='第 031 讲 · 高阶函数、lambda 与 map / filter / reduce' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -109,9 +109,9 @@ print('RETURN_VALUE' in ops, 'BUILD_TUPLE' in ops)
 
 <CodeTabs :tabs='[{"label": "主示例", "code": "from functools import reduce\nfrom operator import mul\n\nraw = [&#39;3&#39;, &#39;-2&#39;, &#39;0&#39;, &#39;4&#39;]\nnums = list(map(int, raw))\npos = list(filter(lambda x: x &gt; 0, nums))\nprint(nums, pos)\nm = map(int, raw)\nprint(list(m), list(m))\nprint(reduce(mul, [3, 4], 1))\nprint(reduce(mul, [], 1))\ntry:\n    print(reduce(mul, []))\nexcept TypeError as e:\n    print(type(e).__name__, str(e))", "note": "map / filter 的惰性与一次性"}, {"label": "对照 / 进阶", "code": "from operator import itemgetter, add, mul\nfrom functools import reduce\n\nrows = [(&#39;a&#39;, 3), (&#39;b&#39;, 1), (&#39;c&#39;, 2)]\nprint(sorted(rows, key=itemgetter(1)))\nprint(list(map(itemgetter(1), rows)))\n\nOPS = {&#39;add&#39;: add, &#39;mul&#39;: mul}\ndef apply(op, a, b):\n    return OPS[op](a, b)\nprint(apply(&#39;mul&#39;, 3, 4), apply(&#39;add&#39;, 3, 4))\n\nf = filter(lambda x: x &gt; 1, [1, 2, 3])\nprint(list(f), list(f))\nprint(reduce(add, (1, 2, 3)))", "note": "reduce、operator 与 lambda 的适用边界"}]' title='两种写法切换看' />
 
-<Term word='函数作为值' text='Python 2 的 map、filter 返回 list，Python 3 起返回迭代器（map 对象 / filter 对象），惰性求值、只能消费一次；只有 `list(...)` 或 `for` 循环才真正物化结果。时间复杂度 `O(n)`、额外空间 `O(1)`（不含输出），而列表推导式立即构造完整 list，' />
+<Term word='函数作为值' text='Python 2 的 map、filter 返回 list，Python 3 起返回迭代器（map 对象 / filter 对象），惰性求值、只能消费一次；只有 `list(...)` 或 `for` 循环才真正物化结果。时间复杂度 `O(n)`、额外空间 `O(1)`（不含输出），而列表推导式立即构造完整 list…' />
 
-<Term word='map / filter 的惰性' text='`functools.reduce` 从左到右把二元函数累积到一个值：`reduce(add, [1, 2, 3], 0)` 得到 6。Python 3 把 reduce 移出内建、放进 functools，调用前要从 `functools` 里取出 `reduce`。无 initializer 时它取第一个元素作起点' />
+<Term word='map / filter 的惰性' text='`functools.reduce` 从左到右把二元函数累积到一个值：`reduce(add, [1, 2, 3], 0)` 得到 6。Python 3 把 reduce 移出内建、放进 functools，调用前要从 `functools` 里取出 `reduce`。无 initializer 时它取第一个元素作起点…' />
 
 
 ## reduce、operator 与 lambda 的适用边界
@@ -171,9 +171,9 @@ operator 模块的 `add`、`mul`、`itemgetter` 等是 C 层对 PyObject 操作�
 
 lambda 编译出的仍是标准 function 对象，只是 `co_name` 被写成 `<lambda>`、且语法层限定函数体为单表达式，这解释了它在 traceback 里缺乏可定位的名字。
 
-<ConceptDiagram type='flow4' title='第 031 讲 · map / filter 的惰性与一次性' labels='map / filter 的惰性与一次性|reduce、operator 与 lamb|函数作为值：回调、键函数与分派表' caption='用函数组合代替重复循环' />
+<ConceptDiagram type='flow4' title='第 031 讲 · map / filter 的惰性与一次性' labels='map / filter 的惰性与一次性|reduce、operator 与 lamb…|函数作为值：回调、键函数与分派表|partial 与组合' caption='用函数组合代替重复循环' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 版本迁移差异与场景选型决策
@@ -241,15 +241,15 @@ print(reduce(mul, [], 1))
 
 <Callout type="idea" title='落地提示' text='回调、排序键、策略表、插件注册本质都是高阶函数，框架里的依赖注入也建立在这之上' />
 
-<CheckList id='P031b' title='上线前自检' :items='["能复现并解释「reduce 对空批次抛 TypeError: reduce」", "能复现并解释「把 map / filter 结果当列表复用，第二次得到空」", "能复现并解释「长 lambda 塞进 sorted key 或 map，出」", "能用一条命令验证 函数作为值", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P031b' title='上线前自检' :items='["能复现并解释「reduce 对空批次抛 TypeError: reduce…」", "能复现并解释「把 map / filter 结果当列表复用，第二次得到空」", "能复现并解释「长 lambda 塞进 sorted key 或 map，出…」", "能用一条命令验证 函数作为值", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import inspect; print(inspect.signature(print))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 函数作为值 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 函数作为值 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：reduce 对空批次抛 TypeError", "body": "没给 initializer 时 reduce 需要至少一个元素作起点，而线上空输入是常态", "tip": "始终传单位元 initializer：加法 0、乘法 1、拼接空串；或改用 sum 等内置聚合"}, {"title": "第 2 步：把 map / filter 结果当列表复用", "body": "Python 3 的 map / filter 是一次性迭代器，消费完就耗尽", "tip": "需要复用就 list(...) 物化一次，或每次重新构造迭代器"}, {"title": "第 3 步：长 lambda 塞进 sorted key", "body": "lambda 只能单表达式、__name__ 恒为 &lt;lambda&gt;，traceback 与日志里没有有意义的名字", "tip": "复杂逻辑写命名 def 并用 __name__ 打日志；取字段或属性用 operator.itemgetter / attrgetter"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：reduce 对空批次抛 TypeError…", "body": "没给 initializer 时 reduce 需要至少一个元素作起点，而线上空输入是常态", "tip": "始终传单位元 initializer：加法 0、乘法 1、拼接空串；或改用 sum 等内置聚合"}, {"title": "第 2 步：把 map / filter 结果当列表复用…", "body": "Python 3 的 map / filter 是一次性迭代器，消费完就耗尽", "tip": "需要复用就 list(...) 物化一次，或每次重新构造迭代器"}, {"title": "第 3 步：长 lambda 塞进 sorted key…", "body": "lambda 只能单表达式、__name__ 恒为 &lt;lambda&gt;，traceback 与日志里没有有意义的名字", "tip": "复杂逻辑写命名 def 并用 __name__ 打日志；取字段或属性用 operator.itemgetter / attrgetter"}]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='reduce 对空批次抛 TypeError: reduce() of empty iterable with no initial value：没给 initializer 时 reduce 需要至少一个元素作起点，而线上空输入是常态' />
 
@@ -288,3 +288,16 @@ python -c "import inspect; print(inspect.signature(print))"
 3. map(f, *iterables) 多可迭代以最短为准；filter(None, seq) 过滤掉所有假值元素
 
 [下一讲：装饰器原理与 functools.wraps](/functions/decorator)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/031-higher-order.py`
+
+```bash
+python3 examples/lessons/031-higher-order.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/031-higher-order.py) · [全部示例代码索引](/examples/)

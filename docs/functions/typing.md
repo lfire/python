@@ -62,7 +62,7 @@ print(get_type_hints(distance) == distance.__annotations__)
 
 <OutputBox title='主示例运行结果' output='[&#39;a&#39;, &#39;b&#39;, &#39;return&#39;]\n[&#39;int&#39;, &#39;int&#39;, &#39;float&#39;]\nTrue\nint | None\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import typing\nfrom typing import get_type_hints\n\ndef distance(a: int, b: int = 0) -&gt; float:\n    return float(a - b)\n\nh = get_type_hints(distance)\nprint(sorted(h))\nprint([h[k].__name__ for k in (&#39;a&#39;, &#39;b&#39;, &#39;return&#39;)])\nprint(distance.__annotations__[&#39;a&#39;] is int)\nprint(str(int | None))\nprint(get_type_hints(distance) == distance.__annotations__)' :notes='["导入 typing 用于类型相关工具", "导入 get_type_hints，把注解解析成真实类型对象", "定义带参数与返回值注解的函数", "函数体只是普通运算，注解不参与执行", "解析注解，得到名字到类型的字典", "打印注解里登记的字段名", "读出各字段类型的 __name__", "注解值就是 int 类型对象本身", "3.10+ 的联合写法 X | None", "解析结果与 __annotations__ 一致，说明没有延迟字符串"]' title='第 036 讲 · 类型注解、typing 与渐进式类型' />
+<LineByLine code='import typing\nfrom typing import get_type_hints\n\ndef distance(a: int, b: int = 0) -&gt; float:\n    return float(a - b)\n\nh = get_type_hints(distance)\nprint(sorted(h))\nprint([h[k].__name__ for k in (&#39;a&#39;, &#39;b&#39;, &#39;return&#39;)])\nprint(distance.__annotations__[&#39;a&#39;] is int)\nprint(str(int | None))\nprint(get_type_hints(distance) == distance.__annotations__)' :notes='["导入 typing 用于类型相关工具", "导入 get_type_hints，把注解解析成真实类型对象", "空行，只用于分隔逻辑块，不影响执行结果。", "定义带参数与返回值注解的函数", "函数体只是普通运算，注解不参与执行", "空行，只用于分隔逻辑块，不影响执行结果。", "解析注解，得到名字到类型的字典", "打印注解里登记的字段名", "读出各字段类型的 __name__", "注解值就是 int 类型对象本身", "3.10+ 的联合写法 X | None", "解析结果与 __annotations__ 一致，说明没有延迟字符串"]' title='第 036 讲 · 类型注解、typing 与渐进式类型' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -94,9 +94,9 @@ print([i.opname for i in dis.get_instructions(f) if i.opname == 'RETURN_VALUE'])
 | 一句话目标 | 为大型代码库建立可检查的接口契约 |
 | 为下一讲铺垫 | 阶段综合：缓存装饰器库与插件注册表 |
 
-<ConceptDiagram type='flow4' title='第 036 讲 · 注解只是元数据：存储与求值' labels='注解只是元数据：存储与求值|联合、泛型与结构化子类型|渐进式类型落地与运行时校验的分界' caption='为大型代码库建立可检查的接口契约' />
+<ConceptDiagram type='flow4' title='第 036 讲 · 注解只是元数据：存储与求值' labels='注解只是元数据：存储与求值|联合、泛型与结构化子类型|渐进式类型落地与运行时校验的分界|mypy 与 pyright' caption='为大型代码库建立可检查的接口契约' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 联合、泛型与结构化子类型
@@ -170,11 +170,11 @@ print(TYPE_CHECKING)
 | 联合类型（PEP 604） | 3.10 | X \| None / X \| Y | Optional[X] 等价于 X \| None |
 | 类型参数语法（PEP 695） | 3.12 | def f[T](x: T) -> T / type A = ... | 之前用 TypeVar('T') 与 Generic[T] |
 
-<Term word='注解不强制运行时检查' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义时求值并存为对象，这' />
+<Term word='注解不强制运行时检查' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义时求值并存为对象，这…' />
 
-<Term word='泛型与 TypeVar' text='`Optional[X]` 等价于 `X | None`，PEP 604 在 3.10 引入 `X | Y` 之后，`Union[X, Y]` 也能直接写成联合；内建泛型 `list[int]`、`dict[str, int]`、`tuple[int, ...]` 由 PEP 585 在 3.9 落地，3.8 及以前要' />
+<Term word='泛型与 TypeVar' text='`Optional[X]` 等价于 `X ／ None`，PEP 604 在 3.10 引入 `X ／ Y` 之后，`Union[X, Y]` 也能直接写成联合；内建泛型 `list[int]`、`dict[str, int]`、`tuple[int, ...]` 由 PEP 585 在 3.9 落地，3.8 及以前要…' />
 
-<FlowTimeline :steps='[{"title": "注解只是元数据：存储与求值", "desc": "函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解…", "tone": "blue"}, {"title": "联合、泛型与结构化子类型", "desc": "`Optional[X]` 等价于 `X | None`，PEP 604 在 3.1…", "tone": "purple"}, {"title": "渐进式类型落地与运行时校验的分界", "desc": "渐进式类型的做法，是先在收益最大的地方加注解——公共 API、跨服务数据结构、配置模…", "tone": "orange"}, {"title": "工程落地", "desc": "跨服务 payload：注解给静态检查，运行时校验另写一层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "注解只是元数据：存储与求值", "desc": "函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解…", "tone": "blue"}, {"title": "联合、泛型与结构化子类型", "desc": "`Optional[X]` 等价于 `X ／ None`，PEP 604 在 3.1…", "tone": "purple"}, {"title": "渐进式类型落地与运行时校验的分界", "desc": "渐进式类型的做法，是先在收益最大的地方加注解——公共 API、跨服务数据结构、配置模…", "tone": "orange"}, {"title": "工程落地", "desc": "跨服务 payload：注解给静态检查，运行时校验另写一层", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## 渐进式类型落地与运行时校验的分界
@@ -217,7 +217,7 @@ from __future__ import annotations
 
 <Compare :panels='[{"label": "主示例", "code": "import typing\nfrom typing import get_type_hints\n\ndef distance(a: int, b: int = 0) -&gt; float:\n    return float(a - b)\n\nh = get_type_hints(distance)\nprint(sorted(h))\nprint([h[k].__name__ for k in (&#39;a&#39;, &#39;b&#39;, &#39;return&#39;)])\nprint(distance.__annotations__[&#39;a&#39;] is int)\nprint(str(int | None))\nprint(get_type_hints(distance) == distance.__annotations__)", "note": "注解只是元数据：存储与求值"}, {"label": "对照 / 进阶", "code": "from typing import Protocol, runtime_checkable, TypedDict, Literal, TYPE_CHECKING\n\n@runtime_checkable\nclass Closeable(Protocol):\n    def close(self) -&gt; None: ...\n\nclass Config(TypedDict):\n    host: str\n    port: int\n\nMode = Literal[&#39;r&#39;, &#39;w&#39;]\n\nclass File:\n    def close(self) -&gt; None:\n        pass\n\nprint(isinstance(File(), Closeable))\nprint(Config.__annotations__)\nprint(sorted(Config.__required_keys__))\nprint(Mode)\nprint(TYPE_CHECKING)", "note": "联合、泛型与结构化子类型"}]' title='两种写法对照' note='差异集中在 注解不强制运行时检查；先看输出，再找背后的规则。' />
 
-<Callout type="tip" title='核心心智模型' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义' />
+<Callout type="tip" title='核心心智模型' text='函数注解存在 `fn.__annotations__` 这个字典里，类与模块级的注解写在各自的 `__annotations__`；变量注解 `x: int` 只登记注解、并不创建名字绑定，随后读 `x` 会抛 `NameError: name &#39;x&#39; is not defined`。注解默认在定义…' />
 
 
 ## 跨服务 payload：注解给静态检查，运行时校验另写一层
@@ -262,7 +262,7 @@ print(sorted(get_type_hints(Event)))
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 注解不强制运行时检查 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 注解不强制运行时检查 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -274,7 +274,7 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='以为加了类型注解运行时就会校验，传错类型照样跑：注解只是 __annotations__ 元数据，CPython 不生成检查字节码' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：以为加了类型注解运行时就会校验，传错类型照样", "body": "注解只是 __annotations__ 元数据，CPython 不生成检查字节码", "tip": "在 CI 里跑 mypy / pyright 让注解产生约束力；跨服务输入另用 pydantic 做运行时校验"}, {"title": "第 2 步：为过检查器到处写 Any，错误被悄悄放过", "body": "Any 让静态检查器在该处停止推断与报错，等于局部关掉检查", "tip": "用 object 加 isinstance 收窄、具体联合或 TypeVar；把 Any 控制在真正的动态边界"}, {"title": "第 3 步：注解里引用后面才定义的类，定义时抛 Name", "body": "注解默认在定义时求值，前向引用的名字此刻还不存在", "tip": "加 from __future__ import annotations 把注解字符串化，或用引号写成前向引用字符串"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：以为加了类型注解运行时就会校验，传错类型照样…", "body": "注解只是 __annotations__ 元数据，CPython 不生成检查字节码", "tip": "在 CI 里跑 mypy / pyright 让注解产生约束力；跨服务输入另用 pydantic 做运行时校验"}, {"title": "第 2 步：为过检查器到处写 Any，错误被悄悄放过", "body": "Any 让静态检查器在该处停止推断与报错，等于局部关掉检查", "tip": "用 object 加 isinstance 收窄、具体联合或 TypeVar；把 Any 控制在真正的动态边界"}, {"title": "第 3 步：注解里引用后面才定义的类，定义时抛 Name…", "body": "注解默认在定义时求值，前向引用的名字此刻还不存在", "tip": "加 from __future__ import annotations 把注解字符串化，或用引号写成前向引用字符串"}]' />
 
 
 ## 给关键路径加注解：练习与自测
@@ -315,3 +315,16 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 [下一讲：阶段综合：缓存装饰器库与插件注册表](/functions/capstone)
 
 <Predict no='036-5' q='def f(a: int) -&gt; int: return a；print(f.__annotations__[&#39;a&#39;] is int, &#39;a&#39; in f.__code__.co_varnames) 输出什么？' :options='["True True", "True False", "False True"]' answer='0' output='True True' explain='注解在 3.13 默认求值，值就是 int 类型对象；a 同时是形参名，会登记进 code object 的 co_varnames。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/036-typing.py`
+
+```bash
+python3 examples/lessons/036-typing.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/036-typing.py) · [全部示例代码索引](/examples/)

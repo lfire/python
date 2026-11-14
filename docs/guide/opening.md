@@ -41,7 +41,7 @@ except TypeError as e:
 
 <OutputBox title='主示例运行结果' output='int 1\nstr one\n(3, 12, 4) CPython\nTypeError unsupported operand type(s) for +' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys, platform\n\nx = 1\nprint(type(x).__name__, x)\nx = &#39;one&#39;\nprint(type(x).__name__, x)\nprint(sys.version_info[:3], platform.python_implementation())\ntry:\n    print(1 + &#39;1&#39;)\nexcept TypeError as e:\n    print(type(e).__name__, str(e)[:40])' :notes='["导入 sys 读取解释器版本，platform 读取实现名称", "把名字 x 绑定到整数对象 1", "type(x) 返回当前绑定对象的类型；名字本身没有类型", "重新绑定到字符串对象，赋值不检查旧类型", "同一个名字现在指向 str 对象，印证动态类型", "version_info 是具名元组；实现名可能是 CPython 或 PyPy", "强类型验证：整数与字符串相加不会隐式转换", "捕获预期的 TypeError", "打印异常类型与消息，错误在出错点立即暴露", "GIL 是引用计数不加细锁的代价；CPU 密集靠多进程或 C 扩展，IO 密集靠线程池/asyncio"]' title='第 001 讲 · 开篇：Python 是什么，为什么值得学' />
+<LineByLine code='import sys, platform\n\nx = 1\nprint(type(x).__name__, x)\nx = &#39;one&#39;\nprint(type(x).__name__, x)\nprint(sys.version_info[:3], platform.python_implementation())\ntry:\n    print(1 + &#39;1&#39;)\nexcept TypeError as e:\n    print(type(e).__name__, str(e)[:40])' :notes='["导入 sys 读取解释器版本，platform 读取实现名称", "空行，只用于分隔逻辑块，不影响执行结果。", "把名字 x 绑定到整数对象 1", "type(x) 返回当前绑定对象的类型；名字本身没有类型", "重新绑定到字符串对象，赋值不检查旧类型", "同一个名字现在指向 str 对象，印证动态类型", "version_info 是具名元组；实现名可能是 CPython 或 PyPy", "强类型验证：整数与字符串相加不会隐式转换", "捕获预期的 TypeError", "打印异常类型与消息，错误在出错点立即暴露", "GIL 是引用计数不加细锁的代价；CPU 密集靠多进程或 C 扩展，IO 密集靠线程池/asyncio"]' title='第 001 讲 · 开篇：Python 是什么，为什么值得学' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -92,9 +92,9 @@ CPython 把所有值表示为堆上的 PyObject，头部至少包含 `ob_refcnt`
 
 对象池（小整数 -5..256、部分短字符串驻留）也是这套模型的优化产物，用 is 比较值会踩到它。理解对象头与引用计数，比记住「Python 慢」有用得多。
 
-<ConceptDiagram type='flow4' title='第 001 讲 · 动态强类型：名字没有类型，对象才有' labels='动态强类型：名字没有类型，对象才有|执行链路：源码 → AST → 字节码 → |对象模型与生态：一切皆对象的实际含义' caption='建立 Python 的语言观与学习动机' />
+<ConceptDiagram type='flow4' title='第 001 讲 · 动态强类型：名字没有类型，对象才有' labels='动态强类型：名字没有类型，对象才有|执行链路：源码 → AST → 字节码…|对象模型与生态：一切皆对象的实际含义|版本生态与社区' caption='建立 Python 的语言观与学习动机' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 和其他语言比：按工程约束选型
@@ -173,3 +173,16 @@ for name, fn in [('python-loop', loop_sum), ('builtin', sum)]:
 3. 一切皆对象：PyObject 头含引用计数与类型指针，容器里存的是引用
 
 [下一讲：环境与工具链：解释器、虚拟环境与编辑器](/guide/setup)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/001-opening.py`
+
+```bash
+python3 examples/lessons/001-opening.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/001-opening.py) · [全部示例代码索引](/examples/)

@@ -68,15 +68,15 @@ print('walrus', doubled)
 
 <OutputBox title='主示例运行结果' output='list [1, 4, 9, 16, 25]\nset [0, 1, 2] dict {1: 1, 2: 4, 3: 9, 4: 16, 5: 25}\ngen type generator sum 55\nno leak outer [0, 1, 2]\nnested for [(0, 0), (0, 1), (0, 2), (1, 0)] len 6\ntwo ifs [4]\nconditional expr [&#39;odd&#39;, &#39;even&#39;, &#39;odd&#39;, &#39;even&#39;, &#39;odd&#39;]\nouter iterable captured [1, 2, 3]\nwalrus [4, 6]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='nums = [1, 2, 3, 4, 5]\nsquares = [x * x for x in nums]\nuniq = {x % 3 for x in nums}\nmapping = {x: x * x for x in nums}\ngen = (x * x for x in nums)\nprint(&#39;list&#39;, squares)\nprint(&#39;set&#39;, sorted(uniq), &#39;dict&#39;, mapping)\nprint(&#39;gen type&#39;, type(gen).__name__, &#39;sum&#39;, sum(gen))\n\ni = &#39;outer&#39;\ncomp = [i for i in range(3)]\nprint(&#39;no leak&#39;, i, comp)\n\npairs = [(a, b) for a in range(2) for b in range(3)]\nprint(&#39;nested for&#39;, pairs[:4], &#39;len&#39;, len(pairs))\nfiltered = [x for x in nums if x % 2 == 0 if x &gt; 2]\nprint(&#39;two ifs&#39;, filtered)\nlabels = [&#39;even&#39; if x % 2 == 0 else &#39;odd&#39; for x in nums]\nprint(&#39;conditional expr&#39;, labels)\n\ndata = [1, 2, 3]\ng = (x for x in data)\ndata = [9, 9]\nprint(&#39;outer iterable captured&#39;, list(g))\n\ndoubled = [y for x in [1, 2, 3] if (y := x * 2) &gt; 2]\nprint(&#39;walrus&#39;, doubled)' :notes='["构造一组数字作为四种推导式的共同输入", "列表推导立即构造 list", "集合推导立即构造 set，自动去重", "字典推导立即构造 dict", "生成器表达式返回惰性 generator，创建时不计算", "打印列表推导结果", "集合用 sorted 消除顺序不确定性，字典按插入顺序", "类型为 generator，sum 消费它得到平方和", "在外层定义一个同名变量 i", "推导式内的 i 是独立作用域的循环变量", "外层 i 仍是 &#39;outer&#39;，证明循环变量不泄漏", "多重 for 按 a 外 b 内的顺序嵌套", "打印前四项与总数，验证嵌套顺序", "两个 if 子句等价于 and，只保留偶数且大于 2 的", "值表达式里的三元条件放在 for 之前", "按奇偶生成标签列表", "构造数据后创建生成器表达式", "此时最外层 iterable 已绑定为原列表的迭代器", "重新绑定 data 到新列表，不影响已创建的生成器", "消费后仍是旧数据的 1、2、3", "3.8 起 := 在 if 里复用中间结果，避免重复计算", "只保留 2 倍后大于 2 的结果，得到 4 与 6", "3.8 起 := 可在值表达式与 if 里复用中间结果，但禁止在最外层 iterable 赋值"]' title='第 024 讲 · 推导式：四种写法与可读性边界' />
+<LineByLine code='nums = [1, 2, 3, 4, 5]\nsquares = [x * x for x in nums]\nuniq = {x % 3 for x in nums}\nmapping = {x: x * x for x in nums}\ngen = (x * x for x in nums)\nprint(&#39;list&#39;, squares)\nprint(&#39;set&#39;, sorted(uniq), &#39;dict&#39;, mapping)\nprint(&#39;gen type&#39;, type(gen).__name__, &#39;sum&#39;, sum(gen))\n\ni = &#39;outer&#39;\ncomp = [i for i in range(3)]\nprint(&#39;no leak&#39;, i, comp)\n\npairs = [(a, b) for a in range(2) for b in range(3)]\nprint(&#39;nested for&#39;, pairs[:4], &#39;len&#39;, len(pairs))\nfiltered = [x for x in nums if x % 2 == 0 if x &gt; 2]\nprint(&#39;two ifs&#39;, filtered)\nlabels = [&#39;even&#39; if x % 2 == 0 else &#39;odd&#39; for x in nums]\nprint(&#39;conditional expr&#39;, labels)\n\ndata = [1, 2, 3]\ng = (x for x in data)\ndata = [9, 9]\nprint(&#39;outer iterable captured&#39;, list(g))\n\ndoubled = [y for x in [1, 2, 3] if (y := x * 2) &gt; 2]\nprint(&#39;walrus&#39;, doubled)' :notes='["构造一组数字作为四种推导式的共同输入", "列表推导立即构造 list", "集合推导立即构造 set，自动去重", "字典推导立即构造 dict", "生成器表达式返回惰性 generator，创建时不计算", "打印列表推导结果", "集合用 sorted 消除顺序不确定性，字典按插入顺序", "类型为 generator，sum 消费它得到平方和", "空行，只用于分隔逻辑块，不影响执行结果。", "在外层定义一个同名变量 i", "推导式内的 i 是独立作用域的循环变量", "外层 i 仍是 &#39;outer&#39;，证明循环变量不泄漏", "空行，只用于分隔逻辑块，不影响执行结果。", "多重 for 按 a 外 b 内的顺序嵌套", "打印前四项与总数，验证嵌套顺序", "两个 if 子句等价于 and，只保留偶数且大于 2 的", "值表达式里的三元条件放在 for 之前", "按奇偶生成标签列表", "构造数据后创建生成器表达式", "空行，只用于分隔逻辑块，不影响执行结果。", "此时最外层 iterable 已绑定为原列表的迭代器", "重新绑定 data 到新列表，不影响已创建的生成器", "消费后仍是旧数据的 1、2、3", "3.8 起 := 在 if 里复用中间结果，避免重复计算", "空行，只用于分隔逻辑块，不影响执行结果。", "只保留 2 倍后大于 2 的结果，得到 4 与 6", "3.8 起 := 可在值表达式与 if 里复用中间结果，但禁止在最外层 iterable 赋值"]' title='第 024 讲 · 推导式：四种写法与可读性边界' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='推导式有四种写法：列表 `[expr for ...]`、集合 `{expr for ...}`、字典 `{k: v for ...}` 与生成器表达式 `(expr for ...)`。多重 `for` 从左到右按嵌套顺序执行，等价于外层变量先走、内层变量后走的双层循环；多个 `if` 子句等价于' />
+<Callout type="tip" title='核心心智模型' text='推导式有四种写法：列表 `[expr for ...]`、集合 `{expr for ...}`、字典 `{k: v for ...}` 与生成器表达式 `(expr for ...)`。多重 `for` 从左到右按嵌套顺序执行，等价于外层变量先走、内层变量后走的双层循环；多个 `if` 子句等价于…' />
 
-<ConceptDiagram type='compare2' title='第 024 讲 · 四种推导式、作用域与专用字节码' labels='四种推导式、作用域与专用字节码|惰性求值的边界与海象运算符|可读性边界与退回循环的判据' caption='写出简洁且不过度的推导式' />
+<ConceptDiagram type='compare2' title='第 024 讲 · 四种推导式、作用域与专用字节码' labels='四种推导式、作用域与专用字节码|惰性求值的边界与海象运算符|可读性边界与退回循环的判据|何时退回循环' caption='写出简洁且不过度的推导式' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把两种写法并排放在一起：结果往往相近，差别更常出现在失败路径与边界条件上。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 四种推导式对照：列表、集合、字典与生成器表达式
@@ -250,7 +250,7 @@ print('aggregate from file', aggregate(make_source('11' + chr(10) + '25')))
 python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 列表 / 集合 / 字典推导式 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 列表 / 集合 / 字典推导式 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 推导式练习与可读性复盘
@@ -299,3 +299,16 @@ python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"
 <Predict no='024-4' q='data = [1, 2, 3]; g = (x * x for x in data); data = [9]; print(list(g)) 输出什么？' :options='["[1, 4, 9]", "[81]", "[]"]' answer='0' output='[1, 4, 9]' explain='生成器表达式创建时最外层 iterable 已被求值并绑定为原列表的迭代器，之后把 data 重新绑定到新列表不影响生成器；消费时仍产出 1、4、9。惰性只针对后续计算，不针对最外层数据源的绑定。' />
 
 <FillBlank no='024-5' tpl='squares = [x * x for x ___ nums]' :answers='["in"]' hint='回想本讲关于 列表 / 集合 / 字典推导式 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 四种推导式、作用域与专用字节码 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/024-comprehension.py`
+
+```bash
+python3 examples/lessons/024-comprehension.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/024-comprehension.py) · [全部示例代码索引](/examples/)

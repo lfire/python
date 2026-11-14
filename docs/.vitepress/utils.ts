@@ -162,6 +162,18 @@ export const LESSONS: Lesson[] = [
   { path: '/practice/interview', title: '面试与能力自评', stage: 'L0' },
   { path: '/practice/ecosystem', title: 'Python 生态与选型地图', stage: 'L0' },
   { path: '/practice/glossary', title: '术语表', stage: 'L0' },
+  { path: '/examples/', title: '示例代码索引', stage: 'L0' },
+  { path: '/topics/', title: '专题补遗 · 参考课程查漏补缺', stage: 'L0' },
+  { path: '/topics/regex', title: '正则表达式 re：从字符类到回溯', stage: 'L1' },
+  { path: '/topics/scrapy-antibot', title: 'Scrapy 与反爬合规：从 Spider 到生产采集', stage: 'L6' },
+  { path: '/topics/testing-automation', title: '接口与 Web UI 自动化测试', stage: 'L7' },
+  { path: '/topics/office-advanced', title: '办公自动化进阶：PPT、GUI 与批处理', stage: 'L2' },
+  { path: '/topics/dl-projects', title: '深度学习项目：CNN、RNN、迁移学习与部署', stage: 'L9' },
+  { path: '/topics/rag-frameworks', title: 'RAG 框架与大模型 API 实战', stage: 'L9' },
+  { path: '/topics/web-frameworks', title: 'Flask 实操：路由、模板与会话', stage: 'L8' },
+  { path: '/topics/data-projects', title: '数据分析实战：Jupyter 到报告导出', stage: 'L9' },
+  { path: '/topics/toolchain-foundation', title: '工程底座：Linux、Git、SQL 与多版本', stage: 'L7' },
+  { path: '/topics/reference-map', title: '参考课程对照与学习路线', stage: 'L0' },
 ]
 
 export const STAGE_LABEL: Record<Stage, string> = { L0: '导学', L1: '编程地基', L2: '容器与序列', L3: '函数与抽象', L4: '面向对象', L5: '核心机制', L6: '并发与异步', L7: '工程化', L8: '服务端与数据', L9: '数据与 AI', L10: '分布式云原生', L11: '资深进阶', L12: '工程实战' }

@@ -68,16 +68,16 @@ print('deque', list(d), d.popleft(), d.pop())
 
 <OutputBox title='主示例运行结果' output='mixed types [&#39;int&#39;, &#39;str&#39;, &#39;list&#39;]\nstores refs True TWO\nreallocs far fewer True\nsize never shrinks True\nafter insert(0) [&#39;head&#39;, 0, 1, 2, 3]\npop(0) head now [0, 1, 2, 3]\npop() 3 now [0, 1, 2]\ndeque [0, 1, 2, 3, 4] 0 4' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import sys\nfrom collections import deque\n\nrow = [1, &#39;two&#39;, [3]]\nprint(&#39;mixed types&#39;, [type(x).__name__ for x in row])\nprint(&#39;stores refs&#39;, row[2] is row[2], row[1].upper())\n\na = []\nsizes = []\nfor i in range(200):\n    a.append(i)\n    sizes.append(sys.getsizeof(a))\nreallocs = sum(1 for i in range(1, len(sizes)) if sizes[i] != sizes[i - 1])\nprint(&#39;reallocs far fewer&#39;, reallocs &lt; 20)\nprint(&#39;size never shrinks&#39;, all(sizes[i] &gt;= sizes[i - 1] for i in range(1, len(sizes))))\n\nb = [0, 1, 2, 3]\nb.insert(0, &#39;head&#39;)\nprint(&#39;after insert(0)&#39;, b)\nprint(&#39;pop(0)&#39;, b.pop(0), &#39;now&#39;, b)\nprint(&#39;pop()&#39;, b.pop(), &#39;now&#39;, b)\n\nd = deque([1, 2, 3])\nd.appendleft(0)\nd.append(4)\nprint(&#39;deque&#39;, list(d), d.popleft(), d.pop())' :notes='["导入 sys 用 getsizeof 观察容量，deque 用于对照", "一个 list 混装 int、str、list 三种类型", "打印每个元素的实际类型，证明容器存的是任意对象引用", "row[2] 两次访问是同一对象；str.upper() 返回新字符串", "从空列表开始记录容量阶梯", "sizes 保存每次 append 后的 getsizeof 值", "连续 append 200 次，制造多次潜在扩容", "append 是摊还 O(1) 的尾部操作", "记录当前字节数，用于检测是否发生 realloc", "统计容量真正发生变化的次数", "200 次 append 只触发十几次扩容，远少于 200", "容量单调不减，getsizeof 不会变小", "构造一个小列表演示头部与尾部操作的差别", "insert(0, x) 要搬移全部 4 个引用，是 O(n)", "头部插入后的结果", "pop(0) 同样要搬移后续引用，比 pop() 贵", "pop() 只递减 ob_size，是 O(1)", "deque 从空序列构造，内部按分块组织", "appendleft 在左端 O(1) 插入", "append 在右端 O(1) 插入", "打印双端操作的结果，popleft 与 pop 各取一端", "in / index / count / remove 是 O(n) 线性扫描；+ 拼接与 * 重复要复制引用"]' title='第 018 讲 · list：动态数组、操作与时间复杂度' />
+<LineByLine code='import sys\nfrom collections import deque\n\nrow = [1, &#39;two&#39;, [3]]\nprint(&#39;mixed types&#39;, [type(x).__name__ for x in row])\nprint(&#39;stores refs&#39;, row[2] is row[2], row[1].upper())\n\na = []\nsizes = []\nfor i in range(200):\n    a.append(i)\n    sizes.append(sys.getsizeof(a))\nreallocs = sum(1 for i in range(1, len(sizes)) if sizes[i] != sizes[i - 1])\nprint(&#39;reallocs far fewer&#39;, reallocs &lt; 20)\nprint(&#39;size never shrinks&#39;, all(sizes[i] &gt;= sizes[i - 1] for i in range(1, len(sizes))))\n\nb = [0, 1, 2, 3]\nb.insert(0, &#39;head&#39;)\nprint(&#39;after insert(0)&#39;, b)\nprint(&#39;pop(0)&#39;, b.pop(0), &#39;now&#39;, b)\nprint(&#39;pop()&#39;, b.pop(), &#39;now&#39;, b)\n\nd = deque([1, 2, 3])\nd.appendleft(0)\nd.append(4)\nprint(&#39;deque&#39;, list(d), d.popleft(), d.pop())' :notes='["导入 sys 用 getsizeof 观察容量，deque 用于对照", "一个 list 混装 int、str、list 三种类型", "空行，只用于分隔逻辑块，不影响执行结果。", "打印每个元素的实际类型，证明容器存的是任意对象引用", "row[2] 两次访问是同一对象；str.upper() 返回新字符串", "从空列表开始记录容量阶梯", "空行，只用于分隔逻辑块，不影响执行结果。", "sizes 保存每次 append 后的 getsizeof 值", "连续 append 200 次，制造多次潜在扩容", "append 是摊还 O(1) 的尾部操作", "记录当前字节数，用于检测是否发生 realloc", "统计容量真正发生变化的次数", "200 次 append 只触发十几次扩容，远少于 200", "容量单调不减，getsizeof 不会变小", "构造一个小列表演示头部与尾部操作的差别", "空行，只用于分隔逻辑块，不影响执行结果。", "insert(0, x) 要搬移全部 4 个引用，是 O(n)", "头部插入后的结果", "pop(0) 同样要搬移后续引用，比 pop() 贵", "pop() 只递减 ob_size，是 O(1)", "deque 从空序列构造，内部按分块组织", "空行，只用于分隔逻辑块，不影响执行结果。", "appendleft 在左端 O(1) 插入", "append 在右端 O(1) 插入", "打印双端操作的结果，popleft 与 pop 各取一端", "in / index / count / remove 是 O(n) 线性扫描；+ 拼接与 * 重复要复制引用"]' title='第 018 讲 · list：动态数组、操作与时间复杂度' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
 
 ## 指针数组、ob_size 与 allocated
 
-<ConceptDiagram type='hub4' title='第 018 讲 · 内存布局：指针数组、ob_size 与 allocated' labels='内存布局：指针数组、ob_size 与 al|摊还扩容：append 为什么是 O(1)，|复杂度全景与容器选型：list、deque、' caption='能按成本选择合适操作' />
+<ConceptDiagram type='hub4' title='第 018 讲 · 内存布局：指针数组、ob_size 与 allocated' labels='内存布局：指针数组、ob_size 与 al…|摊还扩容：append 为什么是 O(1)…|复杂度全景与容器选型：list、deque…|内存布局' caption='能按成本选择合适操作' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲的核心机制放在中心，四周是它同时影响的可读性、性能与正确性，适合用来检查取舍有没有漏项。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 摊还扩容：append 为什么是 O(1)
@@ -262,3 +262,16 @@ print('bounded deque', list(q), len(q))
 3. a[i] 与 len(a) 是 O(1)；insert(i) / pop(i) 因 memmove 是 O(n-i)，pop() 末尾是 O(1)
 
 [下一讲：list 进阶：切片赋值、排序与常见陷阱](/containers/list-advanced)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/018-list-basics.py`
+
+```bash
+python3 examples/lessons/018-list-basics.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/018-list-basics.py) · [全部示例代码索引](/examples/)

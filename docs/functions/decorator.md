@@ -27,11 +27,11 @@ description: 从零实现并正确调试装饰器
 
 ## 先有模型：装饰器是一次函数替换
 
-<Callout type="tip" title='核心心智模型' text='`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行 `f = deco(f)`：deco 在模块导入、执行到该语句时被调用一次，不是每次调用 f 时。装饰器是接收一个可调用、返回一个可调用的对象，返回值被绑定到原名字，之后所有调用走的是包装后的函数。因为替换发生在导入' />
+<Callout type="tip" title='核心心智模型' text='`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行 `f = deco(f)`：deco 在模块导入、执行到该语句时被调用一次，不是每次调用 f 时。装饰器是接收一个可调用、返回一个可调用的对象，返回值被绑定到原名字，之后所有调用走的是包装后的函数。因为替换发生在导入…' />
 
-<ConceptDiagram type='layers3' title='第 032 讲 · @ 语法的求值时机与函数替换' labels='@ 语法的求值时机与函数替换|functools.wraps 到底搬回了什|带状态装饰器、闭包与常见应用' caption='从零实现并正确调试装饰器' />
+<ConceptDiagram type='layers3' title='第 032 讲 · @ 语法的求值时机与函数替换' labels='@ 语法的求值时机与函数替换|functools.wraps 到底搬回了什…|带状态装饰器、闭包与常见应用|常见应用' caption='从零实现并正确调试装饰器' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 **本讲定位**
 
@@ -86,7 +86,7 @@ print(bad(2, 3), good(2, 3, 4))
 
 <OutputBox title='主示例运行结果' output='wrapper (*args, **kwargs)\nvolume (w, h, d)\nFalse True\n(*args, **kwargs)\n6 24' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from functools import wraps\nimport inspect\n\ndef log_bad(fn):\n    def wrapper(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapper\n\ndef log_good(fn):\n    @wraps(fn)\n    def wrapper(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapper\n\ndef area(w, h):\n    return w * h\ndef volume(w, h, d):\n    return w * h * d\n\nbad = log_bad(area)\ngood = log_good(volume)\nprint(bad.__name__, inspect.signature(bad))\nprint(good.__name__, inspect.signature(good))\nprint(hasattr(bad, &#39;__wrapped__&#39;), hasattr(good, &#39;__wrapped__&#39;))\nprint(inspect.signature(good, follow_wrapped=False))\nprint(bad(2, 3), good(2, 3, 4))' :notes='["导入 wraps，用于把元数据从原函数搬到 wrapper", "导入 inspect，signature 用来验证装饰前后的签名差异", "定义不带 wraps 的装饰器", "wrapper 用 *args / **kwargs 透传任意实参", "调用原函数并返回结果", "返回包装函数，完成一次函数替换", "定义带 wraps 的装饰器", "@wraps(fn) 把名字、文档、注解与 __wrapped__ 装到 wrapper", "wrapper 同样透传实参", "调用原函数", "返回包装后的函数", "定义被装饰的二参数函数 area", "返回面积", "定义三参数函数 volume", "返回体积", "显式写 f = deco(f)，与 @log_bad 完全等价", "显式写 f = deco(f)，与 @log_good 完全等价", "没 wraps：名字是 wrapper，签名退化成 (*args, **kwargs)", "有 wraps：名字是 volume，signature 沿 __wrapped__ 还原", "只有 wraps 版本才带 __wrapped__ 属性", "关闭 follow_wrapped 后看到的是 wrapper 自身签名", "两次调用都返回正确结果，装饰不改变业务逻辑"]' title='第 032 讲 · 装饰器原理与 functools.wraps' />
+<LineByLine code='from functools import wraps\nimport inspect\n\ndef log_bad(fn):\n    def wrapper(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapper\n\ndef log_good(fn):\n    @wraps(fn)\n    def wrapper(*args, **kwargs):\n        return fn(*args, **kwargs)\n    return wrapper\n\ndef area(w, h):\n    return w * h\ndef volume(w, h, d):\n    return w * h * d\n\nbad = log_bad(area)\ngood = log_good(volume)\nprint(bad.__name__, inspect.signature(bad))\nprint(good.__name__, inspect.signature(good))\nprint(hasattr(bad, &#39;__wrapped__&#39;), hasattr(good, &#39;__wrapped__&#39;))\nprint(inspect.signature(good, follow_wrapped=False))\nprint(bad(2, 3), good(2, 3, 4))' :notes='["导入 wraps，用于把元数据从原函数搬到 wrapper", "导入 inspect，signature 用来验证装饰前后的签名差异", "空行，只用于分隔逻辑块，不影响执行结果。", "定义不带 wraps 的装饰器", "wrapper 用 *args / **kwargs 透传任意实参", "调用原函数并返回结果", "返回包装函数，完成一次函数替换", "空行，只用于分隔逻辑块，不影响执行结果。", "定义带 wraps 的装饰器", "@wraps(fn) 把名字、文档、注解与 __wrapped__ 装到 wrapper", "wrapper 同样透传实参", "调用原函数", "返回包装后的函数", "空行，只用于分隔逻辑块，不影响执行结果。", "定义被装饰的二参数函数 area", "返回面积", "定义三参数函数 volume", "返回体积", "空行，只用于分隔逻辑块，不影响执行结果。", "显式写 f = deco(f)，与 @log_bad 完全等价", "显式写 f = deco(f)，与 @log_good 完全等价", "没 wraps：名字是 wrapper，签名退化成 (*args, **kwargs)", "有 wraps：名字是 volume，signature 沿 __wrapped__ 还原", "只有 wraps 版本才带 __wrapped__ 属性", "关闭 follow_wrapped 后看到的是 wrapper 自身签名", "两次调用都返回正确结果，装饰不改变业务逻辑"]' title='第 032 讲 · 装饰器原理与 functools.wraps' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -124,7 +124,7 @@ print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPE
 | 多个装饰器的包装顺序 | 自下而上依次替换 | f = d1(d2(f))，第 033 讲展开调用顺序 |
 | classmethod / staticmethod 顺序 | staticmethod 通常置最外层 | 否则绑定行为与签名会错 |
 
-<FlowTimeline :steps='[{"title": "@ 语法的求值时机与函数替换", "desc": "`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行 …", "tone": "blue"}, {"title": "functools.wraps 到底搬回了什么", "desc": "不写 wraps，wrapper 的 `__name__` 是字符串 wrapper…", "tone": "purple"}, {"title": "带状态装饰器、闭包与常见应用", "desc": "计数器、命中率这类状态可以用闭包自由变量加 nonlocal 保存：wrapper …", "tone": "orange"}, {"title": "工程落地", "desc": "可禁用、可观测、可单测的计时装饰器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "@ 语法的求值时机与函数替换", "desc": "`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行…", "tone": "blue"}, {"title": "functools.wraps 到底搬回了什么", "desc": "不写 wraps，wrapper 的 `__name__` 是字符串 wrapper…", "tone": "purple"}, {"title": "带状态装饰器、闭包与常见应用", "desc": "计数器、命中率这类状态可以用闭包自由变量加 nonlocal 保存：wrapper…", "tone": "orange"}, {"title": "工程落地", "desc": "可禁用、可观测、可单测的计时装饰器", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 
 ## functools.wraps 到底搬回了什么
@@ -151,9 +151,9 @@ print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPE
 
 ### WRAPPER_ASSIGNMENTS 与 __wrapped__
 
-<Term word='装饰器即函数替换' text='`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行 `f = deco(f)`：deco 在模块导入、执行到该语句时被调用一次，不是每次调用 f 时。装饰器是接收一个可调用、返回一个可调用的对象，返回值被绑定到原名字，之后所有调用走的是包装后的函数。因为替换发生在导入期，装饰器里的顶层副' />
+<Term word='装饰器即函数替换' text='`@deco` 紧跟在 `def f` 之前，等价于在 def 执行完之后立即执行 `f = deco(f)`：deco 在模块导入、执行到该语句时被调用一次，不是每次调用 f 时。装饰器是接收一个可调用、返回一个可调用的对象，返回值被绑定到原名字，之后所有调用走的是包装后的函数。因为替换发生在导入期，装饰器里的顶层副…' />
 
-<Term word='@ 语法的求值时机' text='不写 wraps，wrapper 的 `__name__` 是字符串 wrapper、`__doc__` 是 None、`__annotations__` 是空字典，`inspect.signature` 看到的是 `(*args, **kwargs)`：日志聚合、Sphinx 文档、按名字的测试收集、依赖注入会同时失' />
+<Term word='@ 语法的求值时机' text='不写 wraps，wrapper 的 `__name__` 是字符串 wrapper、`__doc__` 是 None、`__annotations__` 是空字典，`inspect.signature` 看到的是 `(*args, **kwargs)`：日志聚合、Sphinx 文档、按名字的测试收集、依赖注入会同时失…' />
 
 
 ## 从闭包 cell 到元数据搬运的底层
@@ -170,11 +170,11 @@ print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPE
 
 `inspect.unwrap` 做的是同一件事。这也解释了身份变化：f 本身是 wrapper，`f.__wrapped__` 才是原函数，二者用 is 比较为假。
 
-<ConceptDiagram type='layers3' title='第 032 讲 · 分层视角' labels='@ 语法的求值时机与函数替换|functools.wraps 到底搬回|带状态装饰器、闭包与常见应用|常见应用' caption='带状态装饰器、闭包与常见应用' />
+<ConceptDiagram type='layers3' title='第 032 讲 · 分层视角' labels='@ 语法的求值时机与函数替换|functools.wraps 到底搬回…|带状态装饰器、闭包与常见应用|常见应用' caption='带状态装饰器、闭包与常见应用' />
 
 换成分层视角：检查自己能否说出每一层依赖下一层提供的哪一项能力，尤其是 常见应用 落在哪一层。
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：不写 functools.wraps，所有函", "body": "装饰器返回的是新函数，元数据没搬回来，日志 / 文档 / 依赖注入全部失真", "tip": "在 wrapper 上加 @wraps(fn)，或直接调 functools.update_wrapper(wrapper, fn)"}, {"title": "第 2 步：以为 @deco 在每次请求时执行", "body": "装饰在模块导入期发生一次、只是替换名字；顶层的注册与连库副作用也在导入时触发", "tip": "把运行期逻辑放进 wrapper，把一次性副作用明确写在装饰器里并加可控开关"}, {"title": "第 3 步：包装 async def 却用了同步 wra", "body": "同步 wrapper 直接返回协程对象，日志拿不到结果、异常也不会经过 wrapper 的 try / except", "tip": "wrapper 定义为 async def 并 return await fn(*a, **k)，或用 inspect.iscoroutinefunction 分支处理"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：不写 functools.wraps，所有函…", "body": "装饰器返回的是新函数，元数据没搬回来，日志 / 文档 / 依赖注入全部失真", "tip": "在 wrapper 上加 @wraps(fn)，或直接调 functools.update_wrapper(wrapper, fn)"}, {"title": "第 2 步：以为 @deco 在每次请求时执行", "body": "装饰在模块导入期发生一次、只是替换名字；顶层的注册与连库副作用也在导入时触发", "tip": "把运行期逻辑放进 wrapper，把一次性副作用明确写在装饰器里并加可控开关"}, {"title": "第 3 步：包装 async def 却用了同步 wra…", "body": "同步 wrapper 直接返回协程对象，日志拿不到结果、异常也不会经过 wrapper 的 try / except", "tip": "wrapper 定义为 async def 并 return await fn(*a, **k)，或用 inspect.iscoroutinefunction 分支处理"}]' />
 
 
 ## 带状态装饰器、闭包与常见应用
@@ -260,7 +260,7 @@ print(work(1), work(2), work.calls)
 python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print(f(4))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 装饰器即函数替换 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 装饰器即函数替换 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 可禁用、可观测、可单测的计时装饰器
@@ -303,7 +303,7 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 <Callout type="idea" title='落地提示' text='缓存、鉴权、重试、计时、事务边界都适合做成装饰器，但要保证可禁用、可观测、可单独测试' />
 
-<CheckList id='P032b' title='上线前自检' :items='["能复现并解释「不写 functools.wraps，所有函数都叫 wrap」", "能复现并解释「以为 @deco 在每次请求时执行」", "能复现并解释「包装 async def 却用了同步 wrapper」", "能用一条命令验证 装饰器即函数替换", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P032b' title='上线前自检' :items='["能复现并解释「不写 functools.wraps，所有函数都叫 wrap…」", "能复现并解释「以为 @deco 在每次请求时执行」", "能复现并解释「包装 async def 却用了同步 wrapper」", "能用一条命令验证 装饰器即函数替换", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 计时装饰器的练习与自测
@@ -340,3 +340,16 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 3. 不写 wraps：__name__ 为 wrapper、__doc__ 为 None、签名 (*args, **kwargs)，日志 / 文档 / 依赖注入失真
 
 [下一讲：带参装饰器、叠加顺序与类装饰器](/functions/decorator-params)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/032-decorator.py`
+
+```bash
+python3 examples/lessons/032-decorator.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/032-decorator.py) · [全部示例代码索引](/examples/)

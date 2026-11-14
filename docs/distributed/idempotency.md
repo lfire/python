@@ -119,7 +119,7 @@ for key in ['k1', 'k1', 'k2', 'k1']:
 
 对强一致要求高的场景，更稳妥的是基于共识的锁（etcd / ZooKeeper 的租约与顺序节点），或直接用数据库唯一约束。
 
-<Callout type="tip" title='核心心智模型' text='幂等指同一操作执行多次与执行一次的效果相同，写成 `f(f(x)) = f(x)`。HTTP 语义里 GET / PUT / DELETE 设计上幂等，POST 不是；但工程判据不靠方法名，而靠「写接口能不能被安全重放」。前提是承认超时不等于失败：调用方超时重试、消息队列至少一次投递、网关重发，都可' />
+<Callout type="tip" title='核心心智模型' text='幂等指同一操作执行多次与执行一次的效果相同，写成 `f(f(x)) = f(x)`。HTTP 语义里 GET / PUT / DELETE 设计上幂等，POST 不是；但工程判据不靠方法名，而靠「写接口能不能被安全重放」。前提是承认超时不等于失败：调用方超时重试、消息队列至少一次投递、网关重发，都可…' />
 
 
 ## 租约、看门狗与 fencing token
@@ -148,7 +148,7 @@ for key in ['k1', 'k1', 'k2', 'k1']:
 
 限流还要区分读与写、可丢弃与必达，并对写操作叠加幂等，防止「被限流 → 重试 → 重复」的组合故障。
 
-<ArchBlueprint title='第 106 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "幂等键、去重表与唯一索引", "protocol": "调用 / 请求", "items": [{"label": "幂等键、去重表与唯一索引", "sub": "输入与前置", "detail": "幂等指同一操作执行多次与执行一次的效果相同，写成 `f(f(x)) = f(x)`。HTTP 语义里 GET / PUT / DELETE 设计上幂等，POST 不是；但工程判据不靠方法名，而靠「写接口能不能被安全重放」。前提是承认超时不等于失败：调用方超时重试、消息队列至少一次投递、网关重发，都可", "tone": "blue"}]}, {"name": "核心规则", "note": "分布式锁、租约与看门狗", "protocol": "语言 / 运行时协议", "items": [{"label": "分布式锁、租约与看门狗", "sub": "状态与边界", "detail": "分布式锁要满足互斥、不会死锁、容错三条。Redis 的经典实现是一条原子命令：`SET` 带 `NX`（只有键不存在才设置，保证互斥）与 `EX`（给锁一个租约，过期自动释放），value 用一个随机 token 标识持有者。释放必须写成 Lua 脚本「先比对 value 是否等于自己的 token", "tone": "purple"}]}, {"name": "落地与收尾", "note": "令牌桶、漏桶与分布式限流", "items": [{"label": "令牌桶、漏桶与分布式限流", "sub": "工程处理", "detail": "限流保护下游不被突发流量打垮。令牌桶：以固定速率 r 往容量 c 的桶里补充令牌，每个请求取走 1 个，桶里有令牌就放行、空了就拒绝或排队；它容许最多 c 的突发（攒下的令牌可以一次用完），长期平均速率被 r 限制，是网关与 Guava RateLimiter 的常见模型。本讲 code 里 `ca", "tone": "green"}]}]' />
+<ArchBlueprint title='第 106 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "幂等键、去重表与唯一索引", "protocol": "调用 / 请求", "items": [{"label": "幂等键、去重表与唯一索引", "sub": "输入与前置", "detail": "幂等指同一操作执行多次与执行一次的效果相同，写成 `f(f(x)) = f(x)`。HTTP 语义里 GET / PUT / DELETE 设计上幂等，POST 不是；但工程判据不靠方法名，而靠「写接口能不能被安全重放」。前提是承认超时不等于失败：调用方超时重试、消息队列至少一次投递、网关重发，都可…", "tone": "blue"}]}, {"name": "核心规则", "note": "分布式锁、租约与看门狗", "protocol": "语言 / 运行时协议", "items": [{"label": "分布式锁、租约与看门狗", "sub": "状态与边界", "detail": "分布式锁要满足互斥、不会死锁、容错三条。Redis 的经典实现是一条原子命令：`SET` 带 `NX`（只有键不存在才设置，保证互斥）与 `EX`（给锁一个租约，过期自动释放），value 用一个随机 token 标识持有者。释放必须写成 Lua 脚本「先比对 value 是否等于自己的 token…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "令牌桶、漏桶与分布式限流", "items": [{"label": "令牌桶、漏桶与分布式限流", "sub": "工程处理", "detail": "限流保护下游不被突发流量打垮。令牌桶：以固定速率 r 往容量 c 的桶里补充令牌，每个请求取走 1 个，桶里有令牌就放行、空了就拒绝或排队；它容许最多 c 的突发（攒下的令牌可以一次用完），长期平均速率被 r 限制，是网关与 Guava RateLimiter 的常见模型。本讲 code 里…", "tone": "green"}]}]' />
 
 **分布式锁的关键参数与失效**
 
@@ -171,7 +171,7 @@ for key in ['k1', 'k1', 'k2', 'k1']:
 
 `SETNX` 的互斥来自 Redis 单线程执行命令的原子性，`EX` 租约把「持有者崩溃」转化为「到期自动释放」，看门狗把「业务未完成但锁过期」转化为「续期」，fencing token 则用全序令牌封住旧持有者的迟到写入。
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用「先查后写」实现幂等，并发下仍重复扣款", "body": "SELECT 与 INSERT 是两条独立操作，两个请求都在对方提交前查到不存在、都执行写入", "tip": "用去重表唯一索引 + 本地事务，或 INSERT ON CONFLICT DO NOTHING 让数据库原子去重"}, {"title": "第 2 步：分布式锁不设租约、释放时不校验持有者", "body": "持有者崩溃后锁永不释放；直接 DEL 会误删已被别人持有的同名锁", "tip": "SET key token NX EX ttl 带随机值，Lua 比对 token 再释放，配看门狗续期与 fencing token"}, {"title": "第 3 步：固定窗口限流在边界放行 2 倍流量 / 限流", "body": "固定窗口切换瞬间前窗末尾与后窗开头的请求都通过；客户端限流可被绕过且多实例不共享计数", "tip": "改滑动窗口，网关层与服务端各做一层，跨进程计数用 Redis + Lua 原子化，429 配 Retry-After 与退避"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用「先查后写」实现幂等，并发下仍重复扣款", "body": "SELECT 与 INSERT 是两条独立操作，两个请求都在对方提交前查到不存在、都执行写入", "tip": "用去重表唯一索引 + 本地事务，或 INSERT ON CONFLICT DO NOTHING 让数据库原子去重"}, {"title": "第 2 步：分布式锁不设租约、释放时不校验持有者", "body": "持有者崩溃后锁永不释放；直接 DEL 会误删已被别人持有的同名锁", "tip": "SET key token NX EX ttl 带随机值，Lua 比对 token 再释放，配看门狗续期与 fencing token"}, {"title": "第 3 步：固定窗口限流在边界放行 2 倍流量 / 限流…", "body": "固定窗口切换瞬间前窗末尾与后窗开头的请求都通过；客户端限流可被绕过且多实例不共享计数", "tip": "改滑动窗口，网关层与服务端各做一层，跨进程计数用 Redis + Lua 原子化，429 配 Retry-After 与退避"}]' />
 
 **错因速查**
 
@@ -225,7 +225,7 @@ for idem, t in events:
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 幂等键设计 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 幂等键设计 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习与速记：重试、锁与限流
@@ -264,3 +264,16 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 3. 反模式是先 `SELECT` 再 `INSERT`；改用 `ON CONFLICT DO NOTHING`、捕获 `IntegrityError` 或带版本 CAS
 
 [下一讲：分布式事务：2PC / TCC / Saga / 消息最终一致](/distributed/dist-tx)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/106-idempotency.py`
+
+```bash
+python3 examples/lessons/106-idempotency.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/106-idempotency.py) · [全部示例代码索引](/examples/)

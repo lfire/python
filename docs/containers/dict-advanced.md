@@ -90,13 +90,13 @@ print('chainmap is live', view['x'])
 
 <OutputBox title='主示例运行结果' output='groups {1: [&#39;a&#39;, &#39;c&#39;], 2: [&#39;bb&#39;, &#39;dd&#39;, &#39;ee&#39;]}\nread created key True\nget avoids factory None False\ncounts 3 0 [(&#39;a&#39;, 3), (&#39;n&#39;, 2)]\nupdate adds 4 1 8\nlayered True 9000\nwrites to first [&#39;debug&#39;, &#39;timeout&#39;] env untouched {&#39;port&#39;: 9000}\npipe merge {&#39;x&#39;: 2, &#39;y&#39;: 3}\nunpack merge {&#39;x&#39;: 2, &#39;y&#39;: 3}\nchainmap is live 20' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections import defaultdict, Counter, ChainMap\n\ngroups = defaultdict(list)\nfor word in (&#39;a&#39;, &#39;bb&#39;, &#39;c&#39;, &#39;dd&#39;, &#39;ee&#39;):\n    groups[len(word)].append(word)\nprint(&#39;groups&#39;, dict(groups))\nbefore = len(groups)\n_ = groups[99]\nprint(&#39;read created key&#39;, len(groups) == before + 1)\nprint(&#39;get avoids factory&#39;, groups.get(98), 98 in groups)\n\nc = Counter(&#39;banana&#39;)\nprint(&#39;counts&#39;, c[&#39;a&#39;], c[&#39;z&#39;], c.most_common(2))\nc.update([&#39;a&#39;, &#39;x&#39;])\nprint(&#39;update adds&#39;, c[&#39;a&#39;], c[&#39;x&#39;], c.total())\n\ndefaults = {&#39;debug&#39;: False, &#39;port&#39;: 8080}\nenv = {&#39;port&#39;: 9000}\nuser = {&#39;debug&#39;: True}\ncfg = ChainMap(user, env, defaults)\nprint(&#39;layered&#39;, cfg[&#39;debug&#39;], cfg[&#39;port&#39;])\ncfg[&#39;timeout&#39;] = 5\nprint(&#39;writes to first&#39;, list(user), &#39;env untouched&#39;, env)\n\na = {&#39;x&#39;: 1}\nb = {&#39;x&#39;: 2, &#39;y&#39;: 3}\nprint(&#39;pipe merge&#39;, a | b)\nprint(&#39;unpack merge&#39;, {**a, **b})\nview = ChainMap(b, {&#39;z&#39;: 9})\nb[&#39;x&#39;] = 20\nprint(&#39;chainmap is live&#39;, view[&#39;x&#39;])' :notes='["导入三个 collections 容器，分别对应分组、计数与分层", "defaultdict(list) 让缺失键自动对应一个空列表", "按单词长度分组，首次访问某长度会自动建空列表", "转成普通 dict 打印，可见两个长度组", "记录当前键数，用于检验读操作是否插入新键", "下标读一个不存在的键 99，触发工厂并插入", "键数加一，证明读路径也会污染数据", "get 不触发 __missing__，返回 None 且不插入", "Counter 直接从可迭代对象统计字符频次", "a 出现 3 次，缺失的 z 返回 0，most_common(2) 取前两名", "update 是累加语义，a 再加 1、并新增 x", "total() 是 3.10+ 的方法，返回所有计数之和", "默认配置层，debug 与 port 的兜底值", "环境层覆盖 port", "用户层覆盖 debug", "ChainMap 按 user、env、defaults 顺序回退查找", "debug 命中 user，port 命中 env", "写入只作用于第一个 map，即 user 层", "user 多了 timeout，env 保持原样", "构造两个普通字典用于对比合并语义", "3.9+ 的 | 生成新字典，右侧 x 覆盖左侧", "3.5+ 的字典解包同样生成新字典", "ChainMap 只保存 b 的引用，不复制", "修改底层 b 的 x", "活视图立即读到 20，而 | 与解包的结果仍是旧快照", "Counter 缺键返回 0；update 是累加不是覆盖；most_common(n) 按计数降序，相等按首次出现顺序", "Counter 的 + - &amp; | 是多重集运算，- 丢弃非正结果、&amp; 取 min；total() 在 3.10 加入"]' title='第 022 讲 · dict 进阶：默认字典、计数器与合并' />
+<LineByLine code='from collections import defaultdict, Counter, ChainMap\n\ngroups = defaultdict(list)\nfor word in (&#39;a&#39;, &#39;bb&#39;, &#39;c&#39;, &#39;dd&#39;, &#39;ee&#39;):\n    groups[len(word)].append(word)\nprint(&#39;groups&#39;, dict(groups))\nbefore = len(groups)\n_ = groups[99]\nprint(&#39;read created key&#39;, len(groups) == before + 1)\nprint(&#39;get avoids factory&#39;, groups.get(98), 98 in groups)\n\nc = Counter(&#39;banana&#39;)\nprint(&#39;counts&#39;, c[&#39;a&#39;], c[&#39;z&#39;], c.most_common(2))\nc.update([&#39;a&#39;, &#39;x&#39;])\nprint(&#39;update adds&#39;, c[&#39;a&#39;], c[&#39;x&#39;], c.total())\n\ndefaults = {&#39;debug&#39;: False, &#39;port&#39;: 8080}\nenv = {&#39;port&#39;: 9000}\nuser = {&#39;debug&#39;: True}\ncfg = ChainMap(user, env, defaults)\nprint(&#39;layered&#39;, cfg[&#39;debug&#39;], cfg[&#39;port&#39;])\ncfg[&#39;timeout&#39;] = 5\nprint(&#39;writes to first&#39;, list(user), &#39;env untouched&#39;, env)\n\na = {&#39;x&#39;: 1}\nb = {&#39;x&#39;: 2, &#39;y&#39;: 3}\nprint(&#39;pipe merge&#39;, a | b)\nprint(&#39;unpack merge&#39;, {**a, **b})\nview = ChainMap(b, {&#39;z&#39;: 9})\nb[&#39;x&#39;] = 20\nprint(&#39;chainmap is live&#39;, view[&#39;x&#39;])' :notes='["导入三个 collections 容器，分别对应分组、计数与分层", "空行，只用于分隔逻辑块，不影响执行结果。", "defaultdict(list) 让缺失键自动对应一个空列表", "按单词长度分组，首次访问某长度会自动建空列表", "转成普通 dict 打印，可见两个长度组", "记录当前键数，用于检验读操作是否插入新键", "下标读一个不存在的键 99，触发工厂并插入", "键数加一，证明读路径也会污染数据", "get 不触发 __missing__，返回 None 且不插入", "Counter 直接从可迭代对象统计字符频次", "空行，只用于分隔逻辑块，不影响执行结果。", "a 出现 3 次，缺失的 z 返回 0，most_common(2) 取前两名", "update 是累加语义，a 再加 1、并新增 x", "total() 是 3.10+ 的方法，返回所有计数之和", "默认配置层，debug 与 port 的兜底值", "空行，只用于分隔逻辑块，不影响执行结果。", "环境层覆盖 port", "用户层覆盖 debug", "ChainMap 按 user、env、defaults 顺序回退查找", "debug 命中 user，port 命中 env", "写入只作用于第一个 map，即 user 层", "user 多了 timeout，env 保持原样", "构造两个普通字典用于对比合并语义", "空行，只用于分隔逻辑块，不影响执行结果。", "3.9+ 的 | 生成新字典，右侧 x 覆盖左侧", "3.5+ 的字典解包同样生成新字典", "ChainMap 只保存 b 的引用，不复制", "修改底层 b 的 x", "活视图立即读到 20，而 | 与解包的结果仍是旧快照", "Counter 缺键返回 0；update 是累加不是覆盖；most_common(n) 按计数降序，相等按首次出现顺序", "Counter 的 + - &amp; | 是多重集运算，- 丢弃非正结果、&amp; 取 min；total() 在 3.10 加入"]' title='第 022 讲 · dict 进阶：默认字典、计数器与合并' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<ConceptDiagram type='layers3' title='第 022 讲 · defaultdict 与 Counter：被重写的 __missing__ 与 update' labels='defaultdict 与 Counter：|ChainMap：活视图的分层查找与写入落点|合并方式、OrderedDict 与选型' caption='用标准库容器消灭样板代码' />
+<ConceptDiagram type='layers3' title='第 022 讲 · defaultdict 与 Counter：被重写的 __missing__ 与 update' labels='defaultdict 与 Counter…|ChainMap：活视图的分层查找与写入落点|合并方式、OrderedDict 与选型|映射协议' caption='用标准库容器消灭样板代码' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图换成分层视角：上层只依赖下层提供的能力，旁路负责异常与降级，读的时候逐层往下追问依赖。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## ChainMap：活视图的分层查找与写入落点
@@ -230,3 +230,16 @@ print('log frozen', type(dict(changes)).__name__)
 <Predict no='022-4' q='c = Counter(&#39;banana&#39;); c.update([&#39;a&#39;]); print(c[&#39;a&#39;], c.most_common(1)) 输出什么？' :options='["3 [(&#39;a&#39;, 3)]", "4 [(&#39;a&#39;, 4)]", "4 [(&#39;a&#39;, 4), (&#39;n&#39;, 2)]"]' answer='1' output='4 [(&#39;a&#39;, 4)]' explain='&#39;banana&#39; 里 a 出现 3 次，Counter.update 累加而非覆盖，加 1 得 4；most_common(1) 只返回计数最高的 1 项，故为 [(&#39;a&#39;, 4)]。传 None 才返回全部。' />
 
 <FillBlank no='022-5' tpl='from collections  ___ defaultdict, Counter, ChainMap' :answers='["import"]' hint='回想本讲关于 defaultdict 工厂 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 defaultdict 与 Counter：被重写的 __missing__ 与 update 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/022-dict-advanced.py`
+
+```bash
+python3 examples/lessons/022-dict-advanced.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/022-dict-advanced.py) · [全部示例代码索引](/examples/)

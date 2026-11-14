@@ -82,7 +82,7 @@ print(isinstance(User.__dict__['age'], property))
 
 <OutputBox title='主示例运行结果' output='18 True\nValueError age must be non-negative int\n18\nproperty\nTrue' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='class User:\n    def __init__(self, age):\n        self.__secret = 7\n        self.age = age\n    @property\n    def age(self):\n        return self._age\n    @age.setter\n    def age(self, value):\n        if not isinstance(value, int) or value &lt; 0:\n            raise ValueError(&#39;age must be non-negative int&#39;)\n        self._age = value\n\nu = User(18)\nprint(u.age, &#39;_User__secret&#39; in u.__dict__)\ntry:\n    u.age = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))\nprint(u.age)\nprint(type(User.__dict__[&#39;age&#39;]).__name__)\nprint(isinstance(User.__dict__[&#39;age&#39;], property))' :notes='["定义 User 类，演示校验与名称改写", "构造器接收初始年龄", "双下划线名在类体内被改写为 _User__secret", "self.age 赋值会触发 property 的 setter 校验", "@property 把 age 变成数据描述符的 getter", "getter 返回私有存储里的值", "从 _age 读出，避免再次触发描述符", "@age.setter 生成带 fset 的新 property", "setter 接收待赋的值", "校验类型与非负约束", "不满足就抛 ValueError，赋值不会被写入", "校验通过后写进实例字典", "创建实例，__init__ 内部已走一次 setter", "年龄可读，改写后的键确实在实例字典里", "准备捕获非法赋值", "直接赋 -1，绕过 __init__ 但仍经过 setter", "捕获预期的 ValueError", "打印异常类型与消息", "非法值未写入，age 仍是 18", "类字典里的 age 是一个 property 对象", "isinstance 确认它确实是 property"]' title='第 040 讲 · 访问控制、property 与描述符协议' />
+<LineByLine code='class User:\n    def __init__(self, age):\n        self.__secret = 7\n        self.age = age\n    @property\n    def age(self):\n        return self._age\n    @age.setter\n    def age(self, value):\n        if not isinstance(value, int) or value &lt; 0:\n            raise ValueError(&#39;age must be non-negative int&#39;)\n        self._age = value\n\nu = User(18)\nprint(u.age, &#39;_User__secret&#39; in u.__dict__)\ntry:\n    u.age = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))\nprint(u.age)\nprint(type(User.__dict__[&#39;age&#39;]).__name__)\nprint(isinstance(User.__dict__[&#39;age&#39;], property))' :notes='["定义 User 类，演示校验与名称改写", "构造器接收初始年龄", "双下划线名在类体内被改写为 _User__secret", "self.age 赋值会触发 property 的 setter 校验", "@property 把 age 变成数据描述符的 getter", "getter 返回私有存储里的值", "从 _age 读出，避免再次触发描述符", "@age.setter 生成带 fset 的新 property", "setter 接收待赋的值", "校验类型与非负约束", "不满足就抛 ValueError，赋值不会被写入", "校验通过后写进实例字典", "空行，只用于分隔逻辑块，不影响执行结果。", "创建实例，__init__ 内部已走一次 setter", "年龄可读，改写后的键确实在实例字典里", "准备捕获非法赋值", "直接赋 -1，绕过 __init__ 但仍经过 setter", "捕获预期的 ValueError", "打印异常类型与消息", "非法值未写入，age 仍是 18", "类字典里的 age 是一个 property 对象", "isinstance 确认它确实是 property"]' title='第 040 讲 · 访问控制、property 与描述符协议' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -187,9 +187,9 @@ except ValueError as e:
 
 ### getter / setter 如何落到描述符方法
 
-<Term word='名称改写与私有约定' text='单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写：编译器在编译类体时' />
+<Term word='名称改写与私有约定' text='单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写：编译器在编译类体时…' />
 
-<Term word='property 的 getter / setter' text='描述符协议由三个方法构成：`__get__(self, obj, objtype=None)`、`__set__(self, obj, value)`、`__delete__(self, obj)`。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现 `__s' />
+<Term word='property 的 getter / setter' text='描述符协议由三个方法构成：`__get__(self, obj, objtype=None)`、`__set__(self, obj, value)`、`__delete__(self, obj)`。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现…' />
 
 
 ## 数据描述符与非数据描述符
@@ -205,7 +205,7 @@ except ValueError as e:
 
 <Compare :panels='[{"label": "主示例", "code": "class User:\n    def __init__(self, age):\n        self.__secret = 7\n        self.age = age\n    @property\n    def age(self):\n        return self._age\n    @age.setter\n    def age(self, value):\n        if not isinstance(value, int) or value &lt; 0:\n            raise ValueError(&#39;age must be non-negative int&#39;)\n        self._age = value\n\nu = User(18)\nprint(u.age, &#39;_User__secret&#39; in u.__dict__)\ntry:\n    u.age = -1\nexcept ValueError as e:\n    print(type(e).__name__, str(e))\nprint(u.age)\nprint(type(User.__dict__[&#39;age&#39;]).__name__)\nprint(isinstance(User.__dict__[&#39;age&#39;], property))", "note": "名称改写与私有约定"}, {"label": "对照 / 进阶", "code": "class Checked:\n    def __set_name__(self, owner, name):\n        self.name = name\n        self.key = &#39;_&#39; + name\n    def __get__(self, obj, objtype=None):\n        if obj is None:\n            return self\n        return obj.__dict__.get(self.key)\n    def __set__(self, obj, value):\n        if value &lt; 0:\n            raise ValueError(&#39;negative&#39;)\n        obj.__dict__[self.key] = value\n\nclass Loose:\n    def __get__(self, obj, objtype=None):\n        return &#39;loose&#39;\n\nclass Item:\n    price = Checked()\n    tag = Loose()\n    def __init__(self, price):\n        self.price = price\n\nit = Item(10)\nprint(it.price, Item.price.name, Item.price.key)\nit.tag = &#39;mine&#39;\nprint(it.tag, &#39;tag&#39; in it.__dict__)\ntry:\n    it.price = -5\nexcept ValueError as e:\n    print(type(e).__name__, str(e))", "note": "property 与描述符协议"}]' title='两种写法对照' note='差异集中在 名称改写与私有约定；先看输出，再找背后的规则。' />
 
-<Callout type="tip" title='核心心智模型' text='单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写' />
+<Callout type="tip" title='核心心智模型' text='单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写…' />
 
 
 ## 底层：__getattribute__ 里的描述符分派
@@ -224,9 +224,9 @@ except ValueError as e:
 
 `__set_name__` 由 `type.__new__` 在类创建时对每个描述符调用一次，把字段名注入，让 `ORM` 字段无需重复声明名字。`classmethod` 与 `staticmethod` 也都是描述符：前者 `__get__` 绑定 `cls`，后者 `__get__` 原样返回函数。
 
-<ArchBlueprint title='第 040 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "名称改写与私有约定", "protocol": "调用 / 请求", "items": [{"label": "名称改写与私有约定", "sub": "输入与前置", "detail": "单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写", "tone": "blue"}]}, {"name": "核心规则", "note": "property 与描述符协议", "protocol": "语言 / 运行时协议", "items": [{"label": "property 与描述", "sub": "状态与边界", "detail": "描述符协议由三个方法构成：`__get__(self, obj, objtype=None)`、`__set__(self, obj, value)`、`__delete__(self, obj)`。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描", "tone": "purple"}]}, {"name": "落地与收尾", "note": "优先级规则与自定义描述符", "items": [{"label": "优先级规则与自定义描述符", "sub": "工程处理", "detail": "`object.__getattribute__` 的完整优先级是：数据描述符 → 实例 `__dict__` → 非数据描述符 → 类属性 → 全失败后才调用 `__getattr__`；`object.__setattr__` 里数据描述符的 `__set__` 也优先于写入实例字典，而非数据描", "tone": "green"}]}]' />
+<ArchBlueprint title='第 040 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "名称改写与私有约定", "protocol": "调用 / 请求", "items": [{"label": "名称改写与私有约定", "sub": "输入与前置", "detail": "单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写…", "tone": "blue"}]}, {"name": "核心规则", "note": "property 与描述符协议", "protocol": "语言 / 运行时协议", "items": [{"label": "property 与描述…", "sub": "状态与边界", "detail": "描述符协议由三个方法构成：`__get__(self, obj, objtype=None)`、`__set__(self, obj, value)`、`__delete__(self, obj)`。一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "优先级规则与自定义描述符", "items": [{"label": "优先级规则与自定义描述符", "sub": "工程处理", "detail": "`object.__getattribute__` 的完整优先级是：数据描述符 → 实例 `__dict__` → 非数据描述符 → 类属性 → 全失败后才调用 `__getattr__`；`object.__setattr__` 里数据描述符的 `__set__` 也优先于写入实例字典，而非数据描…", "tone": "green"}]}]' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：校验写在 __init__ 里，后续 use", "body": "__init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它", "tip": "用 property 的 setter 或自定义数据描述符，把校验放进 __set__，保证每次赋值都过同一入口"}, {"title": "第 2 步：自定义描述符忘了实现 __set__，校验被", "body": "只实现 __get__ 的是非数据描述符，优先级低于实例 __dict__，obj.x = v 直接写进字典", "tip": "实现 __set__（或 __delete__）让它成为数据描述符；__get__ 里读写 obj.__dict__[key] 避免递归"}, {"title": "第 3 步：以为双下划线是真私有，外部仍改到了内部状态", "body": "名称改写只是编译期把 __x 改成 _ClassName__x，不是访问控制", "tip": "按约定用单下划线表达内部；确需隔离靠 property / 描述符与文档约束"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：校验写在 __init__ 里，后续 use…", "body": "__init__ 只在创建时跑一次，直接赋值走 object.__setattr__ 不经过它", "tip": "用 property 的 setter 或自定义数据描述符，把校验放进 __set__，保证每次赋值都过同一入口"}, {"title": "第 2 步：自定义描述符忘了实现 __set__，校验被…", "body": "只实现 __get__ 的是非数据描述符，优先级低于实例 __dict__，obj.x = v 直接写进字典", "tip": "实现 __set__（或 __delete__）让它成为数据描述符；__get__ 里读写 obj.__dict__[key] 避免递归"}, {"title": "第 3 步：以为双下划线是真私有，外部仍改到了内部状态", "body": "名称改写只是编译期把 __x 改成 _ClassName__x，不是访问控制", "tip": "按约定用单下划线表达内部；确需隔离靠 property / 描述符与文档约束"}]' />
 
 
 ## 优先级规则与自定义描述符
@@ -265,13 +265,13 @@ except ValueError as e:
 
 ## 从命名约定到描述符的版本演进
 
-<FlowTimeline :steps='[{"title": "名称改写与私有约定", "desc": "单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from modul…", "tone": "blue"}, {"title": "property 与描述符协议", "desc": "描述符协议由三个方法构成：`__get__(self, obj, objtype=N…", "tone": "purple"}, {"title": "优先级规则与自定义描述符", "desc": "`object.__getattribute__` 的完整优先级是：数据描述符 → …", "tone": "orange"}, {"title": "工程落地", "desc": "可复用的校验字段描述符：一个 ORM 雏形", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "名称改写与私有约定", "desc": "单下划线 `_name` 只是约定，提示内部使用，不影响访问…", "tone": "blue"}, {"title": "property 与描述符协议", "desc": "描述符协议由三个方法构成…", "tone": "purple"}, {"title": "优先级规则与自定义描述符", "desc": "`object.__getattribute__` 的完整优先级是：数据描述符…", "tone": "orange"}, {"title": "工程落地", "desc": "可复用的校验字段描述符：一个 ORM 雏形", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 ```bash
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 名称改写与私有约定 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 名称改写与私有约定 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 可复用的校验字段描述符：一个 ORM 雏形
@@ -321,7 +321,7 @@ for attr, val in [('price', -1.0), ('stock', 'x')]:
 
 <Callout type="idea" title='落地提示' text='ORM 字段、配置校验、懒加载属性、类型约束都适合用描述符实现，一处定义全局生效' />
 
-<CheckList id='P040b' title='上线前自检' :items='["能复现并解释「校验写在 __init__ 里，后续 user.age = 」", "能复现并解释「自定义描述符忘了实现 __set__，校验被实例字典绕过」", "能复现并解释「以为双下划线是真私有，外部仍改到了内部状态」", "能用一条命令验证 名称改写与私有约定", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P040b' title='上线前自检' :items='["能复现并解释「校验写在 __init__ 里，后续 user.age =…」", "能复现并解释「自定义描述符忘了实现 __set__，校验被实例字典绕过」", "能复现并解释「以为双下划线是真私有，外部仍改到了内部状态」", "能用一条命令验证 名称改写与私有约定", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 校验写在 __init__、__set__ 缺失与假私有
@@ -371,3 +371,16 @@ for attr, val in [('price', -1.0), ('stock', 'x')]:
 3. property 是数据描述符，setter 保证每次赋值都过同一入口；只读赋值抛 AttributeError: ... has no setter
 
 [下一讲：特殊方法：repr、比较、算术与容器协议](/oop/special-methods)
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/040-property.py`
+
+```bash
+python3 examples/lessons/040-property.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/040-property.py) · [全部示例代码索引](/examples/)

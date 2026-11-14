@@ -60,16 +60,16 @@ pip 用 `--no-cache-dir` 避免把缓存写进层，锁文件固定版本保证�
 | pip --no-cache-dir | 不把 pip 缓存写入层 | 层大小与 pip cache 目录 |
 | 非 root 用户 | 缩小容器内权限 | 容器 uid 与文件属主 |
 
-<ConceptDiagram type='flow3' title='第 110 讲 · 镜像分层、多阶段构建与瘦身' labels='镜像分层、多阶段构建与瘦身|资源请求与限制、OOMKill 与 CPyt|探针语义、preStop 与 SIGTERM' caption='把 Python 服务稳定地跑在集群里' />
+<ConceptDiagram type='flow3' title='第 110 讲 · 镜像分层、多阶段构建与瘦身' labels='镜像分层、多阶段构建与瘦身|资源请求与限制、OOMKill 与 CPyt…|探针语义、preStop 与 SIGTERM…' caption='把 Python 服务稳定地跑在集群里' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## Dockerfile 先 COPY 全部源码再 pip install
 
 <Callout type="warn" title='本讲最容易踩的坑' text='Dockerfile 先 COPY 全部源码再 pip install：任何一行代码改动都会让缓存的依赖层失效，每次构建重装依赖，冷启动与 CI 时间被拖长' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：Dockerfile 先 COPY 全部源码", "body": "任何一行代码改动都会让缓存的依赖层失效，每次构建重装依赖，冷启动与 CI 时间被拖长", "tip": "先 COPY requirements 或锁文件、RUN pip install --no-cache-dir，最后 COPY 源码；用多阶段构建把编译依赖留在 builder"}, {"title": "第 2 步：容器不设 memory limit 或 li", "body": "CPython 的 arena 不归还、dict 过度分配与 C 扩展原生内存使 p99 RSS 高于均值，超限时被 OOMKill 且无优雅退出", "tip": "按 p99 RSS 加余量设 limits，requests 略低于 limits；暴露 RSS 指标并配重启次数告警"}, {"title": "第 3 步：把就绪探针写成强依赖数据库，且不做 SIGT", "body": "数据库抖动让全部实例同时被摘出 Service，故障等比放大；SIGTERM 到来进程直接退出，在途请求被截断返回 502", "tip": "就绪只反映本实例能否接流量，存活不依赖外部；注册 SIGTERM handler 置停止标志、fail readiness、drain 在途请求，preStop 等待 endpoint 摘除传播"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：Dockerfile 先 COPY 全部源码…", "body": "任何一行代码改动都会让缓存的依赖层失效，每次构建重装依赖，冷启动与 CI 时间被拖长", "tip": "先 COPY requirements 或锁文件、RUN pip install --no-cache-dir，最后 COPY 源码；用多阶段构建把编译依赖留在 builder"}, {"title": "第 2 步：容器不设 memory limit 或 li…", "body": "CPython 的 arena 不归还、dict 过度分配与 C 扩展原生内存使 p99 RSS 高于均值，超限时被 OOMKill 且无优雅退出", "tip": "按 p99 RSS 加余量设 limits，requests 略低于 limits；暴露 RSS 指标并配重启次数告警"}, {"title": "第 3 步：把就绪探针写成强依赖数据库，且不做 SIGT…", "body": "数据库抖动让全部实例同时被摘出 Service，故障等比放大；SIGTERM 到来进程直接退出，在途请求被截断返回 502", "tip": "就绪只反映本实例能否接流量，存活不依赖外部；注册 SIGTERM handler 置停止标志、fail readiness、drain 在途请求，preStop 等待 endpoint 摘除传播"}]' />
 
 
 ## 资源请求与限制、OOMKill 与 CPython 内存特征
@@ -136,7 +136,7 @@ print('inflight_after_drain', s.inflight)
 
 <OutputBox title='主示例运行结果' output='stopping_before False\nstopping_after True\ninflight_after_drain 0' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import signal, os\n\nclass Server:\n    def __init__(self):\n        self.stopping = False\n        self.inflight = 3\n    def handle_term(self, signum, frame):\n        self.stopping = True\n    def drain(self):\n        while self.inflight &gt; 0:\n            self.inflight -= 1\n\ns = Server()\nsignal.signal(signal.SIGTERM, s.handle_term)\nprint(&#39;stopping_before&#39;, s.stopping)\nos.kill(os.getpid(), signal.SIGTERM)\nprint(&#39;stopping_after&#39;, s.stopping)\ns.drain()\nprint(&#39;inflight_after_drain&#39;, s.inflight)' :notes='["导入 signal 注册处理器、os 用于给自己发信号", "模拟持有在途请求的服务", "初始化停止标志与在途计数", "stopping 供就绪探针与主循环读取", "inflight 记录尚未处理完的请求数", "SIGTERM 处理器只置标志，不做重活", "把停止状态置真，主循环据此停止收新请求", "drain 把在途请求处理完再退出", "在途未清零时持续等待", "每处理完一个请求递减在途计数", "创建服务实例", "把 handle_term 注册为 SIGTERM 处理器", "打印停止标志初值，正常服务为 False", "模拟 kubelet 删除 Pod 时发送 SIGTERM", "信号在字节码检查点被处理，标志变为 True", "进入 drain，等待并清空在途请求", "打印在途请求数，0 表示可安全退出"]' title='第 110 讲 · 容器化与 Kubernetes 部署' />
+<LineByLine code='import signal, os\n\nclass Server:\n    def __init__(self):\n        self.stopping = False\n        self.inflight = 3\n    def handle_term(self, signum, frame):\n        self.stopping = True\n    def drain(self):\n        while self.inflight &gt; 0:\n            self.inflight -= 1\n\ns = Server()\nsignal.signal(signal.SIGTERM, s.handle_term)\nprint(&#39;stopping_before&#39;, s.stopping)\nos.kill(os.getpid(), signal.SIGTERM)\nprint(&#39;stopping_after&#39;, s.stopping)\ns.drain()\nprint(&#39;inflight_after_drain&#39;, s.inflight)' :notes='["导入 signal 注册处理器、os 用于给自己发信号", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟持有在途请求的服务", "初始化停止标志与在途计数", "stopping 供就绪探针与主循环读取", "inflight 记录尚未处理完的请求数", "SIGTERM 处理器只置标志，不做重活", "把停止状态置真，主循环据此停止收新请求", "drain 把在途请求处理完再退出", "在途未清零时持续等待", "每处理完一个请求递减在途计数", "空行，只用于分隔逻辑块，不影响执行结果。", "创建服务实例", "把 handle_term 注册为 SIGTERM 处理器", "打印停止标志初值，正常服务为 False", "模拟 kubelet 删除 Pod 时发送 SIGTERM", "信号在字节码检查点被处理，标志变为 True", "进入 drain，等待并清空在途请求", "打印在途请求数，0 表示可安全退出"]' title='第 110 讲 · 容器化与 Kubernetes 部署' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -239,13 +239,13 @@ print('left_after_drain', app.drain())
 
 <Callout type="idea" title='落地提示' text='多阶段构建、锁文件安装、非 root 运行、就绪与存活探针分开、preStop 配合优雅退出' />
 
-<CheckList id='P110b' title='上线前自检' :items='["能复现并解释「Dockerfile 先 COPY 全部源码再 pip in」", "能复现并解释「容器不设 memory limit 或 limit 贴着压测」", "能复现并解释「把就绪探针写成强依赖数据库，且不做 SIGTERM 处理」", "能用一条命令验证 镜像分层与多阶段构建", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P110b' title='上线前自检' :items='["能复现并解释「Dockerfile 先 COPY 全部源码再 pip in…」", "能复现并解释「容器不设 memory limit 或 limit 贴着压测…」", "能复现并解释「把就绪探针写成强依赖数据库，且不做 SIGTERM 处理」", "能用一条命令验证 镜像分层与多阶段构建", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 镜像分层与多阶段构建 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 镜像分层与多阶段构建 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 **错因速查**
 
@@ -294,7 +294,7 @@ print('rolling_8_2_1', rolling(8, 2, 1))
 
 <OutputBox title='扩展示例运行结果' output='hpa_50_of_70 3\nhpa_140_of_70 8\nhpa_74_of_70 4\nrolling_4_1_1 (5, 3)\nrolling_8_2_1 (10, 7)' />
 
-<LineByLine code='import math\n\ndef desired_replicas(current, metric, target, tolerance=0.1, min_r=1, max_r=10):\n    ratio = metric / target\n    if abs(ratio - 1.0) &lt;= tolerance:\n        return current\n    want = math.ceil(current * ratio)\n    return max(min_r, min(max_r, want))\n\ndef rolling(replicas, max_surge, max_unavailable):\n    return replicas + max_surge, replicas - max_unavailable\n\nprint(&#39;hpa_50_of_70&#39;, desired_replicas(4, 50, 70))\nprint(&#39;hpa_140_of_70&#39;, desired_replicas(4, 140, 70))\nprint(&#39;hpa_74_of_70&#39;, desired_replicas(4, 74, 70))\nprint(&#39;rolling_4_1_1&#39;, rolling(4, 1, 1))\nprint(&#39;rolling_8_2_1&#39;, rolling(8, 2, 1))' :notes='["期望副本公式：当前副本乘指标比值再向上取整", "比值落在 1 加减 tolerance 内直接维持当前副本，抑制抖动", "滚动更新：总 Pod 上限与最低可用 Pod 两个硬边界", "74/70 的比值 1.057 落在 tolerance 内，副本数不变", "`startupProbe` / `livenessProbe` / `readinessProbe` 语义分开，就绪别强依赖数据库；`terminationGracePeriodSeconds` 默认 30 秒", "`SIGTERM` 置 stopping、readiness 转失败、drain 在途、关连接池；preStop 留摘除传播窗口，清理段必须限时", "每条 `RUN` / `COPY` / `ADD` 生成一层，先装依赖后拷源码；多阶段用 `python:3.13-slim` + `--no-cache-dir` 瘦身", "非 root 运行 + chown，`readOnlyRootFilesystem` 时把临时写入指向 emptyDir 挂载的 /tmp", "`resources.requests` 管调度、`limits` 管上限；1 Mi 是 2^20 字节，注意 M / Mi 十进制与二进制差异", "CPU 超限只 throttle，内存超限触发 `SIGKILL`；CPython 的 `pymalloc` 与 C 扩展让 RSS 高于 `tracemalloc`", "`startupProbe` / `livenessProbe` / `readinessProbe` 语义分开，就绪别强依赖数据库；`terminationGracePeriodSeconds` 默认 30 秒", "`SIGTERM` 置 stopping、readiness 转失败、drain 在途、关连接池；preStop 留摘除传播窗口，清理段必须限时", "每条 `RUN` / `COPY` / `ADD` 生成一层，先装依赖后拷源码；多阶段用 `python:3.13-slim` + `--no-cache-dir` 瘦身", "非 root 运行 + chown，`readOnlyRootFilesystem` 时把临时写入指向 emptyDir 挂载的 /tmp"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef desired_replicas(current, metric, target, tolerance=0.1, min_r=1, max_r=10):\n    ratio = metric / target\n    if abs(ratio - 1.0) &lt;= tolerance:\n        return current\n    want = math.ceil(current * ratio)\n    return max(min_r, min(max_r, want))\n\ndef rolling(replicas, max_surge, max_unavailable):\n    return replicas + max_surge, replicas - max_unavailable\n\nprint(&#39;hpa_50_of_70&#39;, desired_replicas(4, 50, 70))\nprint(&#39;hpa_140_of_70&#39;, desired_replicas(4, 140, 70))\nprint(&#39;hpa_74_of_70&#39;, desired_replicas(4, 74, 70))\nprint(&#39;rolling_4_1_1&#39;, rolling(4, 1, 1))\nprint(&#39;rolling_8_2_1&#39;, rolling(8, 2, 1))' :notes='["期望副本公式：当前副本乘指标比值再向上取整", "空行，只用于分隔逻辑块，不影响执行结果。", "比值落在 1 加减 tolerance 内直接维持当前副本，抑制抖动", "滚动更新：总 Pod 上限与最低可用 Pod 两个硬边界", "74/70 的比值 1.057 落在 tolerance 内，副本数不变", "这一行 `return current` 的作用，可对照上方输出逐项核对。", "这一行 `want = math.ceil(current * ratio)` 的作用，可对照上方输出逐项核对。", "这一行 `return max(min_r, min(max_r, want))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def rolling(replicas, max_surge, max_unavailable):` 的作用，可对照上方输出逐项核对。", "这一行 `return replicas + max_surge, replicas - max_unavaila` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;hpa_50_of_70&#39;, desired_replicas(4, 50, 70))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;hpa_140_of_70&#39;, desired_replicas(4, 140, 70))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;hpa_74_of_70&#39;, desired_replicas(4, 74, 70))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;rolling_4_1_1&#39;, rolling(4, 1, 1))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;rolling_8_2_1&#39;, rolling(8, 2, 1))` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
 
 ### maxSurge 与 maxUnavailable 的阶段计数
@@ -384,3 +384,16 @@ for limit in (480, 620, 680):
 [下一讲：GitOps、灰度发布与可观测平台](/distributed/gitops)
 
 <FillBlank no='110-6' tpl='___ signal, os' :answers='["import"]' hint='回想本讲关于 镜像分层与多阶段构建 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 镜像分层、多阶段构建与瘦身 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/110-docker-k8s.py`
+
+```bash
+python3 examples/lessons/110-docker-k8s.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/110-docker-k8s.py) · [全部示例代码索引](/examples/)

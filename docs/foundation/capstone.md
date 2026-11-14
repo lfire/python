@@ -78,7 +78,7 @@ for bad in ('abs(-2)', '1 / 0', 'x + 1'):
 
 <OutputBox title='主示例运行结果' output='1 + 2 * 3 = 7\n(4 + 6) / 2 = 5.0\n-3 ** 2 = -9\n2 ** 10 = 1024\nreject &#39;abs(-2)&#39; ValueError\nreject &#39;1 / 0&#39; ZeroDivisionError\nreject &#39;x + 1&#39; ValueError' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='import ast, operator\n\nOPS = {\n    ast.Add: operator.add,\n    ast.Sub: operator.sub,\n    ast.Mult: operator.mul,\n    ast.Div: operator.truediv,\n    ast.Pow: operator.pow,\n    ast.Mod: operator.mod,\n}\nUNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}\n\ndef evaluate(expr):\n    tree = ast.parse(expr, mode=&#39;eval&#39;)\n    return _eval(tree.body)\n\ndef _eval(node):\n    if isinstance(node, ast.Constant) and type(node.value) in (int, float):\n        return node.value\n    if isinstance(node, ast.BinOp) and type(node.op) in OPS:\n        return OPS[type(node.op)](_eval(node.left), _eval(node.right))\n    if isinstance(node, ast.UnaryOp) and type(node.op) in UNARY:\n        return UNARY[type(node.op)](_eval(node.operand))\n    raise ValueError(&#39;unsupported syntax&#39;)\n\nfor s in (&#39;1 + 2 * 3&#39;, &#39;(4 + 6) / 2&#39;, &#39;-3 ** 2&#39;, &#39;2 ** 10&#39;):\n    print(s, &#39;=&#39;, evaluate(s))\nfor bad in (&#39;abs(-2)&#39;, &#39;1 / 0&#39;, &#39;x + 1&#39;):\n    try:\n        evaluate(bad)\n    except (ValueError, ZeroDivisionError) as e:\n        print(&#39;reject&#39;, repr(bad), type(e).__name__)' :notes='["导入 ast 做语法分析、operator 把运算符节点映射成函数，全程不调用 eval", "用字典把二元运算 AST 节点类型映射到 operator 的算术函数", "加法节点对应 operator.add", "减法节点对应 operator.sub", "乘法节点对应 operator.mul", "除法用 truediv，返回 float 与 Python 语义一致", "乘方映射到 pow，-3 ** 2 的优先级由语法树决定", "取模映射到 mod", "字典结束；不在白名单里的运算符会走到后面的拒绝分支", "一元正负号单独一张表，映射到 operator.pos 与 operator.neg", "对外入口：接收字符串，返回数值", "mode=&#39;eval&#39; 只解析单个表达式，返回 Expression 而非 Module", "把表达式主体交给递归求值器", "递归遍历语法树，只对白名单节点求值", "3.8 起字面量统一为 ast.Constant；按 value 实际类型放行 int 与 float，排除 bool", "字面量直接返回，不执行任何代码", "二元运算且运算符在白名单内才处理", "查表取函数，递归求值左右子树，绝不 eval 字符串", "一元运算同样查表", "对操作数递归求值后取正或取负", "Call / Name / Attribute 等一律拒绝，这是安全边界的核心", "四个合法表达式，覆盖优先级、括号、一元负号与乘方", "逐个求值并打印", "三个危险或非法输入：函数调用、除零、名字引用", "把求值包在 try 里，异常转成可读的拒绝信息", "触发白名单拒绝或算术异常", "只捕获预期两类异常，不用裸 except", "打印被拒输入与异常类型，作为可测的输出"]' title='第 016 讲 · 阶段综合：交互式命令行计算器' />
+<LineByLine code='import ast, operator\n\nOPS = {\n    ast.Add: operator.add,\n    ast.Sub: operator.sub,\n    ast.Mult: operator.mul,\n    ast.Div: operator.truediv,\n    ast.Pow: operator.pow,\n    ast.Mod: operator.mod,\n}\nUNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}\n\ndef evaluate(expr):\n    tree = ast.parse(expr, mode=&#39;eval&#39;)\n    return _eval(tree.body)\n\ndef _eval(node):\n    if isinstance(node, ast.Constant) and type(node.value) in (int, float):\n        return node.value\n    if isinstance(node, ast.BinOp) and type(node.op) in OPS:\n        return OPS[type(node.op)](_eval(node.left), _eval(node.right))\n    if isinstance(node, ast.UnaryOp) and type(node.op) in UNARY:\n        return UNARY[type(node.op)](_eval(node.operand))\n    raise ValueError(&#39;unsupported syntax&#39;)\n\nfor s in (&#39;1 + 2 * 3&#39;, &#39;(4 + 6) / 2&#39;, &#39;-3 ** 2&#39;, &#39;2 ** 10&#39;):\n    print(s, &#39;=&#39;, evaluate(s))\nfor bad in (&#39;abs(-2)&#39;, &#39;1 / 0&#39;, &#39;x + 1&#39;):\n    try:\n        evaluate(bad)\n    except (ValueError, ZeroDivisionError) as e:\n        print(&#39;reject&#39;, repr(bad), type(e).__name__)' :notes='["导入 ast 做语法分析、operator 把运算符节点映射成函数，全程不调用 eval", "空行，只用于分隔逻辑块，不影响执行结果。", "用字典把二元运算 AST 节点类型映射到 operator 的算术函数", "加法节点对应 operator.add", "减法节点对应 operator.sub", "乘法节点对应 operator.mul", "除法用 truediv，返回 float 与 Python 语义一致", "乘方映射到 pow，-3 ** 2 的优先级由语法树决定", "取模映射到 mod", "字典结束；不在白名单里的运算符会走到后面的拒绝分支", "一元正负号单独一张表，映射到 operator.pos 与 operator.neg", "空行，只用于分隔逻辑块，不影响执行结果。", "对外入口：接收字符串，返回数值", "mode=&#39;eval&#39; 只解析单个表达式，返回 Expression 而非 Module", "把表达式主体交给递归求值器", "空行，只用于分隔逻辑块，不影响执行结果。", "递归遍历语法树，只对白名单节点求值", "3.8 起字面量统一为 ast.Constant；按 value 实际类型放行 int 与 float，排除 bool", "字面量直接返回，不执行任何代码", "二元运算且运算符在白名单内才处理", "查表取函数，递归求值左右子树，绝不 eval 字符串", "一元运算同样查表", "对操作数递归求值后取正或取负", "Call / Name / Attribute 等一律拒绝，这是安全边界的核心", "空行，只用于分隔逻辑块，不影响执行结果。", "四个合法表达式，覆盖优先级、括号、一元负号与乘方", "逐个求值并打印", "三个危险或非法输入：函数调用、除零、名字引用", "把求值包在 try 里，异常转成可读的拒绝信息", "触发白名单拒绝或算术异常", "只捕获预期两类异常，不用裸 except", "打印被拒输入与异常类型，作为可测的输出"]' title='第 016 讲 · 阶段综合：交互式命令行计算器' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -96,9 +96,9 @@ for bad in ('abs(-2)', '1 / 0', 'x + 1'):
 
 把解析、求值、渲染、输入循环拆开，正因为这四件事的失败模式与测试手段完全不同。
 
-<ConceptDiagram type='flow4' title='第 016 讲 · eval 为什么不能当沙箱：属性链逃逸与 compile 链路' labels='eval 为什么不能当沙箱：属性链逃逸与 c|AST 白名单与字面量判断的版本细节|输入循环、精度与函数拆分' caption='把语法地基串成一个能用的小程序' />
+<ConceptDiagram type='flow4' title='第 016 讲 · eval 为什么不能当沙箱：属性链逃逸与 compile 链路' labels='eval 为什么不能当沙箱：属性链逃逸与 c…|AST 白名单与字面量判断的版本细节|输入循环、精度与函数拆分|命令行参数与帮助' caption='把语法地基串成一个能用的小程序' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图按四步走一遍完整流程：触发、检查、执行、收尾。最容易漏掉的通常是检查与收尾两步。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 表达式求值方式对照：别把解释器交给用户
@@ -232,7 +232,7 @@ eval 传 &#123;'__builtins__': &#123;&#125;&#125; 挡不住沙箱逃逸：().`__
 
 <Callout type="warn" title='本讲最容易踩的坑' text='用 eval 直接算用户输入的表达式，服务被植入任意命令：eval 会编译并执行任意表达式，__import__(&#39;os&#39;).system(...) 一类调用能读写文件与发起网络请求' />
 
-<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 eval 直接算用户输入的表达式，服务被", "body": "eval 会编译并执行任意表达式，__import__(&#39;os&#39;).system(...) 一类调用能读写文件与发起网络请求", "tip": "改为 ast.parse(mode=&#39;eval&#39;) 加节点白名单递归求值；只放行 Constant / BinOp / UnaryOp，遇 Call 与 Name 抛 ValueError"}, {"title": "第 2 步：以为清空 __builtins__ 就安全了", "body": "CPython 一切皆对象，通过 ().__class__.__bases__[0].__subclasses__() 属性链可绕过空内建表找到敏感类", "tip": "不要试图给 eval 做沙箱；从语法层用 AST 白名单杜绝一切可执行节点"}, {"title": "第 3 步：EOF 或 Ctrl+C 时计算器抛一堆栈 ", "body": "input() 遇 EOF 抛 EOFError、遇 Ctrl+C 抛 KeyboardInterrupt，后者不在 Exception 之下，容易被漏掉", "tip": "循环里分别捕获 EOFError 与 KeyboardInterrupt 做优雅退出；SyntaxError / ZeroDivisionError / ValueError 转提示后 continue"}]' />
+<StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：用 eval 直接算用户输入的表达式，服务被…", "body": "eval 会编译并执行任意表达式，__import__(&#39;os&#39;).system(...) 一类调用能读写文件与发起网络请求", "tip": "改为 ast.parse(mode=&#39;eval&#39;) 加节点白名单递归求值；只放行 Constant / BinOp / UnaryOp，遇 Call 与 Name 抛 ValueError"}, {"title": "第 2 步：以为清空 __builtins__ 就安全了", "body": "CPython 一切皆对象，通过 ().__class__.__bases__[0].__subclasses__() 属性链可绕过空内建表找到敏感类", "tip": "不要试图给 eval 做沙箱；从语法层用 AST 白名单杜绝一切可执行节点"}, {"title": "第 3 步：EOF 或 Ctrl+C 时计算器抛一堆栈…", "body": "input() 遇 EOF 抛 EOFError、遇 Ctrl+C 抛 KeyboardInterrupt，后者不在 Exception 之下，容易被漏掉", "tip": "循环里分别捕获 EOFError 与 KeyboardInterrupt 做优雅退出；SyntaxError / ZeroDivisionError / ValueError 转提示后 continue"}]' />
 
 
 ## 练习题与交付验收
@@ -260,3 +260,16 @@ eval 传 &#123;'__builtins__': &#123;&#125;&#125; 挡不住沙箱逃逸：().`__
 <Predict no='016-4' q='对表达式 -3 ** 2 用 AST 白名单求值（USub 取负、Pow 求幂），结果是多少？' :options='["9", "-9", "报错，因为一元负号不能被求值"]' answer='1' output='-9' explain='Python 语法里 ** 优先级高于一元负号，语法树是 UnaryOp(USub, BinOp(3, Pow, 2))；先算 3 ** 2 得 9 再取负得到 -9。写成 (-3) ** 2 才是 9，语法树结构直接编码了优先级。' />
 
 <FillBlank no='016-5' tpl='___ ast, operator' :answers='["import"]' hint='回想本讲关于 需求拆解与输入循环 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 eval 为什么不能当沙箱：属性链逃逸与 compile 链路 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/016-capstone.py`
+
+```bash
+python3 examples/lessons/016-capstone.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/016-capstone.py) · [全部示例代码索引](/examples/)

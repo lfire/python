@@ -77,7 +77,7 @@ print(bars([v for _, v in data], [l for l, _ in data]))
 
 <OutputBox title='主示例运行结果' output='一季度 | ############# 120\n二季度 | #################### 180\n三季度 | ########### 95' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='def bars(values, labels, width=20):\n    top = max(values)\n    out = []\n    for lab, v in zip(labels, values):\n        n = round(v / top * width)\n        out.append(lab + &#39; | &#39; + &#39;#&#39; * n + &#39; &#39; + str(v))\n    return chr(10).join(out)\n\ndata = [(&#39;一季度&#39;, 120), (&#39;二季度&#39;, 180), (&#39;三季度&#39;, 95)]\nprint(bars([v for _, v in data], [l for l, _ in data]))' :notes='["定义把数值映射成条形长度的函数，模拟 bar 图的长度编码", "以最大值作为满格的基准，保证最长条恰好占满 width", "out 收集每一行的文本条形", "按标签与数值一一配对遍历", "把数值按比例折算成 &#39;#&#39; 的个数，这是零基线的长度编码", "直接拼出标签、条形与原始数值，便于核对", "用 chr(10) 连接多行，避免在示例代码里写换行转义", "三组季度数据，模拟分类比较场景", "分别取出数值列与标签列传入 bars，输出三行条形"]' title='第 095 讲 · 可视化：Matplotlib / Seaborn / Plotly 与图表选型' />
+<LineByLine code='def bars(values, labels, width=20):\n    top = max(values)\n    out = []\n    for lab, v in zip(labels, values):\n        n = round(v / top * width)\n        out.append(lab + &#39; | &#39; + &#39;#&#39; * n + &#39; &#39; + str(v))\n    return chr(10).join(out)\n\ndata = [(&#39;一季度&#39;, 120), (&#39;二季度&#39;, 180), (&#39;三季度&#39;, 95)]\nprint(bars([v for _, v in data], [l for l, _ in data]))' :notes='["定义把数值映射成条形长度的函数，模拟 bar 图的长度编码", "以最大值作为满格的基准，保证最长条恰好占满 width", "out 收集每一行的文本条形", "按标签与数值一一配对遍历", "把数值按比例折算成 &#39;#&#39; 的个数，这是零基线的长度编码", "直接拼出标签、条形与原始数值，便于核对", "用 chr(10) 连接多行，避免在示例代码里写换行转义", "空行，只用于分隔逻辑块，不影响执行结果。", "三组季度数据，模拟分类比较场景", "分别取出数值列与标签列传入 bars，输出三行条形"]' title='第 095 讲 · 可视化：Matplotlib / Seaborn / Plotly 与图表选型' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
@@ -142,9 +142,9 @@ print('ratio gap zero', round((100 - 92) / 100, 2), 'gap truncated', round((100 
 | 双 y 轴叠两条线 | 读者误以为量纲可比 | 分面画或明确标单位 |
 | 只画均值不画误差 | 把噪声当显著结论 | 加 95% 置信区间并标 n |
 
-<Term word='图表类型与数据关系' text='图型由你要回答的问题决定。比较少量类别的大小用条形图（bar），且条形必须从 0 起，因为长度是编码通道；看随时间变化的趋势用折线图（line），横轴是有序的时间，强调斜率与拐点；看单变量的分布用直方图（hist）或箱线图（boxplot），前者靠分箱计数看形状、后者用四分位数与须线标出离群点；看两个数值变量的关系用散' />
+<Term word='图表类型与数据关系' text='图型由你要回答的问题决定。比较少量类别的大小用条形图（bar），且条形必须从 0 起，因为长度是编码通道；看随时间变化的趋势用折线图（line），横轴是有序的时间，强调斜率与拐点；看单变量的分布用直方图（hist）或箱线图（boxplot），前者靠分箱计数看形状、后者用四分位数与须线标出离群点；看两个数值变量的关系用散…' />
 
-<Term word='Figure / Axes 对象模型' text='Matplotlib 分两层：Figure 是整张画布（含尺寸 figsize、dpi、背景），Axes 是画布上真正画图的一个坐标系（含 x/y 轴、刻度、标题、图例、数据）。`plt.subplots(nrows,ncols)` 一次返回 (fig, axes)，多子图时 axes 是 ndarray，用 `axe' />
+<Term word='Figure / Axes 对象模型' text='Matplotlib 分两层：Figure 是整张画布（含尺寸 figsize、dpi、背景），Axes 是画布上真正画图的一个坐标系（含 x/y 轴、刻度、标题、图例、数据）。`plt.subplots(nrows,ncols)` 一次返回 (fig, axes)，多子图时 axes 是 ndarray，用…' />
 
 
 ## 长度编码与视觉通道：误差是怎么被放大的
@@ -155,9 +155,9 @@ Matplotlib 的分层来自出版级排版需求：Figure 管画布物理尺寸�
 
 pyplot 状态机只是为这套 OO 模型提供便捷入口，隐式『当前 Axes』在多图场景正是样式错位的来源。置信区间来自对统计量的抽样分布估计（如 bootstrap 重采样或标准误乘临界值），它量化的是估计不确定性而非数据离散度，所以标注时必须写明类型与 n。
 
-<ConceptDiagram type='flow3' title='第 095 讲 · 按数据关系选图，而不是按习惯选图' labels='按数据关系选图，而不是按习惯选图|Figure / Axes 对象模型与状态机|可读性陷阱：截断纵轴、置信区间与配色' caption='用图准确表达数据而不是装饰数据' />
+<ConceptDiagram type='flow3' title='第 095 讲 · 按数据关系选图，而不是按习惯选图' labels='按数据关系选图，而不是按习惯选图|Figure / Axes 对象模型与状态机…|可读性陷阱：截断纵轴、置信区间与配色' caption='用图准确表达数据而不是装饰数据' />
 
-这张图把本讲的三条线索并排放在一起：先看问题从哪里来，再看规则在哪里生效，最后看它落到工程的哪一处。建议顺着箭头走一遍，再回到主示例里找对应的实现。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
+这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
 
 ## 配色、导出与可复现的绘图脚本
@@ -210,7 +210,7 @@ print(caption(records))
 python -c "import statistics as s; print(s.mean([1,2,3,100]), s.median([1,2,3,100]))"
 ```
 
-把输入换成你自己的数据，观察结果是否仍符合 图表类型与数据关系 的规则；不一致时先核对版本与依赖，再回到主示例逐行定位。这条命令也可以加进 CI 作为回归检查。
+在仓库根目录跑一遍上面这条命令，可以复现本讲与 图表类型与数据关系 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
 
 ## 练习、自测与速记卡
@@ -249,3 +249,16 @@ python -c "import statistics as s; print(s.mean([1,2,3,100]), s.median([1,2,3,10
 [下一讲：统计基础：分布、检验与相关性](/data-ai/statistics)
 
 <FillBlank no='095-5' tpl='___ bars(values, labels, width=20):' :answers='["def"]' hint='回想本讲关于 图表类型与数据关系 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 按数据关系选图，而不是按习惯选图 的落点。' />
+
+
+---
+
+<Callout type="tip" title="配套示例代码可直接运行" text="把仓库 clone 到本地后执行下面的命令，就能依次复现正文里的四段示例；文件中按主示例、对照写法、原理验证、工程案例分段，并附预期输出注释。" />
+
+**本讲示例代码** · 仓内路径 `examples/lessons/095-visualization.py`
+
+```bash
+python3 examples/lessons/095-visualization.py
+```
+
+[在 GitHub 查看 / 下载源码](https://github.com/lfire/python/blob/main/examples/lessons/095-visualization.py) · [全部示例代码索引](/examples/)
