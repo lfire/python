@@ -14,9 +14,11 @@ description: 设计可撤销、可审计的身份体系
 
 ## 点了「禁用用户」，旧 token 到期前仍能调接口
 
-一个后台系统把用户登录信息全放进 JWT，权限判断写在前端路由里，密码用 MD5 存。上线后三个问题接踵而至：员工离职后管理员在后台点了『禁用』，该员工手里的 token 到期前仍能调用接口，因为 JWT 签发后服务端没有状态可撤销；有人直接改前端路由或用脚本调接口，绕开按钮隐藏读到了别人的数据；
+一个后台系统把用户登录信息全放进 JWT，权限判断写在前端路由里，密码用 MD5 存。
 
-数据库泄露后 MD5 值被彩虹表批量还原。第一反应是『把 token 有效期调短』，这缓解了吊销，却解释不了越权，也不解决密码存储。三件事对应三层不同机制：会话状态放在哪里决定能否主动失效，授权判定必须在服务端，密码要靠带盐的慢哈希。本讲用标准库手工签发并验证一个 `HS256` JWT，把无状态的代价变成可测的结论。
+上线后三个问题接踵而至：员工离职后管理员在后台点了『禁用』，该员工手里的 token 到期前仍能调用接口，因为 JWT 签发后服务端没有状态可撤销；有人直接改前端路由或用脚本调接口，绕开按钮隐藏读到了别人的数据；数据库泄露后 MD5 值被彩虹表批量还原。
+
+第一反应是『把 token 有效期调短』，这缓解了吊销，却解释不了越权，也不解决密码存储。三件事对应三层不同机制：会话状态放在哪里决定能否主动失效，授权判定必须在服务端，密码要靠带盐的慢哈希。本讲用标准库手工签发并验证一个 `HS256` JWT，把无状态的代价变成可测的结论。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='JWT 签发后点了『禁用用户』，对方 token 到期前仍能调接口：JWT 无状态，服务端没有可删除的会话记录，验签通过即放行' />
 
@@ -40,11 +42,9 @@ Session 方案在服务端保存会话状态（内存或 Redis），浏览器只
 
 好处是删掉服务端记录即可主动踢人、改动即时生效，代价是要有一份集中会话存储，跨域与水平扩展都得处理共享。
 
-JWT（RFC 7519）是 `header.payload.signature` 三段 base64url，payload 自带 `sub`、`exp`、`iat`，服务端验签后无需查库，无状态适合微服务与多方验证；
+JWT（RFC 7519）是 `header.payload.signature` 三段 base64url，payload 自带 `sub`、`exp`、`iat`，服务端验签后无需查库，无状态适合微服务与多方验证；代价是签发后无法主动失效，除非再引入状态：黑名单、短时效 access token（如 15 分钟）配可轮换的 refresh token，或 token 版本号与用户状态比对。
 
-代价是签发后无法主动失效，除非再引入状态：黑名单、短时效 access token（如 15 分钟）配可轮换的 refresh token，或 token 版本号与用户状态比对。判据要具体到需求：需要即时下线、改权限立刻生效，选 Session 或 JWT 黑名单；服务无共享存储、要跨服务自校验，选 JWT。
-
-把两者当成风格差异来选，就会在离职踢人这类需求上翻车。
+判据要具体到需求：需要即时下线、改权限立刻生效，选 Session 或 JWT 黑名单；服务无共享存储、要跨服务自校验，选 JWT。把两者当成风格差异来选，就会在离职踢人这类需求上翻车。
 
 **Session 与 JWT 对照**
 
@@ -151,9 +151,9 @@ base64url 只是编码不是加密，payload 任何人可解码，所以里面�
 
 密码绝不能明文或单轮 MD5/SHA：用 argon2id（首选）、bcrypt、scrypt，或标准库 `hashlib.pbkdf2_hmac`，每个用户独立 16 字节随机 salt、验证时重算并 `compare_digest`。
 
-OAuth2 授权码流程配 `PKCE`（RFC 7636）：客户端生成 `code_verifier`，把 `code_challenge=base64url(SHA256(verifier))` 连同 `S256` 方法放进授权请求，换 token 时带上原始 verifier 由服务端比对，防止授权码被截获冒用；
+OAuth2 授权码流程配 `PKCE`（RFC 7636）：客户端生成 `code_verifier`，把 `code_challenge=base64url(SHA256(verifier))` 连同 `S256` 方法放进授权请求，换 token 时带上原始 verifier 由服务端比对，防止授权码被截获冒用；`state` 参数防 `CSRF`。
 
-`state` 参数防 `CSRF`。access token 短时效，refresh token 一次一换并检测重放（旧 token 复用触发整族吊销）。
+access token 短时效，refresh token 一次一换并检测重放（旧 token 复用触发整族吊销）。
 
 **密码哈希与 OAuth2 / RBAC 要点**
 
@@ -170,19 +170,17 @@ OAuth2 授权码流程配 `PKCE`（RFC 7636）：客户端生成 `code_verifier`
 
 ## RBAC / ABAC：可审计的判定入口从哪来
 
-`RBAC` 把权限绑到角色、用户绑到角色，判定收敛到一个函数 `has_permission(user,action,resource)` 查『角色 → 权限』映射；
+`RBAC` 把权限绑到角色、用户绑到角色，判定收敛到一个函数 `has_permission(user,action,resource)` 查『角色 → 权限』映射；`ABAC` 再引入属性（部门、时间、资源归属、IP）做更细粒度控制。
 
-`ABAC` 再引入属性（部门、时间、资源归属、IP）做更细粒度控制。铁律是权限判定必须在服务端集中执行：前端隐藏按钮只是体验改善，绝不是安全边界，任何脚本都能直接调接口；每个受保护端点都要经过同一个判定入口，避免新加接口漏判。敏感操作（改密、支付、导出）要二次校验，重新输密码或 MFA。
+铁律是权限判定必须在服务端集中执行：前端隐藏按钮只是体验改善，绝不是安全边界，任何脚本都能直接调接口；每个受保护端点都要经过同一个判定入口，避免新加接口漏判。敏感操作（改密、支付、导出）要二次校验，重新输密码或 MFA。
 
 审计日志记录 who、when、what、resource、result、trace_id，append-only 或写独立存储，越权尝试要告警。密钥要支持轮换（用 `kid` 标识当前密钥），全站强制 `HTTPS`，Cookie 加 HttpOnly、Secure、SameSite。
 
 令牌里放角色即可，别把权限判定结果缓存到不受控的客户端；服务间调用同样要带身份（mTLS 或签发的 service token），不能因为『内网』就默认可信。
 
-JWT 的安全完全建立在签名上：header 与 payload 经 base64url 编码后拼成 `signing_input`，`HS256` 用共享密钥对其做 `HMAC-SHA256`（即 RFC 2104 的 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))` 嵌套结构），`RS256` 用私钥签、公钥验；
+JWT 的安全完全建立在签名上：header 与 payload 经 base64url 编码后拼成 `signing_input`，`HS256` 用共享密钥对其做 `HMAC-SHA256`（即 RFC 2104 的 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))` 嵌套结构），`RS256` 用私钥签、公钥验；验证方重算签名并用常量时间比较，任何一位被改动都会导致不匹配。
 
-验证方重算签名并用常量时间比较，任何一位被改动都会导致不匹配。因为编码不是加密，payload 只是『防篡改』而非『防读取』，所以令牌里只能放非敏感声明。
-
-无状态带来一个结构性代价：服务端没有『已签发令牌』的清单，无法像 Session 那样删一条记录就撤销，要恢复可撤销性就必须重新引入状态（黑名单、token 版本、短 exp 加 refresh 轮换）。
+因为编码不是加密，payload 只是『防篡改』而非『防读取』，所以令牌里只能放非敏感声明。无状态带来一个结构性代价：服务端没有『已签发令牌』的清单，无法像 Session 那样删一条记录就撤销，要恢复可撤销性就必须重新引入状态（黑名单、token 版本、短 exp 加 refresh 轮换）。
 
 密码哈希用 pbkdf2_hmac 这类 KDF 把口令与随机 salt 迭代二十万次，故意放慢单次计算让离线暴力破解成本极高，salt 保证相同密码得到不同摘要、彩虹表失效。
 
@@ -199,11 +197,9 @@ JWT 的安全完全建立在签名上：header 与 payload 经 base64url 编码�
 
 ## 带黑名单、RBAC 与审计的最小认证层
 
-下面把身份体系写成不依赖 Web 框架的骨架：`issue` 签发带 `sub`/`roles`/`exp` 的 `HS256` token，`verify` 同时验签、验过期、查 `revoked` 黑名单（补上 JWT 缺失的可撤销性）；
+下面把身份体系写成不依赖 Web 框架的骨架：`issue` 签发带 `sub`/`roles`/`exp` 的 `HS256` token，`verify` 同时验签、验过期、查 `revoked` 黑名单（补上 JWT 缺失的可撤销性）；`authorize` 集中做 `RBAC` 判定，任何端点都必须先过它，并写一条审计记录；password 相关用带盐的 pbkdf2_hmac 与 `compare_digest`。
 
-`authorize` 集中做 `RBAC` 判定，任何端点都必须先过它，并写一条审计记录；password 相关用带盐的 pbkdf2_hmac 与 `compare_digest`。重点看三层职责如何组合：认证产出的身份只是输入，授权是唯一判定入口，审计把所有判定留痕。
-
-真实项目把 `revoked` 换成带 TTL 的 Redis 集合、把审计写进 append-only 存储、密钥从 KMS 取并支持 `kid` 轮换，结构不变。
+重点看三层职责如何组合：认证产出的身份只是输入，授权是唯一判定入口，审计把所有判定留痕。真实项目把 `revoked` 换成带 TTL 的 Redis 集合、把审计写进 append-only 存储、密钥从 KMS 取并支持 `kid` 轮换，结构不变。
 
 ```python
 import hmac, hashlib, base64, json, time
@@ -249,7 +245,7 @@ print('audit rows', len(audit))
 
 <Callout type="idea" title='落地提示' text='敏感操作二次校验、令牌短时效、密码用 argon2/bcrypt、权限模型集中判定并留审计日志' />
 
-<CheckList id='P090b' title='上线前自检' :items='["能复现并解释「JWT 签发后点了『禁用用户』，对方 token 到期前仍能…」", "能复现并解释「用 MD5 存密码，拖库后被批量还原」", "能复现并解释「把权限判断只写在前端，脚本直接调接口越权」", "能用一条命令验证 认证与授权的区别", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P090a' title='上线前自检' :items='["能复现并解释「JWT 签发后点了『禁用用户』，对方 token 到期前仍能…」", "能复现并解释「用 MD5 存密码，拖库后被批量还原」", "能复现并解释「把权限判断只写在前端，脚本直接调接口越权」", "能用一条命令验证 认证与授权的区别", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
@@ -272,9 +268,7 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 ## HMAC-SHA256 的 ipad/opad 与 JWS 签名输入
 
-RFC 2104 把消息认证码紧凑地定义成 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))`，其中 `^` 是按位异或、`||` 是拼接；
-
-块长 `B=64` 字节（SHA-256 的分组大小），密钥 K 若超过 B 先哈希再右补零到 B，ipad 是 0x36 重复 64 次、opad 是 0x5c 重复 64 次。
+RFC 2104 把消息认证码紧凑地定义成 `HMAC(K,m)=H((K^opad)||H((K^ipad)||m))`，其中 `^` 是按位异或、`||` 是拼接；块长 `B=64` 字节（SHA-256 的分组大小），密钥 K 若超过 B 先哈希再右补零到 B，ipad 是 0x36 重复 64 次、opad 是 0x5c 重复 64 次。
 
 外层再套一次哈希不是冗余：裸 `H(secret||m)` 扛不住长度扩展攻击，攻击者拿到摘要与消息长度就能续接数据，而 `HMAC` 把内部状态封进第二次哈希，续接无从下手。
 
@@ -336,7 +330,7 @@ print('decoded payload', base64.urlsafe_b64decode(p + b'===').decode())
 
 <OutputBox title='扩展示例运行结果' output='matches stdlib True\nsigning input eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1NDIiLCJleHAiOjE3MDAwMDAwMDB9\npadding needed 0\ndecoded payload {"sub":"u42","exp":1700000000}' />
 
-<LineByLine code='import base64\nimport hashlib\nimport hmac\nimport json\n\ndef hmac_sha256_raw(key, msg):\n    block = 64\n    if len(key) &gt; block:\n        key = hashlib.sha256(key).digest()\n    key = key + bytes(block - len(key))\n    ipad = bytes([0x36]) * block\n    opad = bytes([0x5c]) * block\n    inner = hashlib.sha256(bytes(a ^ b for a, b in zip(key, ipad)) + msg).digest()\n    return hashlib.sha256(bytes(a ^ b for a, b in zip(key, opad)) + inner).digest()\n\nkey = b&#39;dev-secret&#39;\nheader = json.dumps({&#39;alg&#39;: &#39;HS256&#39;, &#39;typ&#39;: &#39;JWT&#39;}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\npayload = json.dumps({&#39;sub&#39;: &#39;u42&#39;, &#39;exp&#39;: 1700000000}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\nsigning_input = base64.urlsafe_b64encode(header).rstrip(b&#39;=&#39;) + b&#39;.&#39; + base64.urlsafe_b64encode(payload).rstrip(b&#39;=&#39;)\nmine = hmac_sha256_raw(key, signing_input)\nstdlib = hmac.new(key, signing_input, hashlib.sha256).digest()\nprint(&#39;matches stdlib&#39;, mine == stdlib)\nprint(&#39;signing input&#39;, signing_input.decode())\np = signing_input.split(b&#39;.&#39;)[1]\nprint(&#39;padding needed&#39;, (-len(p)) % 4)\nprint(&#39;decoded payload&#39;, base64.urlsafe_b64decode(p + b&#39;===&#39;).decode())\n' :notes='["导入 base64、hashlib、hmac、json，全部来自标准库", "从零实现 HMAC：块长 64 字节，长密钥先哈希再补零", "ipad 是 0x36 重复 64 次，opad 是 0x5c 重复 64 次", "内层哈希算 H((K 异或 ipad) 拼接 msg)", "空行，只用于分隔逻辑块，不影响执行结果。", "外层哈希把内部状态封进去，挡住长度扩展攻击", "用 json.dumps 紧凑序列化，避免手写 JSON 影响字节串", "signing input 是两段 base64url 用点号拼接的 ASCII 串", "手工实现与标准库 hmac 的结果应完全一致", "打印被签名的字节串，说明它覆盖的是编码后内容", "按模 4 计算 payload 段还缺几个填充位", "补三个等号后解码，多余的填充被 base64 解码器忽略", "这一行 `inner = hashlib.sha256(bytes(a ^ b for a, b in zip(k` 的作用，可对照上方输出逐项核对。", "这一行 `return hashlib.sha256(bytes(a ^ b for a, b in zip(ke` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `key = b&#39;dev-secret&#39;` 的作用，可对照上方输出逐项核对。", "这一行 `header = json.dumps({&#39;alg&#39;: &#39;HS256&#39;, &#39;typ&#39;: &#39;JWT&#39;}, ` 的作用，可对照上方输出逐项核对。", "这一行 `payload = json.dumps({&#39;sub&#39;: &#39;u42&#39;, &#39;exp&#39;: 170000000` 的作用，可对照上方输出逐项核对。", "这一行 `signing_input = base64.urlsafe_b64encode(header).rst` 的作用，可对照上方输出逐项核对。", "这一行 `mine = hmac_sha256_raw(key, signing_input)` 的作用，可对照上方输出逐项核对。", "这一行 `stdlib = hmac.new(key, signing_input, hashlib.sha256` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;matches stdlib&#39;, mine == stdlib)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;signing input&#39;, signing_input.decode())` 的作用，可对照上方输出逐项核对。", "这一行 `p = signing_input.split(b&#39;.&#39;)[1]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;padding needed&#39;, (-len(p)) % 4)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;decoded payload&#39;, base64.urlsafe_b64decode(p ` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import base64\nimport hashlib\nimport hmac\nimport json\n\ndef hmac_sha256_raw(key, msg):\n    block = 64\n    if len(key) &gt; block:\n        key = hashlib.sha256(key).digest()\n    key = key + bytes(block - len(key))\n    ipad = bytes([0x36]) * block\n    opad = bytes([0x5c]) * block\n    inner = hashlib.sha256(bytes(a ^ b for a, b in zip(key, ipad)) + msg).digest()\n    return hashlib.sha256(bytes(a ^ b for a, b in zip(key, opad)) + inner).digest()\n\nkey = b&#39;dev-secret&#39;\nheader = json.dumps({&#39;alg&#39;: &#39;HS256&#39;, &#39;typ&#39;: &#39;JWT&#39;}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\npayload = json.dumps({&#39;sub&#39;: &#39;u42&#39;, &#39;exp&#39;: 1700000000}, separators=(&#39;,&#39;, &#39;:&#39;)).encode()\nsigning_input = base64.urlsafe_b64encode(header).rstrip(b&#39;=&#39;) + b&#39;.&#39; + base64.urlsafe_b64encode(payload).rstrip(b&#39;=&#39;)\nmine = hmac_sha256_raw(key, signing_input)\nstdlib = hmac.new(key, signing_input, hashlib.sha256).digest()\nprint(&#39;matches stdlib&#39;, mine == stdlib)\nprint(&#39;signing input&#39;, signing_input.decode())\np = signing_input.split(b&#39;.&#39;)[1]\nprint(&#39;padding needed&#39;, (-len(p)) % 4)\nprint(&#39;decoded payload&#39;, base64.urlsafe_b64decode(p + b&#39;===&#39;).decode())\n' :notes='["导入 base64，用 urlsafe 变体做 base64url 编解码", "导入 hashlib 提供 SHA-256 摘要", "导入 hmac 作手工实现的标准库对照", "导入 json 紧凑序列化 header 与 payload", "空行，只用于分隔逻辑块，不影响执行结果。", "从零实现 HMAC-SHA256，拆成内外两层哈希", "分组长度取 64 字节，即 SHA-256 的块长", "密钥超过块长时先压缩", "长密钥先经 SHA-256 压成 32 字节摘要", "短密钥右补零到块长，得到齐整的 K", "ipad 是字节 0x36 重复 64 次", "opad 是字节 0x5c 重复 64 次", "内层哈希算 H((K 异或 ipad) 拼接 msg)", "外层把内层摘要封进第二次哈希，挡住长度扩展攻击", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一段共享密钥", "紧凑序列化 JWT header，不写多余空格以免影响字节", "同样紧凑地序列化 payload", "两段分别 base64url 去填充后用点号拼成签名输入", "用手工实现的 HMAC 对签名输入签名", "用标准库 hmac 对同一输入算出对照签名", "打印两者是否一致，验证手工实现", "打印被签名字节串，说明签名覆盖编码后的 ASCII 内容", "取出点号后的 payload 段", "按模 4 算出还缺几个填充位", "补三个等号后解码，多余的填充被解码器忽略", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 <Term word='JWS signing input' text='RFC 7515 规定被签名的字节串是 BASE64URL(UTF8(Protected Header)) 加一个点号再接 BASE64URL(Payload)，即编码后的 ASCII 字符串而非原始 JSON。这意味着 header 的键顺序、空格与 Unicode 转义方式都会改变签名，验证方必须逐字节比对而不能 json.loads 后重新 dumps；这是跨语言验签最隐蔽的失败点，也是「签名正确却验不过」的常见根因。' />
 
@@ -410,7 +404,7 @@ print('naive verifier accepts forged', verify_naive(forged, PUBLIC_KEY))
 <Quiz no='090-1' q='关于 HS256 与 RS256 的算法混淆攻击，下面哪项准确？' :options='["验证方按 token 自带 alg 分派、且把公开的 RSA 公钥当作 HS256 的 HMAC 密钥时，攻击者可用公钥伪造任意 token", "RS256 的私钥可以安全公开，只有公钥需要保密", "HMAC 的 ipad 与 opad 让攻击者无法从签名反推密钥，因此算法混淆不成立", "只要 payload 用了 base64url 编码，算法混淆就自动失效"]' answer="0" explain='算法混淆的前提正是「验证方信任 token 里的 alg」加上「HS256 分支用了公开的 RSA 公钥作密钥」。HMAC 的 ipad 与 opad 只保证在密钥保密时不可伪造，密钥一旦公开便无从谈起；base64url 只是编码，与算法选择无关。修复是服务端白名单固定 alg 并隔离不同算法的密钥材料，而不是加强签名算法本身。' />
 
 
-### JWKS 与 kid 轮换的密钥分发结构
+### 用服务端算法白名单挡住 alg 混淆
 
 <Exercise title='用服务端算法白名单挡住 alg 混淆' task='写一个 verify_fixed，忽略 token header 里的 alg、一律按配置的 HS256 与固定密钥验签，并对 alg=none 的空 header 返回 False；说明为什么白名单必须写在服务端而不是文档里。' solution='import base64\nimport hashlib\nimport hmac\nimport json\n\nSECRET = b&#39;server-only-key&#39;\nEXPECTED_ALG = &#39;HS256&#39;\n\ndef b64u(d):\n    return base64.urlsafe_b64encode(d).rstrip(b&#39;=&#39;).decode()\n\ndef verify_fixed(token):\n    h, p, s = token.split(&#39;.&#39;)\n    header = json.loads(base64.urlsafe_b64decode(h + &#39;===&#39;))\n    if header.get(&#39;alg&#39;) != EXPECTED_ALG:\n        return False\n    expect = b64u(hmac.new(SECRET, (h + &#39;.&#39; + p).encode(), hashlib.sha256).digest())\n    return hmac.compare_digest(s, expect)\n\nprint(&#39;whitelist rejects empty header&#39;, verify_fixed(&#39;e30.e30.&#39;))\n' explain='白名单把「用哪个算法」从 token 里不可信的声明收回到服务端配置：alg=none 或 RS256 的 token 在任何伪造签名下都在第一道判断被拒。若只在文档里约定而代码仍读 header 分派，等于把算法选择权交给攻击者；密钥材料也必须按算法分开存放，避免 HS256 分支误用 RSA 公钥。空 header 解码成空字典，get 返回 None，与期望算法不等，直接判否。' />
 

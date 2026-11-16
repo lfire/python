@@ -12,9 +12,9 @@ description: 搭好可复现、可隔离、可协作的开发环境
 
 ## 新同事 clone 仓库后，第一行就报 ModuleNotFoundError
 
-周一早上，新同事 clone 完数据服务仓库，照着 `README` 里的说明运行 `main.py`，第一行就报 ModuleNotFoundError，找不到 requests。他按报错装 requests，接着报 pandas 版本冲突；
+周一早上，新同事 clone 完数据服务仓库，照着 `README` 里的说明运行 `main.py`，第一行就报 ModuleNotFoundError，找不到 requests。
 
-换成同事发来的 `requirements.txt` 全量安装，服务能起来了，本地跑出的报表数字却和测试环境差了一截——因为那份文件里 pandas 只写了 `>=1.5`，两人分别装到 1.5 与 2.2，而 2.x 改过 groupby 的默认行为。
+他按报错装 requests，接着报 pandas 版本冲突；换成同事发来的 `requirements.txt` 全量安装，服务能起来了，本地跑出的报表数字却和测试环境差了一截——因为那份文件里 pandas 只写了 `>=1.5`，两人分别装到 1.5 与 2.2，而 2.x 改过 groupby 的默认行为。
 
 朴素解法是「缺什么装什么、版本装最新的」，它失败在三个变量从未被对齐：解释器版本（他机器是 3.13，CI 是 3.11）、依赖的精确集合（只有下界没有锁）、以及工作目录与 site-packages 的归属（全局安装让两个项目共用同一份包）。任何一项漂移，都足以让「在我机器上是好的」变成线上事故。
 
@@ -23,9 +23,9 @@ description: 搭好可复现、可隔离、可协作的开发环境
 
 ## 解释器身份：sys 里能读到的四个字段
 
-`sys.version_info` 是 5 元素具名元组 (major, minor, micro, releaselevel, serial)，官方推荐用 `sys.version_info >= (3, 8)` 做门槛判断，因为元组按数值逐位比较；
+`sys.version_info` 是 5 元素具名元组 (major, minor, micro, releaselevel, serial)，官方推荐用 `sys.version_info >= (3, 8)` 做门槛判断，因为元组按数值逐位比较；绝不能拿 `sys.version` 那个字符串去比『3.10』是否小于『3.9』，字典序会把 3.10 判成比 3.9 小。
 
-绝不能拿 `sys.version` 那个字符串去比『3.10』是否小于『3.9』，字典序会把 3.10 判成比 3.9 小。`sys.hexversion` 把版本编成一个整数，适合 C 扩展做数值比较。`sys.executable` 给出当前解释器二进制的绝对路径，是判断「我到底在用哪个 python」的唯一可靠依据。
+`sys.hexversion` 把版本编成一个整数，适合 C 扩展做数值比较。`sys.executable` 给出当前解释器二进制的绝对路径，是判断「我到底在用哪个 python」的唯一可靠依据。
 
 `sys.implementation.name` 返回 cpython、pypy 这类实现名，与语言版本分开：同一份 3.11 语法在 CPython 与 PyPy 上跑，version_info 相同而 implementation 不同。
 
@@ -62,9 +62,9 @@ print('cwd_abs', os.path.isabs(report['cwd']))
 
 ## 依赖集合：venv 靠 sys.prefix 切换 site-packages
 
-建好虚拟环境后，目录里会生成 `pyvenv.cfg`、bin 下的 python 副本，以及 lib/python3.13/site-packages 这样的站点目录。激活脚本做的事比想象中少：它主要把 .venv/bin 插到 `PATH` 最前面，让敲 python 时命中虚拟环境里的副本；
+建好虚拟环境后，目录里会生成 `pyvenv.cfg`、bin 下的 python 副本，以及 lib/python3.13/site-packages 这样的站点目录。
 
-真正决定包装到哪、从哪里读的，是解释器启动时读 `pyvenv.cfg` 里的 home，把 `sys.prefix` 改成 .venv，site 模块据此把 .venv/lib/python3.13/site-packages 加进 `sys.path`，而标准库仍从 `sys.base_prefix` 加载。
+激活脚本做的事比想象中少：它主要把 .venv/bin 插到 `PATH` 最前面，让敲 python 时命中虚拟环境里的副本；真正决定包装到哪、从哪里读的，是解释器启动时读 `pyvenv.cfg` 里的 home，把 `sys.prefix` 改成 .venv，site 模块据此把 .venv/lib/python3.13/site-packages 加进 `sys.path`，而标准库仍从 `sys.base_prefix` 加载。
 
 所以「venv 里装的包，系统 python 读不到」不是玄学，是两条不同的 `sys.path`。
 
@@ -94,9 +94,9 @@ python -m pip install
 
 ### 激活前后的路径变量对照
 
-(venv) 提示符不代表解释器换了，activate 只把 .venv/bin 顶到 `PATH` 最前。判断生效别只信 which python——bash 的 hash 缓存留旧路径，得先 hash -r；
+(venv) 提示符不代表解释器换了，activate 只把 .venv/bin 顶到 `PATH` 最前。
 
-更稳的是 `python -c` 打印 `sys.executable` 看是否指向 .venv，并看 `sys.prefix` 与 `sys.base_prefix` 是否分家。
+判断生效别只信 which python——bash 的 hash 缓存留旧路径，得先 hash -r；更稳的是 `python -c` 打印 `sys.executable` 看是否指向 .venv，并看 `sys.prefix` 与 `sys.base_prefix` 是否分家。
 
 用绝对路径 /usr/bin/python 会绕开它。下表把 `PATH`、`sys.executable`、`sys.prefix` 激活前后对照。
 
@@ -116,9 +116,7 @@ python -m pip install
 
 `pyproject.toml` 的 `[project].dependencies` 只声明直接依赖的抽象约束（如 `requests>=2.31` 或兼容写法 `~=2.31.0`），它表达的是「能接受什么范围」，不是「最终装了什么」。
 
-锁文件（`uv.lock`、`poetry.lock`，或 `pip freeze` 导出的带 `==` 与 `--hash` 的 `requirements.lock`）把整棵依赖树——含间接依赖——固定到精确版本与 sha256 摘要；
-
-CI 按锁文件原样安装、不重新解析，例如 `uv sync` 或带 `--require-hashes` 的 `pip install`，也就不接受被替换的包。
+锁文件（`uv.lock`、`poetry.lock`，或 `pip freeze` 导出的带 `==` 与 `--hash` 的 `requirements.lock`）把整棵依赖树——含间接依赖——固定到精确版本与 sha256 摘要；CI 按锁文件原样安装、不重新解析，例如 `uv sync` 或带 `--require-hashes` 的 `pip install`，也就不接受被替换的包。
 
 ```bash
 uv sync --frozen
@@ -164,9 +162,7 @@ CPython 启动阶段按顺序拼出 `sys.path`，这个顺序决定了「谁被�
 
 最终 `sys.path` 的顺序是：脚本目录或空串（代表当前工作目录）、`PYTHONPATH`、标准库 zip 与目录、第三方 site-packages；import 沿这个列表从左到右找，先命中者赢，因此项目里一个与标准库同名的 `json.py` 就能遮蔽真正的 json 模块。
 
-找到模块后，import 把新建的 module 对象写入 `sys.modules` 字典，键是完整模块名；
-
-之后任何 import 都先查这个缓存直接复用，所以同一进程内依赖集合是固定的单例，改了磁盘上的 .py 文件不会自动生效，必须重启进程或 `importlib.reload`。
+找到模块后，import 把新建的 module 对象写入 `sys.modules` 字典，键是完整模块名；之后任何 import 都先查这个缓存直接复用，所以同一进程内依赖集合是固定的单例，改了磁盘上的 .py 文件不会自动生效，必须重启进程或 `importlib.reload`。
 
 这也解释了为什么锁文件要带哈希：pip 的 `--require-hashes` 在下载后比对 sha256，正是为了防止镜像或缓存把包换成另一个字节序列。
 

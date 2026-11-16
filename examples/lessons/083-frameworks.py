@@ -30,10 +30,6 @@ for pname, p in sig.parameters.items():
     default = 'required' if p.default is inspect.Parameter.empty else str(p.default)
     print(pname, ann.__name__, default)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # {'name': 'ada', 'age': 36, 'active': True}
@@ -76,10 +72,6 @@ try:
 except ValueError as e:
     print('error', str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # flask_view params [] ann {}
@@ -98,10 +90,6 @@ def django_view(request):
 for fn in (flask_view, fastapi_view, django_view):
     ann = {k: getattr(v, '__name__', str(v)) for k, v in fn.__annotations__.items()}
     print(fn.__name__, 'params', list(inspect.signature(fn).parameters), 'ann', ann)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

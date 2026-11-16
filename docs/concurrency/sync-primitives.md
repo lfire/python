@@ -27,9 +27,9 @@ description: 用正确的原语表达协作关系
 
 `threading.Lock` 是 C 层 `_thread.lock` 的一层薄包装，`acquire` 返回 bool，`release()` 放行，`locked()` 查询状态；它不记录属主，任何线程都能 release，因此误释放别的锁会静默破坏互斥。
 
-它是原始锁，同一线程第二次 acquire 就会死锁，必须用 `with lock:` 保证成对。RLock 可重入：内部记录属主线程与递归计数，只有属主能 release，且释放次数要与获取次数相同。Coffman 给出死锁的四个必要条件：互斥、持有并等待、不可剥夺、循环等待；
+它是原始锁，同一线程第二次 acquire 就会死锁，必须用 `with lock:` 保证成对。RLock 可重入：内部记录属主线程与递归计数，只有属主能 release，且释放次数要与获取次数相同。
 
-破坏任意一条即可，工程上最实用的是统一加锁顺序（破循环等待）与 `acquire(timeout=...)` 超时回退（破无限等待）。
+Coffman 给出死锁的四个必要条件：互斥、持有并等待、不可剥夺、循环等待；破坏任意一条即可，工程上最实用的是统一加锁顺序（破循环等待）与 `acquire(timeout=...)` 超时回退（破无限等待）。
 
 两个高频反模式要避开：持锁时调用外部回调（对方可能反过来拿同一把锁），以及在持锁段里做 IO（把临界区拖长、放大切换概率）。用 RLock 掩盖「回调里又取同一把锁」，只是把死锁推迟到跨线程场景，正确做法是把那次调用移出临界区。
 
@@ -151,17 +151,13 @@ with rl:
 
 `Condition(lock=None)` 默认自带一把 `RLock`，`wait(timeout=None)` 会先释放底层锁、阻塞，被唤醒后重新拿到锁才返回，所以调用 wait/notify 之前必须持锁。
 
-`notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；
+`notify(n=1)` 只唤醒 n 个等待者，`notify_all()` 唤醒全部；被唤醒之后条件可能已被别的线程改掉，所以必须配 `wait_for`，它内部是一段 `while not predicate()` 的谓词重查循环（`inspect.getsource` 能直接看到那个 while），天然抵御虚假唤醒。
 
-被唤醒之后条件可能已被别的线程改掉，所以必须配 `wait_for`，它内部是一段 `while not predicate()` 的谓词重查循环（`inspect.getsource` 能直接看到那个 while），天然抵御虚假唤醒。
+`Semaphore(value=1)` 维护一个计数器，acquire 减一、release 加一，用来限流而非互斥；`BoundedSemaphore` 在 release 超过初值时抛 `ValueError`，能抓到「放多了」的 bug。
 
-`Semaphore(value=1)` 维护一个计数器，acquire 减一、release 加一，用来限流而非互斥；
+`Event` 是「一次置位、广播所有等待者」：`set()` 之后 `is_set()` 恒为真，`wait()` 立即返回，直到显式 `clear()`；它表达的是状态闸门，不适合当成每个请求复用的开关。
 
-`BoundedSemaphore` 在 release 超过初值时抛 `ValueError`，能抓到「放多了」的 bug。
-
-`Event` 是「一次置位、广播所有等待者」：`set()` 之后 `is_set()` 恒为真，`wait()` 立即返回，直到显式 `clear()`；它表达的是状态闸门，不适合当成每个请求复用的开关。`Barrier` 让 parties 个线程在 `wait()` 处汇合，最后一个到达时执行 action 再一起放行；
-
-任一方超时或调用 `abort()` 会把屏障置为 broken，后续 wait 抛 `BrokenBarrierError`。
+`Barrier` 让 parties 个线程在 `wait()` 处汇合，最后一个到达时执行 action 再一起放行；任一方超时或调用 `abort()` 会把屏障置为 broken，后续 wait 抛 `BrokenBarrierError`。
 
 **wait / notify 与超时接口**
 
@@ -180,9 +176,7 @@ threading 的同步原语都建在 C 层 `_thread.lock` 之上：`Lock` 是对�
 
 wait 的语义是「释放锁 → 挂到等待队列 → 被 notify 移到锁队列 → 重新 acquire」，因此它天然要求调用者先持锁；notify 只是把等待者从一个队列挪到另一个，并不立刻让出锁，被唤醒的线程要等当前持锁者退出 with 才能继续。
 
-`Semaphore` 用一个计数器加 Condition：acquire 在计数为零时 wait，release 加一并 notify；
-
-`BoundedSemaphore` 额外记住初值，release 超过就抛 `ValueError`。
+`Semaphore` 用一个计数器加 Condition：acquire 在计数为零时 wait，release 加一并 notify；`BoundedSemaphore` 额外记住初值，release 超过就抛 `ValueError`。
 
 `Event` 用一把锁加一个布尔标志，set 把标志置真并 notify_all，clear 只是把标志清回假、不会「唤醒」任何人——这正是每请求 clear 会漏掉后来者的原因。死锁的四个条件在 CPython 里没有自动检测，只有靠统一锁顺序与超时把它变成可诊断的失败，而不是静默挂起。
 
@@ -210,18 +204,20 @@ print('switch interval', sys.getswitchinterval() == 0.005)
 
 锁粒度要按数据而不是按代码行划分：保护同一个共享结构的读写用同一把锁，无关结构拆成不同锁以降低竞争。缩短临界区比换一把更快的锁有效得多：只在读—改—写的那几行持锁，计算、序列化、网络调用一律移出去。
 
-所有阻塞获取都给超时（`acquire(timeout=...)`、`Condition.wait(timeout=...)`），超时后记一条带锁名、线程名与持有时长的日志并走降级，而不是无限等；
+所有阻塞获取都给超时（`acquire(timeout=...)`、`Condition.wait(timeout=...)`），超时后记一条带锁名、线程名与持有时长的日志并走降级，而不是无限等；这样线上死锁至少是可诊断的。
 
-这样线上死锁至少是可诊断的。可观测性还包括：给锁命名、统计等待时长分布、在持锁超过阈值时告警。Python 层的 Lock 与 GIL 是两层东西：GIL 保护解释器的引用计数，Lock 保护你的业务数据，前者不会替后者做事。
+可观测性还包括：给锁命名、统计等待时长分布、在持锁超过阈值时告警。Python 层的 Lock 与 GIL 是两层东西：GIL 保护解释器的引用计数，Lock 保护你的业务数据，前者不会替后者做事。
 
 最后，threading 模块的这些原语都基于同一个 C 层锁实现，跨线程可用但不能跨进程，跨进程要用 multiprocessing 里的同名类。
 
 
 ## 有界缓冲区的生产者—消费者：容量、条件与优雅收尾
 
-一个采集端把日志批量写库，生产者快、消费者慢，既要限制在途条目数避免内存涨爆，又要在主线程发出停止信号后把队列排空。用两个 `Condition`（not_full 与 not_empty）加一个固定容量 deque 来表达：生产者在缓冲满时 wait，消费者在空时 wait，双方都用 `wait_for` 重查谓词；
+一个采集端把日志批量写库，生产者快、消费者慢，既要限制在途条目数避免内存涨爆，又要在主线程发出停止信号后把队列排空。
 
-停止用单独的 `Event` 置位并 `notify_all` 唤醒所有等待者，消费者在「队列空且已停止」时退出。所有 wait 都带超时，超时记一条日志，防止异常路径永久挂起。这个结构把 `Semaphore` 的容量、`Condition` 的条件、`Event` 的广播三者各归其位，是线程池有界队列的一个手写原型。
+用两个 `Condition`（not_full 与 not_empty）加一个固定容量 deque 来表达：生产者在缓冲满时 wait，消费者在空时 wait，双方都用 `wait_for` 重查谓词；停止用单独的 `Event` 置位并 `notify_all` 唤醒所有等待者，消费者在「队列空且已停止」时退出。
+
+所有 wait 都带超时，超时记一条日志，防止异常路径永久挂起。这个结构把 `Semaphore` 的容量、`Condition` 的条件、`Event` 的广播三者各归其位，是线程池有界队列的一个手写原型。
 
 ```python
 import collections
@@ -270,7 +266,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='锁的粒度按数据而不是按代码划分，统一获取顺序，并用超时与可观测日志兜底' />
 
-<CheckList id='P062b' title='上线前自检' :items='["能复现并解释「在 wait 后直接用数据，不重新检查条件」", "能复现并解释「持锁时调用外部回调或做网络 IO」", "能复现并解释「每个请求都 event.clear() 复用同一个 Even…」", "能用一条命令验证 Lock 与 RLock", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P062a' title='上线前自检' :items='["能复现并解释「在 wait 后直接用数据，不重新检查条件」", "能复现并解释「持锁时调用外部回调或做网络 IO」", "能复现并解释「每个请求都 event.clear() 复用同一个 Even…」", "能用一条命令验证 Lock 与 RLock", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

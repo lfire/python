@@ -47,15 +47,13 @@ description: 交付一个可发布的抽象工具集
 
 缓存项存 `(expire_at, value)`，命中时比较 `monotonic() < expire_at` 决定复用还是重算。
 
-并发上，检查—计算—写入是典型的 `check-then-act` 竞态：用 `threading.RLock` 把整段包住，`N` 个线程同时未命中时只有一个真正执行底层函数，既避免惊群也免去字典并发读写；
+并发上，检查—计算—写入是典型的 `check-then-act` 竞态：用 `threading.RLock` 把整段包住，`N` 个线程同时未命中时只有一个真正执行底层函数，既避免惊群也免去字典并发读写；`RLock` 可重入，能容忍同线程嵌套调用，但持锁期间绝不能调用可能回调本缓存的外部代码。
 
-`RLock` 可重入，能容忍同线程嵌套调用，但持锁期间绝不能调用可能回调本缓存的外部代码。异常处理同样关键：只有 `fn` 正常返回才把结果写进 `store`，异常直接抛出，否则一次上游抖动会被缓存放大成整段 `TTL` 的持续失败。
+异常处理同样关键：只有 `fn` 正常返回才把结果写进 `store`，异常直接抛出，否则一次上游抖动会被缓存放大成整段 `TTL` 的持续失败。
 
 生产版还要有容量上限：除了 `TTL`，用 `maxsize` 配合 `OrderedDict.move_to_end` 做 `O(1)` 的 LRU 淘汰或定期清理，防止长跑内存无界增长。
 
-键由 `args` 加排序后的 `kwargs` 构成，必须全部可哈希；
-
-用 `functools.wraps` 保留元数据，并暴露 `cache_clear` 与 `cache_info` 供测试、灰度与热更新。
+键由 `args` 加排序后的 `kwargs` 构成，必须全部可哈希；用 `functools.wraps` 保留元数据，并暴露 `cache_clear` 与 `cache_info` 供测试、灰度与热更新。
 
 ```python
 import time, threading
@@ -159,9 +157,7 @@ print(build.calls['n'], build(1), build.__name__, inspect.signature(build))
 
 其一是计时源：单调时钟 `time.monotonic()` 由操作系统保证递增，不受墙上时钟被 `NTP` 或管理员回拨的影响，用 `time.time()` 存 `expire_at` 一旦回拨，就可能把刚写入的条目判成过期、或把过期条目判成有效。
 
-其二是并发：检查—计算—写入是典型的 `check-then-act` 竞态，不加锁包住整段的话，`N` 个线程同时未命中会各自跑一遍底层函数，既浪费又可能让后写的覆盖先写的；
-
-`threading.RLock` 把这段串行化，可重入也避免同一线程嵌套调用时自锁，但持锁期间不能调用会回调本缓存的外部代码。
+其二是并发：检查—计算—写入是典型的 `check-then-act` 竞态，不加锁包住整段的话，`N` 个线程同时未命中会各自跑一遍底层函数，既浪费又可能让后写的覆盖先写的；`threading.RLock` 把这段串行化，可重入也避免同一线程嵌套调用时自锁，但持锁期间不能调用会回调本缓存的外部代码。
 
 其三是异常必须排除在写入路径之外：只有 `fn` 正常返回才把 `(expire_at, value)` 存进 `store`，否则一次上游抖动会被缓存成整段 `TTL` 的持续失败。
 
@@ -182,9 +178,9 @@ print(build.calls['n'], build(1), build.__name__, inspect.signature(build))
 
 重复注册要有明确约定——默认抛 `KeyError` 或显式覆盖，绝不能静默顶掉已有插件；按名字查找失败时给出清晰的 `KeyError` 而不是 `None`。
 
-第三方扩展靠 `importlib.metadata.entry_points`（3.8 起的新 API，用 `group` 参数过滤）：第三方包在 `pyproject.toml` 里声明 `[project.entry-points.GROUP]`，核心在运行时用 `entry_points(group=...)` 发现并调用 `ep.load()`，无需改动核心代码就能接入新能力；
+第三方扩展靠 `importlib.metadata.entry_points`（3.8 起的新 API，用 `group` 参数过滤）：第三方包在 `pyproject.toml` 里声明 `[project.entry-points.GROUP]`，核心在运行时用 `entry_points(group=...)` 发现并调用 `ep.load()`，无需改动核心代码就能接入新能力；3.10 前旧 API 返回 `dict`，3.12 起去掉了旧的字典式接口，用 `group` 参数才跨版本稳妥。
 
-3.10 前旧 API 返回 `dict`，3.12 起去掉了旧的字典式接口，用 `group` 参数才跨版本稳妥。插件要有统一协议（约定函数签名或 `Protocol`），加载时隔离异常，一个坏插件不能拖垮全部；核心只依赖协议、不依赖具体实现。
+插件要有统一协议（约定函数签名或 `Protocol`），加载时隔离异常，一个坏插件不能拖垮全部；核心只依赖协议、不依赖具体实现。
 
 打包侧用 `pyproject.toml` 声明 `[build-system]`、`[project]`、依赖与入口点，版本与元数据用 `importlib.metadata.version()` 读取。
 
@@ -253,9 +249,9 @@ print(len(calls))
 
 可发布的抽象必须自带可测性。
 
-`TTL` 缓存把 `clock` 参数化，测试里传一个假时钟、调用 `advance(ttl + 1)` 就能验证过期重算，完全不用真 `sleep`；
+`TTL` 缓存把 `clock` 参数化，测试里传一个假时钟、调用 `advance(ttl + 1)` 就能验证过期重算，完全不用真 `sleep`；`cache_info()` 返回 `hits` / `misses` / `size`，让命中率可观测，低命中时及时关掉缓存。
 
-`cache_info()` 返回 `hits` / `misses` / `size`，让命中率可观测，低命中时及时关掉缓存。异常不缓存要有专门用例：让函数抛 `ValueError`、再调用一次，断言第二次仍会真正执行，而不是直接抛出旧异常。
+异常不缓存要有专门用例：让函数抛 `ValueError`、再调用一次，断言第二次仍会真正执行，而不是直接抛出旧异常。
 
 并发正确性是最容易漏掉的用例：用 `threading.Barrier` 让 8 个线程同时到达冷键，断言底层函数只执行一次，这能直接暴露忘记加锁的回归。
 
@@ -280,9 +276,11 @@ print(len(calls))
 
 ## 把插件注册表做成显式 API：可隔离、可拒绝重复、可扩展
 
-一个报表框架要允许业务方注册自定义导出器。若用模块级裸字典，单元测试之间会互相污染，第三方加插件还得改核心代码。稳妥的做法是把注册表封装成一个类：`register(name)` 返回装饰器并把函数登记进实例字典，`get` / `names` / `clear` 提供显式访问与清理；
+一个报表框架要允许业务方注册自定义导出器。若用模块级裸字典，单元测试之间会互相污染，第三方加插件还得改核心代码。
 
-重复注册直接抛 `KeyError` 而不是静默覆盖，避免同名插件悄悄顶掉别人。下面用标准库实现一个可直接运行的 `Registry`，演示注册两个插件、读取调用、拦截重复注册、以及 `clear` 后清空。
+稳妥的做法是把注册表封装成一个类：`register(name)` 返回装饰器并把函数登记进实例字典，`get` / `names` / `clear` 提供显式访问与清理；重复注册直接抛 `KeyError` 而不是静默覆盖，避免同名插件悄悄顶掉别人。
+
+下面用标准库实现一个可直接运行的 `Registry`，演示注册两个插件、读取调用、拦截重复注册、以及 `clear` 后清空。
 
 对外发布时再把第三方发现换成 `importlib.metadata.entry_points(group=...)`，核心只依赖一个统一的插件协议，既能测试隔离，也能不改代码就扩展。
 

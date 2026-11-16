@@ -52,10 +52,6 @@ print('JOIN result', join_once())
 print('N+1 queries', count_queries(n_plus_one))
 print('JOIN queries', count_queries(join_once))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # after rollback 0
@@ -77,10 +73,6 @@ db.execute('BEGIN')
 db.execute('INSERT INTO t VALUES (3, 30)')
 db.execute('COMMIT')
 print('after commit', db.execute('SELECT COUNT(*) FROM t').fetchone()[0])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -104,10 +96,6 @@ db.set_trace_callback(None)
 print('sql count', len(seen))
 for q in seen:
     print(' ', q)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -47,10 +47,6 @@ print('caller', caller_name())
 print('result', add(2, 3))
 dis.dis(add)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # f_consts (None, 3)
@@ -70,10 +66,6 @@ print('f_consts', f.__code__.co_consts)
 print('g_consts', g.__code__.co_consts)
 print('f_nbytes', len(f.__code__.co_code))
 print('g_nbytes', len(g.__code__.co_code))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -104,10 +96,6 @@ def scale(a):
 print('consts', scale.__code__.co_consts)
 print('names', scale.__code__.co_names)
 dis.dis(scale)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

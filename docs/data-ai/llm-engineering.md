@@ -14,16 +14,20 @@ description: 把大模型能力做成可靠、可控、可观测的应用
 
 ## 一个「答得流利却答非所问」的 RAG 系统
 
-一个 RAG 问答系统上线后，用户反馈「答案看着流利，但经常答非所问，还偶尔把 A 产品的参数安到 B 产品上」。团队第一反应是换更大的模型，成本翻了三倍，问题只改善了一点。真正的故障点在模型之外：PDF 按固定 500 字切块，把表格拦腰截断；检索只取相似度 Top-5，其中三块来自同一页的重复页眉；
+一个 RAG 问答系统上线后，用户反馈「答案看着流利，但经常答非所问，还偶尔把 A 产品的参数安到 B 产品上」。团队第一反应是换更大的模型，成本翻了三倍，问题只改善了一点。
 
-prompt 把八块内容一股脑塞进上下文，关键条款被埋在中间；Agent 循环没有步数上限，一次工具返回异常就反复重试到超时。这类系统的工程质量几乎全压在检索、预算、幂等与可观测性上。本讲用纯标准库实现一个可运行的最小 RAG，把每个环节的错误都变成能看见、能测量的现象。
+真正的故障点在模型之外：PDF 按固定 500 字切块，把表格拦腰截断；检索只取相似度 Top-5，其中三块来自同一页的重复页眉；prompt 把八块内容一股脑塞进上下文，关键条款被埋在中间；Agent 循环没有步数上限，一次工具返回异常就反复重试到超时。这类系统的工程质量几乎全压在检索、预算、幂等与可观测性上。
+
+本讲用纯标准库实现一个可运行的最小 RAG，把每个环节的错误都变成能看见、能测量的现象。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='按固定字数切块，表格与条款被拦腰截断：检索到的块语义不完整，模型只能看到半句话，进而用参数知识补全' />
 
 
 ## 先算账：上下文窗口怎么分配
 
-上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主题、向量被稀释。
+Prompt 与结构化输出先定下这次调用的输入契约：系统提示、检索片段、对话历史、用户问题要组装成一条 prompt，并要求模型按可解析、可溯源的结构（带引用的段落或 `JSON`）回答，而不是放任自由发挥。
+
+组装的第一道硬约束是上下文窗口不是「越多越好」：一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主题、向量被稀释。
 
 实践上按文档结构切（标题、段落、表格整体），再设 200 到 500 Token 的目标大小与 10% 到 15% 的重叠，同时给每块写入 `section`、`page`、`doc_id` 等元数据，供过滤与溯源。还要主动去重：页眉页脚、目录、重复模板在不同页的向量几乎一样，会白白挤占 Top-K 名额。
 
@@ -47,7 +51,7 @@ prompt 把八块内容一股脑塞进上下文，关键条款被埋在中间；A
 ## 分块、去重与元数据：让检索拿得到完整语义
 
 ```python
-from collections import Counter
+import collections
 
 DOCS = [
     ('A-1', '型号 A100 支持 8 路输入，质保三年'),
@@ -78,16 +82,17 @@ print([doc_id for doc_id, _ in picked])
 
 <OutputBox title='主示例运行结果' output='used 40 blocks 2\n[&#39;A-1&#39;, &#39;A-2&#39;]' note='输出可能随 Python 版本与平台略有差异；以本机实际执行结果为准。' />
 
-<LineByLine code='from collections import Counter\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])' :notes='["导入 Counter 备用；本例用集合交集做关键词打分", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟文档库，每条带 doc_id 便于溯源", "三条文档分别是两个型号的参数", "文档 1：A100 路数与质保", "文档 2：A100 工作温度", "文档 3：B200 参数，用于检验是否会串型号", "空行，只用于分隔逻辑块，不影响执行结果。", "定义极简 Token 估算：真实项目用 tiktoken 或服务端计数", "字符数加词数补偿，仅用于演示预算裁剪", "空行，只用于分隔逻辑块，不影响执行结果。", "retrieve 接受 k（候选数）与 budget（Token 预算）两个独立约束", "把查询转成字符集合，演示关键词召回", "scored 存放 (分数, 文档号, 正文)", "逐条计算字符重合度作为相似度", "记录三元组", "按分数降序，模拟 Top-K 排序", "picked 保存最终入选块，used 累计已用预算", "遍历候选，关键是预算与 k 双重限制", "超预算就停止，宁可少给也不撑爆窗口", "入选并记录已用 Token", "返回块与用量，供日志与观测", "查询 A100 质保，k=3 但预算只够 2 块", "空行，只用于分隔逻辑块，不影响执行结果。", "打印实际用量与块数", "打印溯源 ID，答案必须能指回这些块", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`"]' title='第 104 讲 · LLM 应用工程：Prompt、RAG、Agent 与成本' />
+<LineByLine code='import collections\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])' :notes='["导入 collections 备用；本例用集合交集做关键词打分", "空行，只用于分隔逻辑块，不影响执行结果。", "模拟文档库，每条带 doc_id 便于溯源", "三条文档分别是两个型号的参数", "文档 1：A100 路数与质保", "文档 2：A100 工作温度", "文档 3：B200 参数，用于检验是否会串型号", "空行，只用于分隔逻辑块，不影响执行结果。", "定义极简 Token 估算：真实项目用 tiktoken 或服务端计数", "字符数加词数补偿，仅用于演示预算裁剪", "空行，只用于分隔逻辑块，不影响执行结果。", "retrieve 接受 k（候选数）与 budget（Token 预算）两个独立约束", "把查询转成字符集合，演示关键词召回", "scored 存放 (分数, 文档号, 正文)", "逐条计算字符重合度作为相似度", "记录三元组", "按分数降序，模拟 Top-K 排序", "picked 保存最终入选块，used 累计已用预算", "遍历候选，关键是预算与 k 双重限制", "超预算就停止，宁可少给也不撑爆窗口", "入选并记录已用 Token", "返回块与用量，供日志与观测", "查询 A100 质保，k=3 但预算只够 2 块", "空行，只用于分隔逻辑块，不影响执行结果。", "打印实际用量与块数", "打印溯源 ID，答案必须能指回这些块", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`"]' title='第 104 讲 · LLM 应用工程：Prompt、RAG、Agent 与成本' />
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<Callout type="tip" title='核心心智模型' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主…' />
+<Callout type="tip" title='核心心智模型' text='Prompt 与结构化输出先定下这次调用的输入契约：系统提示、检索片段、对话历史、用户问题要组装成一条 prompt，并要求模型按可解析、可溯源的结构（带引用的段落或 JSON）回答，而不是放任自由发挥。组装的第一道硬约束是上下文窗口不是「越多越好」：一次调用的 Token 由系统提示、检索片段、对…' />
 
 
 ### 对照：带溯源的答案组装
 
 ```python
+# 承接主示例：DOCS、tokens()、retrieve() 已在上方定义，本片段需与主示例一同运行。
 def assemble(picked, question, max_ctx=60):
     head = '资料：' + ' | '.join(t for _, t in picked)
     if len(head) > max_ctx:
@@ -101,16 +106,29 @@ print(assemble(blocks, 'B200 质保多久？'))
 
 <OutputBox title='对照写法：先自己猜，再点开' output='资料：型号 B200 支持 4 路输入，质保一年 | 型号 A100 支持 8 路输入，质保三年...[截断]\n问题：B200 质保多久？\n仅依据资料回答，无依据则回答未找到。' guess="true" />
 
-<Compare :panels='[{"label": "主示例", "code": "from collections import Counter\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])", "note": "上下文预算与分块：先算账，再往里塞"}, {"label": "对照 / 进阶", "code": "def assemble(picked, question, max_ctx=60):\n    head = &#39;资料：&#39; + &#39; | &#39;.join(t for _, t in picked)\n    if len(head) &gt; max_ctx:\n        head = head[:max_ctx] + &#39;...[截断]&#39;\n    prompt = head + chr(10) + &#39;问题：&#39; + question + chr(10) + &#39;仅依据资料回答，无依据则回答未找到。&#39;\n    return prompt\n\nblocks, _ = retrieve(&#39;B200 质保&#39;, k=3, budget=40)\nprint(assemble(blocks, &#39;B200 质保多久？&#39;))", "note": "检索质量：把「答非所问」拆成可测的指标"}]' title='两种写法对照' note='差异集中在 Prompt 与结构化输出；先看输出，再找背后的规则。' />
+<Compare :panels='[{"label": "主示例", "code": "import collections\n\nDOCS = [\n    (&#39;A-1&#39;, &#39;型号 A100 支持 8 路输入，质保三年&#39;),\n    (&#39;A-2&#39;, &#39;A100 的工作温度为 0 到 40 摄氏度&#39;),\n    (&#39;B-1&#39;, &#39;型号 B200 支持 4 路输入，质保一年&#39;),\n]\n\ndef tokens(s):\n    return len(s) + len(s.split()) // 2  # 粗略估算，仅用于演示预算\n\ndef retrieve(query, k=2, budget=40):\n    q = set(query)\n    scored = []\n    for doc_id, text in DOCS:\n        overlap = len(q &amp; set(text)) / (len(q) + 1)\n        scored.append((overlap, doc_id, text))\n    scored.sort(reverse=True)\n    picked, used = [], 0\n    for score, doc_id, text in scored[:k]:\n        if used + tokens(text) &gt; budget: break\n        picked.append((doc_id, text)); used += tokens(text)\n    return picked, used\n\npicked, used = retrieve(&#39;A100 质保&#39;, k=3)\nprint(&#39;used&#39;, used, &#39;blocks&#39;, len(picked))\nprint([doc_id for doc_id, _ in picked])", "note": "上下文预算与分块：先算账，再往里塞"}, {"label": "对照 / 进阶", "code": "# 承接主示例：DOCS、tokens()、retrieve() 已在上方定义，本片段需与主示例一同运行。\ndef assemble(picked, question, max_ctx=60):\n    head = &#39;资料：&#39; + &#39; | &#39;.join(t for _, t in picked)\n    if len(head) &gt; max_ctx:\n        head = head[:max_ctx] + &#39;...[截断]&#39;\n    prompt = head + chr(10) + &#39;问题：&#39; + question + chr(10) + &#39;仅依据资料回答，无依据则回答未找到。&#39;\n    return prompt\n\nblocks, _ = retrieve(&#39;B200 质保&#39;, k=3, budget=40)\nprint(assemble(blocks, &#39;B200 质保多久？&#39;))", "note": "检索质量：把「答非所问」拆成可测的指标"}]' title='两种写法对照' note='差异集中在 Prompt 与结构化输出；先看输出，再找背后的规则。' />
 
 
 ## 检索质量怎么量：Recall@K 与拒答率
 
-检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。
+Embedding 与向量检索是这套问答的地基：把文本映射成高维向量，用余弦距离或内积近似语义相关，擅长同义改写，却对精确编号、型号、错误码不敏感，因为这类 token 在训练语料里往往被切分或低频、向量位置不稳定。检索不是一次性配好就完事的组件，它有自己独立的评价口径。
+
+常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。
 
 混合检索通常优于单一向量检索：`BM25` 等关键词检索对精确编号、型号、错误码更稳，向量检索对同义改写更稳，用 RRF（倒数排名融合）把两路结果合并；重排阶段再对 Top-20 做精排取 Top-5。
 
 要特别注意「lost in the middle」现象：关键信息放在长上下文的中段时，模型引用它的概率明显下降，所以组装 prompt 时应把最相关的块放在首尾。评估集至少要包含无答案的问题、需要跨块综合的问题、含否定词的问题，否则指标会虚高。
+
+<Term word='Prompt 与结构化输出' text='Prompt 与结构化输出先定下这次调用的输入契约：系统提示、检索片段、对话历史、用户问题要组装成一条 prompt，并要求模型按可解析、可溯源的结构（带引用的段落或 JSON）回答，而不是放任自由发挥。组装的第一道硬约束是上下文窗口不是「越多越好」：一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预…' />
+
+<Term word='Embedding 与向量检索' text='Embedding 与向量检索是这套问答的地基：把文本映射成高维向量，用余弦距离或内积近似语义相关，擅长同义改写，却对精确编号、型号、错误码不敏感，因为这类 token 在训练语料里往往被切分或低频、向量位置不稳定。检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关…' />
+
+
+## Agent 循环的四道闸
+
+工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作重复执行不能重复扣款）。
+
+每一轮都要记录输入 / 输出 Token、耗时、工具名、参数摘要、返回状态与 `trace_id`；流式输出要同时处理连接中断与部分结果。降级路径也得提前设计：检索无结果时明确回答「资料中未找到」，而不是让模型用参数知识补全；模型超时时返回已生成的部分加一句提示，而不是空响应。这些约束与提示词措辞无关，属于工程契约。
 
 **Agent 循环的硬性约束**
 
@@ -122,18 +140,7 @@ print(assemble(blocks, 'B200 质保多久？'))
 | 重试策略 | 仅幂等操作，指数退避 | 重复下单、重复扣款 |
 | 日志字段 | trace_id/工具/参数摘要/耗时/Token | 线上无法复盘，只能靠猜 |
 
-<Term word='Prompt 与结构化输出' text='上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主题、向量被稀释。实践…' />
-
-<Term word='Embedding 与向量检索' text='检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更稳，向量检索对同义改…' />
-
-
-## Agent 循环的四道闸
-
-工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作重复执行不能重复扣款）。
-
-每一轮都要记录输入 / 输出 Token、耗时、工具名、参数摘要、返回状态与 `trace_id`；流式输出要同时处理连接中断与部分结果。降级路径也得提前设计：检索无结果时明确回答「资料中未找到」，而不是让模型用参数知识补全；模型超时时返回已生成的部分加一句提示，而不是空响应。这些约束与提示词措辞无关，属于工程契约。
-
-<FlowTimeline :steps='[{"title": "上下文预算与分块：先算账，再往里塞", "desc": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段…", "tone": "blue"}, {"title": "检索质量：把「答非所问」拆成可测的指标", "desc": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有…", "tone": "purple"}, {"title": "Agent 循环与成本：把不确定性关进笼子", "desc": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸…", "tone": "orange"}, {"title": "工程落地", "desc": "带预算、超时、幂等与可观测的调用封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
+<FlowTimeline :steps='[{"title": "上下文预算与分块：先算账，再往里塞", "desc": "Prompt 与结构化输出先定下这次调用的输入契约：系统提示、检索片段、对话历史、用…", "tone": "blue"}, {"title": "检索质量：把「答非所问」拆成可测的指标", "desc": "Embedding 与向量检索是这套问答的地基：把文本映射成高维向量，用余弦距离或内…", "tone": "purple"}, {"title": "Agent 循环与成本：把不确定性关进笼子", "desc": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸…", "tone": "orange"}, {"title": "工程落地", "desc": "带预算、超时、幂等与可观测的调用封装", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
 <ConceptDiagram type='layers3' title='第 104 讲 · 分层视角' labels='上下文预算与分块：先算账，再往里塞|检索质量：把「答非所问」拆成可测的指标|Agent 循环与成本：把不确定性关进笼…|Token 成本与降级' caption='Agent 循环与成本：把不确定性关进笼子' />
 
@@ -175,9 +182,11 @@ print('10000 calls @8k ->', cost(8000, 500) * 10000, 'USD')
 
 ## 工程落地：带预算、超时与幂等的调用封装
 
-下面这段不依赖任何大模型 SDK，用标准库把一次「检索 → 组装 → 生成」的调用封装成有边界的操作：入口先算预算，检索结果不足就明确降级为「资料中未找到」；调用阶段记录每轮的 Token、耗时与 `trace_id`；生成阶段用步数上限防止循环重试；写操作带幂等键，重复调用不会重复执行。
+下面这段不依赖任何大模型 SDK，用标准库把一次「组装 → 生成」的最小调用封装成有边界的操作：检索结果由调用方以 blocks 传入，入口先判空，没有资料就明确降级为「资料中未找到」；接着用 `estimate_tokens` 核对上下文预算，超限直接降级；生成阶段套一层 `MAX_STEPS` 步数上限的循环，作为工具报错后反复重试的防御骨架；每次响应带上 `trace` 与按 prompt 内容算出的幂等键 `idem`，供上游打点与去重。
 
-真实项目把 `call_model` 换成 SDK 调用即可，其余约束原样保留。重点不在代码量，而在每个失败分支都有一个明确、可观测的出口。
+要强调这只是一副骨架：`call_model` 首次就返回文本，循环体实际只走一步；耗时、真正的重试、幂等去重与检索都留给真实项目——把 `call_model` 换成带 `timeout` 与重试的 SDK 调用、把每轮耗时与 Token 接进日志、用去重表加唯一索引让幂等键真正挡住重复写。
+
+重点不在代码量，而在每个失败分支都有一个明确、可观测的出口。
 
 ```python
 import hashlib, time, uuid
@@ -212,9 +221,9 @@ print(answer('未知型号？', []))
 
 <Callout type="idea" title='落地提示' text='为每次调用记录输入/输出/耗时/Token、设置步数与预算上限、工具调用做幂等与超时、关键结论要求可溯源引用' />
 
-<ArchBlueprint title='第 104 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "上下文预算与分块：先算账，再往里塞", "protocol": "调用 / 请求", "items": [{"label": "上下文预算与分块：先算账…", "sub": "输入与前置", "detail": "上下文窗口是硬约束，不是「越多越好」。一次调用的 Token 由系统提示、检索片段、对话历史、用户问题与预留输出共同占用；若窗口 8K、输出要留 1K、历史与提示占 2K，检索片段的预算就只剩 5K。分块要对付两个相互冲突的要求：块太小则语义不完整（表格被切断、指代丢失），块太大则一个块里混进多个主…", "tone": "blue"}]}, {"name": "核心规则", "note": "检索质量：把「答非所问」拆成可测的指标", "protocol": "语言 / 运行时协议", "items": [{"label": "检索质量：把「答非所问」…", "sub": "状态与边界", "detail": "检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有 `Recall@K`（人工标注的相关块是否出现在前 K 个结果里）、MRR（第一个正确结果的排名倒数），以及答案的引用命中率（生成内容能否回溯到召回块）。混合检索通常优于单一向量检索：BM25 等关键词检索对精确编号、型号、错误码更…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "Agent 循环与成本：把不确定性关进笼子", "items": [{"label": "Agent 循环与成本…", "sub": "工程处理", "detail": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作…", "tone": "green"}]}]' />
+<ArchBlueprint title='第 104 讲 · 分层视角' caption='把本讲三个机制放进系统分层，点击每层看职责与失败处理' :layers='[{"name": "触发与入口", "note": "上下文预算与分块：先算账，再往里塞", "protocol": "调用 / 请求", "items": [{"label": "上下文预算与分块：先算账…", "sub": "输入与前置", "detail": "Prompt 与结构化输出先定下这次调用的输入契约：系统提示、检索片段、对话历史、用户问题要组装成一条 prompt，并要求模型按可解析、可溯源的结构（带引用的段落或 JSON）回答，而不是放任自由发挥。组装的第一道硬约束是上下文窗口不是「越多越好」：一次调用的 Token 由系统提示、检索片段、对…", "tone": "blue"}]}, {"name": "核心规则", "note": "检索质量：把「答非所问」拆成可测的指标", "protocol": "语言 / 运行时协议", "items": [{"label": "检索质量：把「答非所问」…", "sub": "状态与边界", "detail": "Embedding 与向量检索是这套问答的地基：把文本映射成高维向量，用余弦距离或内积近似语义相关，擅长同义改写，却对精确编号、型号、错误码不敏感，因为这类 token 在训练语料里往往被切分或低频、向量位置不稳定。检索不是一次性配好就完事的组件，它有自己独立的评价口径。常用指标有…", "tone": "purple"}]}, {"name": "落地与收尾", "note": "Agent 循环与成本：把不确定性关进笼子", "items": [{"label": "Agent 循环与成本…", "sub": "工程处理", "detail": "工具调用让模型能查数据库或调接口，也把失败面放大了一圈。一条可靠的调用链需要四道闸：步数上限（如最多 6 轮，防止模型在工具报错后反复重试）、总预算上限（累计 Token 或金额，超限直接降级为「无法回答」）、超时与退避（网络调用必须带 `timeout`，重试只对幂等操作生效）、以及幂等键（写操作…", "tone": "green"}]}]' />
 
-<CheckList id='P104b' title='上线前自检' :items='["能复现并解释「按固定字数切块，表格与条款被拦腰截断」", "能复现并解释「把 Top-K 结果直接拼进 prompt 不做去重」", "能复现并解释「工具调用无步数与预算上限」", "能用一条命令验证 Prompt 与结构化输出", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P104a' title='上线前自检' :items='["能复现并解释「按固定字数切块，表格与条款被拦腰截断」", "能复现并解释「把 Top-K 结果直接拼进 prompt 不做去重」", "能复现并解释「工具调用无步数与预算上限」", "能用一条命令验证 Prompt 与结构化输出", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import textwrap; print(textwrap.wrap('检索内容按语义切块再拼进提示词', 8))"
@@ -240,11 +249,19 @@ python -c "import textwrap; print(textwrap.wrap('检索内容按语义切块再�
 
 ## 高维距离集中：余弦与内积的判别力退化
 
-把 query 与文档向量归一化到单位长度后，内积 q·d 等于 `cos(theta)`，余弦与内积排序完全等价；若再比较 L2 距离，`norm(q-d)`^2 = 2 - 2cos(theta)，三者互为单调变换，换度量救不了召回。
+把 query 与文档向量归一化到单位长度后，内积 q·d 等于 `cos(theta)`，余弦与内积排序完全等价；若再比较 L2 距离，`norm`，三者互为单调变换，换度量救不了召回。
 
-真正的问题是高维距离集中：设 q、d 各分量独立同分布、均值 0、方差 sigma^2，则 `norm(q-d)`^2 是 2d 个独立项平方和，均值 2d·sigma^2、方差 8d·sigma^4（卡方分布），相对标准差 = `sqrt(8d·sigma^4)`/(2d·sigma^2) = `sqrt(2/d)`，随 d 增大趋于 0。
+```python
+norm(q-d)^2 = 2 - 2cos(theta)
+```
 
-于是所有文档到 query 的距离越挤在同一个值附近，max/min 比值趋于 1，Top-K 名次由微小噪声决定，Recall`@K` 变得不稳定。余弦也逃不掉：随机两向量的 |`cos(theta)`| 期望约 `sqrt(2/(pi·d))`，`d=1024` 时不到 0.025，向量几乎两两正交。
+真正的问题是高维距离集中：设 q、d 各分量独立同分布、均值 0、方差 sigma^2，则 `norm(q-d)^2` 是 2d 个独立项平方和，均值 2d·sigma^2、方差 8d·sigma^4（卡方分布），相对标准差 = `sqrt`，随 d 增大趋于 0。
+
+```python
+sqrt(8d·sigma^4)/(2d·sigma^2) = sqrt(2/d)
+```
+
+于是所有文档到 query 的距离越挤在同一个值附近，max/min 比值趋于 1，Top-K 名次由微小噪声决定，`Recall@K` 变得不稳定。余弦也逃不掉：随机两向量的 `|cos(theta)|` 期望约 `sqrt(2/(pi·d))`，`d=1024` 时不到 0.025，向量几乎两两正交。
 
 这解释了「0.78 还是 0.81」在千维空间没有区分意义、阈值不能跨版本复用；压到 256 或 384 维常反而更省内存、更稳。缓解只有两类：投到低维子空间（对比学习、PCA 白化），或 ANN 先圈候选再精排。
 
@@ -284,15 +301,15 @@ for d in (2, 16, 128, 1024):
 
 ### HNSW 与 IVF-PQ 的召回吞吐前沿
 
-Flat 检索与 N 个向量逐个算内积，单次查询 `O(N·d)`，N 上千万时 QPS 掉到个位数，于是用 ANN 换吞吐，代价是 Recall`@K` 不再为 1。`HNSW` 建分层可导航小世界图：节点按指数分布随机分配到最高层，查询从顶层入口贪心下探，底层用 efSearch 个候选做宽度优先；
+Flat 检索与 N 个向量逐个算内积，单次查询 `O(N·d)`，N 上千万时 QPS 掉到个位数，于是用 ANN 换吞吐，代价是 `Recall@K` 不再为 1。
 
-建图参数 M（每层邻居数，常见 16 到 64）与 efConstruction 决定图质量与构建内存，efSearch 越大召回越高、延迟越长，内存是每向量约 M·8 字节邻接表加原始向量，一千万条 768 维 float32 光向量就约 30GB。
+`HNSW` 建分层可导航小世界图：节点按指数分布随机分配到最高层，查询从顶层入口贪心下探，底层用 efSearch 个候选做宽度优先；建图参数 M（每层邻居数，常见 16 到 64）与 efConstruction 决定图质量与构建内存，efSearch 越大召回越高、延迟越长，内存是每向量约 M·8 字节邻接表加原始向量，一千万条 768 维 float32 光向量就约 30GB。
 
 IVF-PQ 先用 k-means 把空间切成 nlist 个粗簇、查询只扫 nprobe 个，再用乘积量化把残差切成 m 段、每段量化到 256 个中心，单向量压到 m 字节，代价是量化误差。
 
-真实项目用 faiss（faiss/`IndexHNSW.cpp` 与 faiss/`IndexIVFPQ.cpp`）或 hnswlib 在 C++ 层算距离；本文实测用纯标准库复现距离集中而非图索引。选型看 QPS 与内存：内存足选 `HNSW`，向量上亿选 IVF-PQ 加 GPU；
+真实项目用 faiss（`faiss/IndexHNSW.cpp` 与 `faiss/IndexIVFPQ.cpp`）或 hnswlib 在 C++ 层算距离；本讲实测用纯标准库复现距离集中而非图索引。
 
-建库后固定标注 query 测 Recall@10 与 p99 延迟再定参数。
+选型看 QPS 与内存：内存足选 `HNSW`，向量上亿选 IVF-PQ 加 GPU；建库后固定标注 query 测 Recall@10 与 p99 延迟再定参数。
 
 **ANN 索引参数与召回吞吐前沿**
 
@@ -358,7 +375,7 @@ print('mixed_version_recall@5', recall(False))
 
 <Predict no='104-5' q='retrieve(&#39;A100 质保&#39;, k=3, budget=40) 最可能返回几块？' :options='["2 块，第三块因预算不足被丢弃", "3 块，k 优先于预算", "0 块，预算小于所有文档"]' answer='0' output='2 块（used 40，[&#39;A-1&#39;, &#39;A-2&#39;]）' explain='k 是候选上限，budget 是硬预算；循环里先判断 used + tokens(text) &gt; budget 就 break，因此实际入选项可能少于 k。宁可少给也不能撑爆窗口。' />
 
-<FillBlank no='104-6' tpl='from collections  ___ Counter' :answers='["import"]' hint='回想本讲关于 Prompt 与结构化输出 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 上下文预算与分块：先算账，再往里塞 的落点。' />
+<FillBlank no='104-6' tpl='___ collections' :answers='["import"]' hint='回想本讲关于 Prompt 与结构化输出 的规则' explain='补回关键字后重新运行主示例，确认输出仍与上方一致；这一行正是 上下文预算与分块：先算账，再往里塞 的落点。' />
 
 <KnowledgeCard :points='["上下文窗口是硬预算：系统提示 + 检索片段 + 历史 + 问题 + 预留输出，先算账再往里塞", "分块按文档结构切，200-500 Token 加 10-15% 重叠，写 `section` / `page` / `doc_id` 元数据，主动去重页眉目录", "检索有独立口径：`Recall@K`、MRR、引用命中率；混合检索用 BM25 + 向量 + RRF，再重排", "lost in the middle：最相关的块放首尾；评估集要含无答案、跨块综合、含否定词的问题", "Agent 四道闸：步数上限、总预算上限、`timeout` 与退避、幂等键；每轮记 Token / 耗时 / `trace_id`", "降级要显式：检索无结果答「资料中未找到」，超时返已生成部分；失败分支都可观测"]' :pitfalls='["按固定字数切块，表格与条款被拦腰截断", "把 Top-K 结果直接拼进 prompt 不做去重", "工具调用无步数与预算上限", "把检索到的片段无脑塞进上下文、或让 Agent 无上限循环调用工具，会同时推高成本与失控概率"]' summary='大模型应用的工程质量主要在模型之外：检索质量、上下文预算、工具幂等、失败降级与可观测性，而不是提示词措辞' />
 

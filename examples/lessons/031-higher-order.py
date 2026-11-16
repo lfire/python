@@ -35,10 +35,6 @@ try:
 except TypeError as e:
     print(type(e).__name__, str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # [('b', 1), ('c', 2), ('a', 3)]
@@ -63,10 +59,6 @@ f = filter(lambda x: x > 1, [1, 2, 3])
 print(list(f), list(f))
 print(reduce(add, (1, 2, 3)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # map True 0
@@ -89,10 +81,6 @@ print(list(m), len(calls))
 print(twice.__name__, (lambda x: x).__name__)
 ops = [i.opname for i in dis.get_instructions(twice)]
 print('RETURN_VALUE' in ops, 'BUILD_TUPLE' in ops)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -35,10 +35,6 @@ print('annotations', svc.run.__annotations__)
 print('members', sorted(k for k, _ in inspect.getmembers(svc) if k == 'run'))
 print('dict keys', sorted(vars(svc).keys()))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # {"a": 1}
@@ -58,10 +54,6 @@ try:
     call('rmtree', '/tmp')
 except ValueError as e:
     print('blocked:', str(e))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -88,10 +80,6 @@ def f(x: 'int', y: list = None) -> 'dict':
 print('isfunction:', inspect.isfunction(f))
 print('raw:', f.__annotations__)
 print('hints:', get_type_hints(f))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

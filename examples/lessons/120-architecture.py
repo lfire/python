@@ -61,10 +61,6 @@ for label, port in [('memory', MemoryAdapter()), ('json', JsonAdapter())]:
     print(label, isinstance(port, RatePort), contract(port, label))
 print('annotation', list(Pricing.__init__.__annotations__))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # compliant pass
@@ -87,10 +83,6 @@ def verify(store):
 print('compliant', verify(CompliantStore()))
 print('violating', verify(ViolatingStore()))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # domain names ['round']
@@ -108,10 +100,6 @@ def coupled(base):
 print('domain names', sorted(pure_domain.__code__.co_names))
 print('coupled names', sorted(coupled.__code__.co_names))
 print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain.__code__.co_names)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -49,10 +49,6 @@ except TypeError as e:
     print('unhashable', type(e).__name__)
 print('reversed keys', list(reversed(d)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # resize during iteration RuntimeError
@@ -75,10 +71,6 @@ print('fromkeys shared', shared)
 print('hash seed differs', type(hash('a')).__name__)
 print('keys view type', type(d.keys()).__name__)
 print('values has set ops', hasattr(d.values(), '__and__'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -107,10 +99,6 @@ v = d.keys()
 print('view reflects size', len(v) == len(d))
 print('view type', type(v).__name__)
 print('hash is int', isinstance(hash('k'), int))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

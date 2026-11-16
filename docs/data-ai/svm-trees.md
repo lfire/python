@@ -119,13 +119,13 @@ print('K(-1,1)', poly_kernel(-1, 1), 'K(-1,0)', poly_kernel(-1, 0))
 
 ## Bagging、随机森林与降方差
 
-单棵深树方差大、对训练样本扰动敏感，Bagging（Bootstrap Aggregating）用『有放回重采样出多份训练集、各训一棵树、再平均或投票』来压方差：设单棵树方差 σ²、两两相关系数 ρ，B 棵平均后的方差约为 ρ 乘 σ² 加 (1-ρ) 乘 σ² 再除以 B，即 `rho*sigma^2+(1-rho)*sigma^2/B`；
+单棵深树方差大、对训练样本扰动敏感，Bagging（Bootstrap Aggregating）用『有放回重采样出多份训练集、各训一棵树、再平均或投票』来压方差：设单棵树方差 σ²、两两相关系数 ρ，B 棵平均后的方差约为 ρ 乘 σ² 加 (1-ρ) 乘 σ² 再除以 B，即 `rho*sigma^2+(1-rho)*sigma^2/B`；树越多第二项越小，但相关项 ρ·σ² 是下限，所以还要降低树与树之间的相关性。
 
-树越多第二项越小，但相关项 ρ·σ² 是下限，所以还要降低树与树之间的相关性。随机森林在 Bagging 之上再加一层随机：每个节点分裂时只从随机选出的 mtry 个特征子集里挑最优（分类常用 `sqrt(d)`、回归常用 d/3），进一步压低 ρ。
+随机森林在 Bagging 之上再加一层随机：每个节点分裂时只从随机选出的 mtry 个特征子集里挑最优（分类常用 `sqrt(d)`、回归常用 d/3），进一步压低 ρ。随机森林几乎不需要特征缩放、能处理混合类型与缺失、抗过拟合，代价是模型体积大、单条预测要过所有树、且同样不能外推。
 
-随机森林几乎不需要特征缩放、能处理混合类型与缺失、抗过拟合，代价是模型体积大、单条预测要过所有树、且同样不能外推。袋外样本（OOB，约 36.8% 未被某棵树抽到）可直接当验证集估泛化误差，省一次划分。
+袋外样本（OOB，约 36.8% 未被某棵树抽到）可直接当验证集估泛化误差，省一次划分。特征重要性有两种口径：基于不纯度下降（impurity-based，倾向于高基数特征、有偏）与基于置换（permutation，打乱某列后看验证分数掉多少，更可信）。
 
-特征重要性有两种口径：基于不纯度下降（impurity-based，倾向于高基数特征、有偏）与基于置换（permutation，打乱某列后看验证分数掉多少，更可信）。无论哪种都只是『模型用到它的程度』，不是因果结论——把重要性排第一的特征写成业务原因，是常见越界。
+无论哪种都只是『模型用到它的程度』，不是因果结论——把重要性排第一的特征写成业务原因，是常见越界。
 
 <ConceptDiagram type='compare2' title='第 099 讲 · 间隔最大化、核技巧与软间隔 C' labels='间隔最大化、核技巧与软间隔 C|树的划分准则、剪枝与深度控制|Bagging、随机森林与特征重要性|特征重要性' caption='掌握非线性模型与其适用边界' />
 
@@ -151,9 +151,7 @@ RBF 核 `exp(-gamma*||x-z||^2)` 对应无限维特征空间，gamma 控制距离
 
 软间隔引入松弛变量 ξ_i 与惩罚 C，对偶后拉格朗日乘子被 C 截断（0 不大于 alpha_i 不大于 C），C 同时决定支持向量的数量与边界复杂度。决策树的划分是贪心的：对每个特征排序后枚举相邻取值中点，选使加权不纯度下降最多的切分，本质是局部最优而非全局最优。
 
-Bagging 的方差公式 `rho*sigma^2+(1-rho)*sigma^2/B` 说明『平均』只能消掉不相关部分，随机森林再用特征子采样降低树间相关 ρ，才把方差进一步压下去；
-
-这也是为什么单棵深树方差大、森林却稳。
+Bagging 的方差公式 `rho*sigma^2+(1-rho)*sigma^2/B` 说明『平均』只能消掉不相关部分，随机森林再用特征子采样降低树间相关 ρ，才把方差进一步压下去；这也是为什么单棵深树方差大、森林却稳。
 
 **树 / SVM / 随机森林选型**
 
@@ -221,7 +219,7 @@ print('depth3 tree', build(data, 0, 1))
 
 <Callout type="idea" title='落地提示' text='用网格搜索配合交叉验证调关键参数，特征重要性只作线索不做因果解释' />
 
-<CheckList id='P099b' title='上线前自检' :items='["能复现并解释「不设 max_depth / min_samples_lea…」", "能复现并解释「RBF SVM 直接喂未缩放特征，边界全是碎块」", "能复现并解释「把特征重要性排名当成业务因果结论」", "能用一条命令验证 间隔最大化与核技巧", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P099a' title='上线前自检' :items='["能复现并解释「不设 max_depth / min_samples_lea…」", "能复现并解释「RBF SVM 直接喂未缩放特征，边界全是碎块」", "能复现并解释「把特征重要性排名当成业务因果结论」", "能用一条命令验证 间隔最大化与核技巧", "关键路径有自动化测试与失败分支"]' />
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：不设 max_depth / min_sam…", "body": "树会一直分裂到每片叶子都纯，把噪声与个别样本也背下来，方差极大", "tip": "设 max_depth、min_samples_leaf 并配合交叉验证；或用 ccp_alpha 做代价复杂度剪枝"}, {"title": "第 2 步：RBF SVM 直接喂未缩放特征，边界全是碎…", "body": "RBF 核用距离平方的指数，大尺度列主导核值；gamma=&#39;scale&#39; 又依赖各列方差", "tip": "先用 StandardScaler 标准化，再用网格搜索在 C 与 gamma 的对数网格上调参"}, {"title": "第 3 步：把特征重要性排名当成业务因果结论", "body": "不纯度下降型重要性偏向高基数特征，且只反映「模型用到它」，不反映因果", "tip": "改用 permutation_importance 在验证集上度量，并把结论限定为「预测贡献」而非因果"}]' />
 
@@ -230,23 +228,19 @@ print('depth3 tree', build(data, 0, 1))
 
 软间隔原始问题是最小化 0.5 乘 w 范数平方加 C 乘松弛变量之和，约束是每个样本 y_i 乘 (w 与 `phi(x_i)` 的内积加 b) 不小于 1 减 xi_i、且 xi_i 不小于 0。
 
-构造拉格朗日函数 L 后，对 w、b、xi 求偏导置零：对 w 得 w 等于各 alpha_i 乘 y_i 乘 `phi(x_i)` 之和，这就是表示定理——最优 w 只是训练样本的线性组合；对 b 得各 alpha_i 乘 y_i 之和为 0；
-
-对 xi_i 得 C 减 alpha_i 减 mu_i 等于 0，配合 mu_i 不小于 0 才有 alpha_i 不大于 C。
+构造拉格朗日函数 L 后，对 w、b、xi 求偏导置零：对 w 得 w 等于各 alpha_i 乘 y_i 乘 `phi(x_i)` 之和，这就是表示定理——最优 w 只是训练样本的线性组合；对 b 得各 alpha_i 乘 y_i 之和为 0；对 xi_i 得 C 减 alpha_i 减 mu_i 等于 0，配合 mu_i 不小于 0 才有 alpha_i 不大于 C。
 
 代回消去原始变量得到对偶：最大化各 alpha_i 之和，减去一半的各 alpha_i alpha_j y_i y_j 乘 `K(x_i,x_j)` 之和，约束 0 不大于 alpha_i 不大于 C、且各 alpha_i 乘 y_i 之和为 0。
 
-注意对偶里样本只以内积 K 出现，把 K 换成核函数就是核技巧，且目标是 alpha 的凹二次型、全局最优无局部极小。KKT 互补松弛给出三类点：`alpha_i=0` 是间隔外的点，删掉不影响模型；0 小于 alpha_i 小于 C 是恰在间隔边界上的点、xi_i 为 0，用来定 b；
+注意对偶里样本只以内积 K 出现，把 K 换成核函数就是核技巧，且目标是 alpha 的凹二次型、全局最优无局部极小。
 
-`alpha_i=C` 是越界或落在间隔内的点。
+KKT 互补松弛给出三类点：`alpha_i=0` 是间隔外的点，删掉不影响模型；0 小于 alpha_i 小于 C 是恰在间隔边界上的点、xi_i 为 0，用来定 b；`alpha_i=C` 是越界或落在间隔内的点。
 
 决策函数 `f(x)=sum(alpha_i*y_i*K(x_i,x))+b` 只对 alpha_i 大于 0 的样本求和，这是正文『模型只由支持向量决定』的严格来源，而 C 截断 alpha 的来由只有走完这条推导链才看得见。
 
 把 `K(x,z)=exp(-gamma*||x-z||^2)` 展开：||x-z||² 等于 ||x||² 加 ||z||² 减 2 乘 x 与 z 的内积，于是 K 可以拆成 `exp(-gamma*||x||^2)`、`exp(-gamma*||z||^2)` 与 `exp(2*gamma*x.z)` 三项之积。
 
-前两项只依赖单个样本，可吸收进缩放；
-
-关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
+前两项只依赖单个样本，可吸收进缩放；关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
 
 所以 RBF 对应的 `phi(x)` 落在无穷维空间，含从常数、一次到任意高次单项式的加权和，权重 (2gamma)^k/k! 随 k 快速衰减。
 
@@ -308,7 +302,7 @@ print('gini(root)', round(gini(labels), 4))
 
 <OutputBox title='扩展示例运行结果' output='rbf direct 0.960789\nrbf series 12 terms 0.960789\nseries 3 terms 0.892249\ngini(id, 12 levels) 0.0\ngini(binary split) 0.5\ngini(root) 0.5' />
 
-<LineByLine code='import math\n\ndef rbf_direct(x, z, g=0.5):\n    d2 = sum((a - b) ** 2 for a, b in zip(x, z))\n    return math.exp(-g * d2)\n\ndef rbf_series(x, z, g=0.5, terms=12):\n    dot = sum(a * b for a, b in zip(x, z))\n    nx = sum(a * a for a in x)\n    nz = sum(b * b for b in z)\n    s = 0.0\n    coef = 1.0\n    for k in range(terms):\n        s += coef * (dot ** k) / math.factorial(k)\n        coef *= 2 * g\n    return math.exp(-g * nx) * math.exp(-g * nz) * s\n\nx = [1.0, 0.5]\nz = [0.8, 0.3]\nprint(&#39;rbf direct&#39;, round(rbf_direct(x, z), 6))\nprint(&#39;rbf series 12 terms&#39;, round(rbf_series(x, z), 6))\nprint(&#39;series 3 terms&#39;, round(rbf_series(x, z, terms=3), 6))\n\ndef gini(labels):\n    n = len(labels)\n    if not n:\n        return 0.0\n    c = {}\n    for l in labels:\n        c[l] = c.get(l, 0) + 1\n    return 1 - sum((v / n) ** 2 for v in c.values())\n\ndef weighted_gini(groups):\n    total = sum(len(g) for g in groups)\n    return sum(len(g) * gini(g) for g in groups) / total\n\nlabels = [0, 1] * 6\nprint(&#39;gini(id, 12 levels)&#39;, round(weighted_gini([[labels[i]] for i in range(12)]), 4))\nprint(&#39;gini(binary split)&#39;, round(weighted_gini([labels[:6], labels[6:]]), 4))\nprint(&#39;gini(root)&#39;, round(gini(labels), 4))\n' :notes='["导入 math，用 exp 与 factorial 构造级数", "空行，只用于分隔逻辑块，不影响执行结果。", "rbf_direct 按距离平方的指数直接算核值", "rbf_series 拆成单样本因子与 exp(2g 乘点积) 的幂级数", "coef 逐项乘 2g，实现 (2gamma) 的 k 次方", "空行，只用于分隔逻辑块，不影响执行结果。", "除以 k 阶乘，即泰勒展开的系数", "12 项截断已收敛到直接公式的 6 位小数", "3 项截断丢掉高次项，数值明显偏低", "gini 实现 1 减各类占比平方和", "weighted_gini 按子节点样本数加权", "12 个样本标签各半，根节点基尼 0.5", "把 id 类特征切成 12 个单样本纯叶，加权基尼降到 0", "二分切法加权基尼仍是 0.5，说明高基数切分是虚假增益", "这一行 `coef *= 2 * g` 的作用，可对照上方输出逐项核对。", "这一行 `return math.exp(-g * nx) * math.exp(-g * nz) * s` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `x = [1.0, 0.5]` 的作用，可对照上方输出逐项核对。", "这一行 `z = [0.8, 0.3]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;rbf direct&#39;, round(rbf_direct(x, z), 6))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;rbf series 12 terms&#39;, round(rbf_series(x, z),` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;series 3 terms&#39;, round(rbf_series(x, z, terms` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def gini(labels):` 的作用，可对照上方输出逐项核对。", "这一行 `n = len(labels)` 的作用，可对照上方输出逐项核对。", "这一行 `if not n:` 的作用，可对照上方输出逐项核对。", "这一行 `return 0.0` 的作用，可对照上方输出逐项核对。", "这一行 `c = {}` 的作用，可对照上方输出逐项核对。", "这一行 `for l in labels:` 的作用，可对照上方输出逐项核对。", "这一行 `c[l] = c.get(l, 0) + 1` 的作用，可对照上方输出逐项核对。", "这一行 `return 1 - sum((v / n) ** 2 for v in c.values())` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def weighted_gini(groups):` 的作用，可对照上方输出逐项核对。", "这一行 `total = sum(len(g) for g in groups)` 的作用，可对照上方输出逐项核对。", "这一行 `return sum(len(g) * gini(g) for g in groups) / total` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `labels = [0, 1] * 6` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;gini(id, 12 levels)&#39;, round(weighted_gini([[l` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;gini(binary split)&#39;, round(weighted_gini([lab` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;gini(root)&#39;, round(gini(labels), 4))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef rbf_direct(x, z, g=0.5):\n    d2 = sum((a - b) ** 2 for a, b in zip(x, z))\n    return math.exp(-g * d2)\n\ndef rbf_series(x, z, g=0.5, terms=12):\n    dot = sum(a * b for a, b in zip(x, z))\n    nx = sum(a * a for a in x)\n    nz = sum(b * b for b in z)\n    s = 0.0\n    coef = 1.0\n    for k in range(terms):\n        s += coef * (dot ** k) / math.factorial(k)\n        coef *= 2 * g\n    return math.exp(-g * nx) * math.exp(-g * nz) * s\n\nx = [1.0, 0.5]\nz = [0.8, 0.3]\nprint(&#39;rbf direct&#39;, round(rbf_direct(x, z), 6))\nprint(&#39;rbf series 12 terms&#39;, round(rbf_series(x, z), 6))\nprint(&#39;series 3 terms&#39;, round(rbf_series(x, z, terms=3), 6))\n\ndef gini(labels):\n    n = len(labels)\n    if not n:\n        return 0.0\n    c = {}\n    for l in labels:\n        c[l] = c.get(l, 0) + 1\n    return 1 - sum((v / n) ** 2 for v in c.values())\n\ndef weighted_gini(groups):\n    total = sum(len(g) for g in groups)\n    return sum(len(g) * gini(g) for g in groups) / total\n\nlabels = [0, 1] * 6\nprint(&#39;gini(id, 12 levels)&#39;, round(weighted_gini([[labels[i]] for i in range(12)]), 4))\nprint(&#39;gini(binary split)&#39;, round(weighted_gini([labels[:6], labels[6:]]), 4))\nprint(&#39;gini(root)&#39;, round(gini(labels), 4))\n' :notes='["导入 math，用 exp 与 factorial 构造级数", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 rbf_direct，按距离平方的指数直接算核值", "逐维求差平方和得到 ||x-z||²", "返回 exp(-gamma 乘距离平方)", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 rbf_series，拆成单样本因子与 exp(2g 乘点积) 的幂级数", "dot 先算 x 与 z 的点积", "nx 算 x 的平方范数", "nz 算 z 的平方范数", "s 累加级数各项", "coef 从 1 起，逐项乘 2g 实现 (2gamma) 的 k 次方", "循环累加 terms 项", "第 k 项除以 k 阶乘，即泰勒展开的系数", "coef 乘 2g，推进到下一项", "乘回两个单样本指数因子，得到完整核值", "空行，只用于分隔逻辑块，不影响执行结果。", "给定二维向量 x", "给定二维向量 z", "打印直接公式算出的 RBF 值", "打印 12 项级数重建的 RBF 值，已收敛到 6 位小数", "打印只取 3 项时的结果，丢掉高次项后明显偏低", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 gini，实现 1 减各类占比平方和", "n 是标签总数", "空集合单独处理", "空集合的基尼记为 0.0", "c 统计各标签出现次数", "遍历每个标签", "对应类别计数加一", "返回 1 减各类占比平方和", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 weighted_gini，按子节点样本数加权", "total 求所有分组的样本总数", "各组基尼按样本数加权后取平均", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 12 个标签各半的样本，根节点基尼 0.5", "把 id 类特征切成 12 个单样本纯叶，加权基尼降到 0", "二分切法加权基尼仍是 0.5", "打印根节点基尼，说明高基数切分是虚假增益", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### SMO 的双变量解析更新与工作集选择
@@ -328,9 +322,7 @@ print('gini(root)', round(gini(labels), 4))
 
 把 `K(x,z)=exp(-gamma*||x-z||^2)` 展开：||x-z||² 等于 ||x||² 加 ||z||² 减 2 乘 x 与 z 的内积，于是 K 可以拆成 `exp(-gamma*||x||^2)`、`exp(-gamma*||z||^2)` 与 `exp(2*gamma*x.z)` 三项之积。
 
-前两项只依赖单个样本，可吸收进缩放；
-
-关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
+前两项只依赖单个样本，可吸收进缩放；关键在 `exp(2*gamma*x.z)` 展开成从 `k=0` 到无穷的级数，每项是 (2gamma)^k 除以 k 阶乘再乘 (x 与 z 内积) 的 k 次方，而后者正是 k 次多项式核，展开后是所有次数不超过 k 的单项式 `phi(x)` 乘 `phi(z)` 之和。
 
 所以 RBF 对应的 `phi(x)` 落在无穷维空间，含从常数、一次到任意高次单项式的加权和，权重 (2gamma)^k/k! 随 k 快速衰减。
 

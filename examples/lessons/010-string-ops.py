@@ -34,10 +34,6 @@ print('split', 'a,b,c'.split(','))
 print('partition', 'k=v'.partition('='))
 print('strip', '  x  '.strip())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # same_result True
@@ -64,10 +60,6 @@ print('join_faster', t_join < t_plus)
 print('rsplit', 'a.b.c'.rsplit('.', 1))
 print('splitlines', len(('a' + chr(10) + 'b').splitlines()))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # new_object True
@@ -85,10 +77,6 @@ print('same_prefix', t[:3] == a)
 print('interned_literal', a is b)
 print('getsizeof_grows', sys.getsizeof('abcd') >= sys.getsizeof('abc'))
 print('slice_is_copy', a[1:] is not a)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

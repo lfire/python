@@ -31,10 +31,6 @@ for name, p in sig.parameters.items():
     default = 'no-default' if p.default is inspect.Parameter.empty else repr(p.default)
     print(name, p.kind.name, default)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # ([],)
@@ -59,10 +55,6 @@ def add2(item, seen=None):
     return seen
 print(add2('a'), add2('b'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # (1,) {'c': 2}
@@ -81,10 +73,6 @@ print(cd.co_argcount, cd.co_posonlyargcount, cd.co_kwonlyargcount, cd.co_flags &
 print(inspect.signature(f).bind(9, c=7, x=1).arguments)
 ops = [i.opname for i in dis.get_instructions(f)]
 print('RETURN_VALUE' in ops, len(ops) > 0)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -95,25 +95,37 @@ print('quorum single', quorum_ok('a', {'n1'}, w=2))
 
 一致性哈希把节点和键都映射到同一个哈希环，增删节点只影响相邻区间，迁移量约 `1/N`；虚拟节点把每个物理节点拆成多个槽位，让分布更均匀，代价是路由表变大。`md5` 等确定性哈希不受进程内 `hash` 随机化影响，适合跨节点共享的路由计算。
 
-quorum 的正确性来自集合交集：写集合大小 W 与读集合大小 R 满足 `W + R > N` 时二者必有重叠副本，因此读至少能看到一个承载最新写的副本；这是鸽巢原理的直接应用，也是 `CAP` 下选择一致性或可用性的定量依据。`SSE` 把长连接建模成「逐块产出」的生成器，背压由消费方拉取速度决定；
+quorum 的正确性来自集合交集：写集合大小 W 与读集合大小 R 满足 `W + R > N` 时二者必有重叠副本，因此读至少能看到一个承载最新写的副本；这是鸽巢原理的直接应用，也是 `CAP` 下选择一致性或可用性的定量依据。
 
-超时与预算上限把不确定长尾关进有限边界。契约测试之所以能锁住四讲演进中的行为不变，是因为它把命令语义显式化为对每个实现都成立的输入输出对，任何替换违反契约都会在 CI 暴露。
+`SSE` 把长连接建模成「逐块产出」的生成器，背压由消费方拉取速度决定；超时与预算上限把不确定长尾关进有限边界。契约测试之所以能锁住四讲演进中的行为不变，是因为它把命令语义显式化为对每个实现都成立的输入输出对，任何替换违反契约都会在 CI 暴露。
 
 ```python
 import hashlib
 
-N = 3
 def h(s):
     return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
-counts = [0, 0, 0]
-for i in range(300):
-    counts[h('key' + str(i)) % N] += 1
-print('distribution', counts)
-print('balanced', max(counts) - min(counts) < 60)
-print('quorum R+W>N', 2 + 2 > 3)
+
+def ring(nodes, replicas=3):
+    return sorted((h(nd + '#' + str(i)), nd) for nd in nodes for i in range(replicas))
+
+def owner(key, r):
+    x = h(key)
+    for slot, nd in r:
+        if x <= slot:
+            return nd
+    return r[0][1]
+
+keys = ['key' + str(i) for i in range(300)]
+r3 = ring(['n1', 'n2', 'n3'])
+r4 = ring(['n1', 'n2', 'n3', 'n4'])
+ring_moved = sum(owner(k, r3) != owner(k, r4) for k in keys)
+mod_moved = sum(h(k) % 3 != h(k) % 4 for k in keys)
+print('ring moved', ring_moved, 'of 300 =', round(ring_moved / 300, 3))
+print('modulo moved', mod_moved, 'of 300 =', round(mod_moved / 300, 3))
+print('quorum 2+2>3', 2 + 2 > 3)
 ```
 
-<OutputBox title='原理验证' output='distribution [111, 88, 101]\nbalanced True\nquorum R+W&gt;N True' />
+<OutputBox title='原理验证' output='ring moved 94 of 300 = 0.313\nmodulo moved 225 of 300 = 0.75\nquorum 2+2&gt;3 True' />
 
 <Term word='分片与路由' text='分片把键空间分布到多节点。取模 `hash(key) % N` 最简单，但节点数一变，绝大多数键的归属都改变，扩缩容要全量迁移；一致性哈希把节点映射成环上多个虚拟节点（vnode，生产常取 100 到 200 个），键按哈希顺时针落到遇到的第一个节点，增删节点只影响相邻区间，迁移量约 `1/N`，虚拟节点还能缓解数据倾…' />
 
@@ -144,11 +156,11 @@ print('quorum R+W>N', 2 + 2 > 3)
 
 把同样的网关能力用于 LLM 流式推理：`SSE` 属于 `text/event-stream`，帧以 `data:` 开头、空行分隔，用生成器逐块 `yield` 即可实现背压。
 
-长连接必须设四道闸：首 token 超时与总时长上限、Token 预算上限、并发连接上限、累计金额上限，否则一个慢流会拖空连接池、一次异常重试会吃掉整日预算。多供应商适配靠统一接口（请求 / 流式块 / 用量）挡在后面，重试只对幂等请求生效并带指数退避；每轮记录 `trace_id`、Token、耗时与工具名；
+长连接必须设四道闸：首 token 超时与总时长上限、Token 预算上限、并发连接上限、累计金额上限，否则一个慢流会拖空连接池、一次异常重试会吃掉整日预算。
 
-降级路径明确——超预算返回已生成部分加提示，而不是空响应。项目复盘用契约测试锁住四讲演进过程中命令语义不变：内存版、网络版、WAL 版、分片版都跑同一组断言；
+多供应商适配靠统一接口（请求 / 流式块 / 用量）挡在后面，重试只对幂等请求生效并带指数退避；每轮记录 `trace_id`、Token、耗时与工具名；降级路径明确——超预算返回已生成部分加提示，而不是空响应。
 
-把四讲的决定连成一条可复核的链——接口抽象定窄接口与契约测试、协议帧定消息边界与版本、WAL 定刷盘策略、分片与网关定 quorum 级别和超时阈值，每一条都写进 ADR 并标注代价与回退方案。
+项目复盘用契约测试锁住四讲演进过程中命令语义不变：内存版、网络版、WAL 版、分片版都跑同一组断言；把四讲的决定连成一条可复核的链——接口抽象定窄接口与契约测试、协议帧定消息边界与版本、WAL 定刷盘策略、分片与网关定 quorum 级别和超时阈值，每一条都写进 ADR 并标注代价与回退方案。
 
 **AI 网关与分布式失败模式**
 
@@ -200,16 +212,16 @@ print('timeout', gateway([(1, 'A'), (99, 'B')], budget=5, deadline=10))
 
 ## 演进过程中用契约测试与 ADR 锁住行为不变
 
-<CheckList id='P132b' title='上线前自检' :items='["能复现并解释「只做分片不做副本，节点故障造成永久丢数据」", "能复现并解释「流式接口不设超时与预算上限」", "能复现并解释「演进过程中没有契约测试与 ADR」", "能用一条命令验证 分片与路由", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P132a' title='上线前自检' :items='["能复现并解释「只做分片不做副本，节点故障造成永久丢数据」", "能复现并解释「流式接口不设超时与预算上限」", "能复现并解释「演进过程中没有契约测试与 ADR」", "能用一条命令验证 分片与路由", "关键路径有自动化测试与失败分支"]' />
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：只做分片不做副本，节点故障造成永久丢数据", "body": "每个键只有一个持有者，磁盘损坏或节点宕机即不可恢复", "tip": "每份数据写 N 个副本，W 个确认后应答，配故障转移选主与读修复"}, {"title": "第 2 步：流式接口不设超时与预算上限", "body": "慢流占住连接池、Agent 循环无上限重试会吃整日 Token 预算", "tip": "设首 token/总时长超时、Token 与金额累计上限、并发连接上限，超预算返回已生成部分"}, {"title": "第 3 步：演进过程中没有契约测试与 ADR", "body": "换实现时命令语义悄悄漂移，取舍的代价与回退没人记得", "tip": "四讲共用同一组契约测试，把分片迁移、quorum 级别、刷盘策略、超时阈值写成 ADR"}]' />
 
 
 ## 分片路由 + quorum + 流式预算的统一网关
 
-把最后一讲的两条线合到一个网关：数据面用 `md5` 选分片、`route` 在主副本宕机时自动切到存活副本、`quorum_ok` 判断剩余副本是否够 W；推理面用 `stream` 逐块产出并受 `deadline` 与 `token_budget` 双重约束，`cost` 据实际用量计费。
+把最后一讲的两条线合到一个网关：数据面用 `md5` 把节点铺成带虚拟节点的一致性哈希环，`replica_set` 按环序去重并旋转到主副本开头，`route` 沿这份副本顺序在主副本宕机时切到存活副本，`quorum_ok` 只数该键副本集里仍存活的节点、并按 `W + R > N` 判定写入能否达成；推理面用 `stream` 逐块产出并受 `deadline` 与 `token_budget` 双重约束，`cost` 据实际用量计费。
 
-这个结构同时覆盖「分片复制」与「AI 网关」两个议题：同一套路由、限流、可观测能力既能服务 KV，也能服务 LLM 流式推理。真实项目还要加心跳与租约、多数派选主防脑裂、多供应商统一接口、retry 幂等键与 `trace_id`，并把四讲的契约测试跑在分片版上验证命令语义不变。片段可直接运行，重点看故障转移与预算降级两条路径。
+这个结构同时覆盖「分片复制」与「AI 网关」两个议题：同一套路由、限流、可观测能力既能服务 KV，也能服务 LLM 流式推理。真实项目还要加心跳与租约、多数派选主防脑裂、多供应商统一接口、重试幂等键与 `trace_id`，并把四讲的契约测试跑在分片版上验证命令语义不变。片段可直接运行，重点看故障转移与预算降级两条路径。
 
 ```python
 import hashlib
@@ -218,23 +230,31 @@ def h(s):
     return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
 
 class Gateway:
-    def __init__(self, nodes, token_budget=100):
+    def __init__(self, nodes, replicas=3, token_budget=100, w=2, r=2):
         self.nodes = list(nodes)
         self.alive = set(nodes)
+        self.w, self.r = w, r
         self.budget = token_budget
         self.spent = 0
-    def shard(self, key):
-        return self.nodes[h(key) % len(self.nodes)]
+        self.ring = sorted((h(nd + '#' + str(i)), nd)
+                           for nd in self.nodes for i in range(replicas))
+    def replica_set(self, key):
+        order = []
+        for slot, nd in self.ring:
+            if nd not in order:
+                order.append(nd)
+        x = h(key)
+        primary = next((nd for slot, nd in self.ring if x <= slot), self.ring[0][1])
+        k = order.index(primary)
+        return order[k:] + order[:k]
     def route(self, key):
-        pref = self.shard(key)
-        if pref in self.alive:
-            return pref
-        for nd in self.nodes:
+        for nd in self.replica_set(key):
             if nd in self.alive:
                 return nd
         return None
-    def quorum_ok(self, w=2):
-        return len(self.alive) >= w
+    def quorum_ok(self, key):
+        live = sum(1 for nd in self.replica_set(key) if nd in self.alive)
+        return live >= self.w and self.w + self.r > len(self.replica_set(key))
     def stream(self, chunks, deadline):
         out = []
         for t, text in chunks:
@@ -247,9 +267,10 @@ class Gateway:
         return round(self.spent * price, 4)
 
 gw = Gateway(['n1', 'n2', 'n3'], token_budget=3)
-print('shard', gw.shard('user-42'))
-gw.alive.discard(gw.shard('user-42'))
-print('failover', gw.route('user-42'), 'quorum', gw.quorum_ok())
+key = 'user-42'
+print('replicas', gw.replica_set(key))
+gw.alive.discard(gw.replica_set(key)[0])
+print('failover', gw.route(key), 'quorum', gw.quorum_ok(key))
 print('stream', gw.stream([(1, 'A'), (2, 'B'), (3, 'C'), (4, 'D')], deadline=10))
 print('cost', gw.cost())
 ```
@@ -275,15 +296,41 @@ python -m compileall -q . && python -m pytest -q
 
 把 LLM 流式响应用 SSE 推给客户端，网关面对的是一条不会按时结束的长连接。
 
-SSE 的有线格式很朴素：Content-Type 为 text/event-stream，每个事件是 data 行加一个空行结束，可选 event、id、retry 字段，`HTTP`/1.1 用 Transfer-Encoding: chunked 分块下发，`HTTP`/2 则走 `DATA` 帧；
+SSE 的有线格式很朴素：Content-Type 为 text/event-stream，每个事件是 data 行加一个空行结束，可选 event、id、retry 字段，`HTTP/1.1` 用 Transfer-Encoding: chunked 分块下发，`HTTP/2` 则走 `DATA` 帧；中间若有代理缓冲或 Nagle 攒包，首 token 会被卡住，必须配 X-Accel-Buffering: no 与周期性心跳注释帧。
 
-中间若有代理缓冲或 Nagle 攒包，首 token 会被卡住，必须配 X-Accel-Buffering: no 与周期性心跳注释帧。
+网关内部真正的问题是背压：上游推理按 token 产出，客户端或网络慢时若用无界队列缓冲，一个慢消费者就能吃光内存，因此 asyncio 侧用 `asyncio.Queue(maxsize=N)`，满了就让 producer 在 await `queue.put()` 上挂起，把压力反向传到上游；队列大小与单连接内存上限要写进容量模型。
 
-网关内部真正的问题是背压：上游推理按 token 产出，客户端或网络慢时若用无界队列缓冲，一个慢消费者就能吃光内存，因此 asyncio 侧用 `asyncio.Queue(maxsize=N)`，满了就让 producer 在 await `queue.put()` 上挂起，把压力反向传到上游；
+客户端中途断开是常态而非异常：连接关闭要触发 CancelledError，网关必须 `cancel()` 上游推理任务并 await 它收尾，否则模型侧继续生成、继续计费，形成孤儿推理；清理段要用 `asyncio.shield` 加超时保护，避免取消链把关闭逻辑也打断。
 
-队列大小与单连接内存上限要写进容量模型。客户端中途断开是常态而非异常：连接关闭要触发 CancelledError，网关必须 `cancel()` 上游推理任务并 await 它收尾，否则模型侧继续生成、继续计费，形成孤儿推理；清理段要用 `asyncio.shield` 加超时保护，避免取消链把关闭逻辑也打断。
+再往上是一组四层超时：连接超时、首 token 超时（`TTFT`）、逐 token 的空闲超时与整条流的总时长上限，任何一层触发都返回已生成部分并把 `finish_reason` 标成 timeout。
 
-再往上是一组分层超时：连接超时、首 token 超时（`TTFT`）、逐 token 的空闲超时与整条流的总时长上限，任何一层触发都返回已生成部分并把 finish_reason 标成 timeout。
+
+### 客户端断连时的取消传播与孤儿推理清理
+
+**流式网关的分层约束与失效信号**
+
+| 层级 | 约束 / 字段 | 失效信号 | 处置 |
+| --- | --- | --- | --- |
+| 传输 | text/event-stream、chunked、心跳帧 | 首 token 迟迟不到 | 关代理缓冲、加心跳帧 |
+| 背压 | asyncio.Queue(maxsize) | 无界队列吃满内存 | producer 在 put 挂起反压 |
+| 断连 | cancel 加 await 上游任务 | 客户端走后仍在计费 | shield 包裹清理并限时 |
+| 四层超时 | connect / TTFT / idle / total | 慢流占住连接池 | 分级返回已生成部分 |
+| 预算 | 令牌桶加累计 Token 与金额上限 | Agent 循环吃尽日预算 | 超预算截断并标 finish_reason |
+
+<Quiz no='132-1' q='流式推理网关里，客户端中途断开后最容易被漏掉、且会直接造成成本损失的失效是？' :options='["没有 cancel 并 await 上游推理任务，模型继续生成形成孤儿推理", "没有把 Content-Type 设成 application/json", "没有给 SSE 事件加 id 字段", "没有用 HTTP/2 明文传输"]' answer="0" explain='连接关闭只影响客户端一侧，若网关不把 CancelledError 传播并取消上游任务，模型侧会继续吐 token 直到最大长度，既占连接又持续计费；清理段要用 shield 加超时，保证取消链不会把关闭逻辑也打断。' />
+
+
+## 四层超时、令牌桶限流与 Token 预算截断
+
+限流要同时挡住两个维度：请求速率与累计成本。速率用令牌桶而非固定窗口——桶以 rate 个 token 每秒补充、容量 capacity 决定允许的突发，窗口边界不会像固定计数那样出现临界点双倍流量，实现只需记录上次补充时间与余量，纯函数即可用虚拟时钟测试，不依赖真实 sleep。
+
+成本维度更关键：Agent 的一次工具循环可能反复调用模型，若只在单请求上设超时而不累计 Token 与金额，一日预算会在无人察觉时被长连接吃尽；网关要按租户维护累计计数，达到软阈值降速、达到硬阈值直接截断当前流并返回 `finish_reason=budget_exceeded` 与已生成部分。
+
+并发连接上限、每连接队列大小、单流最大 token 数共同构成准入控制，超限走 429 或降级到非流式摘要。
+
+收束处要把四讲的决定连成一条可复核的链：129 的窄接口与契约测试保证换实现不改命令语义，130 的协议帧与网络层、131 的 WAL 刷盘策略、132 的 quorum 级别与超时阈值全部写进 ADR 并标代价与回退，故障注入脚本随 CI 跑。
+
+能力图谱的终点不是会用多少框架，而是能否在信息不全时给出带假设、带可验证代价、带回退的方案。
 
 ```python
 class TokenBucket:
@@ -314,53 +361,68 @@ print('tokens_after', round(bucket.tokens, 2))
 
 <LineByLine code='class TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self.tokens = float(capacity)\n    def allow(self, cost=1.0):\n        if self.tokens &gt;= cost:\n            self.tokens -= cost\n            return True\n        return False\n    def advance(self, seconds):\n        self.tokens = min(self.capacity, self.tokens + self.rate * seconds)\n        return self.tokens\n\nbucket = TokenBucket(rate=10.0, capacity=5.0)\nresults = [bucket.allow() for _ in range(7)]\nprint(&#39;burst_accepted&#39;, sum(results))\nprint(&#39;tail_rejected&#39;, results[5:] == [False, False])\nrefilled = bucket.advance(0.3)\nprint(&#39;refilled_tokens&#39;, round(refilled, 2))\nprint(&#39;allow_after_refill&#39;, bucket.allow())\nprint(&#39;tokens_after&#39;, round(bucket.tokens, 2))' :notes='["令牌桶：rate 是补充速率，capacity 是突发容量，初始满额", "推进虚拟时钟按 rate 补充但不超过容量", "容量内突发只放行前 5 个请求", "第 6、7 个被拒", "0.3 秒补 3 个令牌", "补后放行一个，剩余令牌降到 2.0", "这一行 `if self.tokens &gt;= cost:` 的作用，可对照上方输出逐项核对。", "这一行 `self.tokens -= cost` 的作用，可对照上方输出逐项核对。", "这一行 `return True` 的作用，可对照上方输出逐项核对。", "这一行 `return False` 的作用，可对照上方输出逐项核对。", "这一行 `def advance(self, seconds):` 的作用，可对照上方输出逐项核对。", "这一行 `self.tokens = min(self.capacity, self.tokens + self.` 的作用，可对照上方输出逐项核对。", "这一行 `return self.tokens` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `bucket = TokenBucket(rate=10.0, capacity=5.0)` 的作用，可对照上方输出逐项核对。", "这一行 `results = [bucket.allow() for _ in range(7)]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;burst_accepted&#39;, sum(results))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tail_rejected&#39;, results[5:] == [False, False]` 的作用，可对照上方输出逐项核对。", "这一行 `refilled = bucket.advance(0.3)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;refilled_tokens&#39;, round(refilled, 2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;allow_after_refill&#39;, bucket.allow())` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tokens_after&#39;, round(bucket.tokens, 2))` 的作用，可对照上方输出逐项核对。"]' title='扩展示例逐行讲解' />
 
-
-### 客户端断连时的取消传播与孤儿推理清理
-
-**流式网关的分层约束与失效信号**
-
-| 层级 | 约束 / 字段 | 失效信号 | 处置 |
-| --- | --- | --- | --- |
-| 传输 | text/event-stream、chunked、心跳帧 | 首 token 迟迟不到 | 关代理缓冲、加心跳帧 |
-| 背压 | asyncio.Queue(maxsize) | 无界队列吃满内存 | producer 在 put 挂起反压 |
-| 断连 | cancel 加 await 上游任务 | 客户端走后仍在计费 | shield 包裹清理并限时 |
-| 超时 | connect / TTFT / idle / total | 慢流占住连接池 | 分级返回已生成部分 |
-| 预算 | 令牌桶加累计 Token 与金额上限 | Agent 循环吃尽日预算 | 超预算截断并标 finish_reason |
-
-
-## 三级超时、令牌桶限流与 Token 预算截断
-
-限流要同时挡住两个维度：请求速率与累计成本。速率用令牌桶而非固定窗口——桶以 rate 个 token 每秒补充、容量 capacity 决定允许的突发，窗口边界不会像固定计数那样出现临界点双倍流量，实现只需记录上次补充时间与余量，纯函数即可用虚拟时钟测试，不依赖真实 sleep。
-
-成本维度更关键：Agent 的一次工具循环可能反复调用模型，若只在单请求上设超时而不累计 Token 与金额，一日预算会在无人察觉时被长连接吃尽；
-
-网关要按租户维护累计计数，达到软阈值降速、达到硬阈值直接截断当前流并返回 `finish_reason=budget_exceeded` 与已生成部分。
-
-并发连接上限、每连接队列大小、单流最大 token 数共同构成准入控制，超限走 429 或降级到非流式摘要。
-
-收束处要把四讲的决定连成一条可复核的链：129 的窄接口与契约测试保证换实现不改命令语义，130 的协议帧与网络层、131 的 WAL 刷盘策略、132 的 quorum 级别与超时阈值全部写进 ADR 并标代价与回退，故障注入脚本随 CI 跑。
-
-能力图谱的终点不是会用多少框架，而是能否在信息不全时给出带假设、带可验证代价、带回退的方案。
+<Exercise title='用虚拟时钟验证令牌桶的突发与补充' task='实现一个不依赖真实时间的令牌桶，构造容量内突发全部放行、超出被拒、推进 0.3 秒后按 rate 补充再放行的用例并打印结果；说明为什么固定窗口计数在窗口临界点会放行双倍流量。' solution='class TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate, self.capacity = rate, capacity\n        self.tokens = float(capacity)\n    def allow(self, cost=1.0):\n        if self.tokens &gt;= cost:\n            self.tokens -= cost\n            return True\n        return False\n    def advance(self, seconds):\n        self.tokens = min(self.capacity, self.tokens + self.rate * seconds)\n\nb = TokenBucket(10.0, 5.0)\nburst = [b.allow() for _ in range(7)]\nprint(&#39;burst_accepted&#39;, sum(burst))\nb.advance(0.3)\nprint(&#39;tokens_after_0_3s&#39;, round(b.tokens, 2))\nprint(&#39;allow_after_refill&#39;, b.allow())\nprint(&#39;tokens_final&#39;, round(b.tokens, 2))' explain='令牌桶按 rate 连续补充、容量 cap 限制突发，5 个令牌一次放行 5 个请求后其余被拒；推进 0.3 秒补 3 个，再放行一个。固定窗口按整段计数，窗口切换瞬间前后各能放行一整窗配额，临界点出现双倍流量，令牌桶没有这个边界。' />
 
 
 ### TTFT 与 TPOT：流式网关该盯哪两个分位数
 
-<Quiz no='132-1' q='流式推理网关里，客户端中途断开后最容易被漏掉、且会直接造成成本损失的失效是？' :options='["没有 cancel 并 await 上游推理任务，模型继续生成形成孤儿推理", "没有把 Content-Type 设成 application/json", "没有给 SSE 事件加 id 字段", "没有用 HTTP/2 明文传输"]' answer="0" explain='连接关闭只影响客户端一侧，若网关不把 CancelledError 传播并取消上游任务，模型侧会继续吐 token 直到最大长度，既占连接又持续计费；清理段要用 shield 加超时，保证取消链不会把关闭逻辑也打断。' />
+<Term word='TTFT 与 TPOT' text='TTFT（Time To First Token）是请求发出到吐出第一个 token 的等待，主要由排队、prefill 计算与首包网络决定，直接对应用户感知的「卡不卡」；TPOT（Time Per Output Token）是首 token 之后相邻两个 token 的平均间隔，衡量 decode 阶段的吐字速度。两者必须分开盯 p50 与 p99：只优化 TTFT 会让排队改善掩盖解码变慢，只看平均吐字速率则会放过首包长尾。流式网关的四层超时正好覆盖这两段：首 token 超时对应 TTFT，逐 token 的空闲超时对应 TPOT，连接超时与总时长上限分别兜住建连失败与极长生成。把这两个分位数写进 SLO 与告警，才能在供应商变慢时定位问题落在排队、prefill 还是 decode。' />
 
 
 ### 连接池耗尽与慢流占位的失效信号
 
-<ConceptDiagram type='flow4' title='第 132 讲 · 扩展图解' labels='SSE 帧与 chunked|Queue(maxsize) 背压|四级超时加断连取消|令牌桶加 Token 预算' caption='流式网关四道闸：从传输帧到背压、生命周期、成本，任何一道缺失都会被长连接放大' />
+<ConceptDiagram type='flow4' title='第 132 讲 · 扩展图解' labels='SSE 帧与 chunked|Queue(maxsize) 背压|四层超时加断连取消|令牌桶加 Token 预算' caption='流式网关四道闸：从传输帧到背压、生命周期、成本，任何一道缺失都会被长连接放大' />
 
 
 ## 四讲收束：契约测试、ADR 与能力图谱
 
-<Exercise title='用虚拟时钟验证令牌桶的突发与补充' task='实现一个不依赖真实时间的令牌桶，构造容量内突发全部放行、超出被拒、推进 0.3 秒后按 rate 补充再放行的用例并打印结果；说明为什么固定窗口计数在窗口临界点会放行双倍流量。' solution='class TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate, self.capacity = rate, capacity\n        self.tokens = float(capacity)\n    def allow(self, cost=1.0):\n        if self.tokens &gt;= cost:\n            self.tokens -= cost\n            return True\n        return False\n    def advance(self, seconds):\n        self.tokens = min(self.capacity, self.tokens + self.rate * seconds)\n\nb = TokenBucket(10.0, 5.0)\nburst = [b.allow() for _ in range(7)]\nprint(&#39;burst_accepted&#39;, sum(burst))\nb.advance(0.3)\nprint(&#39;tokens_after_0_3s&#39;, round(b.tokens, 2))\nprint(&#39;allow_after_refill&#39;, b.allow())\nprint(&#39;tokens_final&#39;, round(b.tokens, 2))' explain='令牌桶按 rate 连续补充、容量 cap 限制突发，5 个令牌一次放行 5 个请求后其余被拒；推进 0.3 秒补 3 个，再放行一个。固定窗口按整段计数，窗口切换瞬间前后各能放行一整窗配额，临界点出现双倍流量，令牌桶没有这个边界。' />
+四讲走完，收束靠两件可核对的东西：一组对内存版、网络版、WAL 版、分片版都成立的契约断言，锁住命令语义在替换实现时不变；以及一份把每个决定的代价与回退写清楚的架构决策记录（ADR），让取舍可复盘。能力图谱的终点不是会用多少框架，而是能否在约束不全时给出带假设、可验证、可回退的方案。
+
+下面用标准库把这两件事落成一个最小骨架：契约函数对每个实现跑同一组写入、读取、删除断言，决策记录固定编号、决定、代价与回退四个字段，CI 里断言每条记录都填了回退路径。
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ADR:
+    num: int
+    decision: str
+    cost: str
+    rollback: str
+
+ADRS = [
+    ADR(129, '窄接口 + 契约测试', '多一层抽象', '退回直连 dict 并保留断言'),
+    ADR(130, '长度前缀帧 + 版本协商', '每帧多 4 字节', '双协议并存窗口'),
+    ADR(131, 'WAL 刷盘 everysec', '断电最多丢一秒', '显式切 always / never'),
+    ADR(132, '一致性哈希 + quorum 多数派', '写需多数派确认', '降级为单主读'),
+]
+
+class MemoryEngine:
+    def __init__(self):
+        self.d = {}
+    def set(self, k, v, ttl=0):
+        self.d[k] = v
+    def get(self, k):
+        return self.d.get(k)
+    def delete(self, k):
+        self.d.pop(k, None)
+
+def contract(engine):
+    engine.set('k', 'v')
+    assert engine.get('k') == 'v'
+    engine.delete('k')
+    assert engine.get('k') is None
+    return True
+
+ok = all(contract(impl()) for impl in (MemoryEngine,))
+print('contract_ok', ok, 'adrs', len(ADRS),
+      'all_have_rollback', all(a.rollback for a in ADRS))
+```
 
 
 ## 从练习到能力图谱：自测与速记
 
-<Exercise title='基础：实现一致性哈希环并观察故障转移' task='用 md5 把三个节点各映射 3 个虚拟节点构成有序环，写 primary(key) 与 route(key, alive)，移除主副本后打印新路由。' solution='import hashlib\ndef h(s): return int(hashlib.md5(s.encode()).hexdigest()[:8],16)\nring=sorted((h(n+&#39;#&#39;+str(i)),n) for n in [&#39;n1&#39;,&#39;n2&#39;,&#39;n3&#39;] for i in range(3))\ndef primary(k):\n    x=h(k)\n    for s,n in ring:\n        if x&lt;=s: return n\n    return ring[0][1]\nalive={&#39;n1&#39;,&#39;n2&#39;,&#39;n3&#39;}\np=primary(&#39;a&#39;)\nprint(&#39;primary&#39;,p)\nalive.discard(p)\nprint(&#39;failover&#39;,next(n for s,n in ring if n in alive))' explain='输出主副本与移除后的下一个存活节点。增删节点只影响相邻区间，是一致性哈希相比取模的核心优势。' />
+<Exercise title='基础：实现一致性哈希环并观察故障转移' task='用 md5 把三个节点各映射 3 个虚拟节点构成有序环，写 replica_set(key) 与 route(key, alive)，移除主副本后打印按副本顺序故障转移的新路由。' solution='import hashlib\ndef h(s): return int(hashlib.md5(s.encode()).hexdigest()[:8],16)\nring=sorted((h(n+&#39;#&#39;+str(i)),n) for n in [&#39;n1&#39;,&#39;n2&#39;,&#39;n3&#39;] for i in range(3))\ndef replica_set(k):\n    order=[]\n    for s,n in ring:\n        if n not in order: order.append(n)\n    x=h(k)\n    p=next((n for s,n in ring if x&lt;=s), ring[0][1])\n    i=order.index(p)\n    return order[i:]+order[:i]\ndef route(k,alive):\n    for n in replica_set(k):\n        if n in alive: return n\n    return None\nalive={&#39;n1&#39;,&#39;n2&#39;,&#39;n3&#39;}\nrs=replica_set(&#39;a&#39;)\nprint(&#39;primary&#39;,rs[0])\nalive.discard(rs[0])\nprint(&#39;failover&#39;,route(&#39;a&#39;,alive))' explain='把环上去重后的副本顺序旋转到主副本开头，故障转移沿这份副本顺序找下一个存活节点，而不是在环上任意取一个存活节点；增删节点只影响相邻区间，是一致性哈希相比取模的核心优势。' />
 
 <Exercise title='进阶：给流式网关加超时与 Token 预算' task='写 gateway(chunks, budget, deadline)，逐块检查时间戳与累计用量，超限时返回已生成部分加降级标记，验证正常、超预算、超时三种情况。' solution='def gw(chunks,budget,deadline):\n    out,used=[],0\n    for t,x in chunks:\n        if t&gt;deadline: return out,&#39;timeout&#39;\n        if used&gt;=budget: return out,&#39;budget&#39;\n        out.append(x); used+=1\n    return out,&#39;ok&#39;\nc=[(1,&#39;A&#39;),(2,&#39;B&#39;),(3,&#39;C&#39;)]\nprint(gw(c,5,10))\nprint(gw(c,2,10))\nprint(gw([(1,&#39;A&#39;),(99,&#39;B&#39;)],5,10))' explain='依次输出 ([&#39;A&#39;,&#39;B&#39;,&#39;C&#39;],&#39;ok&#39;)、([&#39;A&#39;,&#39;B&#39;],&#39;budget&#39;)、([&#39;A&#39;],&#39;timeout&#39;)。超时与预算把不确定的长尾关进有限边界，是流式接口的硬性约束。' />
 

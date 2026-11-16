@@ -31,10 +31,6 @@ print('decimal', Decimal('0.1') + Decimal('0.2'))
 print('decimal_eq', Decimal('0.1') + Decimal('0.2') == Decimal('0.3'))
 print('fraction', Fraction(1, 3) + Fraction(1, 6))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # big_digits 31
@@ -52,10 +48,6 @@ print('shift', 1 << 10)
 print('bitand', 0b1100 & 0b1010)
 print('complex', 3 + 4j, abs(3 + 4j))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # float_hex 3fb999999999999a
@@ -70,10 +62,6 @@ print('int_grows', sys.getsizeof(2 ** 100) > sys.getsizeof(0))
 print('isclose_default', math.isclose(1.0, 1.0 + 1e-10))
 print('isclose_tight', math.isclose(1.0, 1.0 + 1e-3, rel_tol=1e-9))
 print('float_radix', sys.float_info.radix)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

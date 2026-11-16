@@ -50,10 +50,6 @@ print('moved', moved)
 print('ratio', round(moved / len(keys), 3))
 print('ideal', round(1 / 4, 3))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # id 7130316800000020481
@@ -72,10 +68,6 @@ print('ts_back', sid >> 22)
 print('worker', (sid >> 12) & 0x3FF)
 print('seq', sid & 0xFFF)
 print('bits', sid.bit_length())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -96,10 +88,6 @@ g = Gen()
 print(g.next(1000))
 print(g.next(999))
 print(g.next(1001))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

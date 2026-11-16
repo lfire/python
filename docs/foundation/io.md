@@ -14,9 +14,9 @@ description: 完成程序与外界的第一批数据交换
 
 ## 同一份代码在 Windows 与 Linux 读出不同中文
 
-一个导出脚本在 macOS 上跑得好好的，迁到 Windows 容器后读出的中文配置全乱——代码里是 `open(path)`，没写 `encoding`，两边平台的默认编码不一样。另一处把调试信息全用 `print` 打到 `stdout`，下游用管道接这个脚本时，日志和真正的 `CSV` 数据混在一起，解析直接崩；
+一个导出脚本在 macOS 上跑得好好的，迁到 Windows 容器后读出的中文配置全乱——代码里是 `open(path)`，没写 `encoding`，两边平台的默认编码不一样。
 
-还有人用 `f.read()` 一次把几百 MB 的日志读进内存，容器 `OOM` 被杀。
+另一处把调试信息全用 `print` 打到 `stdout`，下游用管道接这个脚本时，日志和真正的 `CSV` 数据混在一起，解析直接崩；还有人用 `f.read()` 一次把几百 MB 的日志读进内存，容器 `OOM` 被杀。
 
 更隐蔽的是异常路径：文件打开后处理到一半抛错，没关的文件描述符一直占着，跑久了报 `too many open files`。
 
@@ -90,13 +90,11 @@ print('cleaned', not pathlib.Path(d).exists())
 
 `newline` 控制换行转换（默认值把各类换行统一成 `chr(10)`），读带 BOM 的文件用 `encoding='utf-8-sig'`。
 
-路径拼接交给 `pathlib`：`Path(base)` 用斜杠运算符连上子目录与文件名，能跨平台生成正确的分隔符；
+路径拼接交给 `pathlib`：`Path(base)` 用斜杠运算符连上子目录与文件名，能跨平台生成正确的分隔符；`Path.read_text(encoding='utf-8')`、`write_text`、`exists`、`name`、`stem`、`suffix`、`glob` 都比手写 `os.path` 好读。
 
-`Path.read_text(encoding='utf-8')`、`write_text`、`exists`、`name`、`stem`、`suffix`、`glob` 都比手写 `os.path` 好读。
+`Path` 不会自动建父目录，要先调 `Path.mkdir`，并把 `parents=True`、`exist_ok=True` 传上。
 
-`Path` 不会自动建父目录，要先调 `Path.mkdir`，并把 `parents=True`、`exist_ok=True` 传上。文件对象本身可迭代，逐行 `for line in f` 内存恒定，绝不要用 `f.read()` 把大文件全量载入；
-
-读进来的行末尾带换行符，用 `splitlines()` 或 `rstrip` 处理。
+文件对象本身可迭代，逐行 `for line in f` 内存恒定，绝不要用 `f.read()` 把大文件全量载入；读进来的行末尾带换行符，用 `splitlines()` 或 `rstrip` 处理。
 
 
 ### 带 BOM 的文件为什么要用 utf-8-sig
@@ -122,28 +120,22 @@ python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"
 
 ## with 与上下文协议：异常路径也保证关闭
 
-`with` 表达式 `as` 变量并不是语法糖，而是把 `try/finally` 固化进协议：进入时调对象的 `__enter__` 并把返回值绑给 `as` 变量，退出时无论正常、`return`、还是抛异常，都保证调 `__exit__(exc_type, exc, tb)`；
+`with` 表达式 `as` 变量并不是语法糖，而是把 `try/finally` 固化进协议：进入时调对象的 `__enter__` 并把返回值绑给 `as` 变量，退出时无论正常、`return`、还是抛异常，都保证调 `__exit__(exc_type, exc, tb)`；`__exit__` 返回 `True` 会抑制异常，返回 `False` 或 `None` 则异常继续向外传播。
 
-`__exit__` 返回 `True` 会抑制异常，返回 `False` 或 `None` 则异常继续向外传播。文件对象的 `__exit__` 会 `flush` 并关闭文件描述符，所以即便处理到一半抛错也不泄漏句柄——这正是手写 `try/finally` 容易漏掉分支的地方。
+文件对象的 `__exit__` 会 `flush` 并关闭文件描述符，所以即便处理到一半抛错也不泄漏句柄——这正是手写 `try/finally` 容易漏掉分支的地方。
 
-`contextlib` 备了一批现成上下文：`redirect_stdout(buf)` 临时换 `sys.stdout`、`suppress(FileNotFoundError)` 吞掉指定异常、`ExitStack` 动态管理多个资源；
+`contextlib` 备了一批现成上下文：`redirect_stdout(buf)` 临时换 `sys.stdout`、`suppress(FileNotFoundError)` 吞掉指定异常、`ExitStack` 动态管理多个资源；用 `@contextmanager` 装饰一个含 `yield` 的生成器函数就能自定义上下文，`yield` 之前的逻辑进 `__enter__`、之后放在 `finally` 里的逻辑进 `__exit__`。
 
-用 `@contextmanager` 装饰一个含 `yield` 的生成器函数就能自定义上下文，`yield` 之前的逻辑进 `__enter__`、之后放在 `finally` 里的逻辑进 `__exit__`。
+多个资源也能写在同一行 `with` 里，比如把 `open(a)` 与 `open(b)` 各绑一个名字，退出时按进入的逆序依次关闭。
 
-多个资源也能写在同一行 `with` 里，比如把 `open(a)` 与 `open(b)` 各绑一个名字，退出时按进入的逆序依次关闭。`input(prompt)` 从 `stdin` 读一行并去掉末尾换行、始终返回 `str`，要数字得显式 `int()` 并捕获 `ValueError`；
-
-它只适合交互脚本，服务里应改从参数、配置或标准输入流读，免得阻塞。
+`input(prompt)` 从 `stdin` 读一行并去掉末尾换行、始终返回 `str`，要数字得显式 `int()` 并捕获 `ValueError`；它只适合交互脚本，服务里应改从参数、配置或标准输入流读，免得阻塞。
 
 
 ## __enter__ / __exit__ 与文件描述符的底层
 
-`print` 在 C 层把每个对象转成 `str` 写进 `file` 的 `write` 方法，`sep` 与 `end` 只是两次额外的写调用；
+`print` 在 C 层把每个对象转成 `str` 写进 `file` 的 `write` 方法，`sep` 与 `end` 只是两次额外的写调用；`file` 缺省 `sys.stdout`，它是一个 `TextIOWrapper`，负责按自身 `encoding` 把 `str` 编码成字节再交给 `BufferedWriter`，所以输出乱码或编码错误多半出在这一层，而非 `print` 本身。
 
-`file` 缺省 `sys.stdout`，它是一个 `TextIOWrapper`，负责按自身 `encoding` 把 `str` 编码成字节再交给 `BufferedWriter`，所以输出乱码或编码错误多半出在这一层，而非 `print` 本身。
-
-`open` 返回的 `TextIOWrapper` 内部包了 `IncrementalDecoder`，逐块把字节解码成 `str`；
-
-`for line in f` 由它的 `__next__` 每次读到换行符为止，内存只随单行长度变化，而 `read()` 会一次性申请整块缓冲。
+`open` 返回的 `TextIOWrapper` 内部包了 `IncrementalDecoder`，逐块把字节解码成 `str`；`for line in f` 由它的 `__next__` 每次读到换行符为止，内存只随单行长度变化，而 `read()` 会一次性申请整块缓冲。
 
 `with` 编译成带 `finally` 语义的指令：进入时把 `__exit__` 压入退出栈、调 `__enter__`，退出时无论正常还是异常都取出 `__exit__` 并把异常三元组传进去；`__exit__` 返回真值则由解释器清除当前异常。
 

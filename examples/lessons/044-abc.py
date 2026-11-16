@@ -46,10 +46,6 @@ print('protocol isinstance', isinstance(Duck(), HasRead))
 Reader.register(Duck)
 print('registered', isinstance(Duck(), Reader), 'has read:', hasattr(Duck(), 'read'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # registered subclass: True
@@ -69,10 +65,6 @@ try:
     NoMethods().read()
 except AttributeError as e:
     print(type(e).__name__, 'no real method')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -102,10 +94,6 @@ try:
 except TypeError:
     print('TypeError needs runtime_checkable')
 print('is_protocol:', PlainProtocol._is_protocol)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

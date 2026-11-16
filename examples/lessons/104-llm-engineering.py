@@ -16,7 +16,7 @@ GitHub：  https://github.com/lfire/python/blob/main/examples/lessons/104-llm-en
 # used 40 blocks 2
 # ['A-1', 'A-2']
 
-from collections import Counter
+import collections
 
 DOCS = [
     ('A-1', '型号 A100 支持 8 路输入，质保三年'),
@@ -44,16 +44,13 @@ picked, used = retrieve('A100 质保', k=3)
 print('used', used, 'blocks', len(picked))
 print([doc_id for doc_id, _ in picked])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 资料：型号 B200 支持 4 路输入，质保一年 | 型号 A100 支持 8 路输入，质保三年...[截断]
 # 问题：B200 质保多久？
 # 仅依据资料回答，无依据则回答未找到。
 
+# 承接主示例：DOCS、tokens()、retrieve() 已在上方定义，本片段需与主示例一同运行。
 def assemble(picked, question, max_ctx=60):
     head = '资料：' + ' | '.join(t for _, t in picked)
     if len(head) > max_ctx:
@@ -63,10 +60,6 @@ def assemble(picked, question, max_ctx=60):
 
 blocks, _ = retrieve('B200 质保', k=3, budget=40)
 print(assemble(blocks, 'B200 质保多久？'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -81,10 +74,6 @@ def cost(prompt_tokens, output_tokens, price_in=0.002, price_out=0.008):
 for n in (2000, 8000, 32000):
     print(n, 'prompt tokens ->', cost(n, 500), 'USD per call')
 print('10000 calls @8k ->', cost(8000, 500) * 10000, 'USD')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

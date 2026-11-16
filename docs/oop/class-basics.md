@@ -16,13 +16,11 @@ description: 建立对象创建与属性存储的准确模型
 
 一个购物车类把 `items` 写成类属性 `items = []`，实例化两个购物车后往第一个加商品，第二个也凭空多出同样的商品——所有实例共享了同一份列表。
 
-排查时还发现 `__init__` 里写 `return self.items` 会抛 `TypeError: __ini…`；
+排查时还发现 `__init__` 里写 `return self.items` 会抛 `TypeError: __ini…`；有人一直以为 `__init__` 是构造函数，其实对象早在 `__new__` 里就造好了。
 
-```python
+```text
 TypeError: __init__() should return None, not 'list'
 ```
-
-有人一直以为 `__init__` 是构造函数，其实对象早在 `__new__` 里就造好了。
 
 另一个疑惑是方法定义写成 `def add(self, item)`，调用却只写 `cart.add(item)`，`self` 到底从哪来。
 
@@ -44,23 +42,16 @@ TypeError: __init__() should return None, not 'list'
 
 ## __new__ 与 __init__ 的分工
 
-真正创建实例的是 `__new__`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；
+真正创建实例的是 `__new__`，它被 Python 自动当作静态方法处理，返回一个实例（通常由 `object.__new__(cls)` 分配内存）；`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`，返回其它值会抛 `TypeError: __ini…`。
 
 ```python
 __new__(cls, *args, **kwargs)
-```
-
-`__init__(self, ...)` 只负责初始化这个已存在的实例，必须返回 `None`，返回其它值会抛 `TypeError: __ini…`。
-
-```python
 TypeError: __init__() should return None, not 'list'
 ```
 
-调用 `C()` 的完整链路是 `type.__call__` 先调 `C.__new__(C)`、确认返回值是 `C`（或其子类）的实例后再自动调 `C.__init__(obj, ...)`、最后把 `obj` 返回给调用方；
+调用 `C()` 的完整链路是 `type.__call__` 先调 `C.__new__(C)`、确认返回值是 `C`（或其子类）的实例后再自动调 `C.__init__(obj, ...)`、最后把 `obj` 返回给调用方；若 `__new__` 返回的不是当前类的实例，`__init__` 根本不会被调用，这一特性常用于单例、对象池或返回子类实例。
 
-若 `__new__` 返回的不是当前类的实例，`__init__` 根本不会被调用，这一特性常用于单例、对象池或返回子类实例。`__new__` 的典型用途还有给 `int`、`tuple` 这类不可变类型在创建时定值（继承它们时，值必须在 `__new__` 阶段确定），普通类几乎不需要重写它。
-
-`self` 只是约定名，本质是 `__init__` 收到的实例引用，写成 `this` 语法上合法但不合约定，也会让读代码的人困惑。
+`__new__` 的典型用途还有给 `int`、`tuple` 这类不可变类型在创建时定值（继承它们时，值必须在 `__new__` 阶段确定），普通类几乎不需要重写它。`self` 只是约定名，本质是 `__init__` 收到的实例引用，写成 `this` 语法上合法但不合约定，也会让读代码的人困惑。
 
 ```python
 class Cart:
@@ -106,15 +97,13 @@ print(vars(a))
 
 ## 实例字典、类属性与方法绑定
 
-实例属性默认存 `instance.__dict__`（一张 `dict`），类属性存 `Class.__dict__`（`mappingproxy`，不能像普通 `dict` 那样直接赋值修改）；
+实例属性默认存 `instance.__dict__`（一张 `dict`），类属性存 `Class.__dict__`（`mappingproxy`，不能像普通 `dict` 那样直接赋值修改）；`vars(obj)` 等价于 `obj.__dict__`。
 
-`vars(obj)` 等价于 `obj.__dict__`。属性查找先查实例 `__dict__`、再查类 `__dict__`、再沿 MRO 查基类，所以实例字典里的同名键会遮蔽类属性（对非数据描述符而言）。
+属性查找先查实例 `__dict__`、再查类 `__dict__`、再沿 MRO 查基类，所以实例字典里的同名键会遮蔽类属性（对非数据描述符而言）。
 
 把所有状态放成可变类属性（`list`、`dict`）时，所有实例通过查找链看到的是同一个对象，一处 `append` 影响全部实例，这正是购物车串数据的根因；每个实例独立的状态必须放进 `__init__` 里的 `self.x = []`。
 
-方法能自动收到 `self`，根本原因是类里的 `function` 对象是非数据描述符、实现了 `__get__`：`obj.method` 访问时触发 `__get__(obj, type(obj))`，生成一个 bound method（`types.MethodType`）把 `obj` 固定为第一个参数，于是 `cart.add(item)` 实际调用的是 `C.add(cart, item)`；
-
-而 `Class.method` 触发 `__get__(None, C)` 返回原函数，需要显式传 `self`。
+方法能自动收到 `self`，根本原因是类里的 `function` 对象是非数据描述符、实现了 `__get__`：`obj.method` 访问时触发 `__get__(obj, type(obj))`，生成一个 bound method（`types.MethodType`）把 `obj` 固定为第一个参数，于是 `cart.add(item)` 实际调用的是 `C.add(cart, item)`；而 `Class.method` 触发 `__get__(None, C)` 返回原函数，需要显式传 `self`。
 
 可以用 `obj.method.__self__ is obj` 与 `obj.method.__fun…` 验证。
 
@@ -152,17 +141,15 @@ print('LOAD_FAST' in ops or 'LOAD_FAST_LOAD_FAST' in ops)
 
 `C()` 的入口是元类 `type.__call__`：它先调用 `C.__new__(C, ...)` 分配一个实例，只有返回值确实是 `C`（或其子类）的实例时才继续调用 `C.__init__(obj, ...)`，最后把 `obj` 返回给调用方。
 
-这也解释了为什么 `__init__` 必须返回 `None`——它的返回值会被 `type.__call__` 丢弃，返回任何别的东西都会触发 `TypeError`。实例属性默认存在 `obj.__dict__` 这张哈希表里，类属性存在类对象的 `__dict__`（`mappingproxy`）里；
+这也解释了为什么 `__init__` 必须返回 `None`——它的返回值会被 `type.__call__` 丢弃，返回任何别的东西都会触发 `TypeError`。
 
-属性查找先查实例字典、再查类字典、再沿 MRO 查基类，所以可变类属性会被所有实例共享。
+实例属性默认存在 `obj.__dict__` 这张哈希表里，类属性存在类对象的 `__dict__`（`mappingproxy`）里；属性查找先查实例字典、再查类字典、再沿 MRO 查基类，所以可变类属性会被所有实例共享。
 
-方法能自动收到 `self`，根本原因是 `function` 对象实现了描述符协议 `__get__`：`obj.m` 触发 `function.__get__`，返回一个把 `obj` 绑定为第一个参数的 `MethodType`；
+方法能自动收到 `self`，根本原因是 `function` 对象实现了描述符协议 `__get__`：`obj.m` 触发 `function.__get__`，返回一个把 `obj` 绑定为第一个参数的 `MethodType`；`C.m` 触发 `__get__(None, C)` 则原样返回函数。
 
 ```python
 function.__get__(obj, type(obj))
 ```
-
-`C.m` 触发 `__get__(None, C)` 则原样返回函数。
 
 `__slots__` 把实例字典替换成一组固定偏移的槽描述符，槽本身是数据描述符，既省掉每张哈希表的内存，也把可赋属性名限制在声明集合内，代价是失去 `__dict__` 与依赖它的机制。
 
@@ -173,13 +160,9 @@ function.__get__(obj, type(obj))
 
 ## __slots__、dataclass 与属性边界
 
-`__slots__ = ('x', 'y')` 让类不再为实例分配 `__dict__` 与 `__weakref__`，改用固定偏移的槽（槽本身是数据描述符），既显著省内存，也把能赋的属性名限制在声明集合内；
+`__slots__ = ('x', 'y')` 让类不再为实例分配 `__dict__` 与 `__weakref__`，改用固定偏移的槽（槽本身是数据描述符），既显著省内存，也把能赋的属性名限制在声明集合内；给未声明的名字赋值抛 `AttributeError`，若确实需要动态属性，可在 slots 里显式加 `'__dict__'`。
 
-给未声明的名字赋值抛 `AttributeError`，若确实需要动态属性，可在 slots 里显式加 `'__dict__'`。
-
-代价是失去实例字典，因此 `cached_property`（第 034 讲）这类依赖 `__dict__` 的机制不可用；
-
-子类若不写自己的 `__slots__`，仍会生成 `__dict__`，父类的省内存效果被抵消。
+代价是失去实例字典，因此 `cached_property`（第 034 讲）这类依赖 `__dict__` 的机制不可用；子类若不写自己的 `__slots__`，仍会生成 `__dict__`，父类的省内存效果被抵消。
 
 `dataclass`（PEP 557，3.7+）按类级注解自动生成 `__init__`、`__repr__`、`__eq__`，字段集合自文档化，配合 `frozen=True` 生成不可变对象、`slots=True`（3.10+）自动生成 `__slots__`。
 

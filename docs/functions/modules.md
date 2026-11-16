@@ -23,7 +23,7 @@ partially initialized module
 most likely due to a circular import
 ```
 
-有人图省事，在每个函数里到处重复导入，或往 `sys.path` 里乱塞路径，反而制造出同一模块被加载两份的新问题。
+有人图省事，在每个函数里到处重复导入，把同一段 `import` 抄得到处都是；真正让同一模块被加载两份的，是随手往 `sys.path` 里乱塞路径、或包内混用绝对与相对导入，使同一个文件以两个不同的模块名各被导入一次。
 
 本讲把 `import` 的真实流程讲清楚：`sys.modules` 缓存、`finder` 与 `loader` 的分工、搜索路径、`__init__` 与 `__all__`、命名空间包，以及循环导入的成因和四种根治办法。
 
@@ -32,9 +32,7 @@ most likely due to a circular import
 
 ## import 的执行链路与模块单例
 
-`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；
-
-未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`、`PathFinder`），`PathFinder` 沿 `sys.path` 搜索，loader 创建 module 对象、执行顶层代码，再存回 `sys.modules`。
+`import X` 先查 `sys.modules`（一张以完整模块名为键的 dict），命中就直接返回同一个 module 对象；未命中才交给 `sys.meta_path` 里的 finder 依次尝试（`BuiltinImporter`、`FrozenImporter`、`PathFinder`），`PathFinder` 沿 `sys.path` 搜索，loader 创建 module 对象、执行顶层代码，再存回 `sys.modules`。
 
 正因为有缓存，模块天然是单例：第二次 `import` 不会重新执行顶层代码，要重跑得用 `importlib.reload(mod)`。
 
@@ -42,11 +40,9 @@ most likely due to a circular import
 
 `sys.path` 的顺序是入口脚本所在目录（或空字符串表示当前工作目录）→ `PYTHONPATH` → 标准库 → `site-packages`，`sys.path[0]` 是脚本目录，这也是随手写一个 `random.py` 就能把标准库 `random` 遮蔽掉的根因。
 
-顶层代码在导入时执行一次，所以连接、线程、打印这类副作用，仅仅 `import` 一下就会触发；
+顶层代码在导入时执行一次，所以连接、线程、打印这类副作用，仅仅 `import` 一下就会触发；把可执行入口收进 `if __name__ == '__main__':` 守卫是基本纪律。
 
-把可执行入口收进 `if __name__ == '__main__':` 守卫是基本纪律。
-
-需要动态导入时用 `importlib.import_module('pkg.mod')`，它的底层函数是 `__import__`。
+需要动态导入时用 `importlib.import_module('pkg.mod')`；它调用 `importlib._bootstrap._gcd_import`，最终落到 `_find_and_load`，与 import 语句共用同一套 `sys.modules` 缓存和查找—加载机制，而 `__import__` 是 `IMPORT_NAME` 字节码为 import 语句准备的内建函数，并不是 `import_module` 的底层实现。
 
 ```python
 import sys, importlib, types
@@ -86,9 +82,7 @@ print(demo.__dict__ is m.__dict__)
 
 `import` 的核心是 `sys.modules` 这个全局字典加上一套 finder / loader 协议。
 
-执行 `import X` 时，`_bootstrap._find_and_load` 先查 `sys.modules['X']`；
-
-命中就直接返回，未命中则在把占位 module 对象插入 `sys.modules` 之后才调用 loader 执行顶层代码，这个先入缓存再执行的顺序正是循环导入能拿到半成品模块的根本原因。
+执行 `import X` 时，`_bootstrap._find_and_load` 先查 `sys.modules['X']`；命中就直接返回，未命中则在把占位 module 对象插入 `sys.modules` 之后才调用 loader 执行顶层代码，这个先入缓存再执行的顺序正是循环导入能拿到半成品模块的根本原因。
 
 loader 把顶层名字写进 `module.__dict__`，`__spec__`（`ModuleSpec`）记录 name、loader、origin、submodule_search_locations，`__package__` 决定相对导入的解析基准，包还会带 `__path__` 供继续搜索子模块。
 
@@ -128,21 +122,17 @@ print(sys.modules['json'] is mod, importlib.import_module('json') is mod)
 
 ## 包、相对导入与命名空间包
 
-常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.py`，它的顶层名字成为包的属性；
+常规包是含 `__init__.py` 的目录，导入包时先执行 `__init__.py`，它的顶层名字成为包的属性；`__all__` 是一个字符串列表，控制 `from pkg import *` 导出哪些名字，不定义时导出所有不以单下划线开头的名字。
 
-`__all__` 是一个字符串列表，控制 `from pkg import *` 导出哪些名字，不定义时导出所有不以单下划线开头的名字。
+绝对导入 `import pkg.mod` 从 `sys.path` 顶层开始找；相对导入 `from . import x`、`from ..pkg import y` 基于当前模块的 `__package__` 解析，只能在包内使用，直接运行的脚本里用相对导入会报 `ImportError: att…`。
 
-绝对导入 `import pkg.mod` 从 `sys.path` 顶层开始找；
-
-相对导入 `from . import x`、`from ..pkg import y` 基于当前模块的 `__package__` 解析，只能在包内使用，直接运行的脚本里用相对导入会报 `ImportError: att…`。
-
-```python
+```text
 ImportError: attempted relative import with no known parent package
 ```
 
-PEP 420（3.3+）引入命名空间包：没有 `__init__.py` 的目录也能成为包，用来把同名包分散到多个分发单元，它的 `__path__` 是 `_NamespacePath`、`__file__` 为 `None`。常见陷阱有三个：包内混用绝对与相对导入，导致同一模块以两个名字各加载一份；
+PEP 420（3.3+）引入命名空间包：没有 `__init__.py` 的目录也能成为包，用来把同名包分散到多个分发单元，它的 `__path__` 是 `_NamespacePath`、`__file__` 为 `None`。
 
-把测试脚本放进包目录却直接运行；随意往 `sys.path` 插入路径，导入到错误的副本。用 `python -m` 运行包内模块会正确设置 `__package__`，相对导入才能生效，这和直接执行 `pkg/mod.py` 的差别就在这里。
+常见陷阱有三个：包内混用绝对与相对导入，导致同一模块以两个名字各加载一份；把测试脚本放进包目录却直接运行；随意往 `sys.path` 插入路径，导入到错误的副本。用 `python -m` 运行包内模块会正确设置 `__package__`，相对导入才能生效，这和直接执行 `pkg/mod.py` 的差别就在这里。
 
 **包、相对导入与命名空间包**
 
@@ -183,15 +173,10 @@ sys.path.remove(root)
 
 循环导入是 a 与 b 互相 `import`，且至少一方在顶层就要用到对方尚未定义完成的名字。关键在于 `_find_and_load` 会先把占位 module 对象放进 `sys.modules`、之后才执行顶层代码：于是另一方拿到的是属性还没填齐的半成品模块。
 
-写法不同报错也不同：`from a import A` 在 `A` 未就绪时报 `ImportError: can…`；
+写法不同报错也不同：`from a import A` 在 `A` 未就绪时报 `ImportError: can…`；而先 `import a` 再取 `a.A` 则报 `AttributeError…`。
 
-```python
+```text
 ImportError: cannot import name 'A' from partially initialized module 'a' (most likely due to a circular import)
-```
-
-而先 `import a` 再取 `a.A` 则报 `AttributeError…`。
-
-```python
 AttributeError: partially initialized module 'a' ... has no attribute 'A' (most likely due to a circular import)
 ```
 
@@ -204,11 +189,9 @@ partially initialized module
 most likely due to a circular import
 ```
 
-四种根治手段：把共享类型与常量下沉到第三个独立模块让依赖变单向；把 `import` 延迟到函数内部、用到时才导入；
+四种根治手段：把共享类型与常量下沉到第三个独立模块让依赖变单向；把 `import` 延迟到函数内部、用到时才导入；仅类型注解需要的导入放进 `typing.TYPE_CHECKING` 配合延迟注解，运行时不发生；统一包内相对导入加 src 布局（源码放 `src/`，避免包目录被直接塞进 `sys.path` 造成同名双加载）。
 
-仅类型注解需要的导入放进 `typing.TYPE_CHECKING` 配合延迟注解，运行时不发生；
-
-统一包内相对导入加 src 布局（源码放 `src/`，避免包目录被直接塞进 `sys.path` 造成同名双加载）。
+其中「把 `import` 延迟到函数内部」指的是为打断依赖环、有明确目的且只放在真正用到那一处的局部延迟导入，要和本讲开头批评的「在每个函数里无差别重复导入」区分开：后者只是把同一段写法抄得到处都是，靠 `sys.modules` 缓存取到的仍是同一个模块对象，并不会因此加载两份；真正的双加载来自同一文件以两个模块名出现或 `sys.path` 被乱塞路径，两者动机不同，不能混为一谈。
 
 **循环导入的成因、信号与根治**
 
@@ -233,9 +216,9 @@ most likely due to a circular import
 partially initialized module has no attribute
 ```
 
-修复思路不是调整 import 顺序，而是把双方都依赖的类型下沉到第三个模块 `m_types`，让依赖图变成单向：`m_a2` 只依赖 `m_types`，`m_types` 不依赖任何人。下面用 `tempfile` 造出真实文件、先捕获异常确认信号，再导入修复后的模块验证 loaded。
+修复思路不是调整 import 顺序，而是把双方都依赖的类型下沉到第三个模块 `m_types`，让依赖图变成单向：`m_a2` 只依赖 `m_types`，`m_types` 不依赖任何人。
 
-真实工程还应配合 src 布局与包内相对导入，避免同名包被加载成两份。
+下面用 `tempfile` 造出真实文件、先捕获异常确认信号，再导入修复后的 `m_a2` 模块，确认 `A2.peer` 指向 `m_types.B`，把依赖变单向这件事变成可核对的结果。真实工程还应配合 src 布局与包内相对导入，避免同名包被加载成两份。
 
 ```python
 import sys, tempfile, pathlib, importlib
@@ -263,7 +246,7 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 在仓库根目录跑一遍上面这条命令，可以复现本讲与 模块对象与 `sys.modules` 相关的一次检查；改动实现后重跑，若输出与页面上的预期不符，再回到主示例逐行定位。把它加进 CI 就能在依赖或版本变化时及时发现偏差。
 
-<CheckList id='P035b' title='上线前自检' :items='["能复现并解释「只是 import 一下配置模块，却连了库、起了线程、进程不…」", "能复现并解释「a 与 b 互相导入，报 partially initial…」", "能复现并解释「包内脚本直接运行，相对导入报 attempted relat…」", "能用一条命令验证 模块对象与 sys.modules", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P035a' title='上线前自检' :items='["能复现并解释「只是 import 一下配置模块，却连了库、起了线程、进程不…」", "能复现并解释「a 与 b 互相导入，报 partially initial…」", "能复现并解释「包内脚本直接运行，相对导入报 attempted relat…」", "能用一条命令验证 模块对象与 sys.modules", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 导入副作用与相对导入错因速查
@@ -278,7 +261,7 @@ python -c "import importlib.util; print(importlib.util.find_spec('json').origin)
 
 <Callout type="warn" title='本讲最容易踩的坑' text='只是 import 一下配置模块，却连了库、起了线程、进程不退出：模块顶层代码在导入时执行一次，副作用不受 main 守卫保护' />
 
-<CheckList id='P035a' title='学完你应当能' :items='["能讲清 import 的执行链路与模块单例", "能讲清 包、相对导入与命名空间包", "能讲清 循环导入的成因与根治", "能在工程里处理 命名空间包"]' />
+<CheckList id='P035b' title='学完你应当能' :items='["能讲清 import 的执行链路与模块单例", "能讲清 包、相对导入与命名空间包", "能讲清 循环导入的成因与根治", "能在工程里处理 命名空间包"]' />
 
 
 ## 复现导入错误并自测

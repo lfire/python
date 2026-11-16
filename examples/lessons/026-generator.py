@@ -73,10 +73,6 @@ except ValueError as e:
 c.close()
 print('after close', log, inspect.getgeneratorstate(c))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # next a
@@ -112,10 +108,6 @@ with tag('T') as t:
     print('inside', t)
 print('contextmanager log', log)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # not started True GEN_CREATED
@@ -144,10 +136,6 @@ print('running flag', g.gi_running)
 print('state', inspect.getgeneratorstate(g))
 print('CO_GENERATOR flag', bool(gen.__code__.co_flags & inspect.CO_GENERATOR))
 print('YIELD in bytecode', 'YIELD' in dis.Bytecode(gen).dis())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -52,15 +52,11 @@ CPython 源码按职责分目录：`Include/` 放公共头文件（`object.h` �
 
 ## PyObject 头里的 ob_refcnt 与 ob_type
 
-CPython 把每个值表示为堆上的 PyObject，头部两个字段 `ob_refcnt` 与 `ob_type` 分别支撑引用计数生命周期与运行时类型分派；
-
-PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通过类型指针间接调用具体 C 函数，这是鸭子类型在机器层的实现。
+CPython 把每个值表示为堆上的 PyObject，头部两个字段 `ob_refcnt` 与 `ob_type` 分别支撑引用计数生命周期与运行时类型分派；PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通过类型指针间接调用具体 C 函数，这是鸭子类型在机器层的实现。
 
 一次函数调用会创建帧并压入线程状态的帧栈，字节码在 `_PyEval_EvalFrameDefault` 的栈式循环里执行：`LOAD_FAST` 从 `localsplus` 数组取局部变量，`BINARY_OP` 弹出两个操作数、按类型分派、把结果压回，`RETURN_VALUE` 弹栈返回。
 
-3.11 起帧从每次调用的 PyObject 改为内联的 `_PyInterpreterFrame`，按需才物化 PyFrameObject，减少了堆分配；
-
-同一版本还把异常处理从基于块字节码改成 `co_exceptiontable` 的零成本表。
+3.11 起帧从每次调用的 PyObject 改为内联的 `_PyInterpreterFrame`，按需才物化 PyFrameObject，减少了堆分配；同一版本还把异常处理从基于块字节码改成 `co_exceptiontable` 的零成本表。
 
 3.13 进一步用超级指令把相邻的 `LOAD_FAST` 合并，减少分派次数。
 
@@ -73,15 +69,11 @@ PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通�
 
 ## code object、帧与 3.11 之后的帧重构
 
-编译产物是 PyCodeObject，字段可通过 `__code__` 读取：`co_code` 是字节码字节串，`co_consts` 是常量元组（含嵌套 code object），`co_names` 是全局与属性名元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`co_flags` 编码参数与生成器标志；
-
-3.11 起新增 `co_exceptiontable`，用异常表替代旧的 `SETUP_FINALLY` 块，实现零成本异常。
+编译产物是 PyCodeObject，字段可通过 `__code__` 读取：`co_code` 是字节码字节串，`co_consts` 是常量元组（含嵌套 code object），`co_names` 是全局与属性名元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`co_flags` 编码参数与生成器标志；3.11 起新增 `co_exceptiontable`，用异常表替代旧的 `SETUP_FINALLY` 块，实现零成本异常。
 
 函数被调用时创建帧：3.11 之前每次调用都分配一个 PyFrameObject（含 `f_back`、`f_locals`、`f_lasti`），3.11 起改为内联的 `_PyInterpreterFrame`，放在线程状态的帧栈上，真正的 PyFrameObject 只在 `sys._getframe` 或回溯需要时才懒创建，这显著降低了调用开销。
 
-`sys._getframe(depth)` 的 `depth=0` 表示当前帧、1 是调用者帧，读 `f_code.co_name` 得到函数名，`f_lasti` 是上一条执行指令的字节偏移；
-
-`f_locals` 在 3.13 起由 PEP 667 改为写时同步回局部变量，不再是 3.12 及以前那份可能过期的快照字典。
+`sys._getframe(depth)` 的 `depth=0` 表示当前帧、1 是调用者帧，读 `f_code.co_name` 得到函数名，`f_lasti` 是上一条执行指令的字节偏移；`f_locals` 在 3.13 起由 PEP 667 改为写时同步回局部变量，不再是 3.12 及以前那份可能过期的快照字典。
 
 **PyCodeObject 关键字段**
 
@@ -104,9 +96,7 @@ PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通�
 
 ## ceval 求值循环、dis 与 3.13 超级指令
 
-字节码由 `Python/ceval.c` 的 `_PyEval_EvalFrameDefault` 在栈式虚拟机里逐条执行；
-
-3.11 起这个函数的主体实际由 `Python/bytecodes.c` 的 DSL 经生成器产出，配合专门化解释器把热点指令改写成带内联缓存的特化版本。
+字节码由 `Python/ceval.c` 的 `_PyEval_EvalFrameDefault` 在栈式虚拟机里逐条执行；3.11 起这个函数的主体实际由 `Python/bytecodes.c` 的 DSL 经生成器产出，配合专门化解释器把热点指令改写成带内联缓存的特化版本。
 
 `dis.dis` 反汇编到的是未特化的 `co_code`，加上 `show_caches=True` 会显示二进制算子后面的 `CACHE` 条目，也就是内联缓存槽。
 
@@ -114,9 +104,7 @@ PyTypeObject 里的 `tp_as_number` 等槽表，让 `BINARY_OP` 在 ceval 中通�
 
 用 `compile(src, name, 'exec')` 可以拿到 code object 检查 `co_consts`，用 dis 能看到 `LOAD_FAST` / `LOAD_CONST` / `BINARY_OP` / `RETURN_VALUE` 这组栈操作序列。
 
-读源码的正确做法是拿调试构建（`./configure --with-pydebug`）加 gdb 或 lldb，在 `_PyEval_EvalFrameDefault` 下断点，单步跟踪一个小函数并对照 dis 输出，而不是通读整个文件；
-
-版本差异必须先确认，否则旧文章的指令级结论会完全失效。
+读源码的正确做法是拿调试构建（`./configure --with-pydebug`）加 gdb 或 lldb，在 `_PyEval_EvalFrameDefault` 下断点，单步跟踪一个小函数并对照 dis 输出，而不是通读整个文件；版本差异必须先确认，否则旧文章的指令级结论会完全失效。
 
 ```python
 import sys, dis
@@ -252,13 +240,11 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 
 把 a + b 的 `BINARY_OP` 在 C 层拆开，能看清鸭子类型落到哪个函数。
 
-Python/`ceval.c` 的 _PyEval_EvalFrameDefault 弹出两个栈顶操作数，调用 Objects/`abstract.c` 的 PyNumber_Add，后者经 binary_op1 按 `Py_TYPE(v)`->tp_as_number 取 nb_add 槽，类型不同时按 PyType_IsSubtype 决定子类型优先，槽为空才抛 TypeError。
+`Python/ceval.c` 的 _PyEval_EvalFrameDefault 弹出两个栈顶操作数，调用 `Objects/abstract.c` 的 PyNumber_Add，后者经 binary_op1 按 `Py_TYPE(v)`->tp_as_number 取 nb_add 槽，类型不同时按 PyType_IsSubtype 决定子类型优先，槽为空才抛 TypeError。
 
-PyLong_Type 的 nb_add 指向 Objects/`longobject.c` 的 long_add，它用 x_add 处理 `ob_digit[]`（每位 30 bit），再经 _PyLong_New 落到 `obmalloc.c` 的 _PyObject_Malloc。
+PyLong_Type 的 nb_add 指向 `Objects/longobject.c` 的 long_add，它用 x_add 处理 `ob_digit[]`（每位 30 bit），再经 _PyLong_New 落到 `obmalloc.c` 的 _PyObject_Malloc。
 
-槽表是 Include/cpython/`object.h` 里 PyNumberMethods 约四十个函数指针的连续结构，PyTypeObject 只存 tp_as_number、tp_as_sequence、tp_as_mapping 三个指针；
-
-对 Python 类，Objects/`typeobject.c` 的 update_one_slot 在 type_ready 时把 `__add__` 包装成 slot_nb_add 填槽，setattr 改类属性会触发 type_modified 让槽失效重算。
+槽表是 `Include/cpython/object.h` 里 PyNumberMethods 约四十个函数指针的连续结构，PyTypeObject 只存 tp_as_number、tp_as_sequence、tp_as_mapping 三个指针；对 Python 类，`Objects/typeobject.c` 的 update_one_slot 在 type_ready 时把 `__add__` 包装成 slot_nb_add 填槽，setattr 改类属性会触发 type_modified 让槽失效重算。
 
 这解释了为什么 int 子类加 `__radd__` 会改变分派顺序，以及纯 Python 的 `__add__` 比内置 long 多一层 slot 包装与一次 PyObject_Call。
 
@@ -301,13 +287,13 @@ print('getsizeof', sys.getsizeof(x))
 
 ## _PyInterpreterFrame 的 localsplus 与 datastack 帧栈
 
-3.11 把帧改成内联结构后，读帧源码先看 Include/internal/`pycore_frame.h` 的 _PyInterpreterFrame：开头是 f_executable（3.13 起指向 PyCodeObject，之前叫 f_code）、previous、f_funcobj、f_globals、f_builtins、f_locals、懒创建的 frame_obj、stacktop、return_offset、owner，末尾是柔性数组 `localsplus[]`。
+3.11 把帧改成内联结构后，读帧源码先看 `Include/internal/pycore_frame.h` 的 _PyInterpreterFrame：开头是 f_executable（3.13 起指向 PyCodeObject，之前叫 f_code）、previous、f_funcobj、f_globals、f_builtins、f_locals、懒创建的 frame_obj、stacktop、return_offset、owner，末尾是柔性数组 `localsplus[]`。
 
 局部变量、cell、free 变量与求值栈共用这一块连续内存，索引由 co_nlocalsplus（co_localspluskinds 用 `CO_FAST_LOCAL`/`CELL`/`FREE` 标种类）与 co_stacksize 划界，`LOAD_FAST` 实际是 frame->`localsplus[i]` 的一次数组读。
 
 帧内存来自 `pycore_pystate.h` 的 _PyThreadState：它持有 datastack_chunk（_PyStackChunk 链表，每块约 16 KiB）与 datastack_top、datastack_limit，_PyThreadState_PushFrame 用栈顶指针 bump 分配，返回只回退指针而不 free，省掉每次调用的堆分配与 GC 追踪。
 
-3.13 的 PEP 667 又把 f_locals 从缓存字典换成写时同步回 localsplus 的 PyFrameLocalsProxy（Objects/`frameobject.c`），调试器改局部变量才能立即生效。
+3.13 的 PEP 667 又把 f_locals 从缓存字典换成写时同步回 localsplus 的 PyFrameLocalsProxy（`Objects/frameobject.c`），调试器改局部变量才能立即生效。
 
 <Exercise title='用 code object 字段算出 localsplus 槽位数' task='读取 __code__ 的 co_nlocalsplus、co_stacksize 与 co_exceptiontable，打印帧内数组总槽数并解释它为何不等于 co_stacksize；再验证 f_lasti 是字节偏移。' solution='import sys\n\ndef probe(fn):\n    co = fn.__code__\n    print(&#39;nlocalsplus&#39;, co.co_nlocalsplus)\n    print(&#39;stacksize&#39;, co.co_stacksize)\n    print(&#39;slots&#39;, co.co_nlocalsplus + co.co_stacksize)\n    print(&#39;exctable_len&#39;, len(co.co_exceptiontable))\n\ndef target(a, b):\n    return a + b\n\nprobe(target)\nprint(&#39;f_lasti_is_offset&#39;, isinstance(sys._getframe().f_lasti, int))' explain='localsplus 同时容纳 co_nlocalsplus 个局部/cell/free 槽与 co_stacksize 个求值栈槽，相加才是帧内数组长度；co_stacksize 只是栈峰值。co_exceptiontable 是 3.11 起零成本异常表的字节编码，与栈深无关。f_lasti 是上一条指令在 co_code 里的字节偏移。' />
 

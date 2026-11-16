@@ -52,10 +52,6 @@ a = bench(); b = bench()
 print('both_run', a > 0 and b > 0)
 dis.dis(hot, show_caches=True)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # main_gil True
@@ -77,10 +73,6 @@ sys.setswitchinterval(0.001)
 print('switch_set', sys.getswitchinterval())
 sys.setswitchinterval(0.005)
 print('switch_restored', sys.getswitchinterval())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -107,10 +99,6 @@ text = buf.getvalue()
 print('specialized_load_attr', 'INSTANCE_VALUE' in text or 'LOAD_ATTR_SLOT' in text)
 print('cache_lines', text.count('CACHE'))
 print('has_adaptive', hasattr(read_attr.__code__, '_co_code_adaptive'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

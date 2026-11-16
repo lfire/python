@@ -39,10 +39,6 @@ data = [(1, 'N'), (2, 'N'), (3, 'N'), (4, 'P'), (5, 'P'), (6, 'P')]
 print('root gini', round(gini([l for _, l in data]), 4))
 print('best split', best_split(data))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # mapped [(-1, 1, 1), (0, 0, -1), (1, 1, 1)]
@@ -53,10 +49,6 @@ def poly_kernel(x, z, degree=2, c=1):
 pts = [(-1, 1), (0, -1), (1, 1)]
 print('mapped', [(x, x * x, lab) for x, lab in pts])
 print('K(-1,1)', poly_kernel(-1, 1), 'K(-1,0)', poly_kernel(-1, 0))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -71,10 +63,6 @@ single = trees[0]
 avg = [st.mean(col) for col in zip(*trees)]
 print('single var', round(st.variance(single), 3))
 print('bagged var', round(st.variance(avg), 3))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -33,10 +33,6 @@ s2 = {'上海': 5, '深圳': 8, '北京': 1}
 print('add', align_add(s1, s2))
 print('fill0', align_add(s1, s2, fill=0))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # agg {'A': 15.0, 'B': 7.0}
@@ -51,10 +47,6 @@ means = {k: sum(v) / len(v) for k, v in g.items()}
 print('agg', means)
 print('transform', [v - means[k] for k, v in rows])
 print('lengths', len(means), len(rows))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -74,10 +66,6 @@ print('distinct str objects', len({id(c) for c in cells}))
 print('object approx bytes', str_bytes)
 print('codes raw bytes', cat_raw, 'itemsize', codes.itemsize)
 print('category total approx', cat_bytes, 'ratio', round(str_bytes / cat_bytes, 1))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

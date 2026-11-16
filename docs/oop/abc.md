@@ -18,13 +18,13 @@ description: 在灵活与契约之间做出正确取舍
 
 另一边，接入第三方 SDK 的对象根本无法继承自家基类，于是有人用 `ABCMeta.register` 把它们注册成虚拟子类，注册后 `isinstance` 确实返回 `True`，调用 `export` 时却抛 `AttributeError`——`register` 只改类型判定，不会凭空长出方法。
 
-还有团队把 `typing.Protocol` 当运行时校验用，对没加 `@runtime_checkable` 的 `Protocol` 直接 `isinstance`，得到 `TypeError: Insta…`；
+还有团队把 `typing.Protocol` 当运行时校验用，对没加 `@runtime_checkable` 的 `Protocol` 直接 `isinstance`，得到 `TypeError: Insta…`；加了装饰器后又误以为它检查方法签名，结果一个签名完全不对的类被判合格。
 
-```python
+```text
 TypeError: Instance and class checks can only be used with @runtime_checkable protocols
 ```
 
-加了装饰器后又误以为它检查方法签名，结果一个签名完全不对的类被判合格。Python 里「契约」有两条完全不同的实现路径：`ABC` 靠继承显式声明，`Protocol` 靠结构隐式匹配。本讲把两条路径的判定机制、运行时代价与选型边界讲透。
+Python 里「契约」有两条完全不同的实现路径：`ABC` 靠继承显式声明，`Protocol` 靠结构隐式匹配。本讲把两条路径的判定机制、运行时代价与选型边界讲透。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='为了规范给所有内部类型套一层 ABC：ABC 只在需要复用默认实现或强制补齐方法时才有收益，纯继承层次不增加任何运行时约束' />
 
@@ -80,7 +80,7 @@ Python 的默认风格是鸭子类型配 `EAFP`（Easier to Ask Forgiveness than
 
 `abc` 模块提供的是显式契约：类继承 `abc.ABC`（其元类是 `ABCMeta`）并用 `@abstractmethod` 标记方法，`type.__new__` 会把这些方法名收进 `__abstractmethods__`（`frozenset`），实例化时解释器检查该集合非空就抛 `TypeError: Can't…`。
 
-```python
+```text
 TypeError: Can't instantiate abstract class
 ```
 
@@ -137,17 +137,13 @@ print('registered', isinstance(Duck(), Reader), 'has read:', hasattr(Duck(), 're
 
 `typing.Protocol`（PEP 544，3.8 引入）表达的是结构化子类型：一个类只要结构上具备 `Protocol` 声明的成员，静态检查器就认为它兼容，完全不需要继承或注册，对第三方类型零侵入。
 
-`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 `TypeError: Proto…`）；
+`Protocol` 类本身带 `_is_protocol = True`，且不可实例化（直接调用抛 `TypeError: Proto…`）；它的方法体通常写 `...` 或加 `@abstractmethod`。
 
 ```text
 TypeError: Protocols cannot be instantiated
 ```
 
-它的方法体通常写 `...` 或加 `@abstractmethod`。
-
-默认情况下 `Protocol` 只作用于静态检查（`mypy` / `pyright`），不能用于 `isinstance` / `issubclass`；
-
-加上 `@typing.runtime_checkable` 才把 `__instancecheck__` 换成运行时成员检查。
+默认情况下 `Protocol` 只作用于静态检查（`mypy` / `pyright`），不能用于 `isinstance` / `issubclass`；加上 `@typing.runtime_checkable` 才把 `__instancecheck__` 换成运行时成员检查。
 
 这个检查非常浅：它遍历协议声明的属性名做 `hasattr` 式判断，只确认名字存在，不调用方法、也不比对签名、不校验返回类型，因此一个 `export(self, x, y, z)` 的类也会被判为符合 `export(self, rows)`。
 
@@ -216,13 +212,11 @@ print('is_protocol:', PlainProtocol._is_protocol)
 
 把选型落到具体问题：需要给一组自家类型提供公共实现、强制子类补齐方法、或做 `isinstance` 分派时，用 `ABC`；需要描述「对外部对象的最小需求」、允许任何第三方类型零改接入时，用 `Protocol`，尤其适合插件体系与回调接口。
 
-`ABC` 的 `isinstance` 走 `ABCMeta.__instancecheck__`，结果会进 `_abc_cache` 与 `_abc_negative_cache` 的弱引用缓存，并遍历 `_abc_registry`，重复调用后接近常数，但比普通类型判定多一层 Python 逻辑；
+`ABC` 的 `isinstance` 走 `ABCMeta.__instancecheck__`，结果会进 `_abc_cache` 与 `_abc_negative_cache` 的弱引用缓存，并遍历 `_abc_registry`，重复调用后接近常数，但比普通类型判定多一层 Python 逻辑；`Protocol` 的运行时检查要遍历协议成员集合逐个 `hasattr`，成员多时代价线性增长。
 
-`Protocol` 的运行时检查要遍历协议成员集合逐个 `hasattr`，成员多时代价线性增长。两者都不要当成数据校验器：类型注解与协议都不在实例化时拦脏数据，那是 `pydantic` 或显式校验的活（第 47 讲）。接口隔离同样重要：协议应只声明真正会调用的最小成员，声明越多、满足它的类型越少、运行时检查越慢。
+两者都不要当成数据校验器：类型注解与协议都不在实例化时拦脏数据，那是 `pydantic` 或显式校验的活（第 47 讲）。接口隔离同样重要：协议应只声明真正会调用的最小成员，声明越多、满足它的类型越少、运行时检查越慢。
 
-实践里最常见的错，是把 `ABC` 当命名空间、把 `register` 当继承、把 `runtime_checkable` 当签名校验；
-
-认清「`ABC` 管继承与复用、`Protocol` 管结构与静态描述、运行时检查只保证名字存在」，这三类误用就能一次性避开。
+实践里最常见的错，是把 `ABC` 当命名空间、把 `register` 当继承、把 `runtime_checkable` 当签名校验；认清「`ABC` 管继承与复用、`Protocol` 管结构与静态描述、运行时检查只保证名字存在」，这三类误用就能一次性避开。
 
 `isinstance` 与 `issubclass` 的入口是 `PyObject_IsInstance` / `PyObject_IsSubclass`，它们会优先调用类型（元类）上定义的 `__instancecheck__` / `__subclasscheck__` 钩子，而不是只比对 `tp_base` 链。
 
@@ -239,9 +233,9 @@ PEP 544 的「结构化」发生在静态检查期：`mypy` 把类的成员集�
 
 ## 插件平台用 Protocol 描述最小接口并配白名单准入
 
-报表平台允许各业务方提供导出器，平台既不能要求对方继承自家基类，也要防止把缺方法的对象注册进路由、造成线上 `AttributeError`。用 `Protocol` 描述「只要有 `export(rows)` 就能用」这一最小需求，对第三方类型零侵入；
+报表平台允许各业务方提供导出器，平台既不能要求对方继承自家基类，也要防止把缺方法的对象注册进路由、造成线上 `AttributeError`。
 
-再配一张显式注册表做准入：注册时用 `@runtime_checkable` 的 `isinstance` 先做粗筛，通过后再由真实调用兜底，并把允许的名字收敛到白名单，避免反射任意方法。
+用 `Protocol` 描述「只要有 `export(rows)` 就能用」这一最小需求，对第三方类型零侵入；再配一张显式注册表做准入：注册时用 `@runtime_checkable` 的 `isinstance` 先做粗筛，通过后再由真实调用兜底，并把允许的名字收敛到白名单，避免反射任意方法。
 
 下面用标准库跑通：`CsvExporter` 结构合规被收录，`Broken` 只有 `run` 方法被拒绝，最后打印已注册插件与一次真实导出结果。要点是 `Protocol` 负责描述结构、注册表负责收敛可调用集合、两者都不承担数据校验——脏数据要在 `export` 内部或边界层单独处理。
 
@@ -277,7 +271,7 @@ print('output:', registry['csv'].export([1, 2, 3]))
 
 <Callout type="idea" title='落地提示' text='对外部生态用 Protocol 描述最小需求，对框架内部用 ABC 提供默认实现与复用' />
 
-<CheckList id='P044b' title='上线前自检' :items='["能复现并解释「为了规范给所有内部类型套一层 ABC」", "能复现并解释「用 register 让第三方类通过 isinstance…」", "能复现并解释「对未加 @runtime_checkable 的 Proto…」", "能用一条命令验证 鸭子类型与 EAFP", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P044a' title='上线前自检' :items='["能复现并解释「为了规范给所有内部类型套一层 ABC」", "能复现并解释「用 register 让第三方类通过 isinstance…」", "能复现并解释「对未加 @runtime_checkable 的 Proto…」", "能用一条命令验证 鸭子类型与 EAFP", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from collections.abc import Sized; print(isinstance([1], Sized))"

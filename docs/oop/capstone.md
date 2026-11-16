@@ -16,11 +16,9 @@ description: 用描述符加元类交付一个可扩展的框架雏形
 
 一个内部报表框架要求开发者在类里声明字段就能自动生成表、校验输入、写入数据库。
 
-第一版把校验写在 `__init__` 里，结果对象创建后业务代码直接 `obj.uid = 'abc'` 就绕过了校验，脏数据照样落库；
+第一版把校验写在 `__init__` 里，结果对象创建后业务代码直接 `obj.uid = 'abc'` 就绕过了校验，脏数据照样落库；第二版把 SQL 用字符串拼接生成，某次字段名里带了引号，整条语句被破坏，还差点变成注入漏洞；第三版用元类收集字段，却在 `__init__` 里遍历类字典，发现拿到的顺序和声明顺序不一致，生成的列顺序全乱。
 
-第二版把 SQL 用字符串拼接生成，某次字段名里带了引号，整条语句被破坏，还差点变成注入漏洞；第三版用元类收集字段，却在 `__init__` 里遍历类字典，发现拿到的顺序和声明顺序不一致，生成的列顺序全乱。这些正是把描述符、元类、校验、SQL 拼到一起时最容易踩的坑。
-
-阶段综合这一讲不再引入新语法，而是把前几讲的能力组装成一个最小但完整的 ORM 雏形：描述符负责每次赋值都过校验，元类负责把声明翻译成映射，参数化查询负责把数据与 SQL 文本彻底分开，错误聚合负责一次返回全部问题。
+这些正是把描述符、元类、校验、SQL 拼到一起时最容易踩的坑。阶段综合这一讲不再引入新语法，而是把前几讲的能力组装成一个最小但完整的 ORM 雏形：描述符负责每次赋值都过校验，元类负责把声明翻译成映射，参数化查询负责把数据与 SQL 文本彻底分开，错误聚合负责一次返回全部问题。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用字符串拼接生成 INSERT 语句：值进入 SQL 语法文本，引号或分号会破坏语句甚至追加语句，形成注入面' />
 
@@ -56,13 +54,11 @@ description: 用描述符加元类交付一个可扩展的框架雏形
 
 ## 设计取舍：描述符存值、元类收集映射
 
-数据描述符（定义了 `__set__` 或 `__delete__`）在 `PyObject_GenericGetAttr` 的查找链里优先级高于实例 `__dict__`，所以任何一次 `obj.x = value` 都会落到 `Field.__set__`，这是「校验不可绕过」的底层依据；
+数据描述符（定义了 `__set__` 或 `__delete__`）在 `PyObject_GenericGetAttr` 的查找链里优先级高于实例 `__dict__`，所以任何一次 `obj.x = value` 都会落到 `Field.__set__`，这是「校验不可绕过」的底层依据；只写在 `__init__` 里的校验没有这层保障。
 
-只写在 `__init__` 里的校验没有这层保障。
+元类 `__new__` 运行在 `type.__new__` 分配 `PyTypeObject` 的过程中，此时 `ns` 仍是类体执行完的原样映射，`__set_name__` 与 `__init_subclass__` 也在同一阶段回调，因此在这里扫描 `ns` 得到的字段声明顺序最可靠；晚到元类 `__init__` 时类已定型。
 
-元类 `__new__` 运行在 `type.__new__` 分配 `PyTypeObject` 的过程中，此时 `ns` 仍是类体执行完的原样映射，`__set_name__` 与 `__init_subclass__` 也在同一阶段回调，因此在这里扫描 `ns` 得到的字段声明顺序最可靠；
-
-晚到元类 `__init__` 时类已定型。sqlite3 的 `?` 占位符走 `sqlite3_bind_*` 系列 C API：SQL 文本先被编译成 prepared statement，值按位置绑定为数据，注入串里的引号、分号、注释符都不参与语法解析；字符串拼接则把值直接送进解析器，一个未转义引号就能改变语句结构。
+sqlite3 的 `?` 占位符走 `sqlite3_bind_*` 系列 C API：SQL 文本先被编译成 prepared statement，值按位置绑定为数据，注入串里的引号、分号、注释符都不参与语法解析；字符串拼接则把值直接送进解析器，一个未转义引号就能改变语句结构。
 
 错误聚合用列表收集再 join，本质是把「多个独立校验失败」从控制流异常转成一次数据返回，便于表单类调用方一次展示全部问题。
 
@@ -75,13 +71,9 @@ description: 用描述符加元类交付一个可扩展的框架雏形
 
 框架的核心翻译是「类里写字段」→「运行时表结构与行为」，这段翻译由两个钩子分工完成。
 
-描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过它，校验与状态写入可以固定在同一个入口；
+描述符（第 40 讲）管实例级：`Field` 实现 `__set__`（数据描述符，优先级高于实例 `__dict__`），因此无论 `__init__` 里赋值还是事后 `obj.x = value`，都必然经过它，校验与状态写入可以固定在同一个入口；`__set_name__`（3.6 / PEP 487）在 `type.__new__` 里被回调，让字段对象记住自己的列名，不用开发者重复写 `uid = Field('uid')`。
 
-`__set_name__`（3.6 / PEP 487）在 `type.__new__` 里被回调，让字段对象记住自己的列名，不用开发者重复写 `uid = Field('uid')`。
-
-元类（第 45 讲）管类级：`__new__` 扫描类命名空间 `ns.items()`，把 `isinstance(v, Field)` 的项收进 `_fields` 映射，并生成 `_table`；
-
-这一步必须在 `__new__`，因为 `__set_name__` 与 `__init_subclass__` 也在 `type.__new__` 内执行，等到了元类 `__init__`，命名空间可能已被改动、顺序也不再可靠。
+元类（第 45 讲）管类级：`__new__` 扫描类命名空间 `ns.items()`，把 `isinstance(v, Field)` 的项收进 `_fields` 映射，并生成 `_table`；这一步必须在 `__new__`，因为 `__set_name__` 与 `__init_subclass__` 也在 `type.__new__` 内执行，等到了元类 `__init__`，命名空间可能已被改动、顺序也不再可靠。
 
 实例状态统一放在一个 `_data` 字典里，避免字段名与内部属性打架。把三层分开后，声明式写法只负责表达意图，运行时行为由框架集中生成，新增模型不需要重复写 SQL 或校验代码。
 
@@ -167,9 +159,9 @@ conn.close()
 
 错误聚合则解决「表单里五个字段错了三个，却只报第一个」的体验问题：`Model.__init__` 用一个 `errors` 列表循环构造，捕获每个 `TypeError` 追加字符串，循环结束后若非空再抛 `ValueError`，消息用 `'; '.join(errors)` 拼成一条，一次返回全部问题。
 
-要注意 `isinstance(value, bool)` 对 `int` 字段会通过（`bool` 是 `int` 子类），金额、端口这类字段应显式排除 bool；
+要注意 `isinstance(value, bool)` 对 `int` 字段会通过（`bool` 是 `int` 子类），金额、端口这类字段应显式排除 bool；默认值、可空字段也要在 `Field` 上表达，而不是散落在业务代码里。
 
-默认值、可空字段也要在 `Field` 上表达，而不是散落在业务代码里。校验规则属于领域层，SQL 生成属于持久化层，两者不要混在描述符里：描述符只判定「这个值合不合法」，字段名到列类型、占位符个数由 `Model` 的方法统一计算。这样单测可以分别覆盖校验与 SQL 两段。
+校验规则属于领域层，SQL 生成属于持久化层，两者不要混在描述符里：描述符只判定「这个值合不合法」，字段名到列类型、占位符个数由 `Model` 的方法统一计算。这样单测可以分别覆盖校验与 SQL 两段。
 
 ```python
 import inspect
@@ -205,17 +197,15 @@ print('mro:', [c.__name__ for c in inspect.getmro(Form)])
 
 ## SQL 参数化、可测试性与绕过元类的调试开关
 
-SQL 必须参数化：sqlite3 用 `?` 占位符，值通过 `execute(sql, params)` 传给 `sqlite3_bind_*` 系列 C API，作为数据与 SQL 文本分离，注入串里的引号、分号只会当成普通字符，不参与语法解析；
+SQL 必须参数化：sqlite3 用 `?` 占位符，值通过 `execute(sql, params)` 传给 `sqlite3_bind_*` 系列 C API，作为数据与 SQL 文本分离，注入串里的引号、分号只会当成普通字符，不参与语法解析；字符串拼接则让值进入语法树，字段名或值里带一个引号就可能破坏语句甚至执行额外语句。
 
-字符串拼接则让值进入语法树，字段名或值里带一个引号就可能破坏语句甚至执行额外语句。
-
-生成语句时，列名来自 `_fields` 这个受控映射（不是用户字符串），占位符个数等于字段数，params 按同一顺序组装成元组，即 `tuple`；
+生成语句时，列名来自 `_fields` 这个受控映射（不是用户字符串），占位符个数等于字段数，params 按同一顺序组装成元组，即 `tuple`；三者顺序必须一致，错一处就会插入错列。
 
 ```python
 tuple(self._data[k] for k in self._fields)
 ```
 
-三者顺序必须一致，错一处就会插入错列。框架还应保持小而透明：暴露明确的注册与字段 API、每个阶段可单独单测（校验、建表、插入、查询各一个断言）、以及绕过元类的调试开关——在排查「某个字段没被收集」时，能直接打印 `ns` 与 `_fields` 比在元类里打日志高效得多。
+框架还应保持小而透明：暴露明确的注册与字段 API、每个阶段可单独单测（校验、建表、插入、查询各一个断言）、以及绕过元类的调试开关——在排查「某个字段没被收集」时，能直接打印 `ns` 与 `_fields` 比在元类里打日志高效得多。
 
 真实项目还要处理迁移、事务（第 42 讲）、连接池与并发，但骨架就是这三层；把参数化从一开始就设计进去，比事后给所有 SQL 打补丁便宜得多。
 
@@ -320,9 +310,7 @@ python -c "print(type('Demo', (), {'x':1}).__mro__)"
 
 ## sqlite3 的 prepare/bind 边界与语句缓存
 
-正文把 SQL 参数化讲成数据与文本分开，再往下一层是 CPython 的 Modules/_sqlite/`statement.c`：pysqlite_statement_create 调用 SQLite 的 sqlite3_prepare_v2，把 SQL 文本编译成 sqlite3_stmt，也就是一串 `VDBE` 虚拟机指令；
-
-问号占位符在 prepare 阶段就占好了绑定槽位，语法树此刻已经定型。
+正文把 SQL 参数化讲成数据与文本分开，再往下一层是 CPython 的 `Modules/_sqlite/statement.c`：pysqlite_statement_create 调用 SQLite 的 sqlite3_prepare_v2，把 SQL 文本编译成 sqlite3_stmt，也就是一串 `VDBE` 虚拟机指令；问号占位符在 prepare 阶段就占好了绑定槽位，语法树此刻已经定型。
 
 `execute(sql, params)` 走 pysqlite_statement_bind_parameters，对每个参数按类型挑 sqlite3_bind_int64 / sqlite3_bind_text / sqlite3_bind_null 之一，只往槽位里写数据，不会重新解析 SQL。
 
@@ -371,20 +359,20 @@ print('age type', fields['age'].typ.__name__)
 
 <OutputBox title='扩展示例运行结果' output='fields [&#39;uid&#39;, &#39;name&#39;, &#39;age&#39;]\nuid name uid\nage type int' />
 
-<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n\ndef collect(cls):\n    out = {}\n    for base in reversed(cls.__mro__):\n        for k, v in vars(base).items():\n            if isinstance(v, Field):\n                out[k] = v\n            elif k in out:\n                del out[k]\n    return out\n\nclass Base:\n    uid = Field(int)\n    name = Field(str)\n\nclass User(Base):\n    name = Field(str)\n    age = Field(int)\n\nfields = collect(User)\nprint(&#39;fields&#39;, list(fields))\nprint(&#39;uid name&#39;, fields[&#39;uid&#39;].name)\nprint(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)\n' :notes='["Field 是数据描述符，__set_name__ 让字段记住自己在类里的名字", "typ 保存字段声明的类型，供校验与列类型映射使用", "把类型挂到实例上", "type_new_set_names 会在类创建期回调这个方法", "把 owner 与属性名记下来，避免开发者重复写字段名", "空行，只用于分隔逻辑块，不影响执行结果。", "沿 MRO 反向遍历，基类字段先入表、子类覆盖后入表", "用有序 dict 保住字段声明顺序，它直接决定 CREATE TABLE 的列序", "reversed(__mro__) 保证最远的祖先先被收集", "vars(base) 只读该类自身的 __dict__，不混入继承来的属性", "子类同名 Field 覆盖基类字段，保留子类的类型", "子类若用非 Field 的同名属性覆盖，应从字段表里删除", "dataclasses 的 _get_field 也用同样的删除逻辑处理字段遮蔽", "返回按声明顺序排列的字段映射", "读回字段顺序，验证 uid 与 name 来自基类、age 来自子类", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class Base:` 的作用，可对照上方输出逐项核对。", "这一行 `uid = Field(int)` 的作用，可对照上方输出逐项核对。", "这一行 `name = Field(str)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class User(Base):` 的作用，可对照上方输出逐项核对。", "这一行 `name = Field(str)` 的作用，可对照上方输出逐项核对。", "这一行 `age = Field(int)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `fields = collect(User)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;fields&#39;, list(fields))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;uid name&#39;, fields[&#39;uid&#39;].name)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='class Field:\n    def __init__(self, typ):\n        self.typ = typ\n    def __set_name__(self, owner, name):\n        self.name = name\n\ndef collect(cls):\n    out = {}\n    for base in reversed(cls.__mro__):\n        for k, v in vars(base).items():\n            if isinstance(v, Field):\n                out[k] = v\n            elif k in out:\n                del out[k]\n    return out\n\nclass Base:\n    uid = Field(int)\n    name = Field(str)\n\nclass User(Base):\n    name = Field(str)\n    age = Field(int)\n\nfields = collect(User)\nprint(&#39;fields&#39;, list(fields))\nprint(&#39;uid name&#39;, fields[&#39;uid&#39;].name)\nprint(&#39;age type&#39;, fields[&#39;age&#39;].typ.__name__)\n' :notes='["定义一个字段描述符；它会经 __set_name__ 记住自己在类里的名字。", "构造时接收字段声明的类型，供后面的校验与列类型映射使用。", "把目标类型挂到描述符实例上。", "type.__new__ 在类创建期会回调它，把 owner 与属性名交给描述符。", "记下字段名，省去开发者手写 uid = Field(&#39;uid&#39;)。", "空行，只用于分隔逻辑块，不影响执行结果。", "按 MRO 收集所有 Field，得到「字段名 → 字段」的映射，供生成表结构用。", "用普通 dict 累积结果，3.7 起它保持插入顺序，直接决定 CREATE TABLE 的列序。", "reversed(__mro__) 让最远的祖先先入表，子类后入表才能正确覆盖同名列。", "vars(base) 只读该类自身的 __dict__，不混入继承来的属性。", "只收集 Field 实例，其它类属性一律跳过。", "登记字段；子类同名 Field 放在后面遍历，会覆盖基类的同名字段。", "若子类用同名但非 Field 的属性覆盖了基类字段，要把它从字段表里剔除。", "删除被遮蔽的字段，这与 dataclasses._get_field 处理字段遮蔽的逻辑一致。", "返回按基类到子类、声明顺序排列的字段映射。", "空行，只用于分隔逻辑块，不影响执行结果。", "基类声明两个字段，模拟 ORM 里的公共列。", "uid 字段类型为 int，__set_name__ 会把 name 记成 &#39;uid&#39;。", "name 字段类型为 str，稍后会被子类同名声明覆盖。", "空行，只用于分隔逻辑块，不影响执行结果。", "子类继承基类字段，并新增、覆盖自己的字段定义。", "子类重新声明 name，覆盖基类的同名 Field，类型仍是 str。", "子类新增 age 字段，它排在最后，验证列顺序确实按声明来。", "空行，只用于分隔逻辑块，不影响执行结果。", "对 User 跑一遍收集，得到合并后的字段映射。", "打印字段顺序，可看到基类字段在前、子类新增在后。", "读回 uid 字段的 name，确认 __set_name__ 已自动填好。", "打印子类 age 字段的类型名，确认覆盖后取到的是子类的 int。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 <Term word='sqlite3_stmt' text='sqlite3_prepare_v2 把 SQL 文本编译出的 SQLite 虚拟机语句对象，占位符槽位在 prepare 阶段就固定；pysqlite 用 Connection.cached_statements 这份 LRU 缓存它，因此拼接式 SQL 因文本各不相同而永远无法命中缓存，每次都要重新编译。' />
 
 
 ### Unit of Work 与 identity map 的架构取舍
 
-正文的 ORM 骨架是描述符管实例、元类管类，但真实框架还多一层持久化会话。SQLAlchemy 的 Session 维护四张表：identity_map 是一份以 (mapper, 主键) 为键的 WeakInstanceDict，保证同一主键在一次会话里只存在一个 Python 实例；
+正文的 ORM 骨架是描述符管实例、元类管类，但真实框架还多一层持久化会话。
 
-_new、_dirty、_deleted 分别挂着待 `INSERT`、待 `UPDATE`、待 `DELETE` 的对象。flush 时 UnitOfWork 按外键依赖对 mapper 做拓扑排序，一次性把变更按正确顺序发给数据库，而不是每次属性赋值都写库。
+SQLAlchemy 的 Session 维护四张表：identity_map 是一份以 (mapper, 主键) 为键的 WeakInstanceDict，保证同一主键在一次会话里只存在一个 Python 实例；_new、_dirty、_deleted 分别挂着待 `INSERT`、待 `UPDATE`、待 `DELETE` 的对象。
 
-代价是脏检查：Session 默认给每个加载对象保存一份 committed_state 属性快照，flush 时逐属性比对，对象数量大时内存与 CPU 都随之上涨；
+flush 时 UnitOfWork 按外键依赖对 mapper 做拓扑排序，一次性把变更按正确顺序发给数据库，而不是每次属性赋值都写库。
 
-批量导入可改用 bulk_save_objects 绕开 identity map，或用 `expire_on_commit=False` 控制快照生命周期。
+代价是脏检查：Session 默认给每个加载对象保存一份 committed_state 属性快照，flush 时逐属性比对，对象数量大时内存与 CPU 都随之上涨；批量导入可改用 bulk_save_objects 绕开 identity map，或用 `expire_on_commit=False` 控制快照生命周期。
 
 这是 Data Mapper 与 Active Record 的分水岭：Django ORM 让每个对象自己 save，接口直观但事务边界散落在业务代码、批量写入要额外封装；SQLAlchemy 把状态集中在 Session，复杂但能统一控制 flush 顺序、回滚与二级缓存。
 
@@ -407,11 +395,11 @@ _new、_dirty、_deleted 分别挂着待 `INSERT`、待 `UPDATE`、待 `DELETE` 
 
 在 3.13 的 sqlite3 上 execute 一次只允许一条语句，直接抛 ProgrammingError: You can only execute one statement at a time；换到允许多语句的驱动，第二条 `DROP` 就可能真的执行。
 
-这不只是引号没转义的问题：值的字节参与了 prepare 阶段的语法解析，语句结构被改写。参数化把值挡在语法树之外，问号槽位先定型，bind 只填数据，注入串里的引号与分号都成了普通文本，读回时逐字节相等。还要注意列名与表名不能参数化，必须由 _fields 这类受控映射提供；
+这不只是引号没转义的问题：值的字节参与了 prepare 阶段的语法解析，语句结构被改写。参数化把值挡在语法树之外，问号槽位先定型，bind 只填数据，注入串里的引号与分号都成了普通文本，读回时逐字节相等。
 
-框架里 `CREATE` `TABLE` 的列名来自开发者声明，`INSERT` 的占位符个数等于字段数，params 按同一顺序组装，三者错一处就会插错列。下面的代码在内存库里同时跑拼接与参数化两条路径，用 ProgrammingError 与读回一致性把差异钉死；
+还要注意列名与表名不能参数化，必须由 _fields 这类受控映射提供；框架里 `CREATE` `TABLE` 的列名来自开发者声明，`INSERT` 的占位符个数等于字段数，params 按同一顺序组装，三者错一处就会插错列。
 
-注入串里的单引号用 `chr(39)` 拼出，避免示例源码里出现引号转义。
+下面的代码在内存库里同时跑拼接与参数化两条路径，用 ProgrammingError 与读回一致性把差异钉死；注入串里的单引号用 `chr(39)` 拼出，避免示例源码里出现引号转义。
 
 ```python
 import sqlite3

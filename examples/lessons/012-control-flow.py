@@ -36,10 +36,6 @@ print(describe([9]))
 print(describe([-1]))
 print(describe('anything'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 5
@@ -61,10 +57,6 @@ print(apply('mul', 2, 3))
 print(apply('max', 2, 3))
 print(apply('mod', 2, 3))
 print('ternary', 'even' if 4 % 2 == 0 else 'odd')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -89,10 +81,6 @@ print('has_jump', any('JUMP' in o for o in ops))
 print('list_case', route([2, 3]))
 print('fallback', route(7))
 print('instr_count', len(ops) > 5)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

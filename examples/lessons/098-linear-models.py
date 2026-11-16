@@ -40,10 +40,6 @@ def scale(row):
 strain = [scale(r) for r in train]
 print('scaled', knn_predict(strain, labels, scale(q)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # closed 0.6 2.2 0.48
@@ -63,10 +59,6 @@ for _ in range(2000):
     wg -= lr * dw; bg -= lr * db
 print('gd', round(wg, 3), round(bg, 3), round(mse(wg, bg), 3))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # L2 after 10 0.479
@@ -81,10 +73,6 @@ for _ in range(10):
     w1.append(max(0.0, v) if v > 0 else 0.0)
 print('L2 after 10', round(w2[-1], 4))
 print('L1 after 10', round(w1[-1], 4))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

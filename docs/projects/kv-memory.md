@@ -25,9 +25,7 @@ description: 为四讲演进线奠定可替换的接口
 
 ## 命令模型与窄接口：把变化挡在抽象后面
 
-命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；
-
-`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演进线里始终不变。
+命令用 `dataclasses.dataclass` 配 `frozen=True` 表达 `(op, key, value, ttl)`，不可变保证命令在解析、排队、传输途中不被偷偷改；`op` 取 `SET` / `GET` / `DEL` / `EXPIRE` 这类封闭集合，命令语义在四讲演进线里始终不变。
 
 错误语义要有自己的层级：自定义 `KVError` 基类，下分 `KeyNotFound`（键不存在或已过期）与 `CommandError`（未知命令、参数非法），不要让调用方 `catch` 裸 `KeyError`——`dict` 的 `KeyError` 与业务「键不存在」混在一起，排查时无法区分是数据问题还是代码 bug。
 
@@ -116,9 +114,9 @@ except ValueError as err:
 
 ## 内存实现与过期策略：惰性删除与逻辑时钟
 
-内存引擎用两个字典：`data` 存键值、`exp` 存绝对过期时刻，逻辑时钟 `now` 由测试推进而不是直接读系统时间，这样过期行为可复现。TTL 记绝对时刻而非倒计时，才能避免时钟调整带来的漂移；
+内存引擎用两个字典：`data` 存键值、`exp` 存绝对过期时刻，逻辑时钟 `now` 由测试推进而不是直接读系统时间，这样过期行为可复现。
 
-生产里用 `time.monotonic()`（不受系统时间回拨影响）而不要用 `time.time()`。
+TTL 记绝对时刻而非倒计时，才能避免时钟调整带来的漂移；生产里用 `time.monotonic()`（不受系统时间回拨影响）而不要用 `time.time()`。
 
 `ttl` 小于等于 0 表示永不过期，`SET` 一个已有键时必须清掉旧的 `exp`，否则旧过期时刻会让新值提前失效。过期删除有两种：惰性删除在读时检查 `exp` 并顺手清理，实现简单但过期键若没人访问就一直占内存；定期删除由后台线程按采样扫描补上，Redis 用的正是两者组合。
 
@@ -172,9 +170,7 @@ print('logged', suite(Logged))
 
 ## 并发安全：GIL 不等于读—检查—删原子
 
-`Protocol` 是结构化子类型：typing 在类创建时用元类收集方法名构成协议，实现类不必继承，只要能解析出同名可调用属性就满足接口；
-
-`@runtime_checkable` 只检查成员存在，不校验签名。
+`Protocol` 是结构化子类型：typing 在类创建时用元类收集方法名构成协议，实现类不必继承，只要能解析出同名可调用属性就满足接口；`@runtime_checkable` 只检查成员存在，不校验签名。
 
 把引擎藏在窄接口后面，等价于把「会变的部分」隔离到单一替换点，命令层只依赖抽象，后续网络、WAL、分片依次替换时行为不变，这正是开闭原则。惰性删除的复杂度是每次读 `O(1)`，但内存占用与过期未访问键数成正比；绝对过期时刻配合 `time.monotonic` 避免系统时间回拨造成的提前或延后失效。
 
@@ -208,9 +204,9 @@ print('lock type', type(lock).__name__)
 
 `dict` 的单次读写在 `GIL` 下是原子的，但「检查是否过期 → 删 → 返回」是复合操作，必须用 `threading.Lock` 包住整个临界区。
 
-`dis` 能看到 `box[0] += 1` 编成 `BINARY_OP` 加 `STORE_SUBSCR` 等多条字节码，线程切换可发生在指令之间，因此读—改—写不加锁必然有竞态。一把大锁简单但把所有写串行化；锁分片按 `hash(key) % N` 把键映射到 N 把独立锁，不同分片可并行写，N 常取 2 的幂；
+`dis` 能看到 `box[0] += 1` 编成 `BINARY_OP` 加 `STORE_SUBSCR` 等多条字节码，线程切换可发生在指令之间，因此读—改—写不加锁必然有竞态。
 
-这层机制等讲到持久化与并发时还会再展开，届时把它和 WAL 的写入顺序放在一起看。注意内置 `hash` 对字符串有随机化，只影响分片选择、不影响正确性。
+一把大锁简单但把所有写串行化；锁分片按 `hash(key) % N` 把键映射到 N 把独立锁，不同分片可并行写，N 常取 2 的幂；这层机制等讲到持久化与并发时还会再展开，届时把它和 WAL 的写入顺序放在一起看。注意内置 `hash` 对字符串有随机化，只影响分片选择、不影响正确性。
 
 契约测试是一组对每个实现都跑同样断言的用例：`SET` 后 `GET` 能取回、`DEL` 后 `GET` 抛 `KeyNotFound`、TTL 到期后 `GET` 抛异常、未知命令抛 `CommandError`。任何新引擎都必须通过同一组用例才能替换，这是 Liskov 替换原则在存储层的落地。
 
@@ -225,7 +221,7 @@ print('lock type', type(lock).__name__)
 | 131 WAL | 持久化与恢复 | 命令语义与引擎接口 |
 | 132 分片复制 | 路由与副本 | 命令语义与契约测试 |
 
-<CheckList id='P129b' title='上线前自检' :items='["能复现并解释「命令层直接读写全局 dict」", "能复现并解释「用裸 KeyError 表示所有错误」", "能复现并解释「认为 GIL 让读—检查—删天然安全」", "能用一条命令验证 命令模型与协议设计", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P129a' title='上线前自检' :items='["能复现并解释「命令层直接读写全局 dict」", "能复现并解释「用裸 KeyError 表示所有错误」", "能复现并解释「认为 GIL 让读—检查—删天然安全」", "能用一条命令验证 命令模型与协议设计", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 窄接口 + 命令层 + 契约测试 + 装配根
@@ -294,15 +290,13 @@ print('service', type(compose('memory').engine).__name__)
 
 PEP 544 的结构化子类型让存储引擎不必继承任何基类：命令层只依赖一个 Protocol，实现类只要方法名与签名匹配就被视为满足。
 
-源码在 `Lib/typing.py` 的 _ProtocolMeta（继承 ABCMeta）：类创建时收集 mro 里所有带注解的方法与属性，存进 `__protocol_attrs__`（3.12 起可用 `typing.get_protocol_members` 读取），并置 `_is_protocol = True`；
-
-非 protocol 的子类若没有显式把它置 False，就被当作具体实现。
+源码在 `Lib/typing.py` 的 _ProtocolMeta（继承 ABCMeta）：类创建时收集 mro 里所有带注解的方法与属性，存进 `__protocol_attrs__`（3.12 起可用 `typing.get_protocol_members` 读取），并置 `_is_protocol = True`；非 protocol 的子类若没有显式把它置 False，就被当作具体实现。
 
 加 `@runtime_checkable` 后 `__instancecheck__` / `__subclasscheck__` 才启用，但它只逐个检查成员名是否存在，不校验类型注解、不执行方法、也不看签名，所以 `isinstance(obj, Engine)` 通过并不代表 `engine.set(k, v)` 的参数顺序正确。
 
 真正的类型约束在静态检查器里完成，运行时只需要这层有没有 get / set / delete 的闸门。
 
-与之相对，`abc.ABC` 配 `@abstractmethod` 是名义子类型：Objects/`typeobject.c` 的 `__instancecheck__` 走 `ABCMeta.__subclasscheck__` 与 _abc 缓存，未实现抽象方法在实例化阶段就抛 TypeError。
+与之相对，`abc.ABC` 配 `@abstractmethod` 是名义子类型：`Objects/typeobject.c` 的 `__instancecheck__` 走 `ABCMeta.__subclasscheck__` 与 _abc 缓存，未实现抽象方法在实例化阶段就抛 TypeError。
 
 选哪个是明确的架构权衡：Protocol 让内存、网络代理、WAL 引擎、分片客户端四种实现完全解耦、可独立替换，代价是错误只能在运行时或静态检查里暴露；ABC 把契约钉死在继承关系上，代价是所有实现被绑进同一棵类树。
 
@@ -339,15 +333,15 @@ print('structural_issubclass', issubclass(MemoryEngine, Engine))
 
 ## 窄接口、错误层级与四讲共用的契约测试
 
-贯穿线要求存储引擎、网络层、持久化、分片依次替换而命令语义不变，接口宽度就是第一个架构决策。把接口收窄到 get / set / delete 三个方法，加上可选的 ttl 与 close，替换点才只有一处：任何新实现只需满足这三个方法，命令层、过期逻辑、错误映射都不改；
+贯穿线要求存储引擎、网络层、持久化、分片依次替换而命令语义不变，接口宽度就是第一个架构决策。
 
-一旦把内部 dict、游标或连接池方法漏进接口，后面每加一层都要回去改调用点。
+把接口收窄到 get / set / delete 三个方法，加上可选的 ttl 与 close，替换点才只有一处：任何新实现只需满足这三个方法，命令层、过期逻辑、错误映射都不改；一旦把内部 dict、游标或连接池方法漏进接口，后面每加一层都要回去改调用点。
 
 错误语义同样要抽象成类型层级而不是裸 KeyError：定义 KVError 基类，分出 KeyNotFound（数据问题，返回空）与 CommandError（协议或代码 bug，应告警），网络层把断连映射成 CommandError，WAL 层把校验失败映射成同类，调用方 except 的分支才稳定。
 
-让行为不变可验证的是把契约测试写成参数化用例：对 SET、GET、GET 缺失、DEL、TTL 过期、值含换行等固定输入与期望输出录成表，用一个 for engine in engines 循环对每个实现跑同一组断言。四种实现共用这一组用例，是渐进式演进里唯一能证明换实现没改语义的证据；
+让行为不变可验证的是把契约测试写成参数化用例：对 SET、GET、GET 缺失、DEL、TTL 过期、值含换行等固定输入与期望输出录成表，用一个 for engine in engines 循环对每个实现跑同一组断言。
 
-契约测试不是单元测试的补充，它就是接口的可执行规范。
+四种实现共用这一组用例，是渐进式演进里唯一能证明换实现没改语义的证据；契约测试不是单元测试的补充，它就是接口的可执行规范。
 
 **接口抽象的两种子类型与契约强度**
 

@@ -64,10 +64,6 @@ p = Point(3, 4)
 print('named', p.x, p.y, p._asdict(), p._replace(y=9))
 print('is tuple', isinstance(p, tuple), p[0] + p[1])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # NamedTuple defaults Point(x=3, y=0) {'y': 0} {'x': 3, 'y': 0}
@@ -102,10 +98,6 @@ def minmax(xs):
 lo, hi = minmax([3, 1, 9])
 print('multi return', lo, hi, type(minmax([1])).__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # tuple smaller True
@@ -137,10 +129,6 @@ p = Point(1, 2)
 print('namedtuple mro', [c.__name__ for c in Point.__mro__[:3]])
 print('fields', Point._fields, 'is tuple subclass', issubclass(Point, tuple))
 print('hash namedtuple', hash(p) == hash((1, 2)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -43,10 +43,6 @@ def work(x):
 print(work(1))
 print(work.__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 3 7 2 add
@@ -79,10 +75,6 @@ def raw(x):
     return x
 print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # f (x)
@@ -112,10 +104,6 @@ while hasattr(cur, '__wrapped__'):
 print(n, cur is f)
 print(inspect.unwrap(stacked) is f)
 print(callable(stacked), type(stacked).__name__)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

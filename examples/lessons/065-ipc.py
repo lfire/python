@@ -47,10 +47,6 @@ if __name__ == '__main__':
         d['a'] = 1
         print('manager dict', d['a'], type(d).__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # value 0 array [0, 0, 0]
@@ -82,10 +78,6 @@ if __name__ == '__main__':
     print('exitcode', p.exitcode, 'alive', p.is_alive())
     print('children', mp.active_children())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # Queue has feeder True
@@ -104,10 +96,6 @@ print('Queue has task_done', hasattr(mq.Queue, 'task_done'))
 print('Pipe duplex default', inspect.signature(mp.Pipe).parameters['duplex'].default)
 print('connection.wait available', hasattr(__import__('multiprocessing.connection', fromlist=['wait']), 'wait'))
 print('platform', sys.platform)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

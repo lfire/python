@@ -74,10 +74,6 @@ with tempfile.TemporaryDirectory() as d:
     print('rows', json.load(open(path, encoding='utf-8')))
 os.environ.pop('TASK_PATH', None)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # direct-write corrupt JSONDecodeError
@@ -101,10 +97,6 @@ with open(tmp, 'w', encoding='utf-8') as f:
 os.replace(tmp, target)
 print('atomic restore', json.loads(open(target, encoding='utf-8').read()))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # content new
@@ -125,10 +117,6 @@ print('content', open(a).read())
 print('inode changed', os.stat(a).st_ino != ino_before)
 print('tmp gone', not os.path.exists(b))
 print('same dir', os.path.dirname(a) == os.path.dirname(b))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -29,15 +29,11 @@ description: 正确创建并驱动协程
 
 `inspect.iscoroutinefunction(f)` 看函数、`inspect.iscoroutine(obj)` 看调用结果、`inspect.isawaitable(obj)` 看能否被 `await`，三者判定层级不同。
 
-协程对象要靠外部驱动：首次 `coro.send(None)` 或 `await` 才推进到第一个 await 点；
-
-若创建后既不 `await` 也不 close，对象被回收时 CPython 会打印 RuntimeWarning: coroutine 'f' was never awaited，这是「调用了却什么都没发生」最常见的现场证据，显式丢弃应调 `coro.close()`。
+协程对象要靠外部驱动：首次 `coro.send(None)` 或 `await` 才推进到第一个 await 点；若创建后既不 `await` 也不 close，对象被回收时 CPython 会打印 RuntimeWarning: coroutine 'f' was never awaited，这是「调用了却什么都没发生」最常见的现场证据，显式丢弃应调 `coro.close()`。
 
 `await` 只能出现在 async def 内部，写在模块顶层或普通 def 里会在编译期报 SyntaxError: 'await' outside function。
 
-统一入口是 `asyncio.run(coro)`（3.7 起）：它新建一个事件循环、把协程包装成 `Task` 跑到完成、取消残留任务、关闭异步生成器并关掉 loop；
-
-同一线程已有运行中的 loop 时再调用会抛 `RuntimeError`（提示 cannot be called from a running event loop），所以库代码只应暴露 async 函数，把 run 留给最外层入口调用一次。
+统一入口是 `asyncio.run(coro)`（3.7 起）：它新建一个事件循环、把协程包装成 `Task` 跑到完成、取消残留任务、关闭异步生成器并关掉 loop；同一线程已有运行中的 loop 时再调用会抛 `RuntimeError`（提示 cannot be called from a running event loop），所以库代码只应暴露 async 函数，把 run 留给最外层入口调用一次。
 
 <Callout type="tip" title='核心心智模型' text='包含 async def 的函数在编译期被打上 `CO_COROUTINE` 标志（值为 128），调用它并不执行函数体，只返回一个 `types.CoroutineType` 实例。`inspect.iscoroutinefunction(f)` 看函数…' />
 
@@ -59,15 +55,11 @@ description: 正确创建并驱动协程
 
 `await` 的操作数必须满足 awaitable 协议，共三类：原生协程（`CO_COROUTINE`）、用 `types.coroutine` 装饰、带 `CO_ITERABLE_COROUTINE`（256）的生成器协程、以及任意实现了 `__await__` 且返回迭代器的对象，`inspect.isawaitable` 对三者都返回 True。
 
-`__await__` 生成器里 yield 出去的值会沿 `yield from` 链路交到事件循环：`asyncio.sleep(0)` 内部就是一个产出 None 的 `__sleep0`，`Task` 收到 None 便用 `loop.call_soon` 安排下一次 `send(None)` 恢复；
-
-yield 出一个未完成的 `Future` 时，`Task` 给它挂 `add_done_callback` 等待就绪。
+`__await__` 生成器里 yield 出去的值会沿 `yield from` 链路交到事件循环：`asyncio.sleep(0)` 内部就是一个产出 None 的 `__sleep0`，`Task` 收到 None 便用 `loop.call_soon` 安排下一次 `send(None)` 恢复；yield 出一个未完成的 `Future` 时，`Task` 给它挂 `add_done_callback` 等待就绪。
 
 对非 awaitable 调用 `await` 会抛 TypeError: object int can't be used in 'await' expression。
 
-3.6 起 `CO_ASYNC_GENERATOR`（512，PEP 525）标记 async def 里含 `yield` 的异步生成器，需配合 async for / `__aiter__` / `__anext__`；
-
-async with 则从 3.5 的 PEP 492 起就依赖 `__aenter__` / `__aexit__`。
+3.6 起 `CO_ASYNC_GENERATOR`（512，PEP 525）标记 async def 里含 `yield` 的异步生成器，需配合 async for / `__aiter__` / `__anext__`；async with 则从 3.5 的 PEP 492 起就依赖 `__aenter__` / `__aexit__`。
 
 这套协议把暂停点标准化了：`asyncio.gather`、`asyncio.create_task`、`asyncio.ensure_future` 都先检查或包装成 awaitable 再交给 loop 调度。
 
@@ -152,15 +144,11 @@ asyncio.run(main())
 
 ## 同步异步边界：别在协程里 time.sleep 或跑同步 requests
 
-事件循环是单线程协作式调度器，一个协程不主动让出，其它任务就没有执行机会。`time.sleep`、同步 `requests.get`、阻塞的数据库驱动、甚至一个纯 Python 长循环写在 async def 里，都会占住唯一线程；
+事件循环是单线程协作式调度器，一个协程不主动让出，其它任务就没有执行机会。
 
-只有 `await asyncio.sleep(0)` 这类显式让出才能把控制权交回 loop。
+`time.sleep`、同步 `requests.get`、阻塞的数据库驱动、甚至一个纯 Python 长循环写在 async def 里，都会占住唯一线程；只有 `await asyncio.sleep(0)` 这类显式让出才能把控制权交回 loop。
 
-正确做法有三类：把同步阻塞函数交给 `asyncio.to_thread`（3.9 起）或 `loop.run_in_executor` 下沉到线程池，`asyncio.to_thread` 还会继承当前 contextvars；
-
-改用原生异步库（`aiohttp`、`httpx.AsyncClient`、`asyncpg`、`aiosqlite`）；
-
-CPU 密集计算交给进程池或 C 扩展。
+正确做法有三类：把同步阻塞函数交给 `asyncio.to_thread`（3.9 起）或 `loop.run_in_executor` 下沉到线程池，`asyncio.to_thread` 还会继承当前 contextvars；改用原生异步库（`aiohttp`、`httpx.AsyncClient`、`asyncpg`、`aiosqlite`）；CPU 密集计算交给进程池或 C 扩展。
 
 要注意 `asyncio.to_thread` 并不绕过 GIL，纯 Python 计算换成线程依旧无法并行，只有释放 GIL 的 IO 或 C 扩展才受益。
 
@@ -198,9 +186,7 @@ CPU 密集计算交给进程池或 C 扩展。
 
 async def 编译出的 code object 带 `CO_COROUTINE` 标志，调用时 CPython 不执行帧，而是构造 `PyCoroObject` 把帧保存在 `cr_frame` 里，指令指针停在起点。
 
-3.11 起 await 的字节码大致是 `GET_AWAITABLE` 取操作数的 `am_await` 槽得到迭代器，再用 `LOAD_CONST` 压入 None、`SEND` 把它送进子迭代器、`YIELD_VALUE` 把值交还调用者并冻结栈帧，3.12 起开头还多一条 `RETURN_GENERATOR`；
-
-用 `dis` 能直接看到这组指令。
+3.11 起 await 的字节码大致是 `GET_AWAITABLE` 取操作数的 `am_await` 槽得到迭代器，再用 `LOAD_CONST` 压入 None、`SEND` 把它送进子迭代器、`YIELD_VALUE` 把值交还调用者并冻结栈帧，3.12 起开头还多一条 `RETURN_GENERATOR`；用 `dis` 能直接看到这组指令。
 
 真正的驱动者是事件循环里的 `Task.__step`：它调用 `coro.send(None)`，根据 yield 出来的值决定下一步——None 用 `call_soon` 重新入队、`Future` 未完成就挂回调、`Future` 完成则把结果 send 回去，这正是 PEP 492 把生成器协议固化为原生协程的机器级形态。
 
@@ -242,7 +228,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='把阻塞调用放进 to_thread / run_in_executor，或换成原生异步库；入口统一用 asyncio.run' />
 
-<CheckList id='P068b' title='上线前自检' :items='["能复现并解释「调用 async 函数直接把返回值当结果用」", "能复现并解释「在协程里用 time.sleep 或同步 requests.…」", "能复现并解释「顶层写 await 或在已有 loop 的线程里再调 asy…」", "能用一条命令验证 coroutine 与 async function", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P068a' title='上线前自检' :items='["能复现并解释「调用 async 函数直接把返回值当结果用」", "能复现并解释「在协程里用 time.sleep 或同步 requests.…」", "能复现并解释「顶层写 await 或在已有 loop 的线程里再调 asy…」", "能用一条命令验证 coroutine 与 async function", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

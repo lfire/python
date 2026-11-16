@@ -106,15 +106,11 @@ print('rows', con.execute('SELECT count(*) FROM agg').fetchone()[0])
 
 ## 脏数据隔离、窗口聚合与幂等写入
 
-`DictReader` 把每行转成 dict，但值全是字符串，`int(row['amount'])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；
+`DictReader` 把每行转成 dict，但值全是字符串，`int(row['amount'])` 遇到非数字或缺失列会抛 `ValueError` 或 `KeyError`；正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告。
 
-正确做法是在解析生成器里 `try/except` 捕获，把原始行送进死信列表（dead letter）而不是中断整批，批次结束出质量报告。
+窗口聚合用 `defaultdict(int)` 累加：tumbling window 的键是 `ts // width * width`，把同一时间桶的记录并到一起；滑动窗口则需要维护队列与过期边界。
 
-窗口聚合用 `defaultdict(int)` 累加：tumbling window 的键是 `ts // width * width`，把同一时间桶的记录并到一起；
-
-滑动窗口则需要维护队列与过期边界。写入侧用事务包住整批（`con.commit()` 一次提交），减少每行的 `fsync`；
-
-幂等靠主键加 SQLite 的 `INSERT`（3.24 起支持，`excluded` 是冲突行的伪表），或 MySQL 的 `ON DUPLICATE KEY UPDATE`、PostgreSQL 的 `ON CONFLICT`。
+写入侧用事务包住整批（`con.commit()` 一次提交），减少每行的 `fsync`；幂等靠主键加 SQLite 的 `INSERT`（3.24 起支持，`excluded` 是冲突行的伪表），或 MySQL 的 `ON DUPLICATE KEY UPDATE`、PostgreSQL 的 `ON CONFLICT`。
 
 ```sql
 INSERT ... ON CONFLICT(key) DO UPDATE SET col = excluded.col
@@ -170,13 +166,11 @@ print('wm', con.execute('SELECT v FROM meta WHERE k=?', ('wm',)).fetchone()[0])
 
 水位（high water mark）记在独立的 meta 表，按分区（日期、来源、租户）分别记录而不是全局单值，否则某个落后分区会拖住其它分区的推进。
 
-写入水位用 `ON CONFLICT(k) DO UPDATE` 配合 `max(v, excluded.v)`，保证只前进不回退；
+写入水位用 `ON CONFLICT(k) DO UPDATE` 配合 `max(v, excluded.v)`，保证只前进不回退；再配上「只处理 offset 大于水位的记录」，at-least-once 投递加幂等写入就近似等价于 effectively-once。
 
-再配上「只处理 offset 大于水位的记录」，at-least-once 投递加幂等写入就近似等价于 effectively-once。质量校验至少覆盖：总行数、死信数与占比、空值率、金额范围、主键唯一性、聚合总量与源数据对账；
+质量校验至少覆盖：总行数、死信数与占比、空值率、金额范围、主键唯一性、聚合总量与源数据对账；把 good / dead / total / 水位写成质量报告随批次落盘，出问题时能定位到具体分区。
 
-把 good / dead / total / 水位写成质量报告随批次落盘，出问题时能定位到具体分区。CSV 与 SQL 双数据源适配靠同一批 dict 记录：既能用 `csv.DictWriter` 落文件，也能用 `con.execute` 入库。schema 演进（新增列）要保证旧批次仍可读。
-
-三个失效信号：重跑后行数翻倍、水位回退、死信数突增却没有告警。
+CSV 与 SQL 双数据源适配靠同一批 dict 记录：既能用 `csv.DictWriter` 落文件，也能用 `con.execute` 入库。schema 演进（新增列）要保证旧批次仍可读。三个失效信号：重跑后行数翻倍、水位回退、死信数突增却没有告警。
 
 **ETL 失败模式与防线**
 
@@ -188,16 +182,16 @@ print('wm', con.execute('SELECT v FROM meta WHERE k=?', ('wm',)).fetchone()[0])
 | 落后分区拖住全部 | 全局单水位 | 按分区分别记录水位 |
 | 水位回退覆盖新数据 | 用赋值而非 max 更新 | SET v=max(v, excluded.v) 保证单调 |
 
-<CheckList id='P127b' title='上线前自检' :items='["能复现并解释「用 read() 全量载入日志，文件稍大就 OOM」", "能复现并解释「失败后从头重跑，聚合值翻倍」", "能复现并解释「一行脏数据让整批中断、已处理结果全丢」", "能用一条命令验证 生成器管道与背压", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P127a' title='上线前自检' :items='["能复现并解释「用 read() 全量载入日志，文件稍大就 OOM」", "能复现并解释「失败后从头重跑，聚合值翻倍」", "能复现并解释「一行脏数据让整批中断、已处理结果全丢」", "能用一条命令验证 生成器管道与背压", "关键路径有自动化测试与失败分支"]' />
 
 
 ## gi_frame 与生成器挂起：O(1) 内存的底层
 
 生成器把函数帧保存在堆上（`gi_frame` 持有局部变量与指令指针），每次 `next` 恢复执行到下一个 `yield` 再挂起，因此同时驻留的只有当前一条记录，这就是 `O(1)` 内存与天然背压的来源；下游不 `next`，上游就不计算。
 
-`csv.DictReader` 本身是迭代器，配合 `io.StringIO` 把字符串包装成文件对象，整条管道无需物化中间列表。SQLite 的事务由 journal 或 WAL 保证原子性，一次 `commit` 把整批改动落盘，比逐行提交少很多 `fsync`；
+`csv.DictReader` 本身是迭代器，配合 `io.StringIO` 把字符串包装成文件对象，整条管道无需物化中间列表。
 
-`ON CONFLICT` 子句用 `excluded` 伪表引用「本想插入但因冲突失败的那一行」，因此 `SET total=excluded.total` 是覆盖而非累加，重跑同一批必然得到相同值。
+SQLite 的事务由 journal 或 WAL 保证原子性，一次 `commit` 把整批改动落盘，比逐行提交少很多 `fsync`；`ON CONFLICT` 子句用 `excluded` 伪表引用「本想插入但因冲突失败的那一行」，因此 `SET total=excluded.total` 是覆盖而非累加，重跑同一批必然得到相同值。
 
 水位只增不减（`max`）保证消费进度单调，配合「只处理大于水位的记录」，at-least-once 投递加幂等写入即可逼近 effectively-once。
 
@@ -239,11 +233,11 @@ print('first', next(lazy))
 
 ## 可重跑的日志聚合管道与质量报告
 
-一条线上 ETL 要求「任何一段失败后重放，结果一致」。下面把四层收进一个可运行脚本：`read_rows` 用 `csv.DictReader` 逐行读并把转换失败的行放进死信；聚合按 `ts` 累加；写入用 `ON CONFLICT` 做覆盖式 upsert；水位写进 meta 表并用 `max` 保证单调；
+一条线上 ETL 要求「任何一段失败后重放，结果一致」。
 
-`report` 汇总行数、死信数、水位与聚合总量，作为批次质量报告落盘。`run1` 与 `run2` 传入同一份源数据，输出必须逐字段一致——这正是可重跑的验收标准。真实项目把 `:memory:` 换成文件库并开 WAL、按日期分区记录水位、把质量报告写进监控系统、给死信配独立重放入口。
+下面把四层收进一个可运行脚本：`read_rows` 用 `csv.DictReader` 逐行读并把转换失败的行放进死信；聚合按 `ts` 累加；写入用 `ON CONFLICT` 做覆盖式 upsert；水位写进 meta 表并用 `max` 保证单调；`report` 汇总行数、死信数、水位与聚合总量，作为批次质量报告落盘。
 
-片段可直接运行，重点看两次运行的报告完全相同。
+`run1` 与 `run2` 传入同一份源数据，输出必须逐字段一致——这正是可重跑的验收标准。真实项目把 `:memory:` 换成文件库并开 WAL、按日期分区记录水位、把质量报告写进监控系统、给死信配独立重放入口。片段可直接运行，重点看两次运行的报告完全相同。
 
 ```python
 import csv, io, sqlite3

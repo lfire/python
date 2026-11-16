@@ -14,9 +14,9 @@ description: 把安全做成默认行为而不是事后补丁
 
 ## 一条带着 OR 条件的输入拖走了整张表
 
-一个内部报表接口把用户传入的名字直接拼进 SQL：先把查询骨架写成字符串，再用 `repr(name)` 把输入接在后面，凑成一条完整语句交给 `execute`。上线后有人提交了一个带引号的输入，整张用户表被拖走；
+一个内部报表接口把用户传入的名字直接拼进 SQL：先把查询骨架写成字符串，再用 `repr(name)` 把输入接在后面，凑成一条完整语句交给 `execute`。
 
-同一份代码还把 `pickle.loads` 用在缓存反序列化上，而缓存内容可由外部接口写入，等于把任意对象构造能力交给了调用方。另一处事故是运维把 `.env` 打进镜像、又在异常日志里打印完整请求头，密钥跟着进了日志系统。
+上线后有人提交了一个带引号的输入，整张用户表被拖走；同一份代码还把 `pickle.loads` 用在缓存反序列化上，而缓存内容可由外部接口写入，等于把任意对象构造能力交给了调用方。另一处事故是运维把 `.env` 打进镜像、又在异常日志里打印完整请求头，密钥跟着进了日志系统。
 
 这些都不是语法层的 bug：`eval`、pickle 处理不可信数据、字符串拼接 SQL、密钥落进交付物，任意一条都能直接导致失陷。团队想靠代码评审拦住，但评审会漏，第三方依赖里的 CVE 更不在评审视野内。这一讲把安全做成默认行为：参数化查询、禁止对不可信数据反序列化、密钥托管与轮换、CI 做依赖与镜像扫描。
 
@@ -141,9 +141,9 @@ print('hmac_equal', hmac.compare_digest(digest, hashlib.sha256(token.encode()).h
 
 pickle 不是数据格式，而是对象构造协议：`pickle.loads` 会执行 `__reduce__` 指定的可调用对象，攻击者构造一个 `__reduce__` 返回 `os.system` 加一串参数、或等价的可调用类，反序列化即触发任意代码执行，这正是 CPython 文档明确警告的「绝不对不可信数据 unpickle」。
 
-json 才是数据格式，跨系统交换一律用它，需要带类型时用显式 schema 校验，而不是 pickle。同类风险还有 `marshal`、`shelve`，以及某些缓存客户端默认用 pickle 编解码；
+json 才是数据格式，跨系统交换一律用它，需要带类型时用显式 schema 校验，而不是 pickle。
 
-若必须用 pickle 做内部缓存，要保证数据来源不可被外部写入，并对 blob 做 `HMAC` 签名校验，签名比对用 `hmac.compare_digest` 做常量时间比较，防时序侧信道。
+同类风险还有 `marshal`、`shelve`，以及某些缓存客户端默认用 pickle 编解码；若必须用 pickle 做内部缓存，要保证数据来源不可被外部写入，并对 blob 做 `HMAC` 签名校验，签名比对用 `hmac.compare_digest` 做常量时间比较，防时序侧信道。
 
 `eval` 与 `exec` 即便配了空的 `globals` 也不安全，内置对象能沿类继承链被重新拿到，应改用 `ast.literal_eval` 解析字面量。
 
@@ -178,9 +178,9 @@ CPython 明确把 pickle 标为不安全，协议 0 到 5 都保留 opcode 调�
 
 第三方依赖是供应链入口：requirements 不锁版本，不同时间的构建就会拉到不同代码，CI 要用锁文件固定版本，用 pip-audit、safety 对照 CVE 库扫描，并产出 `SBOM`（软件物料清单）记录组件与版本，出现新 CVE 时能快速定位受影响的服务。
 
-镜像层同样要扫，而且别把 `.env`、私钥、token 打进镜像或日志；密钥由托管服务或环境变量在运行时注入，支持轮换（新旧密钥并存一段时间），日志里打印令牌前先脱敏（只留前几位）。`secrets` 模块提供 `token_hex`、`token_urlsafe` 这类密码学安全随机源，不要用 `random` 生成令牌；
+镜像层同样要扫，而且别把 `.env`、私钥、token 打进镜像或日志；密钥由托管服务或环境变量在运行时注入，支持轮换（新旧密钥并存一段时间），日志里打印令牌前先脱敏（只留前几位）。
 
-口令存储用 `hashlib.pbkdf2_hmac` 或 bcrypt、argon2 加盐，别用裸 sha256。
+`secrets` 模块提供 `token_hex`、`token_urlsafe` 这类密码学安全随机源，不要用 `random` 生成令牌；口令存储用 `hashlib.pbkdf2_hmac` 或 bcrypt、argon2 加盐，别用裸 sha256。
 
 比较摘要一律用 `hmac.compare_digest`。
 
@@ -200,9 +200,9 @@ CPython 明确把 pickle 标为不安全，协议 0 到 5 都保留 opcode 调�
 
 ## 带参数化、脱敏与幂等令牌的安全数据访问层
 
-把一次用户查询写成默认安全的访问层：查询一律走参数化，外部输入先做白名单校验，返回的令牌与摘要在日志里脱敏，写操作带幂等令牌避免重放。真实项目里还要加最小权限的数据库账号、密钥运行时注入、依赖扫描与审计日志。下面这段用标准库把参数化、常量时间比较、脱敏与幂等去重串在一起，重点看每个外部数据入口都有明确约束，而不是靠调用方自觉；
+把一次用户查询写成默认安全的访问层：查询一律走参数化，外部输入先做白名单校验，返回的令牌与摘要在日志里脱敏，写操作带幂等令牌避免重放。真实项目里还要加最小权限的数据库账号、密钥运行时注入、依赖扫描与审计日志。
 
-任何一条越过边界的路径，都应在这里被挡下并留日志可查。
+下面这段用标准库把参数化、常量时间比较、脱敏与幂等去重串在一起，重点看每个外部数据入口都有明确约束，而不是靠调用方自觉；任何一条越过边界的路径，都应在这里被挡下并留日志可查。
 
 ```python
 import sqlite3, hashlib, hmac, secrets
@@ -238,7 +238,7 @@ print(r.write_once('k1', 'alice'), r.write_once('k1', 'alice'))
 
 <Callout type="idea" title='落地提示' text='用参数化查询、禁止对不可信数据 pickle/eval、密钥托管与轮换、CI 做依赖与镜像扫描' />
 
-<CheckList id='P113b' title='上线前自检' :items='["能复现并解释「用字符串拼接构造 WHERE 条件」", "能复现并解释「对来自缓存或接口的字节直接 pickle.loads」", "能复现并解释「把 .env 与 token 打进镜像或异常日志」", "能用一条命令验证 依赖漏洞与 SBOM", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P113a' title='上线前自检' :items='["能复现并解释「用字符串拼接构造 WHERE 条件」", "能复现并解释「对来自缓存或接口的字节直接 pickle.loads」", "能复现并解释「把 .env 与 token 打进镜像或异常日志」", "能用一条命令验证 依赖漏洞与 SBOM", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
@@ -263,7 +263,7 @@ pickle 是栈式虚拟机，pickletools 能反汇编 blob，关键是 `GLOBAL` /
 
 `__reduce__` 的 (f, args) 序列化后编译成「解析 f、构造 args、`REDUCE`、调用」；f 可以是 `builtins.len` 或任意可调用对象——危险在「反序列化即执行构造逻辑」。CPython 文档禁止对不可信数据 unpickle，协议 0 到 5 都保留该机制。
 
-源码在 `Lib/pickle.py` 的 load_reduce 与 find_class、Modules/`_pickle.c` 的 load_stack_global、`pickletools.py` 的 genops。
+源码在 `Lib/pickle.py` 的 load_reduce 与 find_class、`Modules/_pickle.c` 的 load_stack_global、`pickletools.py` 的 genops。
 
 加固是覆写 find_class 白名单：只放行已知模块与类，`STACK_GLOBAL` 阶段即被拦下，`REDUCE` 无从执行；但 `BUILD`、`NEWOBJ_EX` 仍能触发 `__setstate__`，白名单不能替代「跨系统一律用 json」。
 
@@ -301,11 +301,13 @@ print('native', pickle.loads(blob))
 
 把注入与时序放到「解析阶段」看：sqlite3 参数化免疫注入，因 sqlite3_prepare_v2 先把 SQL 编译成 `VDBE` 字节码，此阶段只看到占位符 ?，输入值不参与语法分析；随后 sqlite3_bind_text 把值绑到变量槽，执行时只作为操作数，引号、OR、注释符无法改变语法树。
 
-CPython 的 sqlite3 扩展在 Modules/_sqlite/`statement.c` 里调 prepare、bind；psycopg、PyMySQL 的 %s 同样两阶段。由此推出占位符不能代表表名、列名、排序方向：它们要在语法分析阶段确定，晚到执行阶段的值无法变成标识符，只能靠白名单。
+CPython 的 sqlite3 扩展在 `Modules/_sqlite/statement.c` 里调 prepare、bind；psycopg、PyMySQL 的 %s 同样两阶段。
+
+由此推出占位符不能代表表名、列名、排序方向：它们要在语法分析阶段确定，晚到执行阶段的值无法变成标识符，只能靠白名单。
 
 另一条线：== 早退，耗时随共同前缀增长；若写成 if provided == expected，固定前缀猜下一字节，正确字节让比较多走一字符、耗时略长，恢复 n 字节令牌只需约 256·n 次请求，暴力枚举则是 256^n。
 
-修复是 `hmac.compare_digest`：CPython 在 Modules/`_operator.c` 的 _tscmp 里做固定时长按位比较，不论首个不同字节在哪都扫描完整长度。
+修复是 `hmac.compare_digest`：CPython 在 `Modules/_operator.c` 的 _tscmp 里做固定时长按位比较，不论首个不同字节在哪都扫描完整长度。
 
 但它只保证比较恒定时间，前面的长度早退判断仍泄漏长度。
 
@@ -325,9 +327,9 @@ CPython 的 sqlite3 扩展在 Modules/_sqlite/`statement.c` 里调 prepare、bin
 
 ## 早退比较的时序侧信道与逐字节爆破
 
-一个内部网关用 32 字节令牌鉴权，验证写成 == 比较，还把耗时打进日志。攻击者先测基线，再逐字节枚举：固定已猜中前缀、对当前字节试 00 到 ff，重复 200 遍取耗时中位数，正确字节让比较多走一字符、耗时略高。32·256·200 约 160 万请求可恢复令牌，暴力枚举 16^32 不可行；
+一个内部网关用 32 字节令牌鉴权，验证写成 == 比较，还把耗时打进日志。攻击者先测基线，再逐字节枚举：固定已猜中前缀、对当前字节试 00 到 ff，重复 200 遍取耗时中位数，正确字节让比较多走一字符、耗时略高。
 
-轮换后仍走同一路径，每次轮换都重新泄漏。复盘换 compare_digest、统一错误响应、移除耗时日志并限速。下面把早退步数与恒定步数对照。
+32·256·200 约 160 万请求可恢复令牌，暴力枚举 16^32 不可行；轮换后仍走同一路径，每次轮换都重新泄漏。复盘换 compare_digest、统一错误响应、移除耗时日志并限速。下面把早退步数与恒定步数对照。
 
 ```python
 def early_exit_steps(a, b):

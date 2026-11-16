@@ -156,11 +156,11 @@ print('param count', len(sig.parameters))
 
 ## 把复盘结论沉淀成可检索的 ADR 与检查表
 
-一次检索系统选型结束后，团队用 dataclass 定义固定的 ADR 结构：编号、标题、状态、上下文、决策、后果、验证、回退八个字段全部必填，`frozen=True` 保证记录一旦写入不被悄悄改写。脚本在生成记录时自动检查「验证」与「回退」是否为空，缺任一项就拒绝归档；
+一次检索系统选型结束后，团队用 dataclass 定义固定的 ADR 结构：编号、标题、状态、上下文、决策、后果、验证、回退八个字段全部必填，`frozen=True` 保证记录一旦写入不被悄悄改写。
 
-再序列化成 `JSON` 存入版本库，便于全文检索与后续复盘引用。复盘产出的检查表也被编码成字段列表，CI 里逐项断言这些字段都有值，把「写清楚」变成机器可判定的条件。真实项目会把 ADR 编号与 Git 提交关联、给 Superseded 记录加指向新编号的字段，并在压测报告里回填验证结果。
+脚本在生成记录时自动检查「验证」与「回退」是否为空，缺任一项就拒绝归档；再序列化成 `JSON` 存入版本库，便于全文检索与后续复盘引用。复盘产出的检查表也被编码成字段列表，CI 里逐项断言这些字段都有值，把「写清楚」变成机器可判定的条件。
 
-下面片段可直接运行，重点看结构如何强制承载代价与回退。
+真实项目会把 ADR 编号与 Git 提交关联、给 Superseded 记录加指向新编号的字段，并在压测报告里回填验证结果。下面片段可直接运行，重点看结构如何强制承载代价与回退。
 
 ```python
 import dataclasses, json
@@ -217,9 +217,9 @@ print('reject empty', archive(dataclasses.replace(adr, verify='')))
 
 加权和还有第二个缺陷，即不满足无关备选独立性：新增或删掉一个方案可能让原有两名排序翻转，这正是换个权重结论就翻转之外更隐蔽的 rank reversal。
 
-可复现的评估框架分三步：第一步把主观形容词换成可核对的代理量，团队熟悉量化为能独立 on-call 排障的人数（bus factor），生态好量化为官方客户端语言数、issue 中位解决时长与发布节奏；第二步先算 Pareto 前沿，若方案 X 在所有维度都不劣于 Y 且至少一维更优，Y 被支配，直接剪掉；
+可复现的评估框架分三步：第一步把主观形容词换成可核对的代理量，团队熟悉量化为能独立 on-call 排障的人数（bus factor），生态好量化为官方客户端语言数、issue 中位解决时长与发布节奏；第二步先算 Pareto 前沿，若方案 X 在所有维度都不劣于 Y 且至少一维更优，Y 被支配，直接剪掉；第三步才对前沿方案做敏感性扫描，上下浮动争议权重看排名是否稳定，翻转就回到硬门槛或补压测数据。
 
-第三步才对前沿方案做敏感性扫描，上下浮动争议权重看排名是否稳定，翻转就回到硬门槛或补压测数据。决策还要按可逆性分级：可回滚的 type-2 决策用轻量流程快速定，不可逆的 type-1 决策才值得完整 ADR 与回退预案。
+决策还要按可逆性分级：可回滚的 type-2 决策用轻量流程快速定，不可逆的 type-1 决策才值得完整 ADR 与回退预案。
 
 ```python
 def pareto_front(options):
@@ -289,11 +289,9 @@ Nygard / `MADR` 格式给每条记录固定编号与字段：status（proposed �
 
 让 ADR 真正生效的是把验证写成可机器判定的触发条件，例如若 p99 连续 7 天超过 200ms 就重开 ADR-0012——把结论挂到监控指标上，而不是靠人记得回头看。
 
-故障复盘同样要落到约束：blameless postmortem 用 contributing factors 而非单一 root cause，时间线之后每条行动项必须有 owner、截止时间与 verification 方式；
+故障复盘同样要落到约束：blameless postmortem 用 contributing factors 而非单一 root cause，时间线之后每条行动项必须有 owner、截止时间与 verification 方式；只有能被 lint、CI 或监控规则自动判定的行动项才算闭环，例如禁止裸 `os.remove` 要转成一个 pre-commit 检查函数，故障转移未演练要转成一个季度跑一次的混沌脚本。
 
-只有能被 lint、CI 或监控规则自动判定的行动项才算闭环，例如禁止裸 `os.remove` 要转成一个 pre-commit 检查函数，故障转移未演练要转成一个季度跑一次的混沌脚本。衡量复盘是否有效的指标是同类故障复发率与 `MTTR`，而不是纪要字数。
-
-把这套约束随代码提交，技术判断才会从依赖个人记忆变成组织可复用的检查表。
+衡量复盘是否有效的指标是同类故障复发率与 `MTTR`，而不是纪要字数。把这套约束随代码提交，技术判断才会从依赖个人记忆变成组织可复用的检查表。
 
 <Exercise title='把复盘行动项转成可判定的 CI 检查' task='写一个检查函数，扫描若干行源码，凡出现裸 os.remove( 或 shutil.rmtree( 就返回违规行号列表，并用一个含两处违规、一处合规的样例自测；说明为什么这样的检查比复盘纪要里提醒大家更可靠。' solution='BANNED = (&#39;os.remove(&#39;, &#39;shutil.rmtree(&#39;)\n\ndef check(lines):\n    bad = []\n    for lineno, line in enumerate(lines, 1):\n        code = line.split(&#39;#&#39;, 1)[0]\n        if any(token in code for token in BANNED):\n            bad.append(lineno)\n    return bad\n\nsample = [\n    &#39;import os, shutil&#39;,\n    &#39;os.remove(path)&#39;,\n    &#39;shutil.move(src, trash)&#39;,\n    &#39;shutil.rmtree(cache)&#39;,\n]\nprint(&#39;violations&#39;, check(sample))\nprint(&#39;expected&#39;, [2, 4])' explain='把行动项写成对源码逐行扫描的纯函数，输出是确定的行号列表，可挂进 pre-commit 或 CI；纪要里的提醒依赖人主动记得，无法被自动判定也没有回归保护，同类违规会反复出现。sample 里第 2、4 行触发，第 3 行只是 shutil.move 被放过。' />
 

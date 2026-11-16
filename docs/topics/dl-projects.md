@@ -7,7 +7,7 @@ description: 从数据管道与训练循环，到 CNN、RNN、预训练 ResNet �
 
 第 103 讲已经用手写 autograd 与 toy 数据把训练循环跑通了，能盯住 `forward`、`backward`、`step` 的顺序，也能解释为什么要 `zero_grad()`，但没有用真实数据集，没有搭 CNN / RNN 网络结构，权重也始终留在内存里。真正做图像或序列项目时，会立刻撞上一串没被覆盖的问题：几万张样本怎么按批喂进去且不把验证集信息漏进缩放参数，卷积层凭什么比全连接省下几十倍参数，预训练模型换掉最后一层为什么就能识别新类别，训好的网络又怎么离开 notebook 到线上进程里被加载。这一篇按一条项目动线把这些缺口补上：先落数据管道与 `nn.Module` 的训练／验证循环，再讲 CNN 与 RNN 的结构动机，接着做预训练 ResNet 的冻结与微调，补一类 GAN 生成任务，然后走 MNIST 分类与医学影像两个端到端流程，最后处理导出、过拟合早停与可复现性。每个依赖 `torch` 的真实示例都配一段纯标准库的最小等价演示，没有 GPU、没装框架也能先把核心机制跑通。
 
-真实框架示例统一依赖下面这条安装命令，CPU 版足够复现本文所有张量运算：
+真实框架示例统一依赖下面这条安装命令，CPU 版足够复现本篇所有张量运算：
 
 ```bash
 # 有 NVIDIA GPU 时可换成对应 CUDA 版本的安装命令
@@ -243,7 +243,7 @@ print("gated grad to step 1:", round(gated_grad(seq), 6))
 
 ## 预训练 ResNet：冻结骨干与微调
 
-ImageNet 上训好的 `resnet18` 已经学会了边缘、纹理、部件等通用特征，做猫狗或病灶分类时不必从零训。做法是把最后的 `fc` 全连接层换成输出新类别数的层，然后分两阶段：先冻结卷积骨干，只训练新头，让随机初始化的头先对齐已有特征；再解冻靠近输出的若干层，用一个比头部小十倍左右的学习率整体微调。冻结的实现就是把这些参数的 `requires_grad` 设为 `False`，并记得传给优化器的只有 `requires_grad=True` 的参数，否则白算梯度。
+ImageNet 上训好的 `resnet18` 已经学会了边缘、纹理、部件等通用特征，做猫狗或病灶分类时不必从零训。做法是把最后的 `fc` 全连接层换成输出新类别数的层，然后分两阶段：先冻结卷积骨干，只训练新头，让随机初始化的头先对齐已有特征；再解冻靠近输出的若干层，用参数组把学习率分成两档整体微调：新头保持 `1e-3`，解冻的骨干用比它小十倍的 `1e-4`，避免冲掉已有特征。冻结的实现就是把这些参数的 `requires_grad` 设为 `False`，并记得传给优化器的只有 `requires_grad=True` 的参数，否则白算梯度。
 
 ```python
 # 依赖开头 bash 块安装的 torch / torchvision
@@ -259,9 +259,16 @@ def build(num_classes=2, fine_tune=False):
     if fine_tune:
         for p in model.layer4.parameters():        # 只解冻最后一组残差块
             p.requires_grad = True
-    params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.SGD(params, lr=1e-3 if not fine_tune else 1e-4,
-                          momentum=0.9)
+        # 参数组：头部 1e-3、解冻骨干 1e-4，差十倍，避免冲掉预训练特征
+        backbone = [p for p in model.layer4.parameters() if p.requires_grad]
+        opt = torch.optim.SGD([
+            {"params": list(model.fc.parameters()), "lr": 1e-3},
+            {"params": backbone, "lr": 1e-4},
+        ], momentum=0.9)
+    else:
+        opt = torch.optim.SGD(
+            [p for p in model.parameters() if p.requires_grad],
+            lr=1e-3, momentum=0.9)
     return model, opt
 
 head_only, opt_head = build(fine_tune=False)

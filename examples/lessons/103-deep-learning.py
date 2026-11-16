@@ -55,10 +55,6 @@ y.backward()
 print('y', y.data)
 print('dy/dw', w.grad, 'dy/dx', x.grad, 'dy/db', b.grad)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # epoch 0 loss 0.3319 w 2.267 b 1.0
@@ -78,10 +74,6 @@ for epoch in range(3):
     loss = sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
     print('epoch', epoch, 'loss', round(loss, 4), 'w', round(w, 3), 'b', round(b, 3))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # x 0.0 analytic 3.0 numerical 3.0
@@ -93,10 +85,6 @@ def analytic(x): return 2 * x + 3
 def numerical(x, h=1e-5): return (f(x + h) - f(x - h)) / (2 * h)
 for x in (0.0, 2.0, -3.0):
     print('x', x, 'analytic', round(analytic(x), 4), 'numerical', round(numerical(x), 4))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

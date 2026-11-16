@@ -64,10 +64,6 @@ print('failover to', route('a', one_down))
 print('quorum after loss', quorum_ok('a', one_down, w=2))
 print('quorum single', quorum_ok('a', {'n1'}, w=2))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # frame count 2
@@ -103,31 +99,35 @@ print('normal', gateway(chunks, budget=5, deadline=10))
 print('budget', gateway(chunks, budget=2, deadline=10))
 print('timeout', gateway([(1, 'A'), (99, 'B')], budget=5, deadline=10))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
-# distribution [111, 88, 101]
-# balanced True
-# quorum R+W>N True
+# ring moved 94 of 300 = 0.313
+# modulo moved 225 of 300 = 0.75
+# quorum 2+2>3 True
 
 import hashlib
 
-N = 3
 def h(s):
     return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
-counts = [0, 0, 0]
-for i in range(300):
-    counts[h('key' + str(i)) % N] += 1
-print('distribution', counts)
-print('balanced', max(counts) - min(counts) < 60)
-print('quorum R+W>N', 2 + 2 > 3)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
+def ring(nodes, replicas=3):
+    return sorted((h(nd + '#' + str(i)), nd) for nd in nodes for i in range(replicas))
+
+def owner(key, r):
+    x = h(key)
+    for slot, nd in r:
+        if x <= slot:
+            return nd
+    return r[0][1]
+
+keys = ['key' + str(i) for i in range(300)]
+r3 = ring(['n1', 'n2', 'n3'])
+r4 = ring(['n1', 'n2', 'n3', 'n4'])
+ring_moved = sum(owner(k, r3) != owner(k, r4) for k in keys)
+mod_moved = sum(h(k) % 3 != h(k) % 4 for k in keys)
+print('ring moved', ring_moved, 'of 300 =', round(ring_moved / 300, 3))
+print('modulo moved', mod_moved, 'of 300 =', round(mod_moved / 300, 3))
+print('quorum 2+2>3', 2 + 2 > 3)
 
 # ======================== 4. 工程案例 ========================
 
@@ -137,23 +137,31 @@ def h(s):
     return int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
 
 class Gateway:
-    def __init__(self, nodes, token_budget=100):
+    def __init__(self, nodes, replicas=3, token_budget=100, w=2, r=2):
         self.nodes = list(nodes)
         self.alive = set(nodes)
+        self.w, self.r = w, r
         self.budget = token_budget
         self.spent = 0
-    def shard(self, key):
-        return self.nodes[h(key) % len(self.nodes)]
+        self.ring = sorted((h(nd + '#' + str(i)), nd)
+                           for nd in self.nodes for i in range(replicas))
+    def replica_set(self, key):
+        order = []
+        for slot, nd in self.ring:
+            if nd not in order:
+                order.append(nd)
+        x = h(key)
+        primary = next((nd for slot, nd in self.ring if x <= slot), self.ring[0][1])
+        k = order.index(primary)
+        return order[k:] + order[:k]
     def route(self, key):
-        pref = self.shard(key)
-        if pref in self.alive:
-            return pref
-        for nd in self.nodes:
+        for nd in self.replica_set(key):
             if nd in self.alive:
                 return nd
         return None
-    def quorum_ok(self, w=2):
-        return len(self.alive) >= w
+    def quorum_ok(self, key):
+        live = sum(1 for nd in self.replica_set(key) if nd in self.alive)
+        return live >= self.w and self.w + self.r > len(self.replica_set(key))
     def stream(self, chunks, deadline):
         out = []
         for t, text in chunks:
@@ -166,8 +174,9 @@ class Gateway:
         return round(self.spent * price, 4)
 
 gw = Gateway(['n1', 'n2', 'n3'], token_budget=3)
-print('shard', gw.shard('user-42'))
-gw.alive.discard(gw.shard('user-42'))
-print('failover', gw.route('user-42'), 'quorum', gw.quorum_ok())
+key = 'user-42'
+print('replicas', gw.replica_set(key))
+gw.alive.discard(gw.replica_set(key)[0])
+print('failover', gw.route(key), 'quorum', gw.quorum_ok(key))
 print('stream', gw.stream([(1, 'A'), (2, 'B'), (3, 'C'), (4, 'D')], deadline=10))
 print('cost', gw.cost())

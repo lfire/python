@@ -42,10 +42,6 @@ print('content-type', captured['headers']['Content-Type'])
 print('body', body.decode())
 print('wsgi keys', sorted(k for k in env if k.startswith('wsgi.')))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # message types ['http.response.start', 'http.response.body']
@@ -77,10 +73,6 @@ print('status', sent[0]['status'])
 print('body', sent[1]['body'].decode())
 print('asgi version', scope['asgi']['version'])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # wsgi params ['environ', 'start_response']
@@ -104,10 +96,6 @@ print('asgi coroutine', inspect.iscoroutinefunction(asgi))
 e = {}
 setup_testing_defaults(e)
 print('wsgi.version', e['wsgi.version'], 'url_scheme', e['wsgi.url_scheme'])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -56,13 +56,9 @@ PEP 420（3.3 起）还允许没有 `__init__.py` 的命名空间包：这种包
 
 ## 包内导入规则：显式相对、__init__ 与 __all__
 
-Python 3 默认绝对导入（PEP 328），包内 `import a` 会去 `sys.path` 顶层找 a，而不是同包的 `a.py`；
+Python 3 默认绝对导入（PEP 328），包内 `import a` 会去 `sys.path` 顶层找 a，而不是同包的 `a.py`；命中不到就报 ModuleNotFoundError: No module named 'a'，想引用同包模块必须写 `from . import a` 或 `from .core import add`。
 
-命中不到就报 ModuleNotFoundError: No module named 'a'，想引用同包模块必须写 `from . import a` 或 `from .core import add`。
-
-`__init__.py` 有三个作用：把目录标记为包、执行包级初始化、收敛公开 API；
-
-在 `__init__.py` 里 `from .core import add` 再用 `__all__ = ['add']` 声明，`from mypkg import *` 就只导出 add，而不会把内部实现名泄漏出去。
+`__init__.py` 有三个作用：把目录标记为包、执行包级初始化、收敛公开 API；在 `__init__.py` 里 `from .core import add` 再用 `__all__ = ['add']` 声明，`from mypkg import *` 就只导出 add，而不会把内部实现名泄漏出去。
 
 命名遵循 PEP 8：模块与包用小写加下划线，避免与标准库同名（`json.py`、`test` 会遮蔽），类名用 CapWords，不要含连字符——带连字符的目录无法被 import。
 
@@ -85,9 +81,7 @@ import 解析由 `sys.meta_path` 上的 finder 按固定顺序完成：`BuiltinI
 
 `sys.path[0]` 通常是脚本所在目录或当前工作目录，这正是扁平布局「从项目根跑就命中本地包」的根因；命中结果缓存在 `sys.modules`，第二次 import 不再查找。
 
-所以想让改动生效，得删掉 `sys.modules[name]` 再重新导入（或用 `importlib.reload`）；
-
-若是新增了文件却找不到，那是 finder 的目录缓存没刷新，用 `importlib.invalidate_caches()` 让新文件可见——两者管的不是同一层缓存。
+所以想让改动生效，得删掉 `sys.modules[name]` 再重新导入（或用 `importlib.reload`）；若是新增了文件却找不到，那是 finder 的目录缓存没刷新，用 `importlib.invalidate_caches()` 让新文件可见——两者管的不是同一层缓存。
 
 PEP 420 的命名空间包没有 `__init__.py`，`FileFinder` 返回 origin 为 None、submodule_search_locations 为 `_NamespacePath` 的 spec，允许多个分发往同一个包名贡献子模块。
 
@@ -230,7 +224,7 @@ sys.path.remove(str(SRC))
 
 <Callout type="idea" title='落地提示' text='按领域而不是按技术分层，公开 API 收敛到 __init__，配置全部走环境变量' />
 
-<CheckList id='P071b' title='上线前自检' :items='["能复现并解释「包内写 import a 想引用同包模块」", "能复现并解释「用扁平布局且从项目根跑测试」", "能复现并解释「给包或模块名加连字符、或叫 json.py / test」", "能用一条命令验证 src 与扁平布局对比", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P071a' title='上线前自检' :items='["能复现并解释「包内写 import a 想引用同包模块」", "能复现并解释「用扁平布局且从项目根跑测试」", "能复现并解释「给包或模块名加连字符、或叫 json.py / test」", "能用一条命令验证 src 与扁平布局对比", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -m compileall -q . && python -m pytest -q

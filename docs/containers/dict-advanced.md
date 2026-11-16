@@ -16,9 +16,9 @@ description: 用标准库容器消灭样板代码
 
 一个配置服务把默认配置、环境变量与用户覆盖三层合并，最初的写法是先把默认配置拷一份，再依次用 `env`、`user` 调两遍 `update()`，每次热更新都要重新构造一遍，且无法回答「这个值到底来自哪一层」。
 
-换成 `ChainMap` 后查找按层回退、写入只落用户层，看似完美，却在压测里发现下游拿到的配置对象会随着 `defaults` 改动悄悄变化——因为 `ChainMap` 是活视图不是快照。同一迭代还有两处事故：词频统计把 `Counter.update` 当成 `dict.update` 用，计数翻倍；
+换成 `ChainMap` 后查找按层回退、写入只落用户层，看似完美，却在压测里发现下游拿到的配置对象会随着 `defaults` 改动悄悄变化——因为 `ChainMap` 是活视图不是快照。
 
-`defaultdict` 仅仅读一个不存在的键就把空列表插了进去，读路径污染了数据，导致「在线用户数」凭空多出一批空记录。这些容器把常见循环固化成了 C 级实现，短且快，但各自重写了关键语义。
+同一迭代还有两处事故：词频统计把 `Counter.update` 当成 `dict.update` 用，计数翻倍；`defaultdict` 仅仅读一个不存在的键就把空列表插了进去，读路径污染了数据，导致「在线用户数」凭空多出一批空记录。这些容器把常见循环固化成了 C 级实现，短且快，但各自重写了关键语义。
 
 本讲把 `defaultdict` 的 `__missing__`、`Counter` 的累加、`ChainMap` 的视图与合并方式的快照差异逐条拆开。
 
@@ -42,17 +42,13 @@ description: 用标准库容器消灭样板代码
 
 工厂只在下标访问时触发，`get()` 与 `in` 不会调用 `__missing__`，这正是「读路径也污染数据」的来源——一次 `d[missing]` 就会永久多出一个键。
 
-工程上读完用 `dict(d)` 转成普通 `dict`，或把 `d.default_factory` 置 `None` 来冻结；
-
-需要嵌套分组时用 `lambda: defaultdict(...)`，但更要小心读路径。
+工程上读完用 `dict(d)` 转成普通 `dict`，或把 `d.default_factory` 置 `None` 来冻结；需要嵌套分组时用 `lambda: defaultdict(...)`，但更要小心读路径。
 
 `Counter` 同样继承 `dict`，把 `__missing__` 改成返回 0，于是缺键计数天然为 0 且不抛 `KeyError`。
 
-它最容易被误用的是 `update`：`Counter.update(iterable)` 是累加计数，而不是 `dict.update` 的覆盖；
+它最容易被误用的是 `update`：`Counter.update(iterable)` 是累加计数，而不是 `dict.update` 的覆盖；`subtract()` 做减法且允许负数；`most_common(n)` 按计数降序返回列表，计数相等时按首次出现顺序，`n` 为 `None` 返回全部；`elements()` 按计数展开并忽略非正值；`+ - & |` 做多重集运算，`-` 与 `&` 分别丢弃非正结果、取 min；`total()` 返回计数总和，是 3.10 才加入的。
 
-`subtract()` 做减法且允许负数；`most_common(n)` 按计数降序返回列表，计数相等时按首次出现顺序，`n` 为 `None` 返回全部；`elements()` 按计数展开并忽略非正值；`+ - & |` 做多重集运算，`-` 与 `&` 分别丢弃非正结果、取 min；
-
-`total()` 返回计数总和，是 3.10 才加入的。访问不存在的键返回 0，别把它和 `defaultdict` 的「插入默认值」混为一谈。
+访问不存在的键返回 0，别把它和 `defaultdict` 的「插入默认值」混为一谈。
 
 ```python
 from collections import defaultdict, Counter, ChainMap

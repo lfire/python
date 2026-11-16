@@ -36,10 +36,6 @@ for w in words:
 else:
     print('no_break', 'loop completed')
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # buggy [2, 5]
@@ -52,10 +48,6 @@ for n in nums:
 print('buggy', nums)
 clean = [n for n in [2, 2, 4, 5] if n % 2 != 0]
 print('fixed', clean)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -76,10 +68,6 @@ except StopIteration:
     print('stop', 'raised')
 print('range_no_next', not hasattr(range(3), '__next__'))
 print('range_is_iterable', hasattr(range(3), '__iter__'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

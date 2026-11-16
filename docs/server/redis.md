@@ -14,20 +14,18 @@ description: 设计正确且可降级的缓存层
 
 ## 批量预热后同一秒集体失效，缓存把 DB 打垮
 
-商品详情页加了 Redis 缓存后 QPS 涨了五倍，一次大促却把数据库打到 CPU 100%。复盘看到三种失效挤在一起：有人用脚本批量查根本不存在的商品 ID，每次都穿透到 DB；一个热点 key 过期的瞬间，几千个请求同时回源重建；
+商品详情页加了 Redis 缓存后 QPS 涨了五倍，一次大促却把数据库打到 CPU 100%。
 
-而运维为图省事给所有缓存统一设了 300 秒 TTL，凌晨批量预热的那批 key 在同一秒集体失效。更糟的是缓存进程重启后服务直接 `500`，因为读路径没有降级。团队最初的补法是给每个 key 都加过期时间，这恰恰解释不了为什么加了 TTL 还是雪崩。
+复盘看到三种失效挤在一起：有人用脚本批量查根本不存在的商品 ID，每次都穿透到 DB；一个热点 key 过期的瞬间，几千个请求同时回源重建；而运维为图省事给所有缓存统一设了 300 秒 TTL，凌晨批量预热的那批 key 在同一秒集体失效。更糟的是缓存进程重启后服务直接 `500`，因为读路径没有降级。
 
-三种故障的根因不同：查不存在、并发重建、集中过期，对应的防线分别是空值缓存与布隆过滤、互斥重建、TTL 抖动。本讲用标准库把三者与分布式锁的正确删法跑通。
+团队最初的补法是给每个 key 都加过期时间，这恰恰解释不了为什么加了 TTL 还是雪崩。三种故障的根因不同：查不存在、并发重建、集中过期，对应的防线分别是空值缓存与布隆过滤、互斥重建、TTL 抖动。本讲用标准库把三者与分布式锁的正确删法跑通。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间留下永久锁：两条命令非原子，加锁成功却没设上过期时间，持锁者崩溃后无人能再获取' />
 
 
 ## 五种数据结构与 Cache-Aside 读写流程
 
-Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；
-
-`List`（`LPUSH` / `RPUSH` / `LPOP` / `BRPOP`）做消息队列与最新 N 条列表；`Set`（`SADD` / `SISMEMBER` / `SINTER`）做去重、共同关注、抽奖；`ZSet`（`ZADD` / `ZRANGEBYSCORE`）按 `score` 排序，用于排行榜与延迟队列。
+Redis 五种基础结构各有明确分工：`String`（`GET` / `SET` / `SETEX` / `INCR`）存单值、计数器与分布式锁；`Hash`（`HGET` / `HSET` / `HGETALL`）存对象的多个字段，可只更新一个字段；`List`（`LPUSH` / `RPUSH` / `LPOP` / `BRPOP`）做消息队列与最新 N 条列表；`Set`（`SADD` / `SISMEMBER` / `SINTER`）做去重、共同关注、抽奖；`ZSet`（`ZADD` / `ZRANGEBYSCORE`）按 `score` 排序，用于排行榜与延迟队列。
 
 `SET key value EX seconds NX` 是一条命令原子完成「设值 + 过期 + 仅当键不存在时设」，是锁与幂等占位的基石：`NX` 保证互斥，`EX` 保证崩溃后能自动释放，`PX` 用毫秒。
 
@@ -184,9 +182,9 @@ Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、
 | 释放 | Lua 里比对 value 再 DEL | 先 GET 后 DEL 非原子，会误删别人的锁 |
 | 过期 | PX 毫秒 TTL | 不设 TTL 时持锁者崩溃永久占锁 |
 
-`SET key value NX EX` 的原子性来自 Redis 单线程执行命令：整个「检查键是否存在 + 写入 + 设过期」在一个事件循环步骤里完成，多个客户端并发时只有一个能拿到 `OK`，这正是互斥锁与幂等占位的基础；
+`SET key value NX EX` 的原子性来自 Redis 单线程执行命令：整个「检查键是否存在 + 写入 + 设过期」在一个事件循环步骤里完成，多个客户端并发时只有一个能拿到 `OK`，这正是互斥锁与幂等占位的基础；把 `SETNX` 与 `EXPIRE` 拆成两条命令就会在中间崩溃留下永不过期的锁。
 
-把 `SETNX` 与 `EXPIRE` 拆成两条命令就会在中间崩溃留下永不过期的锁。过期删除靠 Redis 的惰性删除（访问时发现过期才删）加定期抽样主动清理，因此大批同 TTL 的键会在相近时刻集中失效，流量像雪崩一样压向 DB——给 TTL 加抖动就是把这个尖峰摊平。
+过期删除靠 Redis 的惰性删除（访问时发现过期才删）加定期抽样主动清理，因此大批同 TTL 的键会在相近时刻集中失效，流量像雪崩一样压向 DB——给 TTL 加抖动就是把这个尖峰摊平。
 
 互斥重建用同一把锁把并发回源收敛成一个，其余请求等待或读旧值；逻辑过期则把过期时间放进 `value`、物理键不删，用后台线程异步续，读路径永不阻塞。空值缓存针对的是「不存在」这个查询结果本身也要有表示：用一个哨兵值与短 TTL 占住 `key`，让重复查询不再回源。
 
@@ -206,9 +204,7 @@ Redlock 是对多个独立实例取多数派的方案，但依赖时钟假设、
 
 ## 带互斥重建、空值缓存与降级的多级缓存层
 
-下面把缓存层写成一个可运行的骨架，覆盖三道防线与一条降级路径：`query` 先读缓存，命中空值哨兵直接返回（防穿透）；未命中时用一条带 `NX` 的命令抢重建锁，抢到的线程回源写缓存并加 TTL 抖动，没抢到的短暂等待后重读（防击穿）；空结果写短 TTL 空值；
-
-`load_from_db` 抛异常时降级读一个本地兜底字典并返回 `degraded` 标记，保证缓存 / DB 抖动时服务不 `500`。
+下面把缓存层写成一个可运行的骨架，覆盖三道防线与一条降级路径：`query` 先读缓存，命中空值哨兵直接返回（防穿透）；未命中时用一条带 `NX` 的命令抢重建锁，抢到的线程回源写缓存并加 TTL 抖动，没抢到的短暂等待后重读（防击穿）；空结果写短 TTL 空值；`load_from_db` 抛异常时降级读一个本地兜底字典并返回 `degraded` 标记，保证缓存 / DB 抖动时服务不 `500`。
 
 真实项目把 `store` 换成 `redis` 客户端（读路径就是 `redis.get(key)`）、把 `sleep` 换成订阅通知、把兜底换成限流后的静态页，但「空值、互斥、抖动、降级」四件事的结构不变。
 
@@ -255,7 +251,7 @@ print('keys', sorted(store))
 
 <Callout type="idea" title='落地提示' text='空值缓存与布隆过滤防穿透、互斥重建防击穿、TTL 加抖动防雪崩；锁用 Redlock 或成熟库' />
 
-<CheckList id='P088b' title='上线前自检' :items='["能复现并解释「用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间…」", "能复现并解释「释放锁时直接 DEL，偶尔把别的请求的锁删掉」", "能复现并解释「给所有缓存统一设 300 秒 TTL，批量预热后同一秒集体失…」", "能用一条命令验证 五种数据结构与选型", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P088a' title='上线前自检' :items='["能复现并解释「用 SETNX 加锁后再单独 EXPIRE，进程崩在两句之间…」", "能复现并解释「释放锁时直接 DEL，偶尔把别的请求的锁删掉」", "能复现并解释「给所有缓存统一设 300 秒 TTL，批量预热后同一秒集体失…」", "能用一条命令验证 五种数据结构与选型", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
@@ -278,9 +274,7 @@ python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABL
 
 Redis 每个 db 有两张字典：dict 存键值，expires 存 key 到 long long 毫秒过期时间。过期时间不挂在 value 里而是独立字典，这是 lookupKeyRead 里 `O(1)` 判过期的基础。
 
-删除分两段：expireIfNeeded（src/`db.c`）在访问键时惰性触发，读 expires、比对 `mstime()`，过期则同时删 dict 与 expires 并传播 DEL 事件；
-
-activeExpireCycle（src/`expire.c`）由 serverCron 定期驱动，分 `SLOW`（按 `server.hz` 默认 10 次每秒，时间预算约 25 毫秒每次）与 beforeSleep 里的 `FAST`（预算约 1 毫秒）。
+删除分两段：expireIfNeeded（`src/db.c`）在访问键时惰性触发，读 expires、比对 `mstime()`，过期则同时删 dict 与 expires 并传播 DEL 事件；activeExpireCycle（`src/expire.c`）由 serverCron 定期驱动，分 `SLOW`（按 `server.hz` 默认 10 次每秒，时间预算约 25 毫秒每次）与 beforeSleep 里的 `FAST`（预算约 1 毫秒）。
 
 每轮从 expires 随机抽 `ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP` 个键，删掉已过期的，若过期数除以抽样数大于 25% 就再抽一轮，直到低于阈值或时间预算耗尽。
 
@@ -288,9 +282,7 @@ activeExpireCycle（src/`expire.c`）由 serverCron 定期驱动，分 `SLOW`（
 ACTIVE_EXPIRE_CYCLE_LOOKUPS_PER_LOOP = 20
 ```
 
-数学上设真实过期比例为 q，一轮里过期数 X 服从二项分布 `Binomial(20, q)`，续轮条件是 X 大于 5；
-
-q 小时 P(X 大于 5) 极小，几乎一轮就停，所以主动删除每轮只清理一小撮，大批同 TTL 的键仍靠惰性删除在访问瞬间集中爆发，这正是正文「集中过期」的源码根据，TTL 抖动是把 q 的时间分布摊平而不是改变删除算法。
+数学上设真实过期比例为 q，一轮里过期数 X 服从二项分布 `Binomial(20, q)`，续轮条件是 X 大于 5；q 小时 P(X 大于 5) 极小，几乎一轮就停，所以主动删除每轮只清理一小撮，大批同 TTL 的键仍靠惰性删除在访问瞬间集中爆发，这正是正文「集中过期」的源码根据，TTL 抖动是把 q 的时间分布摊平而不是改变删除算法。
 
 还有一处易忽略：主从复制下从库不主动删过期键、等主库同步 DEL，因此读写分离可能短暂读到已过期数据，Redis 3.2 起读从库才额外做一次 expireIfNeeded 判断返回空值，这是「从库读到脏值」的故障来源。
 
@@ -323,20 +315,18 @@ print('jitter', expire_pressure(jit, 300))
 
 <OutputBox title='扩展示例运行结果' output='flat (600, 31, 0)\njitter (1, 1, 599)' />
 
-<LineByLine code='import random\n\nrandom.seed(7)\n\ndef expire_pressure(ttls, now, sample=20):\n    alive = dict(ttls)\n    rounds = 0\n    removed = 0\n    while rounds &lt; 200:\n        rounds += 1\n        pick = random.sample(list(alive), min(sample, len(alive)))\n        dead = [k for k in pick if alive[k] &lt;= now]\n        for k in dead:\n            del alive[k]\n        removed += len(dead)\n        if len(dead) * 4 &lt;= len(pick):\n            break\n    return removed, rounds, len(alive)\n\nflat = {&#39;k&#39; + str(i): 300 for i in range(600)}\njit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for i in range(600)}\nprint(&#39;flat&#39;, expire_pressure(flat, 300))\nprint(&#39;jitter&#39;, expire_pressure(jit, 300))\n' :notes='["固定随机种子，让抽样实验结果可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "expire_pressure 复刻 activeExpireCycle 的一轮逻辑", "空行，只用于分隔逻辑块，不影响执行结果。", "alive 对应 expires 字典里尚未删除的键", "每轮从存活键里随机抽 20 个，对应每轮 LOOKUPS_PER_LOOP", "dead 是本轮抽中且已到期的键", "删掉到期键并累计删除数", "过期比例不超过 25% 就停，等价于 len(dead)*4 不大于抽样数", "返回 (删除数, 轮数, 剩余键数) 三个可核对的量", "flat 模拟 600 个键统一 300 秒 TTL", "jit 模拟 300 加 0 到 60 秒抖动的 TTL", "统一 TTL 时每轮全命中，跑 31 轮把 600 个键清空", "抖动后单轮只抽到 1 个到期键就收敛，剩 599 个待后续惰性删除", "这一行 `removed += len(dead)` 的作用，可对照上方输出逐项核对。", "这一行 `if len(dead) * 4 &lt;= len(pick):` 的作用，可对照上方输出逐项核对。", "这一行 `break` 的作用，可对照上方输出逐项核对。", "这一行 `return removed, rounds, len(alive)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `flat = {&#39;k&#39; + str(i): 300 for i in range(600)}` 的作用，可对照上方输出逐项核对。", "这一行 `jit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;flat&#39;, expire_pressure(flat, 300))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;jitter&#39;, expire_pressure(jit, 300))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\nrandom.seed(7)\n\ndef expire_pressure(ttls, now, sample=20):\n    alive = dict(ttls)\n    rounds = 0\n    removed = 0\n    while rounds &lt; 200:\n        rounds += 1\n        pick = random.sample(list(alive), min(sample, len(alive)))\n        dead = [k for k in pick if alive[k] &lt;= now]\n        for k in dead:\n            del alive[k]\n        removed += len(dead)\n        if len(dead) * 4 &lt;= len(pick):\n            break\n    return removed, rounds, len(alive)\n\nflat = {&#39;k&#39; + str(i): 300 for i in range(600)}\njit = {&#39;k&#39; + str(i): 300 + random.randint(0, 60) for i in range(600)}\nprint(&#39;flat&#39;, expire_pressure(flat, 300))\nprint(&#39;jitter&#39;, expire_pressure(jit, 300))\n' :notes='["导入 random，用可复现的随机抽样模拟过期键抽查", "空行，只用于分隔逻辑块，不影响执行结果。", "固定随机种子 7，让两组对照实验的抽样序列一致", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 expire_pressure，复刻 activeExpireCycle 的抽样循环", "alive 复制出一份 expires 字典，充当尚未删除的键", "rounds 记录已经跑过的抽样轮数", "removed 累计被删掉的过期键数", "最多跑 200 轮，给不收敛的情况兜底", "每进入一轮，轮数加一", "从存活键里随机抽 sample 个，对应每轮 LOOKUPS_PER_LOOP", "dead 是本轮抽中且已到期的键", "逐个处理本轮到期键", "从 alive 删掉到期键，模拟惰性删除落地", "把本轮删除数累加进 removed", "过期比例不超过 25% 就停，等价于 len(dead)*4 不大于抽样数", "满足条件即跳出循环，停止续轮", "返回 (删除数, 轮数, 剩余键数) 三个可核对的量", "空行，只用于分隔逻辑块，不影响执行结果。", "flat 模拟 600 个键统一 300 秒 TTL", "jit 模拟 300 加 0 到 60 秒抖动的 TTL", "统一 TTL 时每轮全命中，跑 31 轮把 600 个键清空", "抖动后单轮只抽到 1 个到期键就收敛，剩 599 个待后续惰性删除", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ## SDS、渐进式 rehash 与 lazyfree 的内存路径
 
-Redis 的字符串不是 C 的 char 指针而是 sds（src/`sds.h`）：sdshdr8 里有 len、alloc、flags、`buf[]`，取长度 `O(1)`、二进制安全、`APPEND` 时按翻倍预分配但不超过 1MB，这解释了 `INCR` 与 `APPEND` 的代价模型。
+Redis 的字符串不是 C 的 char 指针而是 sds（`src/sds.h`）：sdshdr8 里有 len、alloc、flags、`buf[]`，取长度 `O(1)`、二进制安全、`APPEND` 时按翻倍预分配但不超过 1MB，这解释了 `INCR` 与 `APPEND` 的代价模型。
 
-dict（src/`dict.h`）挂两张 dictht 哈希表 `ht[0]` 与 `ht[1]` 以及 rehashidx：扩容时把 `ht[1]` 设为两倍、rehashidx 置 0，之后每次增删改查顺带把 `ht[0]` 的一个 bucket 迁到 `ht[1]`，查询同时查两张表，避免一次性 `O(n)` 停顿，这也是「大字典扩容期间延迟抖动」的来源。
+dict（`src/dict.h`）挂两张 dictht 哈希表 `ht[0]` 与 `ht[1]` 以及 rehashidx：扩容时把 `ht[1]` 设为两倍、rehashidx 置 0，之后每次增删改查顺带把 `ht[0]` 的一个 bucket 迁到 `ht[1]`，查询同时查两张表，避免一次性 `O(n)` 停顿，这也是「大字典扩容期间延迟抖动」的来源。
 
-底层编码按元素个数与大小切换：小 Hash 与小 List 用 listpack（ziplist 的后继，一块连续内存省指针开销），大对象转 hashtable 或 quicklist；
+底层编码按元素个数与大小切换：小 Hash 与小 List 用 listpack（ziplist 的后继，一块连续内存省指针开销），大对象转 hashtable 或 quicklist；ZSet 小集合用 listpack，大集合用 skiplist 加 dict 双索引，dict 保证 `ZSCORE` 是 `O(1)`、skiplist 保证 `ZRANGE` 是 `O(log n)`。
 
-ZSet 小集合用 listpack，大集合用 skiplist 加 dict 双索引，dict 保证 `ZSCORE` 是 `O(1)`、skiplist 保证 `ZRANGE` 是 `O(log n)`。删除大 key 的架构权衡最尖锐：DEL 同步释放整块内存，百万字段的 Hash 会让单线程卡几十毫秒；
-
-4.0 起 `UNLINK` 把 value 从 dict 摘下（`O(1)`）后丢给 bio 后台线程 lazyfree（src/`bio.c`），`FLUSHALL` `ASYNC` 与 lazyfree-lazy-eviction、lazyfree-lazy-expire、lazyfree-lazy-server-del 三个配置项控制哪些路径走异步。
+删除大 key 的架构权衡最尖锐：DEL 同步释放整块内存，百万字段的 Hash 会让单线程卡几十毫秒；4.0 起 `UNLINK` 把 value 从 dict 摘下（`O(1)`）后丢给 bio 后台线程 lazyfree（`src/bio.c`），`FLUSHALL` `ASYNC` 与 lazyfree-lazy-eviction、lazyfree-lazy-expire、lazyfree-lazy-server-del 三个配置项控制哪些路径走异步。
 
 故障复盘：高峰期 DEL 一个 200 万字段的 Hash，主线程阻塞约 80 毫秒，期间所有请求 RT 尖刺，看起来像「Redis 挂了」，实际是同步内存回收。
 

@@ -25,9 +25,9 @@ description: 亲手验证解释执行的完整链路
 
 `compile()` 把源码字符串编译成 code object，是「源码到字节码」这一步的公开入口；它接收 source、filename、mode 三个必填参数，另有 flags 与 dont_inherit 两个可选开关。
 
-mode 三选一且行为完全不同：exec 编译语句序列，末尾补一条 return None，因此 `exec(code)` 返回 None、co_consts 里多出一个 None；eval 只接受单个表达式，编译出的 code object 不含那条收尾 None，`eval(code)` 返回表达式的值；
+mode 三选一且行为完全不同：exec 编译语句序列，末尾补一条 return None，因此 `exec(code)` 返回 None、co_consts 里多出一个 None；eval 只接受单个表达式，编译出的 code object 不含那条收尾 None，`eval(code)` 返回表达式的值；single 面向交互式解释器，表达式语句会额外触发 `PRINT_EXPR` 把结果打印出来，`REPL` 里敲 1+1 立刻看到 2 就是它。
 
-single 面向交互式解释器，表达式语句会额外触发 `PRINT_EXPR` 把结果打印出来，`REPL` 里敲 1+1 立刻看到 2 就是它。filename 只用于回溯与报错，不是真实文件路径，通常写成用尖括号包住的占位名。
+filename 只用于回溯与报错，不是真实文件路径，通常写成用尖括号包住的占位名。
 
 生成的 code object 有一批只读属性：`co_consts` 是字面量元组（还会包含常量折叠后的结果，如 `6 * 7` 变成 42），`co_names` 是全局名字元组，`co_varnames` 是局部变量名，`co_code` 是原始字节码字节串，`co_filename` 与 `co_firstlineno` 供 traceback 定位，`co_flags` 标出是否含生成器或协程。
 
@@ -52,9 +52,7 @@ single 面向交互式解释器，表达式语句会额外触发 `PRINT_EXPR` �
 
 同一编译单元里相同的字面量通常只保留一份常量对象，所以两个 257 字面量可能 is 相等，但那是编译器去重，不是语言保证（第 006 讲会拆小整数缓存与驻留的差别）。
 
-flags 参数可传 `ast.PyCF_ONLY_AST` 让 compile 直接返回 AST 而非字节码，配合 `ast.dump` 能看到语法树结构；
-
-future 语句也是通过影响编译标志改变生成的字节码，而非运行时开关。
+flags 参数可传 `ast.PyCF_ONLY_AST` 让 compile 直接返回 AST 而非字节码，配合 `ast.dump` 能看到语法树结构；future 语句也是通过影响编译标志改变生成的字节码，而非运行时开关。
 
 ```python
 src = 'x = 6 * 7' + chr(10) + 'print(x)'
@@ -83,9 +81,9 @@ exec(code_obj)
 
 ### code object 常用属性速查
 
-`compile()` 交回一棵 code object 树：模块、函数、类体各一份，内层定义折进外层 co_consts，都是 CodeType 实例。函数那份挂在 `func.__code__`，回溯行号靠 co_linetable 换算，3.10 起它取代了 co_lnotab；
+`compile()` 交回一棵 code object 树：模块、函数、类体各一份，内层定义折进外层 co_consts，都是 CodeType 实例。
 
-判断生成器看 co_flags 与 `inspect.CO_GENERATOR`，闭包变量在 co_freevars，3.11 补了 co_qualname。
+函数那份挂在 `func.__code__`，回溯行号靠 co_linetable 换算，3.10 起它取代了 co_lnotab；判断生成器看 co_flags 与 `inspect.CO_GENERATOR`，闭包变量在 co_freevars，3.11 补了 co_qualname。
 
 下表按标识、常量、名字、变量、行号归类。
 
@@ -102,17 +100,15 @@ exec(code_obj)
 
 ## 常量折叠：co_consts 里藏着的 42
 
-包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目录，文件名形如 `module.cpython-313.pyc`，其中 313 是解释器版本标签；
-
-可以用 `importlib.util.cache_from_source('pkg/mod.py')` 直接算出这个路径，返回值里一定含 `__pycache__` 且以 .pyc 结尾。
+包导入时，CPython 把编译结果写进源文件同级的 `__pycache__` 目录，文件名形如 `module.cpython-313.pyc`，其中 313 是解释器版本标签；可以用 `importlib.util.cache_from_source('pkg/mod.py')` 直接算出这个路径，返回值里一定含 `__pycache__` 且以 .pyc 结尾。
 
 pyc 文件头部记录源文件 mtime 与大小（时间戳模式）或源文件内容的哈希（校验模式，PEP 552，3.7 起），导入时二者比对：一致就跳过编译直接反序列化 code object，不一致才重新编译并覆写。
 
 由此得到两个反直觉结论：一是「改了 .py 一定重新执行」不成立——import 先看 `sys.modules` 缓存，命中就直接复用进程内的模块对象，连 pyc 都不读；二是同一秒内把文件改回同样大小，时间戳模式可能判为未变而继续用旧 pyc。
 
-pyc 与解释器版本绑定，3.12 的 pyc 不能被 3.13 用，也不是可独立分发的可执行文件，它不含源码、不含依赖。部署只需源码与依赖，pyc 可丢弃；
+pyc 与解释器版本绑定，3.12 的 pyc 不能被 3.13 用，也不是可独立分发的可执行文件，它不含源码、不含依赖。
 
-但在只读文件系统或冷启动敏感的容器里，用 `python -m` 预生成 pyc 能省去每次编译的开销。
+部署只需源码与依赖，pyc 可丢弃；但在只读文件系统或冷启动敏感的容器里，用 `python -m` 预生成 pyc 能省去每次编译的开销。
 
 ```bash
 python -m compileall -q
@@ -149,13 +145,9 @@ pyc 头部的 magic number 与 CPython 字节码版本绑定，一旦指令集�
 
 ## __pycache__ 与 pyc：缓存判据与失效信号
 
-判据写在 pyc 头部：开头 4 字节是 `importlib.util.MAGIC_NUMBER`，换版本即作废；
+判据写在 pyc 头部：开头 4 字节是 `importlib.util.MAGIC_NUMBER`，换版本即作废；随后按 PEP 552 存源文件 mtime 与大小或内容哈希，import 时据此决定复用或重编。
 
-随后按 PEP 552 存源文件 mtime 与大小或内容哈希，import 时据此决定复用或重编。
-
-想验证失效，用 `py_compile.compile` 的 invalidation_mode 选 `CHECKED_HASH` 并改源文件；
-
-`python -X` 可把缓存挪走单独观察。
+想验证失效，用 `py_compile.compile` 的 invalidation_mode 选 `CHECKED_HASH` 并改源文件；`python -X` 可把缓存挪走单独观察。
 
 ```bash
 python -X pycache_prefix
@@ -178,21 +170,19 @@ python -X pycache_prefix
 
 ### 部署时 pyc 该留还是该删
 
-取决于镜像怎么打包、文件系统可不可写、冷启动值不值钱。清掉 `__pycache__` 能减小体积，代价是每次启动现场编译；
+取决于镜像怎么打包、文件系统可不可写、冷启动值不值钱。
 
-只读文件系统若不预生成就省不掉，用 `python -m` 在构建阶段铺好更稳。
+清掉 `__pycache__` 能减小体积，代价是每次启动现场编译；只读文件系统若不预生成就省不掉，用 `python -m` 在构建阶段铺好更稳。
 
 ```bash
 python -m compileall -q -f
 ```
 
-担心时间戳在分层镜像里误判，配 --invalidation-mode checked-hash 改用内容哈希；
-
-也可用 `PYTHONPYCACHEPREFIX` 把 pyc 与源码分目录，交付只带源码。
+担心时间戳在分层镜像里误判，配 --invalidation-mode checked-hash 改用内容哈希；也可用 `PYTHONPYCACHEPREFIX` 把 pyc 与源码分目录，交付只带源码。
 
 下面几条自检把留、删、预编译、分离逐项打勾。
 
-<CheckList id='P003b' title='上线前自检' :items='["能复现并解释「改了 .py 文件，重新导入后新代码没生效」", "能复现并解释「把语法错误写进 if False 分支里，以为不会执行就没事」", "能复现并解释「把 pyc 当成可独立分发的编译产物」", "能用一条命令验证 脚本与交互式解释器", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P003a' title='上线前自检' :items='["能复现并解释「改了 .py 文件，重新导入后新代码没生效」", "能复现并解释「把语法错误写进 if False 分支里，以为不会执行就没事」", "能复现并解释「把 pyc 当成可独立分发的编译产物」", "能用一条命令验证 脚本与交互式解释器", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 部署前自检：给字节码缓存留下可核对的证据
@@ -239,11 +229,9 @@ with tempfile.TemporaryDirectory() as d:
 
 最容易忽略的不是磁盘 pyc，而是进程内模块：import 先查 `sys.modules`，命中就复用，常驻进程不重启改多少次都看不见。
 
-排查从内到外：先确认 'mod' in `sys.modules`，必要时 `importlib.reload(mod)`；
+排查从内到外：先确认 'mod' in `sys.modules`，必要时 `importlib.reload(mod)`；再看 `os.stat(path).st_mtime_ns` 与 st_size 是否同秒同大小；再用 cache_from_source 定位 pyc 比头部；最后 `python -B` 启动排除干扰。
 
-再看 `os.stat(path).st_mtime_ns` 与 st_size 是否同秒同大小；
-
-再用 cache_from_source 定位 pyc 比头部；最后 `python -B` 启动排除干扰。下表按现象、根因、动作列出，配排查顺序。
+下表按现象、根因、动作列出，配排查顺序。
 
 **错因速查**
 

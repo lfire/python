@@ -38,9 +38,7 @@ description: 能读懂并操作 Python 的编译中间产物
 
 ## 从源码到 AST：ast.parse、ast.dump 与字面量安全求值
 
-`ast.parse` 返回 `ast.Module`（`mode='eval'` 时返回 `Expression`，`mode='single'` 用于交互式单句），它只做解析，不执行任何代码；
-
-`mode`、`type_comments`、`feature_version` 等参数控制解析细节。
+`ast.parse` 返回 `ast.Module`（`mode='eval'` 时返回 `Expression`，`mode='single'` 用于交互式单句），它只做解析，不执行任何代码；`mode`、`type_comments`、`feature_version` 等参数控制解析细节。
 
 `ast.dump` 把树打成可读字符串，`indent` 参数（3.9+）可缩进，`include_attributes=True` 会带上 `lineno`、`col_offset`、`end_lineno`、`end_col_offset`，调试改写后的节点时很有用。
 
@@ -125,15 +123,11 @@ code object 是编译产物的不可变容器，`co_code` 存指令、`co_lineta
 
 `compile` 把源码或 AST 编成 code object，`filename` 会进 traceback 与 `co_filename`，别写成空串。`mode` 三选一：`'exec'` 编译模块语句、`'eval'` 编译单个表达式并返回值、`'single'` 编译交互式单句（会打印表达式结果）。
 
-`flags` 可用 `ast.PyCF_ONLY_AST` 让 `compile` 直接返回 AST（等价于 `ast.parse`），还可叠加 `__future__` 相关标志；
-
-`dont_inherit=True` 阻止继承调用点的 future 设置。
+`flags` 可用 `ast.PyCF_ONLY_AST` 让 `compile` 直接返回 AST（等价于 `ast.parse`），还可叠加 `__future__` 相关标志；`dont_inherit=True` 阻止继承调用点的 future 设置。
 
 `optimize` 默认 `-1` 跟随解释器的 `-O` 级别，显式 `0` / `1` / `2` 三档：`1` 移除 `assert` 与 `if __debug__` 分支，`2` 再移除文档字符串。
 
-code object 的关键属性：`co_code` 是字节码字节串，`co_consts` 是常量元组，`co_names` 是全局名字元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`co_flags` 记录参数与生成器标志；
-
-3.10 起 `co_linetable` 取代 `co_lnotab` 记录行号，3.11 起新增 `co_exceptiontable`（异常表）与 `co_qualname`。
+code object 的关键属性：`co_code` 是字节码字节串，`co_consts` 是常量元组，`co_names` 是全局名字元组，`co_varnames` 是局部变量名，`co_stacksize` 是求值栈最大深度，`co_flags` 记录参数与生成器标志；3.10 起 `co_linetable` 取代 `co_lnotab` 记录行号，3.11 起新增 `co_exceptiontable`（异常表）与 `co_qualname`。
 
 `dis.dis(code)` 把这些指令翻译成可读形式。注入或动态生成代码时，优先用 AST 而非字符串拼接，产物才可控。
 
@@ -240,7 +234,7 @@ except ValueError:
 
 <Callout type="idea" title='落地提示' text='自定义 lint、代码生成、自动插桩都应基于 AST；产物要保留 lineno 与 col_offset' />
 
-<CheckList id='P049b' title='上线前自检' :items='["能复现并解释「用 eval / exec 解析外部传入的字符串当数据」", "能复现并解释「NodeTransformer 改写后直接 compile…」", "能复现并解释「把某一版本的 co_code 指令或优化结论当语言规范」", "能用一条命令验证 词法与语法分析", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P049a' title='上线前自检' :items='["能复现并解释「用 eval / exec 解析外部传入的字符串当数据」", "能复现并解释「NodeTransformer 改写后直接 compile…」", "能复现并解释「把某一版本的 co_code 指令或优化结论当语言规范」", "能用一条命令验证 词法与语法分析", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"

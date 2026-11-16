@@ -35,10 +35,6 @@ print('version_major', sys.version_info[0])
 print('site_ok', report['site_count'] >= 1)
 print('cwd_abs', os.path.isabs(report['cwd']))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # impl_name cpython
@@ -59,10 +55,6 @@ print('flags_isolated', bool(f.isolated))
 print('flags_no_site', bool(f.no_site))
 print('path_ordered', isinstance(sys.path, list))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # spec_found True
@@ -79,10 +71,6 @@ print('origin_init', spec.origin.endswith('__init__.py'))
 mod = importlib.import_module('json')
 print('cached', mod is sys.modules['json'])
 print('has_dumps', hasattr(mod, 'dumps'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

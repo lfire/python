@@ -41,10 +41,6 @@ del obj
 gc.collect()
 print('cache size after', len(cache))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # threshold (2000, 10, 10)（3.13 起；3.12 及以前为 (700, 10, 10)）
@@ -68,10 +64,6 @@ print('collected with del', n > 0)
 print('garbage list', isinstance(gc.garbage, list))
 print('count', len(gc.get_count()) == 3)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # objects grow True
@@ -92,10 +84,6 @@ print('objects grow', during > before)
 print('objects reclaimed', after < during)
 print('tracemalloc available', hasattr(sys, 'getallocatedblocks'))
 print('refcount positive', sys.getrefcount(gc) > 0)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

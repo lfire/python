@@ -32,10 +32,6 @@ b = TokenBucket(capacity=3, refill_rate=1)
 times = [0, 0, 0, 0, 0.5, 1, 1, 1, 2]
 print([b.allow(t) for t in times])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # k1 charge-applied
@@ -51,10 +47,6 @@ def handle(idem_key, op):
     return op + '-applied'
 for key in ['k1', 'k1', 'k2', 'k1']:
     print(key, handle(key, 'charge'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -72,10 +64,6 @@ print('check and store separate?', 'CONTAINS_OP' in ops and 'STORE_SUBSCR' in op
 print('instruction count', len(ops))
 print('STORE_SUBSCR count', ops.count('STORE_SUBSCR'))
 print('key ops', [o for o in ops if o in ('CONTAINS_OP', 'STORE_SUBSCR')])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

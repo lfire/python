@@ -31,10 +31,6 @@ print('read R2 (before replication)', read('R2'))
 replicate(['R2', 'R3'])
 print('read R2 (after)', read('R2'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # concurrent? True
@@ -55,10 +51,6 @@ print('merged', merge(va, vb))
 vc = {'A': 3, 'B': 2}
 print('vc dominates va?', not concurrent(va, vc))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # after partition: A 2 B 3
@@ -72,10 +64,6 @@ zone_b['x'] = 3
 print('after partition: A', zone_a['x'], 'B', zone_b['x'])
 print('diverged?', zone_a['x'] != zone_b['x'])
 print('CP choice: reject B write -> A,B stay', 2, 2)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

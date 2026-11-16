@@ -50,27 +50,18 @@ TypeError: multiple bases have instance lay-out conflict
 
 普通 heap type 的实例用一张 `PyDictObject`（即 `__dict__`）存属性，还带一个 `__weakref__` 槽。字典是开放定址哈希表，即便只有两三个键也有预分配的表与额外负载，海量小对象时代价重复出现。
 
-定义 `__slots__ = ('x', 'y')` 后，CPython 为每个名字创建一个 `member_descriptor`（`PyMemberDef`），记录它在实例结构体里的固定字节偏移；
+定义 `__slots__ = ('x', 'y')` 后，CPython 为每个名字创建一个 `member_descriptor`（`PyMemberDef`），记录它在实例结构体里的固定字节偏移；实例的 `tp_basicsize` 变成固定值，`tp_dictoffset` 置 0，属性读写从「查字典」变成「按偏移取槽 + 描述符分派」。
 
-实例的 `tp_basicsize` 变成固定值，`tp_dictoffset` 置 0，属性读写从「查字典」变成「按偏移取槽 + 描述符分派」。收益来自去掉哈希表与允许更紧凑的对象分配，实例数越多越明显，用 `tracemalloc` 对十万级列表取差分即可量化。
+收益来自去掉哈希表与允许更紧凑的对象分配，实例数越多越明显，用 `tracemalloc` 对十万级列表取差分即可量化。
 
-代价是三条硬约束：只能赋值槽里声明过的名字，写新属性抛 `AttributeError`；
-
-默认没有 `__dict__`，`vars(obj)` 抛 `TypeError: vars(…`；
-
-```python
-TypeError: vars() argument must have __dict__ attribute
-```
-
-默认也没 `__weakref__`，`weakref.ref(obj)` 抛 `TypeError: canno…`。
+代价是三条硬约束：只能赋值槽里声明过的名字，写新属性抛 `AttributeError`；默认没有 `__dict__`，`vars(obj)` 抛 `TypeError: vars(…`；默认也没 `__weakref__`，`weakref.ref(obj)` 抛 `TypeError: canno…`。
 
 ```text
+TypeError: vars() argument must have __dict__ attribute
 TypeError: cannot create weak reference
 ```
 
-`__slots__` 可以写成单个字符串（这时就是一个槽名）或任意可迭代的字符串序列；
-
-要与 `dataclass` 组合时用 `@dataclass(slots=True)`（3.10 引入），它会重新创建类对象，因为槽必须在类创建时确定。
+`__slots__` 可以写成单个字符串（这时就是一个槽名）或任意可迭代的字符串序列；要与 `dataclass` 组合时用 `@dataclass(slots=True)`（3.10 引入），它会重新创建类对象，因为槽必须在类创建时确定。
 
 ```python
 class Plain:
@@ -121,17 +112,15 @@ print('values', p.x, s.x)
 
 所以正确写法是给链上每个基类都写 `__slots__ = ()`（空元组，表示不占槽但也不给 `__dict__`），只有真正需要字段的那一层声明具体名字。
 
-多继承时，CPython 要为每个基类选 `best_base` 并合并实例布局，若两个基类都带非空槽，它们的固定偏移无法放进同一份结构体，抛 `TypeError: multi…`；
+多继承时，CPython 要为每个基类选 `best_base` 并合并实例布局，若两个基类都带非空槽，它们的固定偏移无法放进同一份结构体，抛 `TypeError: multi…`；解法是只让一个基类带数据槽，其余用空槽或改成组合。
 
 ```text
 TypeError: multiple bases have instance lay-out conflict
 ```
 
-解法是只让一个基类带数据槽，其余用空槽或改成组合。
-
 第三类冲突是名字撞车：类变量与槽同名时，`type.__new__` 抛 `ValueError: 'x'…`，因为同名类变量会遮掉描述符。
 
-```python
+```text
 ValueError: 'x' in __slots__ conflicts with class variable
 ```
 
@@ -182,13 +171,9 @@ except ValueError as e:
 
 ## 弱引用适配、tracemalloc 观测与选型边界
 
-槽类要支持弱引用，把 `'__weakref__'` 显式写进 `__slots__`；
+槽类要支持弱引用，把 `'__weakref__'` 显式写进 `__slots__`；之后 `weakref.ref`、`WeakValueDictionary`、`WeakKeyDictionary` 才能工作。
 
-之后 `weakref.ref`、`WeakValueDictionary`、`WeakKeyDictionary` 才能工作。
-
-这对缓存尤其重要：用普通 `dict` 持有对象，等于给每个对象加一条永生的强引用，缓存不淘汰对象就永不释放；
-
-换成 `WeakValueDictionary` 后，外部强引用消失时条目自动移除，正是观察者与缓存场景的标准解。
+这对缓存尤其重要：用普通 `dict` 持有对象，等于给每个对象加一条永生的强引用，缓存不淘汰对象就永不释放；换成 `WeakValueDictionary` 后，外部强引用消失时条目自动移除，正是观察者与缓存场景的标准解。
 
 观测内存不要只看 `sys.getsizeof`：它只返回对象结构体本身加上 GC 头，算不到 `__dict__` 里哈希表、字符串内容或容器元素的开销，槽类与普通类在它眼里的差值不能代表真实占用。
 
@@ -262,13 +247,11 @@ CPython 的普通 heap type 实例在对象头之后带一个 `PyDictObject` 指
 
 地图服务一次性构造五万个 `Point`，同时维护一个按 `x` 索引的热点缓存。若用普通类，每个实例都带字典，内存随实例数线性膨胀；若缓存用普通 `dict`，即使外部不再引用这些点，缓存里的强引用也会让它们一直活着，形成事实上的泄漏。
 
-正确组合是 `__slots__`：前两个槽把布局压成固定大小，第三个槽让 `weakref` 生效；
+正确组合是 `__slots__`：前两个槽把布局压成固定大小，第三个槽让 `weakref` 生效；缓存改用 `WeakValueDictionary`，外部强引用（`points` 列表）清空并 `gc.collect()` 后，条目自动消失。
 
 ```python
 __slots__ = ('x', 'y', '__weakref__')
 ```
-
-缓存改用 `WeakValueDictionary`，外部强引用（`points` 列表）清空并 `gc.collect()` 后，条目自动消失。
 
 下面用 `tracemalloc` 与 `weakref` 标准库跑通，打印点总数、缓存初始条目数、清空后的条目数以及 `tracemalloc` 仍在跟踪的状态。真实服务还应把坐标换成 `array` 或 `NumPy` 做列式存储，本例聚焦对象布局与弱引用生命周期。
 
@@ -295,7 +278,7 @@ tracemalloc.stop()
 
 <Callout type="idea" title='落地提示' text='海量小对象（图节点、坐标、事件记录）优先考虑 slots 或 NamedTuple，并用 tracemalloc 验证收益' />
 
-<CheckList id='P043b' title='上线前自检' :items='["能复现并解释「只给子类加 __slots__，内存几乎没降」", "能复现并解释「槽类放进 WeakValueDictionary 报 can…」", "能复现并解释「多继承两个带非空槽的基类报 lay-out conflict」", "能用一条命令验证 __dict__ 的开销", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P043a' title='上线前自检' :items='["能复现并解释「只给子类加 __slots__，内存几乎没降」", "能复现并解释「槽类放进 WeakValueDictionary 报 can…」", "能复现并解释「多继承两个带非空槽的基类报 lay-out conflict」", "能用一条命令验证 __dict__ 的开销", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "xs=[3,1,2]; print(sorted(xs), xs[::-1], len(xs))"

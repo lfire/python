@@ -38,10 +38,6 @@ print(type(Cart.add).__name__, type(a.add).__name__)
 print(a.add.__self__ is a, a.add.__func__ is Cart.add)
 print(vars(a))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # TypeError __init__() should return None, not 'int'
@@ -79,10 +75,6 @@ class Point:
 q = Point(3)
 print(q, q.x, q.y)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # function method
@@ -104,10 +96,6 @@ print(C.m.__get__(c, C).__func__ is C.m)
 print('self' in C.m.__code__.co_varnames)
 ops = [i.opname for i in dis.get_instructions(C.m)]
 print('LOAD_FAST' in ops or 'LOAD_FAST_LOAD_FAST' in ops)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

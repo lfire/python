@@ -25,10 +25,6 @@ accept = base64.b64encode(hashlib.sha1((client_key + GUID).encode()).digest()).d
 print('Sec-WebSocket-Accept', accept)
 print('GUID len', len(GUID))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # frame lines ['id: 3', 'event: tick', 'retry: 3000', 'data: c', '', '']
@@ -46,10 +42,6 @@ events = [{'id': 1, 'data': 'a'}, {'id': 2, 'data': 'b'}, {'id': 3, 'data': 'c'}
 frame = sse_frame(3, 'tick', 'c')
 print('frame lines', frame.split(chr(10)))
 print('replay after id 1', resume(events, 1))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -69,10 +61,6 @@ def header(n):
     return bytes([0x80 | OPCODE['text'], 127]) + struct.pack('!Q', n)
 for n in (5, 125, 126, 70000):
     print(n, '->', len(header(n)), 'header bytes')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

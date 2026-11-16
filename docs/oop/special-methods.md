@@ -22,11 +22,11 @@ TypeError: unhashable type: 'Money'
 
 团队为了让两笔金额能比较相等，给类加了 `__eq__`，却不知道这一步会让类自动失去哈希能力。
 
-有人补救时写 `__hash__ = object.__hash__`，结果金额相等的两笔订单因为 `id` 不同得到不同哈希，聚合结果直接错乱；
+有人补救时写 `__hash__ = object.__hash__`，结果金额相等的两笔订单因为 `id` 不同得到不同哈希，聚合结果直接错乱；还有人只定义了 `__repr__`，日志里看着正常，运营看到的报表却是给开发者看的串，因为忘了 `__str__`。
 
-还有人只定义了 `__repr__`，日志里看着正常，运营看到的报表却是给开发者看的串，因为忘了 `__str__`。更隐蔽的一处：给容器写了 `__len__` 之后，`if obj` 的真假值也跟着变了，某个空对象突然被当成 `False` 跳过。
+更隐蔽的一处：给容器写了 `__len__` 之后，`if obj` 的真假值也跟着变了，某个空对象突然被当成 `False` 跳过。这些都不是零散语法，而是数据模型协议的一整套联动：定义一个方法，别的行为会跟着被改。
 
-这些都不是零散语法，而是数据模型协议的一整套联动：定义一个方法，别的行为会跟着被改。本讲把 `repr` / `str` 回退、`eq` / `hash` 联动、`len` / `bool` / `contains` 优先级与算术反射调用逐条拆开，给出每一处的修复写法和失效信号。
+本讲把 `repr` / `str` 回退、`eq` / `hash` 联动、`len` / `bool` / `contains` 优先级与算术反射调用逐条拆开，给出每一处的修复写法和失效信号。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='定义 __eq__ 后实例无法作为 dict 键或 set 元素：type.__new__ 把未显式定义 __hash__ 的类设为 __hash__ = None，hash() 抛 TypeError: unhashable type' />
 
@@ -74,11 +74,11 @@ CPython 把每个特殊方法登记进 `PyTypeObject` 的槽（slot）：`__eq__
 
 ## repr 与 str 是两条独立输出路径，容器强制走 repr
 
-`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。`print(obj)`、`str(obj)`、`f'{obj}'` 与 `format` 的空转换走 `__str__`；
+`__repr__` 面向开发者，目标是无歧义、最好能被 `eval` 复原；`__str__` 面向终端用户，目标是可读。
 
-`repr(obj)`、交互式回显、`logging` 的 `%r`、`f'{obj!r}'` 走 `__repr__`。关键回退规则：`object.__str__` 默认调用 `__repr__`，所以只实现 `__repr__` 就能同时覆盖两条路径，这是最小实现；
+`print(obj)`、`str(obj)`、`f'{obj}'` 与 `format` 的空转换走 `__str__`；`repr(obj)`、交互式回显、`logging` 的 `%r`、`f'{obj!r}'` 走 `__repr__`。
 
-反过来只实现 `__str__` 时，`repr(obj)` 会用 `object.__repr__` 给出带类名与内存地址的默认串，地址每次运行都变，不能写进快照测试。
+关键回退规则：`object.__str__` 默认调用 `__repr__`，所以只实现 `__repr__` 就能同时覆盖两条路径，这是最小实现；反过来只实现 `__str__` 时，`repr(obj)` 会用 `object.__repr__` 给出带类名与内存地址的默认串，地址每次运行都变，不能写进快照测试。
 
 列表、元组、字典、集合打印元素时一律用 `repr`，因为容器需要无歧义表示而不是友好文案——`print([a])` 看到的是 `repr` 结果，哪怕 `a` 定义了漂亮的 `__str__`。`f'{obj!s}'` 与 `f'{obj!r}'` 分别强制两条路径。
 
@@ -128,13 +128,9 @@ CPython 在 `type.__new__` 里检查：若类体定义了 `__eq__` 却没有定�
 TypeError: unhashable type: 'X'
 ```
 
-这样设计是为了守住哈希契约——相等的对象必须有相等的哈希值；
+这样设计是为了守住哈希契约——相等的对象必须有相等的哈希值；默认的 `object.__hash__` 基于身份 `id`，两个 `__eq__` 判等的不同实例哈希必然不同，留着它只会制造「相等却查不到」的诡异 bug。
 
-默认的 `object.__hash__` 基于身份 `id`，两个 `__eq__` 判等的不同实例哈希必然不同，留着它只会制造「相等却查不到」的诡异 bug。
-
-修复分两种意图：可变对象明确写 `__hash__ = None` 表明它就是不可哈希；
-
-值对象应冻结（`frozen dataclass`、`NamedTuple`）并对全部参与 `__eq__` 的字段求哈希，例如 `hash((self.x, self.y))`。
+修复分两种意图：可变对象明确写 `__hash__ = None` 表明它就是不可哈希；值对象应冻结（`frozen dataclass`、`NamedTuple`）并对全部参与 `__eq__` 的字段求哈希，例如 `hash((self.x, self.y))`。
 
 哈希值必须是 `int`，且在对象生命周期内不变，所以参与哈希的字段不能事后被改。另一个易错点：`__eq__` 遇到不认识的类型应返回 `NotImplemented` 这个单例，而不是返回 `False` 或抛异常；返回 `NotImplemented` 后解释器会去试对方的反射方法，都失败才退化为 `is` 身份比较。
 
@@ -181,26 +177,24 @@ print('radd', repr(10 + Score(1)))
 
 `__len__` 必须返回非负整数，CPython 用 `Py_ssize_t` 接收：返回负数抛 `ValueError:`，超过 `sys.maxsize` 抛 `OverflowError: c…`。
 
-```python
+```text
 ValueError: __len__() should return >= 0
 OverflowError: cannot fit 'int' into an index-sized integer
 ```
 
-`bool(obj)` 与 `if obj` 先找 `__bool__`，它必须返回严格的 `bool`，返回 `int` 会抛 `TypeError: __boo…`；
+`bool(obj)` 与 `if obj` 先找 `__bool__`，它必须返回严格的 `bool`，返回 `int` 会抛 `TypeError: __boo…`；没有 `__bool__` 才回退 `__len__`，长度 0 为假。
 
-```python
+```text
 TypeError: __bool__ should return bool, returned int
 ```
 
-没有 `__bool__` 才回退 `__len__`，长度 0 为假。`in` 先找 `__contains__`，没有则回退 `__iter__` 迭代，再没有回退旧的 `__getitem__` 下标协议。
+`in` 先找 `__contains__`，没有则回退 `__iter__` 迭代，再没有回退旧的 `__getitem__` 下标协议。
 
 算术是一组对称协议：`a + b` 先调 `a.__add__(b)`，若返回 `NotImplemented` 再调 `b.__radd__(a)`；当右操作数是左操作数类型的子类且重写了反射方法时，反射方法反而优先，避免子类被基类的 `__add__` 抢走。
 
 `a += b` 先试 `__iadd__` 做原地修改，未定义才回退 `__add__` 再重新绑定，因此不可变类型的 `+=` 会生成新对象。
 
-`functools.total_ordering` 要求类至少定义 `__eq__` 与 `__lt__` / `__le__` / `__gt__` / `__ge__` 之一，装饰器补齐其余四个；
-
-它生成的是 Python 层组合方法，比逐个手写多一层调用，且强依赖 `__eq__` 已定义，适合字段少、比较不热的场景。
+`functools.total_ordering` 要求类至少定义 `__eq__` 与 `__lt__` / `__le__` / `__gt__` / `__ge__` 之一，装饰器补齐其余四个；它生成的是 Python 层组合方法，比逐个手写多一层调用，且强依赖 `__eq__` 已定义，适合字段少、比较不热的场景。
 
 ```python
 import inspect
@@ -256,9 +250,7 @@ print('ne uses eq:', EqOnly() != object())
 
 结算服务要把上千笔流水按币种汇总，还要对重复的金额对象去重。若用普通类，`__eq__` 一加就失去哈希，既当不了 `dict` 键也进不了 `set`；若用可变对象做键，事后改了字段会让哈希与相等性一起失效，账目再也查不出来。
 
-正确做法是把 `Money` 冻结成不可变值对象：`frozen dataclass` 在 `eq=True` 时自动生成按字段元组求值的 `__hash__`，于是相等对象哈希相等，聚合与去重都成立；
-
-`__add__` 里先校验币种一致再返回新实例，避免隐式跨币种相加。
+正确做法是把 `Money` 冻结成不可变值对象：`frozen dataclass` 在 `eq=True` 时自动生成按字段元组求值的 `__hash__`，于是相等对象哈希相等，聚合与去重都成立；`__add__` 里先校验币种一致再返回新实例，避免隐式跨币种相加。
 
 下面用标准库 `dataclasses` 完整跑通：三笔 `CNY` 与一笔 `USD` 汇总、用 `set` 去重、并验证冻结后赋值会抛 `FrozenInstanceError`（它是 `AttributeError` 的子类）。
 

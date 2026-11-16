@@ -25,11 +25,7 @@ description: 让类型契约在 CI 中真正生效
 
 ## mypy 与 pyright：配置项与严格度怎么选
 
-mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implicit_optional`、`warn_unused_ignores` 等一组开关；
-
-`ignore_missing_imports` 与 `follow_imports = 'skip'` 用来处理无标注的第三方库；
-
-`[tool.mypy.overrides]` 下把某个模块设成 `ignore_errors = True`，可对老代码按模块降严格度。
+mypy 配置在 `mypy.ini` 或 `pyproject.toml` 的 `[tool.mypy]`：`strict = True` 一次打开 `disallow_untyped_defs`、`check_untyped_defs`、`warn_return_any`、`no_implicit_optional`、`warn_unused_ignores` 等一组开关；`ignore_missing_imports` 与 `follow_imports = 'skip'` 用来处理无标注的第三方库；`[tool.mypy.overrides]` 下把某个模块设成 `ignore_errors = True`，可对老代码按模块降严格度。
 
 命令行等价写法是 `mypy --strict`。
 
@@ -76,9 +72,7 @@ pyright（Pylance 的底层）读 `pyrightconfig.json` 或 `[tool.pyright]`，�
 
 `list[int]` 在运行时是 `types.GenericAlias`，其 `__instancecheck__` 未实现，isinstance 检测到第二参数是参数化泛型就抛 TypeError。
 
-静态检查器不走运行时：它解析 AST 建符号表与类型图，做约束求解与子类型判定；
-
-Any 被定义成同时是格顶与格底（与任意类型双向兼容），因此一旦进入表达式就短路后续检查并沿返回值传播，这正是 `warn_return_any` 要卡的点。
+静态检查器不走运行时：它解析 AST 建符号表与类型图，做约束求解与子类型判定；Any 被定义成同时是格顶与格底（与任意类型双向兼容），因此一旦进入表达式就短路后续检查并沿返回值传播，这正是 `warn_return_any` 要卡的点。
 
 PEP 561 的 `py.typed` 是个空标记文件，检查器据此决定是否读取该包的行内注解；没有它，stub（`.pyi`）或 Any 就是唯一出路。
 
@@ -151,9 +145,7 @@ Any 的特殊之处在于它与任何类型双向兼容：一旦某个值被标�
 
 对策是开 `warn_return_any` 与 `disallow_any_generics`、给第三方库补 stub 或局部隔离。
 
-行内抑制用 `# type: ignore` 或精确到码的写法，pyright 用 `# pyright: ignore`；
-
-配合 `warn_unused_ignores` 清掉过时抑制，否则检查器会被慢慢掏空。
+行内抑制用 `# type: ignore` 或精确到码的写法，pyright 用 `# pyright: ignore`；配合 `warn_unused_ignores` 清掉过时抑制，否则检查器会被慢慢掏空。
 
 **typing 构造与运行时可查性**
 
@@ -175,13 +167,9 @@ Any 的特殊之处在于它与任何类型双向兼容：一旦某个值被标�
 
 ## 泛型不变性、Protocol 与运行时互补
 
-PEP 585（3.9 起）让内置容器可直接下标：`list[int]`、`dict[str, int]` 是 `types.GenericAlias`；
+PEP 585（3.9 起）让内置容器可直接下标：`list[int]`、`dict[str, int]` 是 `types.GenericAlias`；PEP 604（3.10 起）让 `int | str` 等价于 `typing.Union[int, str]`，`typing.get_origin(list[int])` 返回 list、`get_args(list[int])` 返回 (int,)。
 
-PEP 604（3.10 起）让 `int | str` 等价于 `typing.Union[int, str]`，`typing.get_origin(list[int])` 返回 list、`get_args(list[int])` 返回 (int,)。
-
-可变容器是不变的：`list[int]` 不能赋给 `list[object]`，因为后者允许 append 一个 str 破坏前者；
-
-只读的 `Sequence[int]` 才协变，用 `TypeVar(covariant=True)` 声明。
+可变容器是不变的：`list[int]` 不能赋给 `list[object]`，因为后者允许 append 一个 str 破坏前者；只读的 `Sequence[int]` 才协变，用 `TypeVar(covariant=True)` 声明。
 
 还有 `Literal`（PEP 586）、`Annotated`（PEP 593）、`Protocol`（PEP 544 结构化子类型，配 `@runtime_checkable` 才能做 isinstance）、`TypeGuard`（PEP 647）、3.12 的 PEP 695 type 参数语法。
 
@@ -205,9 +193,9 @@ PEP 604（3.10 起）让 `int | str` 等价于 `typing.Union[int, str]`，`typin
 
 类型检查只能覆盖有注解的代码路径，外部输入（`HTTP` 参数、配置、DB 行）在运行时仍是未校验的裸值。
 
-稳妥做法是在数据边界放一层轻量 validate：用 `typing.get_type_hints` 读出函数声明的契约，逐项 isinstance 校验后再调用核心函数；
+稳妥做法是在数据边界放一层轻量 validate：用 `typing.get_type_hints` 读出函数声明的契约，逐项 isinstance 校验后再调用核心函数；核心函数保留注解供 mypy/pyright 在开发期检查，两者各管一段。
 
-核心函数保留注解供 mypy/pyright 在开发期检查，两者各管一段。下面片段用标准库演示这层守卫：合法输入正常通过、类型不符的输入在边界被拦下、同时打印「注解本身不强制」的证据，说明静态与运行时不是二选一而是分层防御。
+下面片段用标准库演示这层守卫：合法输入正常通过、类型不符的输入在边界被拦下、同时打印「注解本身不强制」的证据，说明静态与运行时不是二选一而是分层防御。
 
 ```python
 import typing
@@ -234,7 +222,7 @@ print('annotation not enforced', add('x', 'y'))
 
 <Callout type="idea" title='落地提示' text='从公共 API 与数据边界开始加类型，按目录逐步提高严格度，把未覆盖文件列成清单逐步清零' />
 
-<CheckList id='P074b' title='上线前自检' :items='["能复现并解释「为赶进度满仓 # type: ignore」", "能复现并解释「公共函数返回 Any 且不治理」", "能复现并解释「以为注解运行时会校验、或写 isinstance(x, li…」", "能用一条命令验证 检查器配置与严格度", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P074a' title='上线前自检' :items='["能复现并解释「为赶进度满仓 # type: ignore」", "能复现并解释「公共函数返回 Any 且不治理」", "能复现并解释「以为注解运行时会校验、或写 isinstance(x, li…」", "能用一条命令验证 检查器配置与严格度", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

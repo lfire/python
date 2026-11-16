@@ -37,10 +37,6 @@ print('unsafe_rows', len(unsafe(inj)))
 print('safe_rows', len(safe(inj)))
 db.close()
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # before []
@@ -64,10 +60,6 @@ out = pickle.loads(blob)
 print('out', out)
 print('after', list(SIDE_EFFECT))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # token_len 32
@@ -85,10 +77,6 @@ def redact(s):
     return s[:4] + '****' if len(s) > 4 else '****'
 print('redacted', redact('abcdefghijk'))
 print('hmac_equal', hmac.compare_digest(digest, hashlib.sha256(token.encode()).hexdigest()))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -16,11 +16,11 @@ description: 读懂取消、超时与回调的真实路径
 
 一个 asyncio 服务给每个请求加了 `asyncio.wait_for(timeout=0.5)`，但某次上游变慢后超时完全没生效，心跳与超时一起失效，请求全卡住。
 
-排查发现有人把一段 CPU 密集的纯 Python 循环直接放进了 async 函数，中间没有任何 `await`，事件循环被这个协程独占，定时器回调根本没机会运行。另一个 bug 出现在清理逻辑：开发者在 finally 里 `await` 一段关闭连接的代码，取消时这个 `await` 又被同一次取消打断，连接没关干净；
+排查发现有人把一段 CPU 密集的纯 Python 循环直接放进了 async 函数，中间没有任何 `await`，事件循环被这个协程独占，定时器回调根本没机会运行。
 
-改用 shield 却又忘了限超时，结果清理段自己挂死。还有人捕获 `CancelledError` 后没重新抛出，让本该取消的 Task 变成了正常完成。Task 每次恢复只推进到下一个 await，取消是在这之后注入异常；理解这条路径，才能写对超时、finally 与 shield。
+另一个 bug 出现在清理逻辑：开发者在 finally 里 `await` 一段关闭连接的代码，取消时这个 `await` 又被同一次取消打断，连接没关干净；改用 shield 却又忘了限超时，结果清理段自己挂死。还有人捕获 `CancelledError` 后没重新抛出，让本该取消的 Task 变成了正常完成。
 
-本讲沿 BaseEventLoop 与 Task 源码把取消与回调链拆开。
+Task 每次恢复只推进到下一个 await，取消是在这之后注入异常；理解这条路径，才能写对超时、finally 与 shield。本讲沿 BaseEventLoop 与 Task 源码把取消与回调链拆开。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='在 async 函数里跑无 await 的 CPU 密集循环：协程在一次 _ready 回调里一路跑完，_run_once 回不到 selector，所有超时、定时器与心跳一起饿死' />
 
@@ -31,9 +31,7 @@ description: 读懂取消、超时与回调的真实路径
 
 asyncio 的事件循环基类在 `Lib/asyncio/base_events.py`，Unix 上默认实现是 `_UnixSelectorEventLoop`（用 selectors 封装 epoll、kqueue）。
 
-核心是 `BaseEventLoop._run_once`：先算出最近定时器的到期时间，作为 `selector.select` 的 timeout；
-
-把到期的 `TimerHandle` 从 `_scheduled` 堆移到 `_ready` 队列；再处理 selector 返回的就绪 IO 事件；最后按 `FIFO` 执行 `_ready` 里的 `Handle`。
+核心是 `BaseEventLoop._run_once`：先算出最近定时器的到期时间，作为 `selector.select` 的 timeout；把到期的 `TimerHandle` 从 `_scheduled` 堆移到 `_ready` 队列；再处理 selector 返回的就绪 IO 事件；最后按 `FIFO` 执行 `_ready` 里的 `Handle`。
 
 `loop.call_soon` 把回调包成 Handle 追加到 `_ready`，`loop.call_later` 包成 TimerHandle 放进按时间排序的 `_scheduled`（`heapq`）。
 
@@ -80,9 +78,7 @@ asyncio.run(main())
 
 Task 是 Future 的子类（`Lib/asyncio/tasks.py`），`create_task` 把协程包成 Task 并用 call_soon 调度它的 `__step`。
 
-`__step` 每次只把协程推进到下一个 `await`：若 `await` 的 Future 未完成，Task 把自己通过 `add_done_callback` 注册为唤醒回调；
-
-Future 完成时调用 `__wakeup`，再 call_soon 重新排入 `__step`，如此往复。
+`__step` 每次只把协程推进到下一个 `await`：若 `await` 的 Future 未完成，Task 把自己通过 `add_done_callback` 注册为唤醒回调；Future 完成时调用 `__wakeup`，再 call_soon 重新排入 `__step`，如此往复。
 
 取消不是抢占：`Task.cancel()` 设置 `_must_cancel` 并递增 cancelling 计数，若 Task 正挂在某个 Future 上，就改为取消那个 Future，使 `__wakeup` 收到 `CancelledError`；下一次 `__step` 在协程内抛出该异常。
 
@@ -162,9 +158,7 @@ asyncio.run(main())
 
 要注意 shield 若无人再 `await` inner，inner 的异常可能没人接收，因此得保留对 inner 的引用，最终 await 它或加 done callback。
 
-`asyncio.timeout`（3.11 起）用上下文管理器在超时时向其作用域内的当前 Task 注入取消，配合 `Task.uncancel()` 可把「超时」与「外部取消」区分开；
-
-`asyncio.wait_for` 内部同样基于取消实现，超时后默认会等待被取消协程真正结束。
+`asyncio.timeout`（3.11 起）用上下文管理器在超时时向其作用域内的当前 Task 注入取消，配合 `Task.uncancel()` 可把「超时」与「外部取消」区分开；`asyncio.wait_for` 内部同样基于取消实现，超时后默认会等待被取消协程真正结束。
 
 TaskGroup（3.11 起，与 PEP 654 的 `ExceptionGroup` 配套）把一组子任务的生命周期绑在一起：任一子任务抛异常就取消其余子任务，并以 `ExceptionGroup` 汇总，退出 async with 时保证所有任务已结束，避免遗留游离 Task。
 
@@ -183,15 +177,11 @@ TaskGroup（3.11 起，与 PEP 654 的 `ExceptionGroup` 配套）把一组子任
 
 asyncio 是单线程协作式调度：`_run_once` 一次循环先把到期 `TimerHandle` 从 `_scheduled` 堆移到 `_ready`，处理 selector 返回的就绪 IO，再按 `FIFO` 执行 `_ready` 里的 `Handle`。每个 Handle 都必须尽快返回，否则整轮循环停摆。
 
-`Task.__step` 让协程每次只推进到下一个 `await`：若等待的 Future 未完成，Task 通过 `add_done_callback` 把 `__wakeup` 挂到该 Future 上，Future 完成时再 call_soon 重新排入 `__step`；
+`Task.__step` 让协程每次只推进到下一个 `await`：若等待的 Future 未完成，Task 通过 `add_done_callback` 把 `__wakeup` 挂到该 Future 上，Future 完成时再 call_soon 重新排入 `__step`；于是取消不是抢占线程，而是设置 `_must_cancel` 并在下一次 `__step`、或经 `__wakeup` 向协程注入 `CancelledError`。
 
-于是取消不是抢占线程，而是设置 `_must_cancel` 并在下一次 `__step`、或经 `__wakeup` 向协程注入 `CancelledError`。这解释了三个结论：无 `await` 的循环让定时器永远等不到 `_run_once` 的下一次迭代；
+这解释了三个结论：无 `await` 的循环让定时器永远等不到 `_run_once` 的下一次迭代；捕获 `CancelledError` 不重新抛出会让 Task 以正常结果结束、`cancelled()` 变 False；finally 里的 `await` 仍处在同一个取消链上，可能被再次打断。
 
-捕获 `CancelledError` 不重新抛出会让 Task 以正常结果结束、`cancelled()` 变 False；finally 里的 `await` 仍处在同一个取消链上，可能被再次打断。shield 通过包一层外层 Future 把取消隔离在外层，inner 继续运行；
-
-TaskGroup 用结构化并发保证退出时无游离任务，异常以 `ExceptionGroup` 汇总；
-
-3.11 的 `cancelling` 与 `uncancel` 让 `asyncio.timeout` 能把自己的取消与外部取消区分开。
+shield 通过包一层外层 Future 把取消隔离在外层，inner 继续运行；TaskGroup 用结构化并发保证退出时无游离任务，异常以 `ExceptionGroup` 汇总；3.11 的 `cancelling` 与 `uncancel` 让 `asyncio.timeout` 能把自己的取消与外部取消区分开。
 
 
 ## 取消路径的失效信号

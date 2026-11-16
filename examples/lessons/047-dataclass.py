@@ -38,10 +38,6 @@ try:
 except FrozenInstanceError as e:
     print(type(e).__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # asdict {'items': ['x']}
@@ -64,10 +60,6 @@ try:
         items: list = []
 except ValueError as e:
     print(type(e).__name__, 'mutable default')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -92,10 +84,6 @@ print('hash plain:', Plain.__hash__)
 print('hash frozen:', Frozen.__hash__ is not None)
 print('field names:', [f.name for f in fields(Plain)])
 print('params:', [p for p in inspect.signature(dataclass).parameters if p in ('init', 'repr', 'eq')])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

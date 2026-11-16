@@ -61,10 +61,6 @@ print('state', state)
 print('compensated', sorted(s.compensated))
 print('duplicate_comp', s.compensate('stock'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # db {'order:1': 'paid'}
@@ -90,10 +86,6 @@ print('db', o.db)
 print('queued', len(o.queue))
 print('sent', o.dispatch())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # balance 110
@@ -111,10 +103,6 @@ once('refund', compensate)
 once('refund', compensate)
 print('balance', state['balance'])
 print('applied', sorted(applied))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

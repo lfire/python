@@ -33,10 +33,6 @@ def knn_err(train, data, k):
 for k in (1, 3, 5, 7, 9):
     print('k', k, 'train_err', knn_err(train, train, k), 'valid_err', knn_err(train, valid, k))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # grid [(1, 0.333), (3, 0.167), (5, 0.0), (7, 0.0), (9, 0.5)]
@@ -46,10 +42,6 @@ grid = [(k, knn_err(train, valid, k)) for k in (1, 3, 5, 7, 9)]
 best_k = min(grid, key=lambda t: t[1])[0]
 print('grid', grid)
 print('best_k', best_k)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -67,10 +59,6 @@ print('mean pred', round(st.mean(preds), 3))
 print('bias^2', round(bias ** 2, 3))
 print('variance', round(var, 3))
 print('MSE approx', round(bias ** 2 + var, 3))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

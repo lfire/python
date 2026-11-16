@@ -16,9 +16,7 @@ description: 在接口边界上控制对象所有权
 
 配置中心返回一个嵌套字典，业务代码把它存进实例后又顺手 return 给调用方；调用方改了一个内层列表，另一个请求的默认值跟着变了，线上出现「上一个用户的筛选条件串到下一个用户」。第一反应是「返回前拷贝一下」，于是用 `copy.copy` 包了一层，问题仍在——内层容器还是共享的。
 
-换成 `copy.deepcopy(x)`，功能对了，却让每次请求多花几毫秒，压测 QPS 掉了一截；
-
-还有人自己实现 `__deepcopy__` 时忘了先登记 `memo`，带循环引用的对象图上同一个节点被复制成两份，aliasing 反而被破坏。
+换成 `copy.deepcopy(x)`，功能对了，却让每次请求多花几毫秒，压测 QPS 掉了一截；还有人自己实现 `__deepcopy__` 时忘了先登记 `memo`，带循环引用的对象图上同一个节点被复制成两份，aliasing 反而被破坏。
 
 更隐蔽的是把内部 list 直接暴露给外部，或返回 `types.MappingProxyType` 后仍试图改它。
 
@@ -35,9 +33,9 @@ description: 在接口边界上控制对象所有权
 
 `copy.deepcopy(x)` 递归复制所有可变子对象，并用一个 `memo` 字典记录每个原对象的 `id` 到新对象的映射：既让循环引用不会无限递归，也保证原图中被多处引用的同一个对象在结果里仍是同一个新对象，也就是保留 aliasing。
 
-对 `int`、`str`、`bytes`、`float`、`bool`、`None`、函数、类型等不可变原子对象，deepcopy 走 `_deepcopy_atomic` 直接返回原对象，不分配内存；
+对 `int`、`str`、`bytes`、`float`、`bool`、`None`、函数、类型等不可变原子对象，deepcopy 走 `_deepcopy_atomic` 直接返回原对象，不分配内存；对只含不可变元素的 tuple，`copy.copy` 也直接返回自身。
 
-对只含不可变元素的 tuple，`copy.copy` 也直接返回自身。所以深拷贝的开销集中在可变容器的数量与深度，而不是对象的值大小。
+所以深拷贝的开销集中在可变容器的数量与深度，而不是对象的值大小。
 
 **赋值 / 浅拷贝 / 深拷贝的共享范围**
 
@@ -100,9 +98,7 @@ tracemalloc.stop()
 
 ## deepcopy 的 memo 与回退路径
 
-自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；
-
-未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。
+自定义类可定义 `__copy__` 与 `__deepcopy__` 完全接管行为；未定义时 copy 模块回退到 `copyreg.dispatch_table` 与 `__reduce_ex__(4)`：先用 `__new__` 建空实例，再递归复制 `__dict__` 或 `__slots__`。
 
 因此一个持有 `threading.Lock`、打开的文件句柄、数据库连接、生成器或 `lambda` 的对象通常无法深拷贝，会抛 `TypeError`（cannot pickle '_thread.lock' object 一类提示）——因为 reduce 路径要 pickle 状态。
 
@@ -149,15 +145,11 @@ print('tuple copy reused', copy.copy(t) is t)
 
 copy 模块的核心是两张分发表 `_copy_dispatch` 与 `_deepcopy_dispatch`，键是类型对象，值是对应的复制函数。
 
-deepcopy 先查 `_deepcopy_dispatch`，命中就直接调用；
-
-否则按序尝试：类型在 `copyreg.dispatch_table` 中登记、对象有 `__deepcopy__`、对象支持 `__reduce_ex__`。
+deepcopy 先查 `_deepcopy_dispatch`，命中就直接调用；否则按序尝试：类型在 `copyreg.dispatch_table` 中登记、对象有 `__deepcopy__`、对象支持 `__reduce_ex__`。
 
 `memo` 是一个普通 dict，键为 `id(x)`，值为已生成的副本；每处理一个对象先查 memo，命中直接返回，未命中就建空壳、立刻登记、再递归字段——这套「先登记再递归」正是循环图不死循环、且同一对象在结果中仍唯一的原因。
 
-reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstate__` 返回的状态做深拷贝，最后用 `__setstate__` 或更新 `__dict__` 恢复；
-
-这也解释了为何不可 pickle 的底层资源（锁、文件、连接）会让深拷贝失败。
+reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstate__` 返回的状态做深拷贝，最后用 `__setstate__` 或更新 `__dict__` 恢复；这也解释了为何不可 pickle 的底层资源（锁、文件、连接）会让深拷贝失败。
 
 小整数 -5..256 与驻留字符串本就被解释器复用，`_deepcopy_atomic` 再叠一层「不可变即复用」，所以深拷贝这类值时对象身份不变。
 
@@ -170,15 +162,13 @@ reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstat
 
 ## 接口边界的所有权：防御性拷贝与不可变替代
 
-值语义与引用语义的 bug 大多发生在边界：构造参数直接存了外部传来的 list、getter 返回内部可变结构、缓存里放了可被调用方改动的对象。三种对策按成本递增：一是文档写明所有权（调用方不得修改），最省但最不可靠；
+值语义与引用语义的 bug 大多发生在边界：构造参数直接存了外部传来的 list、getter 返回内部可变结构、缓存里放了可被调用方改动的对象。
 
-二是返回副本或只读视图，例如 `list(self._items)`、`tuple(...)` 或 `types.MappingProxyType`，读取频繁时每次复制有开销；
+三种对策按成本递增：一是文档写明所有权（调用方不得修改），最省但最不可靠；二是返回副本或只读视图，例如 `list(self._items)`、`tuple(...)` 或 `types.MappingProxyType`，读取频繁时每次复制有开销；三是把内部状态整体换成不可变结构（tuple、frozenset、具名元组、`dataclass(frozen=True)`），从根上消除共享写。
 
-三是把内部状态整体换成不可变结构（tuple、frozenset、具名元组、`dataclass(frozen=True)`），从根上消除共享写。
+性能敏感路径可以让深拷贝只作用于真正需要隔离的层级，或用「写时复制」：平时共享，修改时才复制。
 
-性能敏感路径可以让深拷贝只作用于真正需要隔离的层级，或用「写时复制」：平时共享，修改时才复制。还有一个 list 乘法陷阱：`[[0] * 3] * 3` 得到三个指向同一内层列表的引用，改一行会连改三行；
-
-正确做法是逐行新建，写成 `[[0] * 3 for _ in range(3)]`。
+还有一个 list 乘法陷阱：`[[0] * 3] * 3` 得到三个指向同一内层列表的引用，改一行会连改三行；正确做法是逐行新建，写成 `[[0] * 3 for _ in range(3)]`。
 
 判断有没有共享，直接比较子对象身份比读代码更可靠。
 
@@ -195,9 +185,9 @@ reduce 回退路径会调用 `cls.__new__(cls)` 建空实例，再对 `__getstat
 
 ## 请求配置对象：构造、读取、返回三层的所有权控制
 
-一个 Web 服务的过滤配置从配置中心拿到嵌套 dict，构造时被存进 `RequestConfig`，getter 既要供内部读取又要暴露给多个中间件。若构造时直接存外部引用，配置中心后续刷新会穿透进来；若 getter 返回内部 dict，某个中间件一改就污染全链路；
+一个 Web 服务的过滤配置从配置中心拿到嵌套 dict，构造时被存进 `RequestConfig`，getter 既要供内部读取又要暴露给多个中间件。
 
-若每次 getter 都做深拷贝，热点路径的分配量又扛不住。
+若构造时直接存外部引用，配置中心后续刷新会穿透进来；若 getter 返回内部 dict，某个中间件一改就污染全链路；若每次 getter 都做深拷贝，热点路径的分配量又扛不住。
 
 下面的实现分三层：构造时做一次深拷贝取得所有权，内部读用 `types.MappingProxyType` 只读视图，对外导出才做一次可预测的深拷贝，并提供把整份配置冻结成 tuple 的入口用于缓存键。
 
@@ -238,7 +228,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='库 API 返回副本或只读视图（MappingProxyType），在文档里写清所有权；性能敏感路径用不可变结构替代拷贝' />
 
-<CheckList id='P057b' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改了一行，三行全变」", "能复现并解释「用 copy.copy 包一层就以为隔离了嵌套配置」", "能复现并解释「deepcopy 一个持有锁或数据库连接的对象报 TypeE…」", "能用一条命令验证 赋值 / 浅拷贝 / 深拷贝", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P057a' title='上线前自检' :items='["能复现并解释「[[0] * 3] * 3 改了一行，三行全变」", "能复现并解释「用 copy.copy 包一层就以为隔离了嵌套配置」", "能复现并解释「deepcopy 一个持有锁或数据库连接的对象报 TypeE…」", "能用一条命令验证 赋值 / 浅拷贝 / 深拷贝", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "a=[1]; b=a; print(a is b, id(a)==id(b))"

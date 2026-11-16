@@ -74,10 +74,6 @@ try:
 except ModuleNotFoundError as e:
     print(type(e).__name__, 'halted' in str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # py 3 13

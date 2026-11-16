@@ -33,9 +33,9 @@ Series 与 DataFrame 的算术运算先按 index 做并集对齐，再逐标签�
 
 举个例子，构造两个 `Series`：s1 的索引是北京、上海、广州，值 10、20、30；s2 的索引是上海、深圳、北京，值 5、8、1。两者相加得到四个标签，其中广州、深圳为 NaN，北京为 11、上海为 25。
 
-要『某边缺失按 0 补齐再相加』，必须用 `s1.add(s2, fill_value=0)`，这才得到广州 30、深圳 8；
+要『某边缺失按 0 补齐再相加』，必须用 `s1.add(s2, fill_value=0)`，这才得到广州 30、深圳 8；`fill_value` 只补一边缺失，两边都缺仍为 NaN。
 
-`fill_value` 只补一边缺失，两边都缺仍为 NaN。`reindex` 按给定标签重排并引入缺失，`align` 返回对齐后的两份副本，对称于运算前的隐式对齐。DataFrame 之间运算会同时对行索引与列索引做对齐，join 的 how 参数（left、right、inner、outer）决定并集还是交集。
+`reindex` 按给定标签重排并引入缺失，`align` 返回对齐后的两份副本，对称于运算前的隐式对齐。DataFrame 之间运算会同时对行索引与列索引做对齐，join 的 how 参数（left、right、inner、outer）决定并集还是交集。
 
 排查诡异 NaN 的第一步永远是打印两边的 `.index` 与 `.columns`，看是不是顺序或标签不一致，而不是急着 `df.fillna(0)`——后者会把『没对齐』的真实问题掩盖成一个看似干净的错误结果。
 
@@ -83,17 +83,13 @@ print('fill0', align_add(s1, s2, fill=0))
 
 groupby 的本质是 split-apply-combine：先按 key 把行拆成若干组，对每组应用函数，再把结果合并。
 
-agg（或 aggregate）对每组返回一个标量，结果索引是分组 key，长度等于组数，例如 `df.groupby('region').price.mean()` 得到每个地区一个均值；
-
-可以一次传多个聚合 `['sum','mean','count']`，或用字典对不同列指定不同函数。
+agg（或 aggregate）对每组返回一个标量，结果索引是分组 key，长度等于组数，例如 `df.groupby('region').price.mean()` 得到每个地区一个均值；可以一次传多个聚合 `['sum','mean','count']`，或用字典对不同列指定不同函数。
 
 transform 则必须返回与输入等长、且索引与原行一一对应的结果，最典型的用法是 `df.groupby('region')['price'].transform('mean')` 得到『每行所属组的均值』，从而写 `df['dev']=df['price']-df.groupby('region')['price'].transform('mean')` 做组内标准化，这是 agg 做不到的。
 
 apply 最灵活也最慢，返回形状由函数决定；过滤用 filter 保留满足条件的整组。还要注意分组键里的 NaN 默认被丢弃（`dropna=True`），分类键用 `observed` 参数控制是否列出未出现的类别。
 
-性能上，逐行 iterrows 会把每行构造成一个 Series、走 Python 层循环，十万行以上通常慢一个数量级；
-
-应优先用向量化的列运算、`.loc` 批量赋值，或 `groupby().transform` 一次成型。
+性能上，逐行 iterrows 会把每行构造成一个 Series、走 Python 层循环，十万行以上通常慢一个数量级；应优先用向量化的列运算、`.loc` 批量赋值，或 `groupby().transform` 一次成型。
 
 ```python
 from collections import defaultdict
@@ -113,21 +109,17 @@ print('lengths', len(means), len(rows))
 
 ## merge 行数膨胀与 validate 防线
 
-merge 按一列或多列的键做关系型连接，`pd.merge(a,b,on='id',how='left',validate='many_to_one')` 里的 `validate` 能在运行期检查连接基数，提前发现『本该一对一却膨胀成多行』的隐性错误；
+merge 按一列或多列的键做关系型连接，`pd.merge(a,b,on='id',how='left',validate='many_to_one')` 里的 `validate` 能在运行期检查连接基数，提前发现『本该一对一却膨胀成多行』的隐性错误；`indicator=True` 会加一列 `_merge` 标明每行来自左、右还是两边，便于核对。
 
-`indicator=True` 会加一列 `_merge` 标明每行来自左、右还是两边，便于核对。join 默认按索引连接，concat 按轴堆叠，三者别混用。
+join 默认按索引连接，concat 按轴堆叠，三者别混用。
 
-透视用 `pivot_table(index=...,columns=...,values=...,aggfunc='mean')`，它比 `pivot` 多了聚合步骤，因此能处理重复的 (index, columns) 组合；
+透视用 `pivot_table(index=...,columns=...,values=...,aggfunc='mean')`，它比 `pivot` 多了聚合步骤，因此能处理重复的 (index, columns) 组合；`melt` 是它的逆操作，把宽表拉成长表。
 
-`melt` 是它的逆操作，把宽表拉成长表。时间序列的关键是先把列转成 `datetime64[ns]` 再 set_index，之后 `resample('W')` 按周、`resample('M')` 按月重采样，配合 `.mean()`、`.sum()` 聚合；
+时间序列的关键是先把列转成 `datetime64[ns]` 再 set_index，之后 `resample('W')` 按周、`resample('M')` 按月重采样，配合 `.mean()`、`.sum()` 聚合；`rolling(7).mean()` 做滑动窗口；缺的日期用 `asfreq` 补齐。
 
-`rolling(7).mean()` 做滑动窗口；
+采样规则里 'M' 是月末、'MS' 是月初，混用会让对齐差一整期；较新的 pandas 版本把月末别名写成 'ME'、'M' 会告警，迁移时要留意。
 
-缺的日期用 `asfreq` 补齐。采样规则里 'M' 是月末、'MS' 是月初，混用会让对齐差一整期；较新的 pandas 版本把月末别名写成 'ME'、'M' 会告警，迁移时要留意。
-
-`memory_usage(deep=True)` 逐列看真实占用，比 `df.info()` 的估算更准；
-
-内存优化上，低基数字符串列应转成 `category`（重复值只存一份类别表加整数编码），数值列从 int64/float64 向下转成 int32/float32 或用 nullable 的 `Int32` 支持缺失，布尔列用 bool。
+`memory_usage(deep=True)` 逐列看真实占用，比 `df.info()` 的估算更准；内存优化上，低基数字符串列应转成 `category`（重复值只存一份类别表加整数编码），数值列从 int64/float64 向下转成 int32/float32 或用 nullable 的 `Int32` 支持缺失，布尔列用 bool。
 
 大表则可分块 `read_csv(chunksize=...)` 或改用 Polars。
 
@@ -165,9 +157,7 @@ Pandas 建立在『带标签的数组』之上：每个 Series 或 DataFrame 都
 
 groupby 先对分组键做哈希分解得到每组的行位置索引，agg 把每组约简成标量、transform 则把组结果按行位置广播回原长度，这解释了二者形状差异。
 
-链式索引 `df[cond].col = v` 之所以危险，是因为 `df[cond]` 可能返回视图也可能返回副本，取决于底层块是否连续，解释器无法保证；
-
-`loc[cond, 'col'] = v` 把定位与写入合成一次调用，才绕过这个不确定性。
+链式索引 `df[cond].col = v` 之所以危险，是因为 `df[cond]` 可能返回视图也可能返回副本，取决于底层块是否连续，解释器无法保证；`loc[cond, 'col'] = v` 把定位与写入合成一次调用，才绕过这个不确定性。
 
 理解『标签对齐、列式存储、索引可能返回副本』这三层，绝大多数诡异 NaN 与静默失败都能推导出来。
 
@@ -238,7 +228,7 @@ print('deviation', [(o, round(d, 1)) for o, d in dev])
 | float64 数值 | 8 字节/值 | 转 float32 | 精度下降需评估 |
 | object 布尔 | 指针 + 对象 | 转 bool 或 nullable boolean | 含缺失时用 BooleanDtype |
 
-<CheckList id='P094b' title='上线前自检' :items='["能复现并解释「对布尔索引结果赋值不生效还伴随 SettingWithCop…」", "能复现并解释「两列相加凭空多出 NaN 与错配」", "能复现并解释「merge 后行数比左表还多」", "能用一条命令验证 Series 与 DataFrame 索引", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P094a' title='上线前自检' :items='["能复现并解释「对布尔索引结果赋值不生效还伴随 SettingWithCop…」", "能复现并解释「两列相加凭空多出 NaN 与错配」", "能复现并解释「merge 后行数比左表还多」", "能用一条命令验证 Series 与 DataFrame 索引", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 练习与速记：把对齐规则背下来

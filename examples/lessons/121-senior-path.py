@@ -40,10 +40,6 @@ for opt in OPTIONS:
 pool = [o for o in OPTIONS if eligible(o)]
 print('winner', max(pool, key=lambda o: score(o, w)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # base ['clickhouse', 'es', 'sqlite']
@@ -59,10 +55,6 @@ def rank(weights):
 print('base', rank([0.30, 0.25, 0.20, 0.15, 0.10]))
 print('ops-heavy', rank([0.10, 0.10, 0.60, 0.10, 0.10]))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # obj kind POSITIONAL_OR_KEYWORD
@@ -76,10 +68,6 @@ kw = [p.name for p in sig.parameters.values() if p.kind is p.KEYWORD_ONLY]
 print('obj kind', sig.parameters['obj'].kind.name)
 print('keyword-only params', kw)
 print('param count', len(sig.parameters))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

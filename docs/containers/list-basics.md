@@ -27,9 +27,7 @@ description: 能按成本选择合适操作
 
 CPython 的 `list` 是 `PyListObject`：对象头里有 `ob_size`（逻辑长度）、`ob_item`（指向一块连续 `PyObject*` 数组的指针）与 `allocated`（已分配槽位数）。数组里存的是引用而不是对象本体，元素本体在堆上各自独立。
 
-这解释了一串现象：一个 `list` 能混装 `int`、`str`、`list` 等任意类型；`len(a)` 直接读 `ob_size` 是 `O(1)`；`a[i]` 是一次指针偏移加一次解引用，也是 `O(1)`，但比 C 数组多一次间接寻址；
-
-列表切片、`list(a)`、`a.copy()` 都只复制引用，是浅拷贝，改副本里的嵌套对象会穿透到原列表。
+这解释了一串现象：一个 `list` 能混装 `int`、`str`、`list` 等任意类型；`len(a)` 直接读 `ob_size` 是 `O(1)`；`a[i]` 是一次指针偏移加一次解引用，也是 `O(1)`，但比 C 数组多一次间接寻址；列表切片、`list(a)`、`a.copy()` 都只复制引用，是浅拷贝，改副本里的嵌套对象会穿透到原列表。
 
 内存上在 64 位 CPython 3.13 实测：`sys.getsizeof([])` 为 56 字节，每增加一个元素约多 8 字节指针，`(1, 2, 3)` 这个 tuple 为 64 字节，而 `[1, 2, 3]` 为 88 字节（多出的部分就是 `allocated` 过度分配），空 `deque` 为 760 字节（要维护分块与双端指针）。
 
@@ -96,9 +94,11 @@ CPython 的 `list_resize` 在容量不足时按 `new_allocated` 这个式子算�
 
 CPython 的 `list` 是 `PyListObject`：头部含 `ob_refcnt`、`ob_type`、`ob_size`（逻辑长度），`ob_item` 指向一段连续的 `PyObject*` 数组，`allocated` 记录已分配槽位数。
 
-数组元素是指针而非对象本体，所以混装任意类型、切片与浅拷贝都只复制指针，代价是每次访问多一次间接寻址、每个元素多 8 字节（64 位）指针开销。`append` 触发 `list_resize` 时按约 1.125 倍的过度分配算出新容量并 `realloc` 整块指针数组；
+数组元素是指针而非对象本体，所以混装任意类型、切片与浅拷贝都只复制指针，代价是每次访问多一次间接寻址、每个元素多 8 字节（64 位）指针开销。
 
-把这次 `O(n)` 复制均摊到后续多次 `append` 上，得到摊还 `O(1)`。`insert` 与 `pop(i)` 无法均摊：它们用 `memmove` 把 i 之后的引用整体平移，成本 `O(n - i)`，`pop()` 只减 `ob_size` 才是 `O(1)`。
+`append` 触发 `list_resize` 时按约 1.125 倍的过度分配算出新容量并 `realloc` 整块指针数组；把这次 `O(n)` 复制均摊到后续多次 `append` 上，得到摊还 `O(1)`。
+
+`insert` 与 `pop(i)` 无法均摊：它们用 `memmove` 把 i 之后的引用整体平移，成本 `O(n - i)`，`pop()` 只减 `ob_size` 才是 `O(1)`。
 
 每次增删引用都要配合 `Py_INCREF` / `Py_DECREF` 维护对象引用计数，这也是 `clear()` 与 `del` 需要 `O(n)` 逐个处理的原因。
 
@@ -188,22 +188,20 @@ print('append compiles to CALL', 'CALL' in dis.Bytecode(lambda x: x.append(1)).d
 
 ## 复杂度全景与容器选型：list、deque、array
 
-把常见操作的成本列清楚，选型就不再是凭感觉：`a[i]`、`len(a)`、`append`、`pop()` 是 `O(1)` 或摊还 `O(1)`；`insert(i)`、`pop(i)`、`del a[i]` 是 `O(n - i)`；
+把常见操作的成本列清楚，选型就不再是凭感觉：`a[i]`、`len(a)`、`append`、`pop()` 是 `O(1)` 或摊还 `O(1)`；`insert(i)`、`pop(i)`、`del a[i]` 是 `O(n - i)`；`in`、`index`、`count`、`remove` 是 `O(n)` 线性扫描并逐个比较；`sort()` 最坏 `O(n log n)`。
 
-`in`、`index`、`count`、`remove` 是 `O(n)` 线性扫描并逐个比较；`sort()` 最坏 `O(n log n)`。
+`collections.deque` 是分块双向链表，内部按固定大小的 block（CPython 每块 64 个槽）组织，`append` / `appendleft` / `pop` / `popleft` 两端都是 `O(1)`，`deque(maxlen=n)` 在 append 时自动从另一端丢弃，特别适合队列与滑动窗口；代价是按下标随机访问要跨块遍历，是 `O(n)`，且它不支持切片。
 
-`collections.deque` 是分块双向链表，内部按固定大小的 block（CPython 每块 64 个槽）组织，`append` / `appendleft` / `pop` / `popleft` 两端都是 `O(1)`，`deque(maxlen=n)` 在 append 时自动从另一端丢弃，特别适合队列与滑动窗口；
+`array.array` 用类型码（如 `'i'`、`'d'`）存 C 层数值本体，内存与数值计算都更省，但元素必须是同构数值、不能混装对象。
 
-代价是按下标随机访问要跨块遍历，是 `O(n)`，且它不支持切片。`array.array` 用类型码（如 `'i'`、`'d'`）存 C 层数值本体，内存与数值计算都更省，但元素必须是同构数值、不能混装对象。选型结论很直接：需要按下标随机访问或切片才用 `list`；两端增删用 `deque`；
-
-密集同构数值用 `array.array` 或 `NumPy`；要按键查找应规整成 `dict`（第 021 讲），而不是反复对 `list` 做 `in` 判断。
+选型结论很直接：需要按下标随机访问或切片才用 `list`；两端增删用 `deque`；密集同构数值用 `array.array` 或 `NumPy`；要按键查找应规整成 `dict`（第 021 讲），而不是反复对 `list` 做 `in` 判断。
 
 
 ## 流式聚合：用 deque 做滑动窗口并用预分配 list 承接结果
 
-一个监控脚本要维护最近若干个采样点的滑动窗口，并周期性输出窗口均值。若用 `list` 且每步都 `window.pop(0)` 加 `append`，窗口一宽就变成每步 `O(n)` 的 `memmove`，采集频率一高便吃掉整核；
+一个监控脚本要维护最近若干个采样点的滑动窗口，并周期性输出窗口均值。
 
-改用 `collections.deque(maxlen=width)`，`append` 时自动从另一端丢弃最旧样本，两端都是 `O(1)`。
+若用 `list` 且每步都 `window.pop(0)` 加 `append`，窗口一宽就变成每步 `O(n)` 的 `memmove`，采集频率一高便吃掉整核；改用 `collections.deque(maxlen=width)`，`append` 时自动从另一端丢弃最旧样本，两端都是 `O(1)`。
 
 结果缓冲用 `[0.0] * n` 预分配再按位置写入，避免循环 `append` 反复扩容，最后用切片一次性把有效段交给下游。重点是按操作分布选容器：这里只需要两端增删与顺序遍历，不按下标随机访问，`deque` 正合适；只有下游要按下标取任意窗口才该换回 `list`。
 

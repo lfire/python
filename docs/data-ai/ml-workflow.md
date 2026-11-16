@@ -112,9 +112,7 @@ print('clean', zscore(test, mean(train), pstd(train)))
 
 ## 分类指标：从混淆矩阵推导出该看哪一个
 
-单次划分的分数受随机性影响大，k 折交叉验证把数据均分成 k 份，轮流用 k-1 份训练、1 份验证，得到 k 个分数取均值与标准差，既更稳又给出波动范围；
-
-分类用 `StratifiedKFold` 保持比例，时间序列用 `TimeSeriesSplit` 禁止未来折训练过去。
+单次划分的分数受随机性影响大，k 折交叉验证把数据均分成 k 份，轮流用 k-1 份训练、1 份验证，得到 k 个分数取均值与标准差，既更稳又给出波动范围；分类用 `StratifiedKFold` 保持比例，时间序列用 `TimeSeriesSplit` 禁止未来折训练过去。
 
 嵌套交叉验证把『选超参』与『评估』再分两层：外层评估、内层网格搜索，避免在测试集上反复调参把它退化成验证集。
 
@@ -192,13 +190,11 @@ F1 用调和平均而非算术平均，是因为调和平均对较小项敏感�
 
 ## 可复现的评估脚本：Pipeline 式的隔离与基线对照
 
-一个二分类任务要给出可信的离线结论，最少需要四件事：划分时保持类别比例、预处理参数只在训练折估计、同时汇报多个指标、以及一个多数类基线作地板。下面用纯标准库把这条流程写成可复跑的函数：它把样本按分层思路切成训练与测试两段，标准化参数只从训练段计算，再对测试段应用；
+一个二分类任务要给出可信的离线结论，最少需要四件事：划分时保持类别比例、预处理参数只在训练折估计、同时汇报多个指标、以及一个多数类基线作地板。
 
-随后用一个『全预测多数类』的基线和一个『按阈值打分』的简易模型分别算混淆矩阵，打印各自的 accuracy 与 recall。
+下面用纯标准库把这条流程写成可复跑的函数：它把样本按分层思路切成训练与测试两段，标准化参数只从训练段计算，再对测试段应用；随后用一个『全预测多数类』的基线和一个『按阈值打分』的简易模型分别算混淆矩阵，打印各自的 accuracy 与 recall。
 
-真实工程把 scaler 与模型换成 sklearn 的 `Pipeline`、`StratifiedKFold` 负责分层，指标口径不变；
-
-关键是别让任何 fit 越过训练折边界。
+真实工程把 scaler 与模型换成 sklearn 的 `Pipeline`、`StratifiedKFold` 负责分层，指标口径不变；关键是别让任何 fit 越过训练折边界。
 
 ```python
 def split_stratified(rows, frac=0.7):
@@ -234,16 +230,16 @@ print('model', evaluate(tr, te, 1.5))
 
 <Callout type="idea" title='落地提示' text='先做可解释的基线，按业务代价选指标（召回、AUC、MAE），所有预处理放进 Pipeline 并只在训练折拟合' />
 
-<CheckList id='P097b' title='上线前自检' :items='["能复现并解释「先在全量数据上标准化或做特征选择再划分」", "能复现并解释「用 accuracy 评价极不平衡的欺诈数据」", "能复现并解释「在测试集上反复调参直到满意」", "能用一条命令验证 训练集 / 验证集 / 测试集", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P097a' title='上线前自检' :items='["能复现并解释「先在全量数据上标准化或做特征选择再划分」", "能复现并解释「用 accuracy 评价极不平衡的欺诈数据」", "能复现并解释「在测试集上反复调参直到满意」", "能用一条命令验证 训练集 / 验证集 / 测试集", "关键路径有自动化测试与失败分支"]' />
 
 
 ## ROC-AUC 就是 Mann-Whitney U 统计量
 
 二分类排序分数 `s(x)` 下，ROC-AUC 的定义是『随机取一个正样本与一个负样本，正样本分数高于负样本的概率』，平局记 0.5。把全部正负样本对枚举一遍，满足『正样本分数更高』的对数记为 U（Mann-Whitney U 统计量），则 AUC 等于 U 除以正样本数乘负样本数，含平局时每个平局给 U 加 0.5。
 
-这也解释了为什么 ROC 曲线下梯形面积恰好等于这个概率：按分数从高到低扫描，每遇到一个正样本 TPR 上升 1 除以正样本数、每遇到一个负样本 FPR 前进 1 除以负样本数，累加的小矩形正是 U 除以正负样本数之积。推导带来三个判据：AUC 与阈值无关、只依赖排序；
+这也解释了为什么 ROC 曲线下梯形面积恰好等于这个概率：按分数从高到低扫描，每遇到一个正样本 TPR 上升 1 除以正样本数、每遇到一个负样本 FPR 前进 1 除以负样本数，累加的小矩形正是 U 除以正负样本数之积。
 
-它对类别先验不敏感，正样本占比从 1% 变到 10% 只要排序不变 AUC 不动；但正样本极少时负样本对数量巨大，AUC 会被大量『容易的负样本』稀释，PR-AUC 才对少数类敏感。
+推导带来三个判据：AUC 与阈值无关、只依赖排序；它对类别先验不敏感，正样本占比从 1% 变到 10% 只要排序不变 AUC 不动；但正样本极少时负样本对数量巨大，AUC 会被大量『容易的负样本』稀释，PR-AUC 才对少数类敏感。
 
 源码上 `sklearn/metrics/_ranking.py` 的 `roc_auc_score` 先由 `roc_curve` 生成 (fpr, tpr) 再走梯形积分的 `auc()`，而 `average_precision_score` 走 `_binary_uninterpolated_average_precision` 的阶梯求和，两者故意用不同插值口径，数值不能直接互相比较大小。
 
@@ -251,13 +247,15 @@ Bengio 与 Grandvalet 在 2004 年证明：k 折交叉验证估计的方差不�
 
 数学上设每折误差为 e_i，均值的方差等于 1 除以 k 的平方，再乘上各折方差之和与所有两两协方差之和；重叠让协方差项为正且很大，而样本方差只估计了各折相对均值偏差平方之和再除以 k-1、又除以 k，相当于假装协方差全为零，系统性偏小。
 
-工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；
+工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。
 
-嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
+正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。
 
-一个团队在 40 条样本的验证集上网格搜索 50 组超参，报告最佳 AUC 0.975 并据此上线，线上只有 0.80 左右。这不是数据泄漏，而是赢家诅咒：当每组超参真实效果相同、只是验证集采样带来噪声时，取 50 个带噪估计的最大值，期望上必然高于真值，搜索空间越大、验证集越小，乐观偏差越大。
+正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。一个团队在 40 条样本的验证集上网格搜索 50 组超参，报告最佳 AUC 0.975 并据此上线，线上只有 0.80 左右。
 
-下例用 0.80 的真实分数造 50 组无关超参，每组在 40 个伯努利样本上估一次，最佳值冲到 0.975、高估 0.175，而全网格均值仍贴近 0.807。修复不是换更大的模型，而是把『选超参』放进内层 CV、用从未参与决策的外层测试集报告最终分数，或直接报告多次重复划分的分布而不是单点最大值。
+这不是数据泄漏，而是赢家诅咒：当每组超参真实效果相同、只是验证集采样带来噪声时，取 50 个带噪估计的最大值，期望上必然高于真值，搜索空间越大、验证集越小，乐观偏差越大。下例用 0.80 的真实分数造 50 组无关超参，每组在 40 个伯努利样本上估一次，最佳值冲到 0.975、高估 0.175，而全网格均值仍贴近 0.807。
+
+修复不是换更大的模型，而是把『选超参』放进内层 CV、用从未参与决策的外层测试集报告最终分数，或直接报告多次重复划分的分布而不是单点最大值。
 
 ```python
 import random
@@ -312,7 +310,7 @@ print('bootstrap 95% CI', bootstrap_auc(pos, neg))
 
 <OutputBox title='扩展示例运行结果' output='Mann-Whitney AUC 0.96\ntrapezoid AUC 0.96\nbootstrap 95% CI (0.84, 1.0)' />
 
-<LineByLine code='import random\n\nrandom.seed(3)\n\ndef auc_u(pos, neg):\n    u = 0.0\n    for p in pos:\n        for q in neg:\n            u += 1.0 if p &gt; q else 0.5 if p == q else 0.0\n    return u / (len(pos) * len(neg))\n\ndef auc_trapezoid(scores, labels):\n    pairs = sorted(zip(scores, labels), key=lambda t: -t[0])\n    npos = sum(labels)\n    nneg = len(labels) - npos\n    fpr = [0.0]\n    tpr = [0.0]\n    tp = fp = 0\n    for s, y in pairs:\n        if y == 1:\n            tp += 1\n        else:\n            fp += 1\n        fpr.append(fp / nneg)\n        tpr.append(tp / npos)\n    area = 0.0\n    for i in range(1, len(fpr)):\n        area += (fpr[i] - fpr[i - 1]) * (tpr[i] + tpr[i - 1]) / 2\n    return area\n\npos = [0.9, 0.8, 0.7, 0.6, 0.4]\nneg = [0.5, 0.3, 0.2, 0.1, 0.05]\nscores = pos + neg\nlabels = [1] * len(pos) + [0] * len(neg)\nprint(&#39;Mann-Whitney AUC&#39;, auc_u(pos, neg))\nprint(&#39;trapezoid AUC&#39;, round(auc_trapezoid(scores, labels), 4))\n\ndef bootstrap_auc(pos, neg, b=400):\n    vals = []\n    for _ in range(b):\n        p = [random.choice(pos) for _ in pos]\n        q = [random.choice(neg) for _ in neg]\n        vals.append(auc_u(p, q))\n    vals.sort()\n    return round(vals[int(b * 0.025)], 4), round(vals[int(b * 0.975)], 4)\n\nprint(&#39;bootstrap 95% CI&#39;, bootstrap_auc(pos, neg))\n' :notes='["固定随机种子，让 bootstrap 区间可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "auc_u 枚举全部正负对，统计量 U 除以 n 正 n 负", "空行，只用于分隔逻辑块，不影响执行结果。", "平局记 0.5，对应 ROC 定义里的半分", "auc_trapezoid 按分数降序构造 FPR 与 TPR 序列", "逐段用梯形公式累加面积", "5 个正样本与 5 个负样本，只有 0.4 输给 0.5", "25 个正负对里 24 个正分更高，AUC 为 0.96", "梯形积分给出同一数值，印证两种定义等价", "空行，只用于分隔逻辑块，不影响执行结果。", "bootstrap_auc 有放回重采样正负样本各 b 次", "排序后取 2.5% 与 97.5% 分位得经验置信区间", "小样本下区间宽到 (0.84, 1.0)，单点 AUC 不足以判优劣", "这一行 `nneg = len(labels) - npos` 的作用，可对照上方输出逐项核对。", "这一行 `fpr = [0.0]` 的作用，可对照上方输出逐项核对。", "这一行 `tpr = [0.0]` 的作用，可对照上方输出逐项核对。", "这一行 `tp = fp = 0` 的作用，可对照上方输出逐项核对。", "这一行 `for s, y in pairs:` 的作用，可对照上方输出逐项核对。", "这一行 `if y == 1:` 的作用，可对照上方输出逐项核对。", "这一行 `tp += 1` 的作用，可对照上方输出逐项核对。", "这一行 `else:` 的作用，可对照上方输出逐项核对。", "这一行 `fp += 1` 的作用，可对照上方输出逐项核对。", "这一行 `fpr.append(fp / nneg)` 的作用，可对照上方输出逐项核对。", "这一行 `tpr.append(tp / npos)` 的作用，可对照上方输出逐项核对。", "这一行 `area = 0.0` 的作用，可对照上方输出逐项核对。", "这一行 `for i in range(1, len(fpr)):` 的作用，可对照上方输出逐项核对。", "这一行 `area += (fpr[i] - fpr[i - 1]) * (tpr[i] + tpr[i - 1]` 的作用，可对照上方输出逐项核对。", "这一行 `return area` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `pos = [0.9, 0.8, 0.7, 0.6, 0.4]` 的作用，可对照上方输出逐项核对。", "这一行 `neg = [0.5, 0.3, 0.2, 0.1, 0.05]` 的作用，可对照上方输出逐项核对。", "这一行 `scores = pos + neg` 的作用，可对照上方输出逐项核对。", "这一行 `labels = [1] * len(pos) + [0] * len(neg)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;Mann-Whitney AUC&#39;, auc_u(pos, neg))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;trapezoid AUC&#39;, round(auc_trapezoid(scores, l` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def bootstrap_auc(pos, neg, b=400):` 的作用，可对照上方输出逐项核对。", "这一行 `vals = []` 的作用，可对照上方输出逐项核对。", "这一行 `for _ in range(b):` 的作用，可对照上方输出逐项核对。", "这一行 `p = [random.choice(pos) for _ in pos]` 的作用，可对照上方输出逐项核对。", "这一行 `q = [random.choice(neg) for _ in neg]` 的作用，可对照上方输出逐项核对。", "这一行 `vals.append(auc_u(p, q))` 的作用，可对照上方输出逐项核对。", "这一行 `vals.sort()` 的作用，可对照上方输出逐项核对。", "这一行 `return round(vals[int(b * 0.025)], 4), round(vals[in` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;bootstrap 95% CI&#39;, bootstrap_auc(pos, neg))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import random\n\nrandom.seed(3)\n\ndef auc_u(pos, neg):\n    u = 0.0\n    for p in pos:\n        for q in neg:\n            u += 1.0 if p &gt; q else 0.5 if p == q else 0.0\n    return u / (len(pos) * len(neg))\n\ndef auc_trapezoid(scores, labels):\n    pairs = sorted(zip(scores, labels), key=lambda t: -t[0])\n    npos = sum(labels)\n    nneg = len(labels) - npos\n    fpr = [0.0]\n    tpr = [0.0]\n    tp = fp = 0\n    for s, y in pairs:\n        if y == 1:\n            tp += 1\n        else:\n            fp += 1\n        fpr.append(fp / nneg)\n        tpr.append(tp / npos)\n    area = 0.0\n    for i in range(1, len(fpr)):\n        area += (fpr[i] - fpr[i - 1]) * (tpr[i] + tpr[i - 1]) / 2\n    return area\n\npos = [0.9, 0.8, 0.7, 0.6, 0.4]\nneg = [0.5, 0.3, 0.2, 0.1, 0.05]\nscores = pos + neg\nlabels = [1] * len(pos) + [0] * len(neg)\nprint(&#39;Mann-Whitney AUC&#39;, auc_u(pos, neg))\nprint(&#39;trapezoid AUC&#39;, round(auc_trapezoid(scores, labels), 4))\n\ndef bootstrap_auc(pos, neg, b=400):\n    vals = []\n    for _ in range(b):\n        p = [random.choice(pos) for _ in pos]\n        q = [random.choice(neg) for _ in neg]\n        vals.append(auc_u(p, q))\n    vals.sort()\n    return round(vals[int(b * 0.025)], 4), round(vals[int(b * 0.975)], 4)\n\nprint(&#39;bootstrap 95% CI&#39;, bootstrap_auc(pos, neg))\n' :notes='["导入 random，用于有放回重采样", "空行，只用于分隔逻辑块，不影响执行结果。", "固定随机种子 3，让 bootstrap 区间可复现", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 auc_u，用 Mann-Whitney U 统计量算 AUC", "u 累计所有正负样本对的比较得分", "遍历每个正样本分数", "与每个负样本分数配对", "正分更高记 1，平局记 0.5 对应 ROC 定义里的半分，否则记 0", "除以正负对总数得到 AUC，即 U/(n正·n负)", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 auc_trapezoid，按分数降序构造 FPR 与 TPR 序列后用梯形面积算 AUC", "pairs 按分数从高到低排序 (分数, 标签) 对", "npos 是正样本个数", "nneg 是负样本个数", "fpr 序列从 0.0 起步", "tpr 序列从 0.0 起步", "tp 与 fp 计数器归零", "按分数从高到低扫描每个样本", "遇到正样本", "真正例数加一", "否则是负样本", "假正例数加一", "追加当前 FPR", "追加当前 TPR", "area 累计梯形面积", "逐段遍历 FPR 序列", "用梯形公式累加相邻两点间的面积", "返回梯形积分得到的 AUC", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 5 个正样本分数", "构造 5 个负样本分数，只有 0.4 输给 0.5", "合并全部打分", "给出一一对应的标签，正样本标 1 负样本标 0", "打印 Mann-Whitney U 口径的 AUC，25 对里 24 对正分更高得 0.96", "打印梯形积分口径的 AUC，同一数值印证两种定义等价", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 bootstrap_auc，估计 AUC 的经验置信区间", "vals 收集每轮重采样得到的 AUC", "重采样 b 轮", "有放回地抽与正样本等量的分数", "有放回地抽与负样本等量的分数", "算这一轮的 AUC 并存入 vals", "对全部 AUC 排序以便取分位数", "取 2.5% 与 97.5% 分位，得到 95% 经验置信区间", "空行，只用于分隔逻辑块，不影响执行结果。", "打印区间，小样本下宽到 (0.84, 1.0)，单点 AUC 不足以判优劣", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### PR 曲线阶梯插值与 average precision 的面积口径
@@ -334,9 +332,11 @@ Bengio 与 Grandvalet 在 2004 年证明：k 折交叉验证估计的方差不�
 
 数学上设每折误差为 e_i，均值的方差等于 1 除以 k 的平方，再乘上各折方差之和与所有两两协方差之和；重叠让协方差项为正且很大，而样本方差只估计了各折相对均值偏差平方之和再除以 k-1、又除以 k，相当于假装协方差全为零，系统性偏小。
 
-工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；
+工程后果很直接：用 5 折 CV 报出『正负 0.3%』的误差棒并据此宣称模型 A 优于 B，往往是假显著。
 
-嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
+正确做法是把 CV 当点估计，比较模型时改用同一折划分的配对检验（paired t 或 Wilcoxon）、重复 k 折、或在外层做 bootstrap 重采样；嵌套 CV 的成本是外层折数乘内层折数乘网格大小的训练次数，网格一大就爆炸，这是『评估无偏』与『算力预算』之间真实的架构权衡。
+
+正文说 k 折给均值与标准差，标准差确实能算，但把它当独立样本的置信区间用就是错的。
 
 
 ## 嵌套交叉验证的成本与超参搜索的赢家诅咒

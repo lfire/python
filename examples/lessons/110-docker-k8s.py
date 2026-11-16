@@ -37,10 +37,6 @@ print('stopping_after', s.stopping)
 s.drain()
 print('inflight_after_drain', s.inflight)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # readiness_ok True
@@ -60,10 +56,6 @@ p.db_ok = False
 print('readiness_db_down', p.readiness())
 print('liveness_still_ok', p.liveness())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # cpu_250m_cores 0.25
@@ -80,10 +72,6 @@ def burst(request, limit, replicas):
 print('cpu_250m_cores', millicores(250))
 print('mem_512Mi_bytes', mebibytes(512))
 print('burst_200m_x4', burst(200, 500, 4))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

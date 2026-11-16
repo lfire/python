@@ -39,10 +39,6 @@ except ConfigError as e:
     print(type(e.__cause__).__name__, e.__suppress_context__)
 print(issubclass(KeyboardInterrupt, Exception), issubclass(SystemExit, Exception))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # from-finally from-finally
@@ -71,10 +67,6 @@ def clean(flag):
 log = []
 print(swallow(True), swallow(False))
 print(clean('3'), clean('x'), log)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -109,10 +101,6 @@ except KeyError as e:
 
 print('has exceptiontable', len(capture.__code__.co_exceptiontable) > 0)
 print('SETUP_FINALLY', 'SETUP_FINALLY' in dis.Bytecode(capture).dis())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

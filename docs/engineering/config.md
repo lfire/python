@@ -25,15 +25,11 @@ description: 把配置做成可验证、可覆盖、可审计的输入
 
 `os.environ` 的类型是 `os._Environ`（一个 `MutableMapping`），`os.getenv(key, default)` 在取不到时返回默认值，`os.environb` 提供字节版本。
 
-关键陷阱是：所有环境变量的值都是 `str`——`os.environ` 底层是 C 的 `char**` 键值串，不带任何类型信息，所以端口必须 `int(...)` 转换，开关必须自己解析；
-
-`bool('False')` 会得到 `True`，因为任意非空字符串在 Python 里都为真，得写个 `parse_bool` 把 `'1'` / `'true'` / `'yes'` / `'on'` 归一成布尔。
+关键陷阱是：所有环境变量的值都是 `str`——`os.environ` 底层是 C 的 `char**` 键值串，不带任何类型信息，所以端口必须 `int(...)` 转换，开关必须自己解析；`bool('False')` 会得到 `True`，因为任意非空字符串在 Python 里都为真，得写个 `parse_bool` 把 `'1'` / `'true'` / `'yes'` / `'on'` 归一成布尔。
 
 `.env` 文件由 `python-dotenv` 的 `load_dotenv()` 读取，格式是 `KEY=VALUE`；`.env` 必须进 `.gitignore`，提交进仓库的应是去掉真值的 `.env.example` 占位文件。
 
-标准库里，`configparser` 读 INI、`tomllib`（Python 3.11 起）读 `TOML`、`json` 读配置；
-
-其中 `tomllib` 会按 `TOML` 规范把 `false` / `8080` 解析成原生 `bool` / `int`，`tomllib.loads('debug=false')` 得到 `{'debug': False}` 而非字符串，正好和环境变量的全字符串形成对照。
+标准库里，`configparser` 读 INI、`tomllib`（Python 3.11 起）读 `TOML`、`json` 读配置；其中 `tomllib` 会按 `TOML` 规范把 `false` / `8080` 解析成原生 `bool` / `int`，`tomllib.loads('debug=false')` 得到 `{'debug': False}` 而非字符串，正好和环境变量的全字符串形成对照。
 
 PEP 508 的环境标记与 `argparse` 的命令行覆盖，是另外两类配置入口。
 
@@ -113,15 +109,11 @@ print('log-safe', str(token), 'real', token.reveal())
 
 <OutputBox title='对照写法：先自己猜，再点开' output='valid port 8080\nstartup fails fast PORT must be an integer\nlog-safe *** real sk-live-abc123' guess="true" />
 
-`os.environ` 是 `os._Environ`，包装 C 运行时的 environ（`char**` 的 `KEY=VALUE` 串），因此所有值天然是 `str`，没有任何类型元数据；
-
-`bool('False')` 之所以为 `True`，是因为 Python 的真值规则把任意非空字符串判为真，这正是开关配置要写 `parse_bool` 的原因。
+`os.environ` 是 `os._Environ`，包装 C 运行时的 environ（`char**` 的 `KEY=VALUE` 串），因此所有值天然是 `str`，没有任何类型元数据；`bool('False')` 之所以为 `True`，是因为 Python 的真值规则把任意非空字符串判为真，这正是开关配置要写 `parse_bool` 的原因。
 
 `tomllib`（3.11 起）走另一条路：它按 `TOML` 规范把 `false` / `8080` 解析成 `bool` / `int`，与环境变量字符串形成对照。
 
-`pydantic-settings` 的 `BaseSettings` 用元类收集字段别名（环境变量名，默认大小写不敏感），按 init > env > dotenv > secrets > default 求值，再交给 pydantic 做类型校验；
-
-缺必需字段或类型不符在构造对象那一刻抛 `ValidationError`，这就是「启动期失败」的实现机制。
+`pydantic-settings` 的 `BaseSettings` 用元类收集字段别名（环境变量名，默认大小写不敏感），按 init > env > dotenv > secrets > default 求值，再交给 pydantic 做类型校验；缺必需字段或类型不符在构造对象那一刻抛 `ValidationError`，这就是「启动期失败」的实现机制。
 
 `SecretStr` 通过重写 `__str__` / `__repr__` 返回掩码，避免敏感值被日志格式化函数取到；热更新通常用后台监听加原子替换配置对象，而非就地改字段。
 
@@ -134,21 +126,15 @@ print('log-safe', str(token), 'real', token.reveal())
 
 一份配置通常来自多层，优先级必须显式写清：默认值 < `.env` 文件 < 进程环境变量 < 显式覆盖或 CLI 参数。
 
-`pydantic-settings` 的 `BaseSettings` 把这个顺序定得更细：构造函数的 `init` 参数 > 环境变量 > dotenv 文件 > secrets 目录 > 字段默认值；
-
-字段默认 `case_sensitive=False`，因此环境变量名按大写匹配，可用 `env_prefix` 加前缀、用 `env_nested_delimiter='__'` 读嵌套结构、用 `SettingsConfigDict(env_file='.env')` 指定文件。
+`pydantic-settings` 的 `BaseSettings` 把这个顺序定得更细：构造函数的 `init` 参数 > 环境变量 > dotenv 文件 > secrets 目录 > 字段默认值；字段默认 `case_sensitive=False`，因此环境变量名按大写匹配，可用 `env_prefix` 加前缀、用 `env_nested_delimiter='__'` 读嵌套结构、用 `SettingsConfigDict(env_file='.env')` 指定文件。
 
 它真正的价值是校验：字段带类型与约束，缺必需字段或类型不符会在构造对象时抛 `ValidationError`，于是「启动期失败」而不是等冷门接口首次读取才炸。
 
-工程上把配置收敛成一个类型化、启动后不可变的对象（`dataclass(frozen=True)` 或 `BaseSettings` 实例），全模块只从它读；
-
-启动时全量校验并打印一份非敏感字段摘要，任何缺失或越界都立刻退出进程。
+工程上把配置收敛成一个类型化、启动后不可变的对象（`dataclass(frozen=True)` 或 `BaseSettings` 实例），全模块只从它读；启动时全量校验并打印一份非敏感字段摘要，任何缺失或越界都立刻退出进程。
 
 密钥绝不硬编码、绝不提交仓库：生产环境交给托管服务（Vault、AWS Secrets Manager、K8s Secret）并支持轮换与热更新，轮换不该触发全量发版。
 
-日志与异常里也要防泄漏：本讲对照示例里自定义了一个包装类，重写 `__str__` / `__repr__` 只返回掩码（可验证 `str(token)` 得到 `'***'`，只有 `reveal()` 才给真值）；
-
-Pydantic 的 `SecretStr` 是同一思路的现成类型，取值方法是 `get_secret_value()`。
+日志与异常里也要防泄漏：本讲对照示例里自定义了一个包装类，重写 `__str__` / `__repr__` 只返回掩码（可验证 `str(token)` 得到 `'***'`，只有 `reveal()` 才给真值）；Pydantic 的 `SecretStr` 是同一思路的现成类型，取值方法是 `get_secret_value()`。
 
 默认不把完整请求体或响应写进日志。配置漂移指同一份配置在不同环境、或不同时间悄悄不一致：对策是给类型化配置对象加版本号与校验和、坚持单一事实源、按环境分层覆盖（`dev` / `staging` / `prod` 前缀或独立文件）、每个键标注 owner 与默认值，并对每次变更留审计记录。
 

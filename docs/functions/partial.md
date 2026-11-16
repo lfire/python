@@ -14,17 +14,13 @@ description: 用标准库工具削减重复参数
 
 ## 回调接口只收一个可调用对象，参数却对不上
 
-一个回调接口只接收单参数函数，手头却是 `power(base, exp)`，需要固定 `exp=2`；
+一个回调接口只接收单参数函数，手头却是 `power(base, exp)`，需要固定 `exp=2`；最省事的写法是堆一堆 `lambda` 或再包一层 `def`，可参数一改就要动好几处，这些匿名函数既没法 `pickle`，日志里又全叫 `<lambda>`。
 
-最省事的写法是堆一堆 `lambda` 或再包一层 `def`，可参数一改就要动好几处，这些匿名函数既没法 `pickle`，日志里又全叫 `<lambda>`。
-
-另一类坑更隐蔽：给查询函数套上 `@lru_cache` 想提速，传入 `list` 参数时直接抛 `TypeError: unhas…`；
+另一类坑更隐蔽：给查询函数套上 `@lru_cache` 想提速，传入 `list` 参数时直接抛 `TypeError: unhas…`；给一个会写日志、读当前时间的函数加缓存，后续调用全拿到第一次的旧值；把可变返回值交给调用方原地修改，还会污染缓存里那同一份引用。
 
 ```text
 TypeError: unhashable type: 'list'
 ```
-
-给一个会写日志、读当前时间的函数加缓存，后续调用全拿到第一次的旧值；把可变返回值交给调用方原地修改，还会污染缓存里那同一份引用。
 
 本讲把 `functools` 里几件工具讲透：`partial` 如何冻结参数、`lru_cache` 的键与边界、`singledispatch` 按类型分派、`cached_property` 与 `__dict__` 的关系，以及可调用协议，把函数式工具从会用变成用对。
 
@@ -59,17 +55,13 @@ TypeError: unhashable type: 'list'
 
 ## functools.partial：把固定参数变成数据
 
-`functools.partial` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；
+`functools.partial` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` 后再 `p(a=2)`，真正用的是 2。
 
 ```python
 functools.partial(func, /, *args, **keywords)
 ```
 
-再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` 后再 `p(a=2)`，真正用的是 2。
-
-partial 对象把冻结内容摊在 `.func`、`.args`、`.keywords` 三个属性上，可以直接核对；
-
-它默认没有 `__name__`，需要时用 `functools.update_wrapper` 补齐即可。
+partial 对象把冻结内容摊在 `.func`、`.args`、`.keywords` 三个属性上，可以直接核对；它默认没有 `__name__`，需要时用 `functools.update_wrapper` 补齐即可。
 
 与 `lambda` 相比，partial 保存的是原函数引用，只要 `func` 与 `args` 可 pickle 它就能 pickle，读起来清楚、也能被内省；而 `lambda` 每次新建，`__name__` 恒为 `<lambda>`。
 
@@ -135,13 +127,11 @@ except TypeError as e:
 
 `maxsize` 默认 128，设为 `None` 表示无界、不做淘汰，取 2 的幂时淘汰效率最好；`typed` 默认 `False`，置 `True` 会把 `1` 与 `1.0` 当成不同的键。
 
-缓存键由位置参数与关键字参数共同构造，要求每个元素可哈希，传入 `list`、`dict`、`set` 会抛 `TypeError: unhas…`；
+缓存键由位置参数与关键字参数共同构造，要求每个元素可哈希，传入 `list`、`dict`、`set` 会抛 `TypeError: unhas…`；关键字参数的书写顺序也会影响键，同一组键值用不同顺序传入可能被当成两个键。
 
 ```text
 TypeError: unhashable type: 'list'
 ```
-
-关键字参数的书写顺序也会影响键，同一组键值用不同顺序传入可能被当成两个键。
 
 `cache_info()` 返回具名元组 `CacheInfo`，`cache_clear()` 清空缓存，`__wrapped__` 能取到未缓存的原函数，`cache_parameters()`（3.9+）返回 `{'maxsize': ...…`。
 
@@ -207,13 +197,9 @@ print(callable(f), callable(functools.partial(int, base=2)))
 
 ## singledispatch、cached_property 与可调用协议
 
-`functools.singledispatch` 按第一个参数的类型分派：用 `@singledispatch` 定义默认实现，再用 `@fun.register(int)` 或带类型注解的 `@fun.register`（3.7+ 支持从注解推断）注册各类型实现，`dispatch(type)` 能查到具体会走哪个函数，`registry` 就是类型到实现的映射；
+`functools.singledispatch` 按第一个参数的类型分派：用 `@singledispatch` 定义默认实现，再用 `@fun.register(int)` 或带类型注解的 `@fun.register`（3.7+ 支持从注解推断）注册各类型实现，`dispatch(type)` 能查到具体会走哪个函数，`registry` 就是类型到实现的映射；查找沿类型的 `__mro__` 进行，子类会回退到最近的已注册父类，注册到 `ABC` 同样生效，3.8+ 还提供方法版 `singledispatchmethod`。
 
-查找沿类型的 `__mro__` 进行，子类会回退到最近的已注册父类，注册到 `ABC` 同样生效，3.8+ 还提供方法版 `singledispatchmethod`。
-
-`cached_property`（3.8+）把首次计算的结果以同名键写进实例 `__dict__`，之后实例属性查找直接命中、不再调用计算函数；
-
-它是只实现 `__get__` 的非数据描述符，正因没有 `__set__` 才会被实例字典覆盖，也因此要求实例有 `__dict__`，与去掉字典的 `__slots__` 冲突。
+`cached_property`（3.8+）把首次计算的结果以同名键写进实例 `__dict__`，之后实例属性查找直接命中、不再调用计算函数；它是只实现 `__get__` 的非数据描述符，正因没有 `__set__` 才会被实例字典覆盖，也因此要求实例有 `__dict__`，与去掉字典的 `__slots__` 冲突。
 
 和 `property` 相比，`property` 每次访问都重新计算，`cached_property` 只算一次。
 
@@ -225,9 +211,9 @@ print(callable(f), callable(functools.partial(int, base=2)))
 
 `partial` 是纯 Python 的可调用对象，内部只存 `func`、`args`、`keywords`，`__call__` 时把它们与本次实参合并再调用 `func`，因此没有额外的闭包作用域，也就能 pickle。
 
-`cached_property` 是只实现 `__get__` 的非数据描述符：首次访问时计算并把结果以同名键写进实例 `__dict__`，之后实例字典优先于它，计算便只发生一次；
+`cached_property` 是只实现 `__get__` 的非数据描述符：首次访问时计算并把结果以同名键写进实例 `__dict__`，之后实例字典优先于它，计算便只发生一次；没有 `__set__` 既是它能被实例字典覆盖的原因，也决定了 `__slots__` 去掉 `__dict__` 后无法使用。
 
-没有 `__set__` 既是它能被实例字典覆盖的原因，也决定了 `__slots__` 去掉 `__dict__` 后无法使用。`singledispatch` 则用 `registry` 字典把类型映射到实现，`dispatch` 沿类型的 `__mro__` 找到第一个注册命中的类。
+`singledispatch` 则用 `registry` 字典把类型映射到实现，`dispatch` 沿类型的 `__mro__` 找到第一个注册命中的类。
 
 <Term word='functools.partial' text='`functools.partial(func, /, *args, **keywords)` 返回一个 partial 对象，把一部分位置参数与关键字参数冻结下来；再次调用时，新传入的实参追加在已冻结的位置参数之后，关键字参数则允许被同名新值覆盖，例如 `p = partial(f, a=1)` 后再…' />
 
@@ -236,13 +222,13 @@ print(callable(f), callable(functools.partial(int, base=2)))
 
 ## 用 partial 适配回调，并给纯解析函数加可清理的缓存
 
-一个任务队列的回调只接受单参数函数，底层 `fetch` 却有三个参数；
+一个任务队列的回调只接受单参数函数，底层 `fetch` 却有三个参数；用 `partial` 冻结 `timeout` 与 `retries`，就得到一个符合接口的可调用对象，调用时还能按名覆盖个别配置。
 
 ```python
 fetch(url, timeout, retries)
 ```
 
-用 `partial` 冻结 `timeout` 与 `retries`，就得到一个符合接口的可调用对象，调用时还能按名覆盖个别配置。另一处是版本号字符串解析：它是纯函数、输入量有限、又会被反复调用，适合加 `lru_cache`，但必须留出 `cache_clear`，方便配置热更新与单元测试之间做隔离。
+另一处是版本号字符串解析：它是纯函数、输入量有限、又会被反复调用，适合加 `lru_cache`，但必须留出 `cache_clear`，方便配置热更新与单元测试之间做隔离。
 
 下面把这两件事写成一个可直接运行的片段：打印 `partial` 适配后的调用、关键字覆盖的效果、解析结果的重复命中，以及清空缓存后 `currsize` 归零。真实项目还应把 `cache_info` 的命中率上报，命中率偏低时及时把缓存关掉。
 

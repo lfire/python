@@ -14,9 +14,9 @@ description: 用函数组合代替重复循环
 
 ## 一个数据清洗脚本，循环套循环越写越乱
 
-一个数据清洗管道要把一批字符串转成整数、过滤掉非正数、再求乘积。朴素写法是三个连续的 for 循环加临时列表，每个循环里重复写 append 与条件判断，改一步规则要动三处；
+一个数据清洗管道要把一批字符串转成整数、过滤掉非正数、再求乘积。
 
-有人改成一行超长 lambda 套 map、filter、reduce，结果调试时既没有行号也看不到中间值，reduce 遇到空输入直接抛 `TypeError`（of empty iterable with no initial value），而线上空批次恰恰是常态。
+朴素写法是三个连续的 for 循环加临时列表，每个循环里重复写 append 与条件判断，改一步规则要动三处；有人改成一行超长 lambda 套 map、filter、reduce，结果调试时既没有行号也看不到中间值，reduce 遇到空输入直接抛 `TypeError`（of empty iterable with no initial value），而线上空批次恰恰是常态。
 
 更隐蔽的是把 map 的结果当列表用了两次，第二次拿到空列表却查不出原因。
 
@@ -44,9 +44,7 @@ Python 2 的 map、filter 返回 list，Python 3 起返回迭代器（map 对象
 
 时间复杂度 `O(n)`、额外空间 `O(1)`（不含输出），而列表推导式立即构造完整 list，空间是 `O(n)`。
 
-`map(func, *iterables)` 可传多个可迭代对象，func 按位置接收多个参数，迭代长度以最短的那个为准，与内置 `zip` 一致，而不像 `itertools.zip_longest` 会补齐；
-
-`filter(func, iterable)` 在 func 为 None 时退化为过滤真值元素，`filter(None, seq)` 等价于取所有真值。
+`map(func, *iterables)` 可传多个可迭代对象，func 按位置接收多个参数，迭代长度以最短的那个为准，与内置 `zip` 一致，而不像 `itertools.zip_longest` 会补齐；`filter(func, iterable)` 在 func 为 None 时退化为过滤真值元素，`filter(None, seq)` 等价于取所有真值。
 
 迭代器一次性是最常见的踩坑点：先 `list(m)` 消费完，再 `list(m)` 得到空列表，因为 `__next__` 已经抛过 `StopIteration`。惰性还带来时序边界：func 里的异常、副作用甚至读取外部状态，都要等到消费时才发生，传入生成器时尤其明显。
 
@@ -118,9 +116,11 @@ print('RETURN_VALUE' in ops, 'BUILD_TUPLE' in ops)
 
 `functools.reduce` 从左到右把二元函数累积到一个值：`reduce(add, [1, 2, 3], 0)` 得到 6。
 
-Python 3 把 reduce 移出内建、放进 functools，调用前要从 `functools` 里取出 `reduce`。无 initializer 时它取第一个元素作起点，空序列直接抛 `TypeError`（of empty iterable with no initial value）；
+Python 3 把 reduce 移出内建、放进 functools，调用前要从 `functools` 里取出 `reduce`。
 
-单元素序列无 initializer 则直接返回该元素且不调用 function。initializer 的工程价值就是给空批次一个单位元（加法的 0、乘法的 1、字符串拼接的空串），让空输入不报错又不改变非空结果。
+无 initializer 时它取第一个元素作起点，空序列直接抛 `TypeError`（of empty iterable with no initial value）；单元素序列无 initializer 则直接返回该元素且不调用 function。
+
+initializer 的工程价值就是给空批次一个单位元（加法的 0、乘法的 1、字符串拼接的空串），让空输入不报错又不改变非空结果。
 
 operator 模块提供 `add`、`mul`、`itemgetter`、`attrgetter`、`methodcaller` 等 C 实现的可调用对象，`itemgetter(1)` 比 `lambda x: x[1]` 更快、可 pickle，作为 `sorted(key=)` 与 `max(key=)` 的键函数尤其合适。
 
@@ -151,9 +151,9 @@ print(reduce(add, (1, 2, 3)))
 
 ## 函数作为值：回调、键函数与分派表
 
-高阶函数的价值是把变化的部分（做什么）从固定的部分（怎么遍历）里抽出来，让处理逻辑像数据一样传递。`sorted` 对每个元素调用一次 key 函数，CPython 先把所有键算好再比较（decorate-sort-undecorate 思路），因此 key 的调用次数恰为 n，比旧式 cmp 两两比较高效；
+高阶函数的价值是把变化的部分（做什么）从固定的部分（怎么遍历）里抽出来，让处理逻辑像数据一样传递。
 
-max、min 同理。
+`sorted` 对每个元素调用一次 key 函数，CPython 先把所有键算好再比较（decorate-sort-undecorate 思路），因此 key 的调用次数恰为 n，比旧式 cmp 两两比较高效；max、min 同理。
 
 分派表是 `dict[str, callable]`，把一长串 `if/elif` 分派换成一次查表，插件注册、回调、依赖注入都建立在这之上。
 
@@ -161,9 +161,7 @@ max、min 同理。
 
 要注意开销：每次回调都是一次 Python 层函数调用与字节码分派，密集数值循环里会被放大，此时内置的 `sum`、`min`、`sorted` 走 C 实现更快。选型判据也在这里：需要过滤加变换一步完成、或要复用中间结果时，列表/生成器推导式通常更可读；已有命名函数、或要保留惰性管道时，map / filter 更合适。
 
-CPython 里 map 与 filter 返回的是专用的迭代器对象，内部只保存函数引用与底层迭代器，`__next__` 被调用时才取出一个元素、执行 func 并返回结果，因此构造阶段完全不触碰数据、func 一次都不会调用；
-
-迭代器自身实现 `__iter__` 返回 self，耗尽后 `__next__` 抛 `StopIteration`，再 list 便得到空列表，这就是一次性的来源。
+CPython 里 map 与 filter 返回的是专用的迭代器对象，内部只保存函数引用与底层迭代器，`__next__` 被调用时才取出一个元素、执行 func 并返回结果，因此构造阶段完全不触碰数据、func 一次都不会调用；迭代器自身实现 `__iter__` 返回 self，耗尽后 `__next__` 抛 `StopIteration`，再 list 便得到空列表，这就是一次性的来源。
 
 reduce 走的是另一条路径：它在 C 层维护一个累加器，若给了 initializer 就以它为起点，否则先取第一个元素作起点（空序列此时抛 `TypeError`），随后对每个剩余元素调用一次二元 function。
 

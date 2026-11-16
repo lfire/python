@@ -33,15 +33,11 @@ description: 从语言机制推出 async/await 的由来
 
 首次必须用 `next(gen)` 或 `gen.send(None)` 启动到第一个 `yield`，否则直接 `gen.send(5)` 会抛 TypeError，提示 can't send non-None value to a just-started generator。
 
-`gen.send(value)` 恢复执行，把 value 作为当前 `yield` 表达式的值，并推进到下一个 `yield` 把新值交还；
-
-`gen.throw(exc)` 在暂停点抛异常，可被生成器内的 `try`/`except` 接住后继续 yield；`gen.close()` 在暂停点抛 `GeneratorExit`，生成器若此时又 yield 会触发 RuntimeError: generator ignored GeneratorExit。
+`gen.send(value)` 恢复执行，把 value 作为当前 `yield` 表达式的值，并推进到下一个 `yield` 把新值交还；`gen.throw(exc)` 在暂停点抛异常，可被生成器内的 `try`/`except` 接住后继续 yield；`gen.close()` 在暂停点抛 `GeneratorExit`，生成器若此时又 yield 会触发 RuntimeError: generator ignored GeneratorExit。
 
 `inspect.getgeneratorstate(gen)` 返回四种状态 `GEN_CREATED`、`GEN_RUNNING`、`GEN_SUSPENDED`、`GEN_CLOSED`。
 
-生成器里 `return value`（3.3 起，PEP 380）等价于把值挂到 `StopIteration.value` 上；
-
-PEP 479 自 3.7 起默认生效（3.5 与 3.6 要显式启用 `generator_stop` 这个 future 特性），把漏出生成器的 StopIteration 转成 RuntimeError，免得它被 for 循环悄悄当成正常终止。
+生成器里 `return value`（3.3 起，PEP 380）等价于把值挂到 `StopIteration.value` 上；PEP 479 自 3.7 起默认生效（3.5 与 3.6 要显式启用 `generator_stop` 这个 future 特性），把漏出生成器的 StopIteration 转成 RuntimeError，免得它被 for 循环悄悄当成正常终止。
 
 **生成器协议方法与状态**
 
@@ -178,9 +174,9 @@ except RuntimeError as e:
 
 也就是说，`r = yield from inner()` 里的 r 来自 inner 的 return，而不是某个被 yield 出来的元素。
 
-这个语义正是 `await` 的原型：await 一个 future，等价于把当前协程挂起、把结果沿 `yield from` 链路回传。有两个容易混的点要分清：生成器里 `return` 只是结束并携带值，不会产出给 for 循环；
+这个语义正是 `await` 的原型：await 一个 future，等价于把当前协程挂起、把结果沿 `yield from` 链路回传。
 
-取值要么接住 `yield from` 的结果，要么手动驱动时在 3.7 之后用 `try`/`except` 读 `StopIteration.value`，不能自己 `raise` 出来。
+有两个容易混的点要分清：生成器里 `return` 只是结束并携带值，不会产出给 for 循环；取值要么接住 `yield from` 的结果，要么手动驱动时在 3.7 之后用 `try`/`except` 读 `StopIteration.value`，不能自己 `raise` 出来。
 
 `types.coroutine`（3.5 起）给生成器打上 `CO_ITERABLE_COROUTINE` 标记，使它成为 awaitable，是从生成器协程过渡到原生协程的桥。
 
@@ -269,7 +265,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='理解这条演进线，才能读懂 asyncio 里 Future / Task 的分工与历史包袱' />
 
-<CheckList id='P067b' title='上线前自检' :items='["能复现并解释「第一次就 gen.send(5) 驱动生成器」", "能复现并解释「在生成器里 raise StopIteration 想结束循…」", "能复现并解释「把 yield from 当成普通遍历，无视委托语义」", "能用一条命令验证 生成器双向通信", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P067a' title='上线前自检' :items='["能复现并解释「第一次就 gen.send(5) 驱动生成器」", "能复现并解释「在生成器里 raise StopIteration 想结束循…」", "能复现并解释「把 yield from 当成普通遍历，无视委托语义」", "能用一条命令验证 生成器双向通信", "关键路径有自动化测试与失败分支"]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='第一次就 gen.send(5) 驱动生成器：生成器尚未启动到第一个 yield，没有表达式可接收值' />
 
@@ -291,9 +287,7 @@ if __name__ == '__main__':
 
 正文把 `yield from` 讲成透明委托，落到 3.13 字节码是另一幅图：dis 显示 `RETURN_GENERATOR`、`GET_YIELD_FROM_ITER`、`SEND`、`YIELD_VALUE`、`END_SEND`。
 
-`GET_YIELD_FROM_ITER` 把表达式归一成迭代器；
-
-`SEND` 是委托核心，栈顶是要发给子生成器的值、下面是委托对象，委托对象有 send 方法就调用 `send(v)`，否则要求 v 为 None 并退化为 `next(it)`。
+`GET_YIELD_FROM_ITER` 把表达式归一成迭代器；`SEND` 是委托核心，栈顶是要发给子生成器的值、下面是委托对象，委托对象有 send 方法就调用 `send(v)`，否则要求 v 为 None 并退化为 `next(it)`。
 
 执行侧在 CPython 源码 `Objects/genobject.c` 的 `gen_send_ex2` 里：恢复 `gi_frame` 的 `_PyInterpreterFrame`，把 arg 压回栈作为上一个 `yield` 表达式的值，exc 为真时改为注入异常，再跑到下一个 `YIELD_VALUE`。
 
@@ -340,11 +334,9 @@ print('iterable coroutine flag', bool(legacy.__code__.co_flags & inspect.CO_ITER
 
 `types.coroutine` 给生成器打上 0x100，使 `collections.abc.Awaitable` 检查通过，于是 3.4 的 `asyncio.coroutine` 生成器能被原生 await 消费。
 
-桥解释了 asyncio 的历史包袱：`Future.__await__` 里写 `yield self` 再 `return self.result()`，仍是生成器协议；
+桥解释了 asyncio 的历史包袱：`Future.__await__` 里写 `yield self` 再 `return self.result()`，仍是生成器协议；`Task.__step` 用 `send(None)` 驱动，`__wakeup` 把结果送回。
 
-`Task.__step` 用 `send(None)` 驱动，`__wakeup` 把结果送回。编译器还靠这些位立规矩：`CO_COROUTINE` 的函数里出现 yield 或 yield from 直接报语法错，保证原生协程的暂停点只有 await。
-
-PEP 342 到 380 再到 492，是把「可暂停」逐步收敛成有独立标志位的对象类别。
+编译器还靠这些位立规矩：`CO_COROUTINE` 的函数里出现 yield 或 yield from 直接报语法错，保证原生协程的暂停点只有 await。PEP 342 到 380 再到 492，是把「可暂停」逐步收敛成有独立标志位的对象类别。
 
 **co_flags 四类可暂停标志**
 

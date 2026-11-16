@@ -52,10 +52,6 @@ async def crawl(urls, limit):
     return await asyncio.gather(*(one(u) for u in urls))
 print('fetched', asyncio.run(crawl(unique, 2)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # acked ['/a'] inflight []
@@ -91,10 +87,6 @@ q.pending.appendleft(lost)
 del q.inflight[lost]
 print('requeued', list(q.pending))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # n 4 m 128 k 2 fp~ 0.0037
@@ -110,10 +102,6 @@ def fp_rate(n, m, k):
 for n, m, k in [(4, 128, 2), (100, 1024, 3), (1000, 1024, 3)]:
     print('n', n, 'm', m, 'k', k, 'fp~', round(fp_rate(n, m, k), 4))
 print('bits per item', round(1024 / 100, 2))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

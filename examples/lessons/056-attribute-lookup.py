@@ -41,10 +41,6 @@ d.b = 'assigned'
 print(d.b)
 print(type(Demo.__dict__['a']).__name__, hasattr(DataDesc, '__set__'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # lazy:computed_total
@@ -67,10 +63,6 @@ print(x.computed_total)
 print(x.cache)
 print(x.missing)
 print(x.__dict__['cache'] == {})
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -95,10 +87,6 @@ c = C()
 print('static', inspect.getattr_static(c, 'x') is C.__dict__['x'])
 print('dynamic', c.x)
 print('opnames', [i.opname for i in dis.get_instructions(read)])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -136,11 +136,7 @@ print('both correct', loop_sum(5000) == builtin_sum(5000))
 
 状态机测试用 `RuleBasedStateMachine` 配合 `@initialize`、`@rule`、`Bundle` 描述「对系统做一串操作后不变量仍成立」，例如内存字典模型与被测缓存对比：每步 `@rule` 随机挑一个操作执行并断言模型一致，hypothesis 连操作序列一起收缩，能抓到手写用例想不到的顺序组合。
 
-可复现靠 `derandomize=True`、`@seed`、`print_blob=True`（打印重放 blob）与提交 example 数据库；
-
-`HealthCheck.too_slow` / `filter_too_much` / `data_too_large` 是策略写坏时的失效信号，不要一律关掉，而要修正策略写法本身；
-
-找到的每个反例都应转成 `@example` 固定下来，让它长期守在回归套件里。
+可复现靠 `derandomize=True`、`@seed`、`print_blob=True`（打印重放 blob）与提交 example 数据库；`HealthCheck.too_slow` / `filter_too_much` / `data_too_large` 是策略写坏时的失效信号，不要一律关掉，而要修正策略写法本身；找到的每个反例都应转成 `@example` 固定下来，让它长期守在回归套件里。
 
 ```python
 import random, sys
@@ -169,9 +165,7 @@ python -m pytest -q --disable-warnings
 
 ## hypothesis 把一次运行建模成选择序列的底层
 
-hypothesis 把一次测试运行建模为「从策略里抽取一串随机选择」：每个整数、字符都是选择序列上的一个节点，失败后 delta-debugging 逐段尝试删除或简化这些选择，只要删后仍失败就保留，直到得到最小选择序列，于是复杂输入被压成本质反例并将该序列哈希存进 `.hypothesis/examples` 供重放；
-
-`derandomize` 固定熵源让整条序列确定。
+hypothesis 把一次测试运行建模为「从策略里抽取一串随机选择」：每个整数、字符都是选择序列上的一个节点，失败后 delta-debugging 逐段尝试删除或简化这些选择，只要删后仍失败就保留，直到得到最小选择序列，于是复杂输入被压成本质反例并将该序列哈希存进 `.hypothesis/examples` 供重放；`derandomize` 固定熵源让整条序列确定。
 
 往返性质 `decode(encode(s)) == s` 要求编码是单射，而把换行替换成字面量 NL 违反了这一点（含 'NL' 的原文解码后变成换行），所以收缩停在两字符 'NL'。
 
@@ -216,9 +210,9 @@ hypothesis 把一次测试运行建模为「从策略里抽取一串随机选择
 
 属性测试真正的工程价值在收尾：生成的输入发现失败后，要把收缩得到的最小反例写回测试套件，让这次事故永久守门。
 
-压缩连续空格的函数若只做一轮替换就不满足幂等性质 `compact(compact(s))==compact(s)`，长空白串会触发失败；
+压缩连续空格的函数若只做一轮替换就不满足幂等性质 `compact(compact(s))==compact(s)`，长空白串会触发失败；对小字母表穷举候选、逐个收缩、去重成最小集合，再把它们序列化成回归清单随代码提交。
 
-对小字母表穷举候选、逐个收缩、去重成最小集合，再把它们序列化成回归清单随代码提交。下面片段用标准库走完「生成 → 找反例 → 收缩 → 固化」整条链路，重点看最小反例如何暴露根因，而不是记住某个具体输入。
+下面片段用标准库走完「生成 → 找反例 → 收缩 → 固化」整条链路，重点看最小反例如何暴露根因，而不是记住某个具体输入。
 
 ```python
 import itertools, json
@@ -255,7 +249,7 @@ print('pinned regression', json.dumps([repr(m) for m in minimal[:3]]))
 
 <Callout type="idea" title='落地提示' text='给纯函数与解析器加属性测试，把发现的反例固化成回归用例；基准测试设回归阈值' />
 
-<CheckList id='P077b' title='上线前自检' :items='["能复现并解释「只写正常输入的手工用例」", "能复现并解释「找到反例却不固化、或一律关掉 HealthCheck」", "能复现并解释「把基准当一次性数字、没有回归阈值」", "能用一条命令验证 hypothesis 策略", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P077a' title='上线前自检' :items='["能复现并解释「只写正常输入的手工用例」", "能复现并解释「找到反例却不固化、或一律关掉 HealthCheck」", "能复现并解释「把基准当一次性数字、没有回归阈值」", "能用一条命令验证 hypothesis 策略", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

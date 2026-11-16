@@ -49,10 +49,6 @@ d.appendleft(0)
 d.append(4)
 print('deque', list(d), d.popleft(), d.pop())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # insert(0) much slower than append True
@@ -80,10 +76,6 @@ t_deque = build('deque', n)
 print('insert(0) much slower than append', t_insert > t_append * 5)
 print('deque.appendleft faster than insert(0)', t_deque < t_insert)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # growth is stepwise True
@@ -106,10 +98,6 @@ obj = []
 holder = [obj]
 print('container stores reference', holder[0] is obj)
 print('append compiles to CALL', 'CALL' in dis.Bytecode(lambda x: x.append(1)).dis())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

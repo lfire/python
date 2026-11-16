@@ -71,10 +71,6 @@ print('etag', etag)
 print('status', HTTPStatus.MOVED_PERMANENTLY.value, HTTPStatus.MOVED_PERMANENTLY.phrase,
       HTTPStatus.FOUND.value, HTTPStatus.FOUND.phrase)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # signed e971917f0dc31851
@@ -103,10 +99,6 @@ print('tampered', verify('img/43.png', 1000, s, now=500))
 print('expired', verify('img/42.png', 1000, s, now=2000))
 print('content-type gate', 'image/png' in {'image/png', 'image/jpeg'})
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # 1 1 1
@@ -131,10 +123,6 @@ def b62(n):
 for n in (1, 61, 62, 3843, 3844, 238327):
     print(n, b62(n), len(b62(n)))
 print('base', len(ALPHABET), 'log62(1e9)', round(math.log(1e9, 62), 2))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -37,10 +37,6 @@ except AttributeError as e:
     print(type(e).__name__, 'cannot add y')
 print('values', p.x, s.x)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # child has dict: True
@@ -68,10 +64,6 @@ try:
 except ValueError as e:
     print(type(e).__name__, 'conflict')
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # slotted cheaper: True
@@ -96,10 +88,6 @@ s_cur = tracemalloc.get_traced_memory()[0]
 print('slotted cheaper:', s_cur < p_cur)
 print('saved bytes > 0:', p_cur - s_cur > 0)
 tracemalloc.stop()
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -23,13 +23,9 @@ description: 把重复的文件劳动变成一条可调度命令
 
 ## pathlib 遍历：PurePath、具体路径与 glob 的大小写边界
 
-`pathlib` 把路径分成两层：`PurePath` 只做词法与字符串操作（用 `/` 拼接、取 `.suffix`、`.stem`、`.name`、`.parent`、`.with_name`），完全不碰磁盘；
+`pathlib` 把路径分成两层：`PurePath` 只做词法与字符串操作（用 `/` 拼接、取 `.suffix`、`.stem`、`.name`、`.parent`、`.with_name`），完全不碰磁盘；`Path` 继承它，再补上 `stat`、`iterdir`、`rglob`、`rename` 这些 IO 方法。
 
-`Path` 继承它，再补上 `stat`、`iterdir`、`rglob`、`rename` 这些 IO 方法。
-
-`Path.rglob('*')` 递归遍历所有后代，等价于 `glob('**/*')`，而 `glob('*.txt')` 只匹配当前一层；
-
-`Path.iterdir()` 只列直接子项。
+`Path.rglob('*')` 递归遍历所有后代，等价于 `glob('**/*')`，而 `glob('*.txt')` 只匹配当前一层；`Path.iterdir()` 只列直接子项。
 
 一个高频坑是 `suffix` 保留原始大小写：`Path('A.TXT').suffix` 得到 `'.TXT'`，按扩展名聚合前必须 `.lower()` 归一，否则 `.TXT` 与 `.txt` 会被算成两类。
 
@@ -39,9 +35,7 @@ description: 把重复的文件劳动变成一条可调度命令
 (dirpath, dirnames, filenames)
 ```
 
-`Path.resolve()` 默认 `strict=False`（3.6 起），把 `..` 与符号链接解析成绝对路径；
-
-`Path.is_relative_to(other)`（3.9 起）用来断言结果仍在允许目录内，是挡住 `..` 越界的关键一道校验。
+`Path.resolve()` 默认 `strict=False`（3.6 起），把 `..` 与符号链接解析成绝对路径；`Path.is_relative_to(other)`（3.9 起）用来断言结果仍在允许目录内，是挡住 `..` 越界的关键一道校验。
 
 `Path.mkdir` 配 `parents=True` 与 `exist_ok=True` 显式声明父目录与已存在时的行为，省去手写 `try`。三个失效信号：glob 莫名漏文件（大小写）、遍历卡死不返回（符号链接环）、日志里出现根目录之外的路径。
 
@@ -98,19 +92,13 @@ print('audit', log_path.read_text(encoding='utf-8').splitlines())
 
 ## 元数据、容量统计与 logging 落盘
 
-`Path.stat()` 返回 `os.stat_result`，几个字段必须分清：`st_size` 是文件逻辑字节数，`st_mtime` 是最后修改时间的浮点秒，`st_ino` 是 `inode` 号，`st_mode` 含类型与权限位；
-
-`st_ctime` 在 Unix 上是 `inode` 元数据最后变更时间（`chmod`、`chown` 都会更新），并不是创建时间——只有 Windows 上它才近似创建时间，把它当「文件什么时候建的」会得出错误报表。
+`Path.stat()` 返回 `os.stat_result`，几个字段必须分清：`st_size` 是文件逻辑字节数，`st_mtime` 是最后修改时间的浮点秒，`st_ino` 是 `inode` 号，`st_mode` 含类型与权限位；`st_ctime` 在 Unix 上是 `inode` 元数据最后变更时间（`chmod`、`chown` 都会更新），并不是创建时间——只有 Windows 上它才近似创建时间，把它当「文件什么时候建的」会得出错误报表。
 
 磁盘实际占用要看 `st_blocks` 乘 512 字节，稀疏文件的 `st_size` 很大而 `st_blocks` 很小，二者不相等。
 
-`datetime.fromtimestamp(st_mtime)` 把浮点秒转成本地 `datetime`，容量换算按 1024 进制，`1 MiB = 1048576` 字节；
+`datetime.fromtimestamp(st_mtime)` 把浮点秒转成本地 `datetime`，容量换算按 1024 进制，`1 MiB = 1048576` 字节；聚合按扩展名用 `collections.defaultdict` 存「文件数、总字节数」最省事。
 
-聚合按扩展名用 `collections.defaultdict` 存「文件数、总字节数」最省事。
-
-审计日志走 `logging` 的 `Logger` / `Handler` / `Formatter` 三层：`logging.basicConfig` 一次配好，`force=True`（3.8 起）会先移除 root 上已有 handler，避免同一进程重复执行时日志翻倍；
-
-`format` 常用 `%(asctime)s`、`%(levelname)s`、`%(message)s` 占位。
+审计日志走 `logging` 的 `Logger` / `Handler` / `Formatter` 三层：`logging.basicConfig` 一次配好，`force=True`（3.8 起）会先移除 root 上已有 handler，避免同一进程重复执行时日志翻倍；`format` 常用 `%(asctime)s`、`%(levelname)s`、`%(message)s` 占位。
 
 按大小轮转用 `RotatingFileHandler` 并显式给 `maxBytes`（默认 0 表示不轮转）、按时间轮转用 `TimedRotatingFileHandler`。
 
@@ -147,9 +135,7 @@ print('still exists', (target / 'keep.txt').exists())
 
 审计用 `logging` 落盘并带 `datetime` 时间戳，形成可回溯的操作序列。
 
-调度侧用 `datetime` 触发，或 APScheduler 的 `CronTrigger` / `IntervalTrigger`；
-
-标准库 `sched` 能做最简定时。
+调度侧用 `datetime` 触发，或 APScheduler 的 `CronTrigger` / `IntervalTrigger`；标准库 `sched` 能做最简定时。
 
 定时任务要处理两类失效：上一轮未结束又触发（`max_instances` 限制重叠）、以及错过触发后堆积补跑（`coalesce` 合并、`misfire_grace_time` 设定容忍窗口）。
 
@@ -162,24 +148,20 @@ print('still exists', (target / 'keep.txt').exists())
 
 ## PurePath 的 flavour 决定大小写敏感
 
-`PurePath` 内部持有一个 flavour 对象（`PosixFlavour` 或 `_WindowsFlavour`），决定分隔符、大小写敏感性与盘符规则，所以同一段 glob 在 Windows 上不区分大小写、在 `POSIX` 上区分；
+`PurePath` 内部持有一个 flavour 对象（`PosixFlavour` 或 `_WindowsFlavour`），决定分隔符、大小写敏感性与盘符规则，所以同一段 glob 在 Windows 上不区分大小写、在 `POSIX` 上区分；`rglob` 把模式编译成选择器后递归调用 `scandir`。
 
-`rglob` 把模式编译成选择器后递归调用 `scandir`。`Path.stat()` 落到 `stat(2)` 系统调用：`st_size` 是目录项记录的逻辑长度，稀疏文件靠孔洞不占块，因此实际占用必须看 `st_blocks`；
+`Path.stat()` 落到 `stat(2)` 系统调用：`st_size` 是目录项记录的逻辑长度，稀疏文件靠孔洞不占块，因此实际占用必须看 `st_blocks`；`st_ctime` 在 Unix 语义是 `inode` 变更时间，这是文件系统而非 Python 的定义。
 
-`st_ctime` 在 Unix 语义是 `inode` 变更时间，这是文件系统而非 Python 的定义。`logging` 的 `Logger` 以点号构成层级、`propagate` 默认 `True` 向上传播到 root，`Handler` 决定落点，`Formatter` 决定文本；
+`logging` 的 `Logger` 以点号构成层级、`propagate` 默认 `True` 向上传播到 root，`Handler` 决定落点，`Formatter` 决定文本；`basicConfig` 的 `force=True` 会先清空 root 已有 handler，因此同一进程里重复配置不会写出两遍。
 
-`basicConfig` 的 `force=True` 会先清空 root 已有 handler，因此同一进程里重复配置不会写出两遍。`shutil.move` 在同文件系统内走 `os.rename`（原子）、跨文件系统才退化为复制加删除，所以回收站目录要与目标同分区。
-
-`dry-run` 的正确性来自把副作用推迟到显式确认之后：计划是纯数据，执行才触碰磁盘。
+`shutil.move` 在同文件系统内走 `os.rename`（原子）、跨文件系统才退化为复制加删除，所以回收站目录要与目标同分区。`dry-run` 的正确性来自把副作用推迟到显式确认之后：计划是纯数据，执行才触碰磁盘。
 
 
 ## 带 dry-run、路径校验与审计的批量重命名
 
 报表目录里混着 `A.TXT`、`B.PNG` 这类大写扩展名，需要统一成小写，但脚本一旦跑错会改动成百上千个文件。
 
-工程做法是把操作拆成 `build_plan` 与 `apply_plan` 两段：`build_plan` 用 `rglob` 递归收集需要改名的「源、目标」，对每个目标先 `resolve` 再断言 `dst.parent` 仍是根目录，防止 `..` 与符号链接把文件挪出去；
-
-`apply_plan` 在 `dry_run=True` 时只写审计日志、返回 `0`，只有显式关掉 `dry_run` 才调用 `Path.rename`。
+工程做法是把操作拆成 `build_plan` 与 `apply_plan` 两段：`build_plan` 用 `rglob` 递归收集需要改名的「源、目标」，对每个目标先 `resolve` 再断言 `dst.parent` 仍是根目录，防止 `..` 与符号链接把文件挪出去；`apply_plan` 在 `dry_run=True` 时只写审计日志、返回 `0`，只有显式关掉 `dry_run` 才调用 `Path.rename`。
 
 日志用 `logging.basicConfig` 的 `force=True` 与 `filemode='w'` 保证每次运行都是干净的一份，消息里带 `datetime` 时间戳、动作与两个文件名。
 

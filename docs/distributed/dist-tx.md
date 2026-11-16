@@ -250,7 +250,7 @@ print('reconcile', len(b.delivered), len(b.consumed))
 
 <Callout type="idea" title='落地提示' text='优先用 outbox + 事务消息保证本地提交与消息发送的原子性，为每个补偿定义幂等与可重试，并保留对账入口' />
 
-<CheckList id='P107b' title='上线前自检' :items='["能复现并解释「先提交本地事务再发 MQ 消息」", "能复现并解释「Saga 只写正向流程，把补偿当成 undo 日志」", "能复现并解释「用 2PC 跨公网服务追求强一致」", "能用一条命令验证 本地事务边界", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P107a' title='上线前自检' :items='["能复现并解释「先提交本地事务再发 MQ 消息」", "能复现并解释「Saga 只写正向流程，把补偿当成 undo 日志」", "能复现并解释「用 2PC 跨公网服务追求强一致」", "能用一条命令验证 本地事务边界", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
@@ -277,9 +277,7 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 
 2PC 直接撞在这条边界上：协调者在 prepare 之后、写全局提交日志之前崩溃，已返回 ready 的参与者既不能自行 commit（万一别人 rollback）、也不能自行 rollback（万一别人 commit），只能停在 in-doubt 等裁决，行锁与连接一路持有。
 
-XA 把这段状态显式化：MySQL 的 XA `START`、XA END、XA `PREPARE` 把分支置为 `PREPARED`，连接断开后事务仍以 in-doubt 分支存活，由 XA `RECOVER` 列出再裁决；
-
-PostgreSQL 的 `PREPARE` `TRANSACTION` 把事务落盘为 prepared xact，由 max_prepared_transactions 限制数量（默认常为 0），恢复靠 pg_prepared_xacts 与 `COMMIT` `PREPARED`。
+XA 把这段状态显式化：MySQL 的 XA `START`、XA END、XA `PREPARE` 把分支置为 `PREPARED`，连接断开后事务仍以 in-doubt 分支存活，由 XA `RECOVER` 列出再裁决；PostgreSQL 的 `PREPARE` `TRANSACTION` 把事务落盘为 prepared xact，由 max_prepared_transactions 限制数量（默认常为 0），恢复靠 pg_prepared_xacts 与 `COMMIT` `PREPARED`。
 
 3PC 想用 pre-commit 消除阻塞，但分区下会出现「一部分已 pre-commit、另一部分未收到」，安全性不成立，生产几乎不用。工程结论是：强一致只留给同一个资源管理器内部，跨服务改用 outbox / Saga 把「必须同时决定」的时刻压成一次本地写。
 
@@ -313,11 +311,11 @@ print('crash', two_pc(['stock', 'balance', 'order'], True))
 
 把 in-doubt 的代价写成可算的量：设一个 XA 事务涉及 P 个参与者、每个 prepare 后持有 R 行行锁，协调者在写完 redo 但未广播 commit 时崩溃，恢复进程平均 T_rec 秒后读全局日志裁决，则冻结的锁数是 P·R，锁持有总时间是 P·R·T_rec 锁秒。
 
-若同类事务以每秒 lambda 个到达，里托定理给出平均同时 in-doubt 的锁数 `L = lambda`·P·R·T_rec：`lambda=50`、`P=3`、`R=8`、`T_rec=30` 秒时 `L=36000` 个行锁，连接池与锁表先耗尽，吞吐塌到接近零。
+若同类事务以每秒 lambda 个到达，里托定理给出平均同时 in-doubt 的锁数 `L = lambda·P·R·T_rec`：`lambda=50`、`P=3`、`R=8`、`T_rec=30` 秒时 `L=36000` 个行锁，连接池与锁表先耗尽，吞吐塌到接近零。
 
-这正是「协调者单点」的量化形式：2PC 可用性约等于所有参与者与协调者可用性的连乘。恢复裁决还有不对称性：协调者若在写全局日志前崩溃，参与者只能集体 rollback；若已写 commit 日志则集体 commit；
+这正是「协调者单点」的量化形式：2PC 可用性约等于所有参与者与协调者可用性的连乘。
 
-日志落盘与广播之间这「一条日志的窗口」决定整个集群走向，所以 XA 实现都在 prepare 阶段把 redo 强制刷盘，这是 2PC 延迟的主要来源。
+恢复裁决还有不对称性：协调者若在写全局日志前崩溃，参与者只能集体 rollback；若已写 commit 日志则集体 commit；日志落盘与广播之间这「一条日志的窗口」决定整个集群走向，所以 XA 实现都在 prepare 阶段把 redo 强制刷盘，这是 2PC 延迟的主要来源。
 
 相比之下 outbox 把「业务行加 outbox 行」放进同一个本地事务，commit 一次落盘即原子可见，根本不存在 in-doubt，代价是下游至少一次投递必须由消费端幂等兜住——把强一致的阻塞换成最终一致的重复，正是两类方案的架构分界。
 

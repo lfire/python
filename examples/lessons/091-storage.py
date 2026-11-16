@@ -46,10 +46,6 @@ print('redis df', len(postings['redis']), 'idf', round(idf['redis'], 4))
 print('query redis cache', search('redis cache'))
 print('query sqlalchemy', search('sqlalchemy'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # a sig 2b4695f4ebd92815
@@ -74,10 +70,6 @@ print('c sig', c.split('Signature=')[1])
 print('path bound', a.split('Signature=')[1] != b.split('Signature=')[1])
 print('expiry bound', a.split('Signature=')[1] != c.split('Signature=')[1])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # 1 -> [1]
@@ -98,10 +90,6 @@ def varint(n):
             return bytes(out)
 for n in (1, 127, 128, 300, 150):
     print(n, '->', list(varint(n)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

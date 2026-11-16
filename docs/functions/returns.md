@@ -137,9 +137,7 @@ except StopIteration as e:
 
 正因如此，函数体里的异常、资源申请都要等到迭代时才发生，清理必须放在 `try/finally` 或依赖 `close()`。
 
-生成器里的 `return value` 也不是把 value 交给调用方：它终止迭代，并把 value 挂到 `StopIteration.value`（PEP 380，3.3+），普通 for 循环完全看不到这个值，只有显式捕获 `StopIteration` 或用 `yield from` 接收才能拿到；
-
-不带值的 return 则让 value 为 None。
+生成器里的 `return value` 也不是把 value 交给调用方：它终止迭代，并把 value 挂到 `StopIteration.value`（PEP 380，3.3+），普通 for 循环完全看不到这个值，只有显式捕获 `StopIteration` 或用 `yield from` 接收才能拿到；不带值的 return 则让 value 为 None。
 
 可以用 `inspect.isgeneratorfunction(f)` 与 `inspect.isgenerator(obj)` 区分函数与对象。
 
@@ -151,22 +149,18 @@ CPython 里函数返回只有一个出口值：`RETURN_VALUE` 指令把栈顶对
 
 None 是全局唯一的 `_Py_NoneStruct` 实例，`Py_None` 的地址固定，所以无 return、return、`return None` 三条路径压栈的都是同一个对象，`is None` 判断的是身份而非值。
 
-生成器是另一条机制：编译期见到 `yield` 就在 `co_flags` 置 `CO_GENERATOR`（0x20），调用时创建 genobject 并保存空帧而不执行，直到 `next()` 才恢复 `gi_frame`；
-
-函数体里的 `return v` 不产生 `RETURN_VALUE` 交给调用方，而是设置 `StopIteration.value = v` 后终止迭代，PEP 380 的 `yield from` 才把这个值取出来。
+生成器是另一条机制：编译期见到 `yield` 就在 `co_flags` 置 `CO_GENERATOR`（0x20），调用时创建 genobject 并保存空帧而不执行，直到 `next()` 才恢复 `gi_frame`；函数体里的 `return v` 不产生 `RETURN_VALUE` 交给调用方，而是设置 `StopIteration.value = v` 后终止迭代，PEP 380 的 `yield from` 才把这个值取出来。
 
 理解只有一个返回对象，才能解释为什么返回类型必须统一、为什么 None 不能同时表达失败与合法空值。
 
 
 ### 生成器 return 与返回注解的版本演进
 
-生成器里 return 不交值：含 `yield` 就置 `CO_GENERATOR`，调用只得到 generator 对象；
+生成器里 return 不交值：含 `yield` 就置 `CO_GENERATOR`，调用只得到 generator 对象；`return v` 则把 v 送进 `StopIteration.value`（PEP 380，3.3 起），`yield from` 才接得住。
 
-`return v` 则把 v 送进 `StopIteration.value`（PEP 380，3.3 起），`yield from` 才接得住。
+3.9 起 `tuple[int, str]` 取代 `typing.Tuple`，3.10 起 `X | None` 表可选，Return 位正对应那个值；PEP 479（3.7）把漏出的 `StopIteration` 转 `RuntimeError`。
 
-3.9 起 `tuple[int, str]` 取代 `typing.Tuple`，3.10 起 `X | None` 表可选，Return 位正对应那个值；
-
-PEP 479（3.7）把漏出的 `StopIteration` 转 `RuntimeError`。下表按 PEP 列出演进。
+下表按 PEP 列出演进。
 
 **返回值相关版本与 PEP**
 
@@ -183,9 +177,9 @@ PEP 479（3.7）把漏出的 `StopIteration` 转 `RuntimeError`。下表按 PEP 
 
 ## 返回值常见错误与修复
 
-最扎眼的两种都指向 None 被当成别的东西。失败路径隐式 return 交回 None 单例，`a, b = find()` 解包就抛 `TypeError`；反过来用 `if r is None` 判失败，又会把合法的 `age=None` 误删。稳妥做法是没找到抛 `LookupError` 子类；
+最扎眼的两种都指向 None 被当成别的东西。失败路径隐式 return 交回 None 单例，`a, b = find()` 解包就抛 `TypeError`；反过来用 `if r is None` 判失败，又会把合法的 `age=None` 误删。
 
-定长解包元素数不符报 `ValueError`。
+稳妥做法是没找到抛 `LookupError` 子类；定长解包元素数不符报 `ValueError`。
 
 还有静默一类：直接返回内部 list，外部 `append()` 就改状态，应回 `tuple(self._items)` 副本。
 

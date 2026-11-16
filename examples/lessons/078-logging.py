@@ -43,10 +43,6 @@ trace_id.set('t-456')
 logger.error('payment failed %s', 'card-xxxx')
 print(stream.getvalue().strip())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # {"level": "INFO", "event": "idcard 110101********1234 approved"}
@@ -83,10 +79,6 @@ log.propagate = False
 log.info('idcard 110101199003071234 approved')
 print(buf.getvalue().strip())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # getEffectiveLevel 30
@@ -113,10 +105,6 @@ child.warning('shown')
 print('captured', repr(buf.getvalue().strip()))
 print('isEnabledFor(INFO)', child.isEnabledFor(logging.INFO))
 print('Filter.filter sig', str(inspect.signature(logging.Filter.filter)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -49,10 +49,6 @@ for old, new in plan:
     logging.info('rename %s -> %s', old, new)
 print('audit', log_path.read_text(encoding='utf-8').splitlines())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # naive join escapes True
@@ -76,10 +72,6 @@ plan = [p.name for p in sorted(target.iterdir()) if p.is_file()]
 print('dry-run would act on', plan)
 print('actually removed', 0)
 print('still exists', (target / 'keep.txt').exists())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -105,10 +97,6 @@ print('walk files', len(walk_files))
 print('rglob files', len(glob_files))
 print('same set', set(walk_files) == set(glob_files))
 print('suffix', Path('a/b/c.txt').suffix)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

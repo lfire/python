@@ -50,10 +50,6 @@ def shrink(s):
 minimal = {shrink(s) for s in failing}
 print('minimal', sorted(m for m in minimal))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # builtin faster True
@@ -75,10 +71,6 @@ t_builtin = timeit.timeit(lambda: builtin_sum(5000), number=200)
 print('builtin faster', t_builtin < t_loop)
 print('both correct', loop_sum(5000) == builtin_sum(5000))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # seeded reproducible True
@@ -94,10 +86,6 @@ def stream(seed, k=6):
 print('seeded reproducible', stream(7) == stream(7))
 print('seed 7 differs from 8', stream(7) != stream(8))
 print('interpreter', sys.version_info[0], sys.version_info[1])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

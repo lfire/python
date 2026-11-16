@@ -221,7 +221,7 @@ print(s.run('clean', '2024-01-01'))
 
 <Callout type="idea" title='落地提示' text='围绕用户旅程定义 SLI，告警可行动、有级别、有预案；定期做故障注入并复盘改进项' />
 
-<CheckList id='P112b' title='上线前自检' :items='["能复现并解释「用固定 cron 时刻串接上下游，不做数据就绪检查」", "能复现并解释「重跑脚本无条件追加结果」", "能复现并解释「告警阈值设成 CPU 超过 80%」", "能用一条命令验证 定时与依赖调度", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P112a' title='上线前自检' :items='["能复现并解释「用固定 cron 时刻串接上下游，不做数据就绪检查」", "能复现并解释「重跑脚本无条件追加结果」", "能复现并解释「告警阈值设成 CPU 超过 80%」", "能用一条命令验证 定时与依赖调度", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"

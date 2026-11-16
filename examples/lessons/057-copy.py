@@ -34,10 +34,6 @@ outer[0].append(3)
 print('shallow sees', shallow[0])
 print('deep isolated', deep[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # cycle ok True True
@@ -57,10 +53,6 @@ print('str reused', copy.deepcopy(s) is s)
 print('int reused', copy.deepcopy(n) is n)
 t = (1, 2, 3)
 print('tuple copy reused', copy.copy(t) is t)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -82,10 +74,6 @@ print('shallow delta > 0', after_shallow - base > 0)
 print('deep delta > shallow', (after_deep - after_shallow) > (after_shallow - base))
 print('delta ratio > 5', (after_deep - after_shallow) // max(1, after_shallow - base) > 5)
 tracemalloc.stop()
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

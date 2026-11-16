@@ -54,10 +54,6 @@ funcs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
 print('legacy funcs', funcs)
 print('guarded', any(isinstance(n, ast.If) for n in tree.body))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # pinned ['httpx==0.27.2']
@@ -79,10 +75,6 @@ p = tomllib.loads(CFG)['project']
 print('pinned', [d for d in p['dependencies'] if '==' in d])
 print('dev tools', p['optional-dependencies']['dev'])
 print('python floor', p['requires-python'])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -106,10 +98,6 @@ guard = [n for n in tree.body if isinstance(n, ast.If)]
 print('relative import levels', rel)
 print('top-level if count', len(guard))
 print('functions', [n.name for n in tree.body if isinstance(n, ast.FunctionDef)])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

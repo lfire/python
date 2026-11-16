@@ -36,9 +36,7 @@ description: 写出快、稳、能定位问题的测试
 
 ## 收集规则：pytest 怎么找到测试
 
-pytest 通过 `import hook`（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；
-
-裸 Python 的 assert 失败只抛 `AssertionError`，没有任何中间值。
+pytest 通过 `import hook`（`pytest.register_assert_rewrite`）在导入测试模块时改写 assert 节点，把 `assert a + b == c` 拆成对每个子表达式求值并暂存结果，因此失败信息会显示哪里得到什么值；裸 Python 的 assert 失败只抛 `AssertionError`，没有任何中间值。
 
 代价是断言必须在 pytest 收集到的模块里才被重写，且不能用 `python -O` 跑测试——`compile` 在 `optimize=1` 下会把所有 `ast.Assert` 节点从字节码里删掉，`x=-1` 时 `optimize=0` 抛 AssertionError、`optimize=1` 却照常执行。
 
@@ -62,9 +60,9 @@ pytest 通过 `import hook`（`pytest.register_assert_rewrite`）在导入测试
 
 ## AssertionRewritingHook：sys.meta_path 上的断言重写
 
-pytest 的 `AssertionRewritingHook` 是 `sys.meta_path` 上的一个 finder：导入测试模块前先读源码、用 `ast` 解析，把每个 `ast.Assert` 节点替换成「先计算并暂存各子表达式、再比较、失败时抛出带中间值的 `AssertionError`」的等价语句，因此失败输出能显示 `assert 1 + 2 == 4` 里 1+2 的值；
+pytest 的 `AssertionRewritingHook` 是 `sys.meta_path` 上的一个 finder：导入测试模块前先读源码、用 `ast` 解析，把每个 `ast.Assert` 节点替换成「先计算并暂存各子表达式、再比较、失败时抛出带中间值的 `AssertionError`」的等价语句，因此失败输出能显示 `assert 1 + 2 == 4` 里 1+2 的值；这也是为什么测试必须由 pytest 收集而非直接 python 运行。
 
-这也是为什么测试必须由 pytest 收集而非直接 python 运行。`compile` 在 `optimize=1`（等价 `python -O`）下会在编译期删掉所有 `ast.Assert`，`dis` 可见 `optimize=0` 的指令数更多。
+`compile` 在 `optimize=1`（等价 `python -O`）下会在编译期删掉所有 `ast.Assert`，`dis` 可见 `optimize=0` 的指令数更多。
 
 `FixtureManager` 按 scope 维护缓存与 setup/finalize 栈：yield fixture 把 yield 之后的代码注册为 finalizer，逆序执行保证先拆小作用域。
 
@@ -206,9 +204,7 @@ python -m pytest -q --disable-warnings
 
 ## 测试金字塔与覆盖率怎么读
 
-`@pytest.mark.parametrize` 把一组参数展开成多个独立用例，失败能定位到具体参数组；
-
-`pytest.param` 给单组打标记（如 skip、xfail），自定义 mark 要在配置里注册，避免 `PytestUnknownMarkWarning`。
+`@pytest.mark.parametrize` 把一组参数展开成多个独立用例，失败能定位到具体参数组；`pytest.param` 给单组打标记（如 skip、xfail），自定义 mark 要在配置里注册，避免 `PytestUnknownMarkWarning`。
 
 测试金字塔：底层大量快而稳的单元测、中层少量集成测、顶层极少量端到端测；越往上越慢越脆，比例倒置会让 CI 变成瓶颈。
 

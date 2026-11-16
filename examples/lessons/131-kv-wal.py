@@ -72,10 +72,6 @@ print('checkpoint', checkpoint(wal, snap))
 print('wal empty', os.path.getsize(wal) == 0)
 print('snap', json.load(open(snap, encoding='utf-8')))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # memory-first ('ack', None)
@@ -95,10 +91,6 @@ def simulate(order):
 
 print('memory-first', simulate('memory-first'))
 print('wal-first', simulate('wal-first'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -120,10 +112,6 @@ s2 = os.stat(p).st_size
 print('sizes', s1, s2, s2 - s1)
 print('header bytes', struct.calcsize('>II'))
 print('fsync signature', str(inspect.signature(os.fsync)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

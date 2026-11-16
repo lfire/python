@@ -8,6 +8,9 @@ GitHub：  https://github.com/lfire/python/blob/main/examples/lessons/054-gil.py
 本文件按正文顺序收录 4 段可运行代码：主示例 / 对照写法 / 原理验证 / 工程案例。
 每段前面的注释里给出该段在页面上的预期输出，方便直接核对运行结果。
 
+注意：工程案例使用「事件循环 + 进程池」，在 spawn 启动方式或受限沙箱中
+可能失败；文件已加环境兜底，会打印跳过原因而不是中断。
+
 运行： python3 examples/lessons/054-gil.py
 """
 
@@ -35,10 +38,6 @@ multi = time.perf_counter() - t0
 print('single', round(single, 3), 'threads', round(multi, 3))
 print('switchinterval', __import__('sys').getswitchinterval())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # serial 0.402 threads 0.051
@@ -60,10 +59,6 @@ def run(n, use_thread):
 
 print('serial', round(run(8, False), 3), 'threads', round(run(8, True), 3))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # switchinterval 0.005
@@ -82,10 +77,6 @@ def bump():
 
 print('switchinterval', sys.getswitchinterval())
 dis.dis(bump)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

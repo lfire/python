@@ -18,13 +18,11 @@ description: 写出异常安全的资源管理代码
 
 另一处工单方向相反：清算事务在 `with` 块里抛错，开发者以为资源会自动回滚，结果 `__exit__` 里只做了 `file.close()`，事务把半截数据 `commit` 了出去。
 
-还有人用 `contextlib.contextmanager` 写清理逻辑，却在生成器里 `yield` 了两次，运行时抛 `RuntimeError: ge…`；
+还有人用 `contextlib.contextmanager` 写清理逻辑，却在生成器里 `yield` 了两次，运行时抛 `RuntimeError: ge…`；以及把同步 `with` 直接套在异步数据库连接上，`__exit__` 里的 `await` 根本没法执行。
 
 ```text
 RuntimeError: generator didn't stop
 ```
-
-以及把同步 `with` 直接套在异步数据库连接上，`__exit__` 里的 `await` 根本没法执行。
 
 `with` 看起来只是「自动关文件」的语法糖，实际上它是一条带异常分发的协议：`__enter__` 的返回值、`__exit__` 的三个参数、返回值是否抑制异常、以及 `LIFO` 的组合顺序，每一处都有确定的规则。本讲把这些规则与 `contextlib` 的工具逐一对上，并给出事务、计时、动态组合三类场景的正确写法。
 
@@ -46,9 +44,7 @@ RuntimeError: generator didn't stop
 
 ## with 的展开：__enter__、三参数 __exit__ 与异常抑制
 
-`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；
-
-无论体里是否抛异常，最后都调用 `__exit__`。
+`with EXPR as VAR` 的语义由数据模型固定：先求值 `EXPR` 得到上下文管理器，调用其 `__enter__()`，把返回值绑定到 `VAR`（没有 `as` 则返回值被丢弃），然后执行 `with` 体；无论体里是否抛异常，最后都调用 `__exit__`。
 
 ```python
 __exit__(exc_type, exc_value, traceback)
@@ -105,27 +101,17 @@ except ValueError as e:
 
 `contextlib.contextmanager` 把一个「只 `yield` 一次」的生成器函数变成上下文管理器：`yield` 之前的代码对应 `__enter__`，`yield` 之后的代码对应 `__exit__`，且必须用 `try/finally` 包住 `yield`，否则异常路径不会执行清理。
 
-它返回的 `_GeneratorContextManager` 通过 `generator.throw()` 把异常送回生成器；
+它返回的 `_GeneratorContextManager` 通过 `generator.throw()` 把异常送回生成器；若生成器又 `yield` 了第二个值，会抛 `RuntimeError: ge…`。
 
-若生成器又 `yield` 了第二个值，会抛 `RuntimeError: ge…`。
-
-```python
+```text
 RuntimeError: generator didn't stop after throw()
 ```
 
 这个对象同时是 `ContextDecorator`，因此也能当装饰器给整个函数套上下文。
 
-`ExitStack`（3.3 引入）解决「上下文数量运行时才确定」：`enter_context(cm)` 逐个进入，`callback(fn, *args)` 注册任意清理回调，`push(cm)` 接管实现了 `__exit__` 但没 `__enter__` 的对象；
+`ExitStack`（3.3 引入）解决「上下文数量运行时才确定」：`enter_context(cm)` 逐个进入，`callback(fn, *args)` 注册任意清理回调，`push(cm)` 接管实现了 `__exit__` 但没 `__enter__` 的对象；退出时严格按进入的逆序（`LIFO`）执行，后进入的先清理。
 
-退出时严格按进入的逆序（`LIFO`）执行，后进入的先清理。
-
-`contextlib.suppress(*exceptions)` 精确抑制列出的异常类型，比裸 `try/except: pass` 可读；
-
-`closing(obj)` 对只有 `close()` 的对象适配成上下文；
-
-`redirect_stdout` 临时替换 `sys.stdout`；
-
-`nullcontext` 用于「有时需要上下文、有时不需要」的分支。
+`contextlib.suppress(*exceptions)` 精确抑制列出的异常类型，比裸 `try/except: pass` 可读；`closing(obj)` 对只有 `close()` 的对象适配成上下文；`redirect_stdout` 临时替换 `sys.stdout`；`nullcontext` 用于「有时需要上下文、有时不需要」的分支。
 
 异步侧对应 `__aenter__` / `__aexit__` 与 `async with`，`asynccontextmanager`（3.7）和 `AsyncExitStack`（3.7）提供同样的组合能力，`__aexit__` 必须是 `async def` 才能 `await` 清理动作。
 
@@ -174,9 +160,7 @@ print('after suppress')
 
 数据库事务是典型：`__enter__` 拿到 `cursor` 并 `BEGIN`，`__exit__` 检查 `exc_type`，为 `None` 就 `commit`，否则 `rollback`，然后 `close` 并返回 `False` 让异常继续向上（绝不吞掉）。
 
-计时上下文在 `__enter__` 记 `perf_counter()`，在 `finally` 里算差值并打点；分布式锁在 `__exit__` 里释放锁并带上 fencing token 校验；
-
-临时目录用 `tempfile.TemporaryDirectory` 已经是一个写好的上下文。
+计时上下文在 `__enter__` 记 `perf_counter()`，在 `finally` 里算差值并打点；分布式锁在 `__exit__` 里释放锁并带上 fencing token 校验；临时目录用 `tempfile.TemporaryDirectory` 已经是一个写好的上下文。
 
 组合多个资源时优先用 `ExitStack`：它保证逆序释放，避免嵌套 `with` 越写越深，也避免某个资源申请失败时前面已申请的资源漏掉清理。
 
@@ -184,19 +168,12 @@ print('after suppress')
 
 CPython 3.11 之前，`with` 靠块栈实现：`SETUP_WITH` 把 `__exit__` 与块信息压栈，异常发生时解释器逐层弹出块栈并调用对应清理，正常路径也要执行 `WITH_CLEANUP` 系列指令，因此无异常也付指令成本。
 
-3.11 起改成异常表（零成本异常处理）：`co_exceptiontable` 记录受保护字节码区间到处理器的跳转，无异常时不执行任何额外指令；
+3.11 起改成异常表（零成本异常处理）：`co_exceptiontable` 记录受保护字节码区间到处理器的跳转，无异常时不执行任何额外指令；`with` 用 `BEFORE_WITH` 取 `__exit__` 并压栈，`WITH_EXCEPT_START` 在异常路径调用它，若返回真则 `POP_TOP` 吞掉异常，否则 `RERAISE`。
 
-`with` 用 `BEFORE_WITH` 取 `__exit__` 并压栈，`WITH_EXCEPT_START` 在异常路径调用它，若返回真则 `POP_TOP` 吞掉异常，否则 `RERAISE`。
-
-`contextmanager` 生成的对象在 `_GeneratorContextManager.__exit__` 里对生成器调用 `gen.throw`；
+`contextmanager` 生成的对象在 `_GeneratorContextManager.__exit__` 里对生成器调用 `gen.throw`；生成器若在 `yield` 之后又 `yield`，`throw` 便无法让它终止，抛出 `RuntimeError: ge…`。
 
 ```python
 gen.throw(exc_type, exc_value, tb)
-```
-
-生成器若在 `yield` 之后又 `yield`，`throw` 便无法让它终止，抛出 `RuntimeError: ge…`。
-
-```python
 RuntimeError: generator didn't stop after throw()
 ```
 
@@ -287,7 +264,7 @@ conn.close()
 
 <Callout type="idea" title='落地提示' text='数据库连接、分布式锁、临时目录、指标计时都应做成上下文管理器，让「申请—释放」在语法层面强制配对' />
 
-<CheckList id='P042b' title='上线前自检' :items='["能复现并解释「__exit__ 里随手 return True 吞掉真实异…」", "能复现并解释「contextmanager 生成器 yield 了两次或没…」", "能复现并解释「在异步代码里用同步 with 管理数据库连接」", "能用一条命令验证 __enter__ / __exit__", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P042a' title='上线前自检' :items='["能复现并解释「__exit__ 里随手 return True 吞掉真实异…」", "能复现并解释「contextmanager 生成器 yield 了两次或没…」", "能复现并解释「在异步代码里用同步 with 管理数据库连接」", "能用一条命令验证 __enter__ / __exit__", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "s='中文'; b=s.encode('utf-8'); print(len(s), len(b), b.hex())"

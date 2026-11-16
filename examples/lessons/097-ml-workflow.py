@@ -27,10 +27,6 @@ def metrics(tp, fp, fn, tn):
 print('all-negative', metrics(0, 0, 10, 990))
 print('a-model', metrics(5, 20, 5, 970))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # leak [1.16, 1.28, 1.39]
@@ -47,10 +43,6 @@ test = [20, 21, 22]
 all_ = train + test
 print('leak', zscore(test, mean(all_), pstd(all_)))
 print('clean', zscore(test, mean(train), pstd(train)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -71,10 +63,6 @@ for i, (tr, va) in enumerate(kfold(10, 5)):
     cover.extend(va)
     print('fold', i, 'val', va, 'train_n', len(tr))
 print('each sample validated once?', sorted(cover) == list(range(10)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

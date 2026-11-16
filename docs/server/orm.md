@@ -27,9 +27,7 @@ description: 写出可控、可诊断的数据库访问层
 
 `create_engine(url)` 返回的是 `Engine`，它是连接池与 SQL 方言的入口，不是一条连接。
 
-默认池是 `QueuePool`，几个默认值要记清：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeout=30`（无可用连接时等待的秒数）；
-
-另有两项常按场景调整而非默认开启——`pool_recycle` 默认是 `-1`（不主动回收），在 MySQL 前面通常设成 3600 之类小于 `wait_timeout` 的值，`pool_pre_ping` 默认是 `False`，生产上建议设成 `True` 让每次借出前先发一条探活语句。
+默认池是 `QueuePool`，几个默认值要记清：`pool_size=5`（常驻连接数）、`max_overflow=10`（池满后最多再临时借出的连接）、`pool_timeout=30`（无可用连接时等待的秒数）；另有两项常按场景调整而非默认开启——`pool_recycle` 默认是 `-1`（不主动回收），在 MySQL 前面通常设成 3600 之类小于 `wait_timeout` 的值，`pool_pre_ping` 默认是 `False`，生产上建议设成 `True` 让每次借出前先发一条探活语句。
 
 `echo=False` 是默认值，设为 `True` 会把所有 SQL 打到日志。
 
@@ -163,13 +161,7 @@ print('after commit', db.execute('SELECT COUNT(*) FROM t').fetchone()[0])
 
 ## 事务边界与隔离级别：短事务、正确级别
 
-事务要满足 `ACID`，隔离级别决定并发下能看到什么：`READ UNCOMMITTED` 允许脏读；
-
-`READ COMMITTED` 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；
-
-`REPEATABLE READ` 靠 `MVCC` 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；
-
-`SERIALIZABLE` 最强但并发最低。
+事务要满足 `ACID`，隔离级别决定并发下能看到什么：`READ UNCOMMITTED` 允许脏读；`READ COMMITTED` 避免脏读但同一事务里两次读同一行可能不同（不可重复读）；`REPEATABLE READ` 靠 `MVCC` 保证事务内重复读一致，MySQL InnoDB 默认为它并用间隙锁抑制部分幻读；`SERIALIZABLE` 最强但并发最低。
 
 PostgreSQL 默认是 `READ COMMITTED`，SQLAlchemy 用 `create_engine` 或对连接设 `execution_options` 覆盖。
 
@@ -197,17 +189,15 @@ create_engine(..., isolation_level='REPEATABLE READ')
 
 ## 加载策略与迁移：从 N+1 到 Alembic 可回滚
 
-N+1 是遍历 N 个父对象、对每个再查一次关联，SQL 条数为 `1+N`，随 N 线性增长；二十万行父表就是二十万次往返，本地二十行测试集毫无征兆。加载策略按关系类型选：默认 `lazy='select'` 在访问属性时才查；
+N+1 是遍历 N 个父对象、对每个再查一次关联，SQL 条数为 `1+N`，随 N 线性增长；二十万行父表就是二十万次往返，本地二十行测试集毫无征兆。
 
-`selectinload` 用一条 `WHERE id IN (...)` 把全部关联一次取回（总条数固定、适合一对多集合）；
-
-`joinedload` 用 `JOIN` 一条 SQL 取回（条数 1，但一对多会让父行重复，需在内存去重，且大集合列数膨胀）；`raiseload` 可在测试环境把未预加载的访问直接抛错，让 N+1 当场暴露。
+加载策略按关系类型选：默认 `lazy='select'` 在访问属性时才查；`selectinload` 用一条 `WHERE id IN (...)` 把全部关联一次取回（总条数固定、适合一对多集合）；`joinedload` 用 `JOIN` 一条 SQL 取回（条数 1，但一对多会让父行重复，需在内存去重，且大集合列数膨胀）；`raiseload` 可在测试环境把未预加载的访问直接抛错，让 N+1 当场暴露。
 
 检测手段有 `echo=True`、SQLAlchemy 事件计数、或 `sqlite3` 的 `set_trace_callback` 数 SQL 条数。
 
-Alembic 管理 schema 演进：`alembic init migrations` 初始化，再用 `revision --autogenerate` 配 `-m 'msg'` 生成含 `upgrade()` 与 `downgrade()` 的脚本，`upgrade head` 应用、`downgrade -1` 回滚；
+Alembic 管理 schema 演进：`alembic init migrations` 初始化，再用 `revision --autogenerate` 配 `-m 'msg'` 生成含 `upgrade()` 与 `downgrade()` 的脚本，`upgrade head` 应用、`downgrade -1` 回滚；脚本必须成对、纳入版本库，CI 里从空库 `upgrade head` 再 `downgrade base` 演一遍。
 
-脚本必须成对、纳入版本库，CI 里从空库 `upgrade head` 再 `downgrade base` 演一遍。部署顺序是先跑迁移再发代码，且迁移要对新旧两版代码兼容（先加可空列、分两次发布再删旧列），否则滚动发布期间旧代码会因缺列报错。
+部署顺序是先跑迁移再发代码，且迁移要对新旧两版代码兼容（先加可空列、分两次发布再删旧列），否则滚动发布期间旧代码会因缺列报错。
 
 SQLAlchemy 的 `Session` 实现 Unit of Work：它内部用 `identity map`（以类与主键为键的弱引用字典）保证同一行在一个事务里只有一个 Python 对象，用状态集合记录 `new` / `dirty` / `deleted`，`flush` 时按表间依赖拓扑排序生成 `INSERT` / `UPDATE` / `DELETE`，`commit` 时把整批语句放进一个数据库事务提交。
 
@@ -226,9 +216,7 @@ Alembic 不直接改库，而是把 schema 差异渲染成带 `upgrade` / `downg
 
 ## 可控的仓储层：短事务、预加载与可回滚迁移
 
-下面把数据访问层做成不依赖 ORM 框架的最小实现，用来说明三条工程约束如何落地：`report()` 用一条 `JOIN` 把所有关联一次取回，绝不在循环里查库，等价 `selectinload` 的效果；
-
-`transfer()` 把两步 `UPDATE` 包在同一个 `BEGIN` / `COMMIT` 里，异常则 `ROLLBACK`，保证转账要么全做要么全不做，且事务里没有远程调用；所有读都通过同一个连接句柄但每次 `execute` 自备语句，不缓存跨请求的 `Session`。
+下面把数据访问层做成不依赖 ORM 框架的最小实现，用来说明三条工程约束如何落地：`report()` 用一条 `JOIN` 把所有关联一次取回，绝不在循环里查库，等价 `selectinload` 的效果；`transfer()` 把两步 `UPDATE` 包在同一个 `BEGIN` / `COMMIT` 里，异常则 `ROLLBACK`，保证转账要么全做要么全不做，且事务里没有远程调用；所有读都通过同一个连接句柄但每次 `execute` 自备语句，不缓存跨请求的 `Session`。
 
 真实项目把 `conn` 换成 `Session`、把 `JOIN` 换成 `selectinload`、把 `BEGIN` / `COMMIT` 换成 `with session.begin()`，结构不变。
 
@@ -276,7 +264,7 @@ print('after', repo.report())
 
 <Callout type="idea" title='落地提示' text='显式 selectinload / joinedload、事务尽量短、只读查询用独立 session；迁移脚本必须可回滚并在 CI 演一遍' />
 
-<CheckList id='P087b' title='上线前自检' :items='["能复现并解释「列表接口随数据量线性变慢，本地测试却完全正常」", "能复现并解释「把 Session 做成模块级全局单例，并发请求串了数据」", "能复现并解释「迁移脚本只写 upgrade，发布失败无法回滚」", "能用一条命令验证 Engine / Session / Unit of Work", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P087a' title='上线前自检' :items='["能复现并解释「列表接口随数据量线性变慢，本地测试却完全正常」", "能复现并解释「把 Session 做成模块级全局单例，并发请求串了数据」", "能复现并解释「迁移脚本只写 upgrade，发布失败无法回滚」", "能用一条命令验证 Engine / Session / Unit of Work", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"
@@ -305,9 +293,7 @@ identity map 的源码在 `Lib/sqlalchemy/orm/identity.py` 的 WeakInstanceDict�
 
 InstanceState（`Lib/sqlalchemy/orm/state.py`）挂在每个映射实例的 _sa_instance_state 上，committed_state 保存上次 flush 后的属性快照，属性赋值经 InstrumentedAttribute 的 `__set__` 触发 `state._modified_event()` 把对象标脏但不发 SQL。
 
-flush 时 `Lib/sqlalchemy/orm/unitofwork.py` 的 UOWTransaction 按 mapper 的外键依赖图做拓扑排序：先 `INSERT` 父表再 `INSERT` 子表，`DELETE` 逆序；
-
-两表互引外键形成的环由 relationship 的 `post_update=True` 断掉，即第二轮补一条 `UPDATE`。
+flush 时 `Lib/sqlalchemy/orm/unitofwork.py` 的 UOWTransaction 按 mapper 的外键依赖图做拓扑排序：先 `INSERT` 父表再 `INSERT` 子表，`DELETE` 逆序；两表互引外键形成的环由 relationship 的 `post_update=True` 断掉，即第二轮补一条 `UPDATE`。
 
 `persistence.py` 的 _organize_states_for_save 再按 (表, 操作类型) 分组走 executemany 批量执行，复杂度 `O(V+E)`（V 是待 flush 的 mapper 与 state 数）。
 
@@ -367,14 +353,12 @@ print('second flush', s.flush(['users', 'orders']))
 
 <OutputBox title='扩展示例运行结果' output='same object True\nflush order [&#39;INSERT INTO users (pk) VALUES (1)&#39;, &#39;INSERT INTO orders (pk) VALUES (7)&#39;]\nsecond flush [&#39;UPDATE users SET name=? WHERE pk=1&#39;]' />
 
-<LineByLine code='class InstanceState:\n    def __init__(self, key, table):\n        self.key = key\n        self.table = table\n        self.committed = {}\n        self.dirty = set()\n\nclass Row:\n    def __init__(self, table, pk, **attrs):\n        self.table = table\n        self.pk = pk\n        self.state = InstanceState((table, pk), table)\n        for k, v in attrs.items():\n            setattr(self, k, v)\n        self.state.committed = dict(attrs)\n\nclass Session:\n    def __init__(self):\n        self.identity_map = {}\n        self.new = []\n        self.dirty = []\n    def add(self, row):\n        self.identity_map[(row.table, row.pk)] = row\n        self.new.append(row)\n    def get(self, table, pk):\n        return self.identity_map.get((table, pk))\n    def flush(self, order):\n        statements = []\n        for row in sorted(self.new, key=lambda r: order.index(r.table)):\n            statements.append(&#39;INSERT INTO &#39; + row.table + &#39; (pk) VALUES (&#39; + str(row.pk) + &#39;)&#39;)\n        for row in self.dirty:\n            for col in row.state.dirty:\n                statements.append(&#39;UPDATE &#39; + row.table + &#39; SET &#39; + col + &#39;=? WHERE pk=&#39; + str(row.pk))\n        self.new.clear()\n        self.dirty.clear()\n        return statements\n\ns = Session()\nu = Row(&#39;users&#39;, 1, name=&#39;a&#39;)\no = Row(&#39;orders&#39;, 7, uid=1)\ns.add(u)\ns.add(o)\nprint(&#39;same object&#39;, s.get(&#39;users&#39;, 1) is u)\nprint(&#39;flush order&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))\nu.name = &#39;b&#39;\nu.state.dirty.add(&#39;name&#39;)\ns.dirty.append(u)\nprint(&#39;second flush&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))\n' :notes='["InstanceState 对应 _sa_instance_state，committed 存 flush 后快照", "dirty 集合记录被改过的列名，属性赋值只标脏不发 SQL", "Row 把 (表, 主键) 作为 identity key 的来源", "Session.identity_map 用字典模拟 WeakInstanceDict 的按键索引", "add 同时登记 identity map 与待插入列表", "get 按 (表, 主键) 取回，验证同一行返回同一对象", "空行，只用于分隔逻辑块，不影响执行结果。", "flush 的 order 参数即 mapper 依赖图的拓扑序", "按拓扑序生成 INSERT，父表 users 必须排在子表 orders 前", "脏对象按列生成 UPDATE，多次修改同名列合并为一条", "清空 new 与 dirty，模拟 flush 之后状态复位", "构造 users 与 orders 两个存在外键依赖的实例", "打印 identity map 命中结果，确认一行一对象", "打印首次 flush 的语句顺序，验证父先子后", "改 name 后把列记进 dirty 集合", "空行，只用于分隔逻辑块，不影响执行结果。", "第二次 flush 只产出一条 UPDATE，不重发 INSERT", "这一行 `def __init__(self):` 的作用，可对照上方输出逐项核对。", "这一行 `self.identity_map = {}` 的作用，可对照上方输出逐项核对。", "这一行 `self.new = []` 的作用，可对照上方输出逐项核对。", "这一行 `self.dirty = []` 的作用，可对照上方输出逐项核对。", "这一行 `def add(self, row):` 的作用，可对照上方输出逐项核对。", "这一行 `self.identity_map[(row.table, row.pk)] = row` 的作用，可对照上方输出逐项核对。", "这一行 `self.new.append(row)` 的作用，可对照上方输出逐项核对。", "这一行 `def get(self, table, pk):` 的作用，可对照上方输出逐项核对。", "这一行 `return self.identity_map.get((table, pk))` 的作用，可对照上方输出逐项核对。", "这一行 `def flush(self, order):` 的作用，可对照上方输出逐项核对。", "这一行 `statements = []` 的作用，可对照上方输出逐项核对。", "这一行 `for row in sorted(self.new, key=lambda r: order.inde` 的作用，可对照上方输出逐项核对。", "这一行 `statements.append(&#39;INSERT INTO &#39; + row.table + &#39; (pk` 的作用，可对照上方输出逐项核对。", "这一行 `for row in self.dirty:` 的作用，可对照上方输出逐项核对。", "这一行 `for col in row.state.dirty:` 的作用，可对照上方输出逐项核对。", "这一行 `statements.append(&#39;UPDATE &#39; + row.table + &#39; SET &#39; + ` 的作用，可对照上方输出逐项核对。", "这一行 `self.new.clear()` 的作用，可对照上方输出逐项核对。", "这一行 `self.dirty.clear()` 的作用，可对照上方输出逐项核对。", "这一行 `return statements` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `s = Session()` 的作用，可对照上方输出逐项核对。", "这一行 `u = Row(&#39;users&#39;, 1, name=&#39;a&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `o = Row(&#39;orders&#39;, 7, uid=1)` 的作用，可对照上方输出逐项核对。", "这一行 `s.add(u)` 的作用，可对照上方输出逐项核对。", "这一行 `s.add(o)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;same object&#39;, s.get(&#39;users&#39;, 1) is u)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;flush order&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))` 的作用，可对照上方输出逐项核对。", "这一行 `u.name = &#39;b&#39;` 的作用，可对照上方输出逐项核对。", "这一行 `u.state.dirty.add(&#39;name&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `s.dirty.append(u)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;second flush&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='class InstanceState:\n    def __init__(self, key, table):\n        self.key = key\n        self.table = table\n        self.committed = {}\n        self.dirty = set()\n\nclass Row:\n    def __init__(self, table, pk, **attrs):\n        self.table = table\n        self.pk = pk\n        self.state = InstanceState((table, pk), table)\n        for k, v in attrs.items():\n            setattr(self, k, v)\n        self.state.committed = dict(attrs)\n\nclass Session:\n    def __init__(self):\n        self.identity_map = {}\n        self.new = []\n        self.dirty = []\n    def add(self, row):\n        self.identity_map[(row.table, row.pk)] = row\n        self.new.append(row)\n    def get(self, table, pk):\n        return self.identity_map.get((table, pk))\n    def flush(self, order):\n        statements = []\n        for row in sorted(self.new, key=lambda r: order.index(r.table)):\n            statements.append(&#39;INSERT INTO &#39; + row.table + &#39; (pk) VALUES (&#39; + str(row.pk) + &#39;)&#39;)\n        for row in self.dirty:\n            for col in row.state.dirty:\n                statements.append(&#39;UPDATE &#39; + row.table + &#39; SET &#39; + col + &#39;=? WHERE pk=&#39; + str(row.pk))\n        self.new.clear()\n        self.dirty.clear()\n        return statements\n\ns = Session()\nu = Row(&#39;users&#39;, 1, name=&#39;a&#39;)\no = Row(&#39;orders&#39;, 7, uid=1)\ns.add(u)\ns.add(o)\nprint(&#39;same object&#39;, s.get(&#39;users&#39;, 1) is u)\nprint(&#39;flush order&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))\nu.name = &#39;b&#39;\nu.state.dirty.add(&#39;name&#39;)\ns.dirty.append(u)\nprint(&#39;second flush&#39;, s.flush([&#39;users&#39;, &#39;orders&#39;]))\n' :notes='["定义 InstanceState，对应 _sa_instance_state", "__init__ 收 identity key 与所属表", "保存 identity key", "保存表名", "committed 存上次 flush 后的属性快照", "dirty 集合记录被改过的列名，属性赋值只标脏不发 SQL", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 Row，模拟一行映射对象", "__init__ 收表名、主键与任意属性", "保存表名", "保存主键", "用 (表, 主键) 作 identity key 造出 InstanceState", "遍历传入的属性", "逐个设为实例属性", "把初始属性存进 committed 快照", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 Session，模拟工作单元", "__init__ 初始化三张表", "identity_map 用字典模拟 WeakInstanceDict 的按键索引", "new 存待插入对象", "dirty 存待更新对象", "定义 add，登记一个对象", "按 (表, 主键) 写进 identity map", "同时追加到 new 列表", "定义 get，按主键取回", "从 identity map 取，验证同一行返回同一对象", "定义 flush，按依赖顺序生成 SQL", "statements 收集本次要发的语句", "按 order 给出的拓扑序排序 new 对象", "按序生成 INSERT，父表 users 必须排在子表 orders 前", "遍历待更新的脏对象", "遍历该对象被改过的列", "按列生成 UPDATE，多次改同名列合并为一条", "清空 new，模拟 flush 后复位", "清空 dirty", "返回本次生成的语句列表", "空行，只用于分隔逻辑块，不影响执行结果。", "造一个 Session 实例", "构造 users 表主键 1 的对象", "构造 orders 表主键 7 的对象，与 users 存在外键依赖", "把 u 加进 Session", "把 o 加进 Session", "打印 identity map 命中结果，确认一行一对象", "打印首次 flush 的语句顺序，验证父先子后", "改 name，模拟属性被赋值", "把 name 列记进 dirty 集合", "把该对象放进待更新列表", "打印第二次 flush，只产出一条 UPDATE、不重发 INSERT", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### pysqlite 的隐式 BEGIN 与 autocommit 边界
 
-Python 标准库 sqlite3 的 legacy transaction control 是 PEP 249 留下的坑：默认 isolation_level 非空串时，pysqlite 只对 `INSERT`、`UPDATE`、`DELETE`、`REPLACE` 这类 DML 隐式发 `BEGIN`，对 `SELECT` 与 DDL 不开事务，`COMMIT` 之后也不会自动开启新事务；
-
-`connect(':memory:')` 在多线程下每个线程拿到独立连接，只有 SingletonThreadPool 或 StaticPool 才共享同一个内存库。
+Python 标准库 sqlite3 的 legacy transaction control 是 PEP 249 留下的坑：默认 isolation_level 非空串时，pysqlite 只对 `INSERT`、`UPDATE`、`DELETE`、`REPLACE` 这类 DML 隐式发 `BEGIN`，对 `SELECT` 与 DDL 不开事务，`COMMIT` 之后也不会自动开启新事务；`connect(':memory:')` 在多线程下每个线程拿到独立连接，只有 SingletonThreadPool 或 StaticPool 才共享同一个内存库。
 
 把 isolation_level 设为 None 进入 autocommit，此时必须显式写 `BEGIN` 或 `BEGIN` `IMMEDIATE` 才能拿到写锁，否则两个连接并发写会撞上 database is locked，而且 SQLite 的锁是库级而非行级，一个写事务会阻塞所有其它写者。
 

@@ -36,10 +36,6 @@ print('queue size', q.qsize())
 print('results', sorted(results))
 print('all joined', all(not t.is_alive() for t in ts))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # join returned True
@@ -66,10 +62,6 @@ with cf.ThreadPoolExecutor(1) as ex:
     except ValueError as e:
         print('future reraises', str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # opnames ['RESUME', 'LOAD_GLOBAL', 'LOAD_CONST', 'BINARY_OP', 'STORE_GLOBAL', 'RETURN_CONST']
@@ -91,10 +83,6 @@ def child():
 t = threading.Thread(target=child)
 t.start(); t.join()
 print('main tls value', tls.value)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

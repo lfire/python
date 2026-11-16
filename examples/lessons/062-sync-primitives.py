@@ -52,10 +52,6 @@ for t in ts: t.start()
 for t in ts: t.join()
 print('locked', counter[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # before set False
@@ -99,10 +95,6 @@ with rl:
     with rl:
         print('rlock reentrant', True)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # has while loop True
@@ -121,10 +113,6 @@ print('wait_for sig', str(inspect.signature(threading.Condition.wait_for)))
 print('Semaphore value default', inspect.signature(threading.Semaphore).parameters['value'].default)
 print('Event wait sig', str(inspect.signature(threading.Event.wait)))
 print('switch interval', sys.getswitchinterval() == 0.005)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

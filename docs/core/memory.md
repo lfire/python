@@ -40,13 +40,11 @@ CPython 里每个对象都以 `PyObject` 开头：`ob_refcnt`（`Py_ssize_t`，6
 
 被 GC 跟踪的容器对象前面还有 `PyGC_Head`（双向链表指针加状态，通常 16 字节），`sys.getsizeof` 会把它算进去。
 
-引用计数是最主要的回收机制：`Py_INCREF` / `Py_DECREF` 在赋值、传参、容器存取、属性绑定、名字离开作用域、`del` 时被大量调用，计数归零立刻触发 `tp_dealloc` 释放对象，并可能级联释放它引用的其它对象。好处是回收时机可预测、无长时间停顿；
+引用计数是最主要的回收机制：`Py_INCREF` / `Py_DECREF` 在赋值、传参、容器存取、属性绑定、名字离开作用域、`del` 时被大量调用，计数归零立刻触发 `tp_dealloc` 释放对象，并可能级联释放它引用的其它对象。
 
-代价是每次绑定都要改计数，为使这些操作不加细粒度锁，解释器用一把 GIL 保护整个执行状态（第 54 讲），且纯引用计数无法回收循环引用（第 53 讲由分代 GC 兜底）。
+好处是回收时机可预测、无长时间停顿；代价是每次绑定都要改计数，为使这些操作不加细粒度锁，解释器用一把 GIL 保护整个执行状态（第 54 讲），且纯引用计数无法回收循环引用（第 53 讲由分代 GC 兜底）。
 
-`sys.getrefcount(obj)` 可读当前计数，但返回值比实际多 1，因为作为参数传入时临时增加了一个引用；
-
-用它做增减趋势对比即可，别把绝对值当精确值。
+`sys.getrefcount(obj)` 可读当前计数，但返回值比实际多 1，因为作为参数传入时临时增加了一个引用；用它做增减趋势对比即可，别把绝对值当精确值。
 
 ```python
 import sys
@@ -89,9 +87,9 @@ CPython 把每个值表示为堆上的 `PyObject`：头部 `ob_refcnt` 与 `ob_t
 
 为降低小对象分配成本，pymalloc 把 ≤512 字节请求按 size class 从 arena（256KB）→ pool（4KB）→ block 三级结构分配并复用，释放后内存常留在 pool 里不立刻归还系统。
 
-小整数池（-5..256）与字符串驻留都是这套对象模型上的复用优化：前者启动时预分配，后者把常量与标识符放进全局表以加速字典键比较。`sys.getsizeof` 走 `__sizeof__` 加 GC 头，只反映浅层结构；
+小整数池（-5..256）与字符串驻留都是这套对象模型上的复用优化：前者启动时预分配，后者把常量与标识符放进全局表以加速字典键比较。
 
-`tracemalloc` 在 PyMem 分配器层记账，能测到容器元素、字符串内容与真实增量，因此「估算内存」必须区分这两层。
+`sys.getsizeof` 走 `__sizeof__` 加 GC 头，只反映浅层结构；`tracemalloc` 在 PyMem 分配器层记账，能测到容器元素、字符串内容与真实增量，因此「估算内存」必须区分这两层。
 
 <ConceptDiagram type='layers3' title='第 052 讲 · PyObject 头、引用计数与归零即释放' labels='PyObject 头、引用计数与归零即释放|小整数池、字符串驻留与 is 的正确用法|pymalloc、getsizeof 的局限…|tracemalloc' caption='能估算对象开销并定位内存问题' />
 
@@ -100,9 +98,9 @@ CPython 把每个值表示为堆上的 `PyObject`：头部 `ob_refcnt` 与 `ob_t
 
 ## 小整数池、字符串驻留与 is 的正确用法
 
-CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；
+CPython 在启动时预分配 -5 到 256 的小整数对象并复用，因此 `a = 256; b = 256` 时 `a is b` 为 `True`；这是实现细节，不是语言规范，PyPy 等实现不保证。
 
-这是实现细节，不是语言规范，PyPy 等实现不保证。编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int('257')` 之类创建的大整数不在池里，两次调用得到不同对象，`is` 比较为 `False`。
+编译期常量还会被合并进同一个 `co_consts` 槽，进一步让字面量复用。运行时通过 `int('257')` 之类创建的大整数不在池里，两次调用得到不同对象，`is` 比较为 `False`。
 
 字符串驻留（intern）把标识符样式的字符串与编译期常量放进全局驻留表，字典键比较时可先比指针再比内容，省掉逐字符比较；`sys.intern(s)` 手动驻留，适合大量重复的键（如日志字段名、枚举值）。但驻留表本身持有强引用，滥驻留用户输入的任意字符串会让它们一直存活，反而造成内存问题。
 
@@ -185,9 +183,9 @@ pymalloc 是 CPython 针对小对象的专用分配器：不超过 512 字节的
 
 ## 用 tracemalloc 量化 list-of-dict 与 NamedTuple 的真实占用
 
-事件流水常有两种建模：每条记录一个字典，或用 `NamedTuple` / slots 类做固定字段。字典灵活但每个元素都带一张哈希表与字符串键，`NamedTuple` 是紧凑元组，字段共享一份名字。用 `sys.getsizeof` 只能看到列表头，看不出元素差异；
+事件流水常有两种建模：每条记录一个字典，或用 `NamedTuple` / slots 类做固定字段。字典灵活但每个元素都带一张哈希表与字符串键，`NamedTuple` 是紧凑元组，字段共享一份名字。
 
-用 `tracemalloc` 分别构造两万条记录并比较净分配字节，才能得出可核对的结论。
+用 `sys.getsizeof` 只能看到列表头，看不出元素差异；用 `tracemalloc` 分别构造两万条记录并比较净分配字节，才能得出可核对的结论。
 
 下面用标准库跑通：构造 `dict` 版与 `NamedTuple` 版，比较两次 `get_traced_memory` 的当前值，并打印 `Point._fields` 确认字段定义。
 
@@ -217,7 +215,7 @@ tracemalloc.stop()
 
 <Callout type="idea" title='落地提示' text='做容量规划用 tracemalloc 看真实分配，海量小对象用 slots / array / NumPy 换布局' />
 
-<CheckList id='P052b' title='上线前自检' :items='["能复现并解释「用 sys.getsizeof 估算容器加全部元素的总内存」", "能复现并解释「用 is 比较大整数或运行时字符串」", "能复现并解释「以为引用计数能回收循环引用」", "能用一条命令验证 PyObject 头与 ob_refcnt", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P052a' title='上线前自检' :items='["能复现并解释「用 sys.getsizeof 估算容器加全部元素的总内存」", "能复现并解释「用 is 比较大整数或运行时字符串」", "能复现并解释「以为引用计数能回收循环引用」", "能用一条命令验证 PyObject 头与 ob_refcnt", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
@@ -244,15 +242,13 @@ python -c "import sys, gc; print(sys.getsizeof([1,2,3]), gc.get_count())"
 
 正文讲 PyObject 头里 ob_refcnt 会因赋值与传参频繁增减，3.12 起这条规律被 PEP 683 改写了一半。
 
-Include/`object.h` 里 PyObject 仍是 ob_refcnt（Py_ssize_t）加 ob_type 指针，但解释器给静态分配的单例设了一个哨兵值 _Py_IMMORTAL_REFCNT；
-
-Include/internal/`pycore_object.h` 的 _Py_IsImmortal 用引用计数的低位标记判断，Py_INCREF / Py_DECREF 命中就整段跳过，不再做写操作。
+`Include/object.h` 里 PyObject 仍是 ob_refcnt（Py_ssize_t）加 ob_type 指针，但解释器给静态分配的单例设了一个哨兵值 _Py_IMMORTAL_REFCNT；`Include/internal/pycore_object.h` 的 _Py_IsImmortal 用引用计数的低位标记判断，Py_INCREF / Py_DECREF 命中就整段跳过，不再做写操作。
 
 被标记的对象包括 None、True、False、小整数池、编译期驻留的字符串与静态类型对象，本机 3.13 实测 `sys.getrefcount(None)` 返回 4294967295，而运行时新建的 1000 只有几个引用，两者一眼可分。
 
-这个改动的动机不是省几条指令：多核上几十个线程同时给 None 加引用会让同一缓存行反复失效，immortal 把这类写彻底消除，是 PEP 703 自由线程构建能拆掉 GIL 的前置条件之一。推导出的副作用有两条：tp_dealloc 遇到 immortal 直接返回，归零即释放对这批对象不成立；
+这个改动的动机不是省几条指令：多核上几十个线程同时给 None 加引用会让同一缓存行反复失效，immortal 把这类写彻底消除，是 PEP 703 自由线程构建能拆掉 GIL 的前置条件之一。
 
-`sys.getrefcount` 对它们返回的是一个固定的大数而不是真实引用数，做引用计数趋势分析时要先把单例排除。
+推导出的副作用有两条：tp_dealloc 遇到 immortal 直接返回，归零即释放对这批对象不成立；`sys.getrefcount` 对它们返回的是一个固定的大数而不是真实引用数，做引用计数趋势分析时要先把单例排除。
 
 驻留字符串也因此更该谨慎：`sys.intern` 把用户串塞进全局表，在 3.12+ 还可能被顺带标记，生命周期直接拉到进程结束。
 
@@ -281,7 +277,7 @@ print('mortal 1000', sys.getrefcount(1000) < 100)
 
 <OutputBox title='扩展示例运行结果' output='list steps [(0, 56), (1, 64), (2, 72), (3, 80), (4, 88), (5, 96)]\ndict empty 64\ndict 6 352\nimmortal None True\nmortal 1000 True' />
 
-<LineByLine code='import sys\n\nprev = None\nsteps = []\nfor n in range(0, 33):\n    size = sys.getsizeof([None] * n)\n    if size != prev:\n        steps.append((n, size))\n        prev = size\nprint(&#39;list steps&#39;, steps[:6])\nprint(&#39;dict empty&#39;, sys.getsizeof({}))\nprint(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6))))\nprint(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 1000000)\nprint(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)\n' :notes='["sys.getsizeof 读的是对象的 __sizeof__ 加 GC 头", "空行，只用于分隔逻辑块，不影响执行结果。", "记录上一次尺寸，只在尺寸变化时记一个台阶", "逐个元素数构造 list，观察指针数组何时扩容", "台阶列表把 (元素数, 结构体字节数) 存成元组", "尺寸变化说明分配器换到了更大的块规格", "打印前六个台阶，3.13 上是每加一个指针多 8 字节", "空 dict 的浅层尺寸，不含任何键值对象", "六个键的 dict 尺寸，紧凑表的索引与条目数组都算在内", "immortal 单例的 getrefcount 是一个远大于真实引用的固定数", "运行时新建的大整数仍是普通引用计数，数值很小", "这一行 `print(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 10000` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\n\nprev = None\nsteps = []\nfor n in range(0, 33):\n    size = sys.getsizeof([None] * n)\n    if size != prev:\n        steps.append((n, size))\n        prev = size\nprint(&#39;list steps&#39;, steps[:6])\nprint(&#39;dict empty&#39;, sys.getsizeof({}))\nprint(&#39;dict 6&#39;, sys.getsizeof(dict.fromkeys(range(6))))\nprint(&#39;immortal None&#39;, sys.getrefcount(None) &gt; 1000000)\nprint(&#39;mortal 1000&#39;, sys.getrefcount(1000) &lt; 100)\n' :notes='["导入 sys，后面用 getsizeof 看浅层结构、用 getrefcount 看引用计数。", "空行，只用于分隔逻辑块，不影响执行结果。", "记录上一次的尺寸，起点设 None 保证第一次一定被记下。", "用列表收集尺寸发生变化的「台阶」。", "逐个检查 0 到 32 个元素的 list，观察指针数组何时扩容。", "sys.getsizeof 只返回 list 结构体加指针数组的浅层大小，不含元素对象。", "只在新尺寸与上次不同时记录，跳过重复值。", "把 (元素数, 字节数) 存成元组，一个台阶一条。", "更新上一次尺寸，供下一轮比较。", "打印前六个台阶，3.13 上大致是每多一个指针加 8 字节，也说明扩容按块而不是逐个。", "空 dict 的浅层尺寸，不含任何键值对象。", "六个键的 dict 尺寸，紧凑表的索引数组与条目数组都算在内，与空 dict 拉开差距。", "PEP 683 把 None 标成 immortal，getrefcount 返回一个固定大数，用大于一百万判断即可。", "运行时新建的 1000 仍是普通引用计数，数值很小，与上一条形成对照。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 **getsizeof 的观测边界按对象布局分类**
 
@@ -297,15 +293,13 @@ print('mortal 1000', sys.getrefcount(1000) < 100)
 
 ## obmalloc.c 的 size class 与 freelist 双层缓存
 
-Objects/`obmalloc.c` 把不超过 `SMALL_REQUEST_THRESHOLD`（512 字节）的请求按 `ALIGNMENT` 向上取整成 size class，从 arena（256 KiB）切成 pool（4 KiB）再切成 block：闲置 pool 挂在 usable_pools 链表，全空的 arena 可以被单独 free 归还操作系统（3.8 起）。
+`Objects/obmalloc.c` 把不超过 `SMALL_REQUEST_THRESHOLD`（512 字节）的请求按 `ALIGNMENT` 向上取整成 size class，从 arena（256 KiB）切成 pool（4 KiB）再切成 block：闲置 pool 挂在 usable_pools 链表，全空的 arena 可以被单独 free 归还操作系统（3.8 起）。
 
 所以释放了对象往往只是把 block 还给 pool，进程 RSS 短期不降是常态而非泄漏。
 
-更上面还有第二层缓存：Objects/`listobject.c` 的 PyList_MAXFREELIST（80 个）、tuple 的 PyTuple_MAXFREELIST（按长度分桶共 2000 个）、float 的 PyFloat_MAXFREELIST（100 个）以及 dict、生成器对象，它们的 tp_dealloc 不把内存交回分配器，而是把空壳挂进类型级 free list，下一次 PyList_New / PyTuple_New 直接复用。
+更上面还有第二层缓存：`Objects/listobject.c` 的 PyList_MAXFREELIST（80 个）、tuple 的 PyTuple_MAXFREELIST（按长度分桶共 2000 个）、float 的 PyFloat_MAXFREELIST（100 个）以及 dict、生成器对象，它们的 tp_dealloc 不把内存交回分配器，而是把空壳挂进类型级 free list，下一次 PyList_New / PyTuple_New 直接复用。
 
-两层叠加解释了两个观测现象：tracemalloc 挂在 PyMem 层，free list 里的空闲对象不算已分配，快照看不到它们，但它们确实占着 RSS；
-
-`PYTHONMALLOC=malloc` 关掉 pymalloc 后 RSS 曲线会明显不同，这本身就是验证分配器行为的手段。
+两层叠加解释了两个观测现象：tracemalloc 挂在 PyMem 层，free list 里的空闲对象不算已分配，快照看不到它们，但它们确实占着 RSS；`PYTHONMALLOC=malloc` 关掉 pymalloc 后 RSS 曲线会明显不同，这本身就是验证分配器行为的手段。
 
 工程结论：查泄漏看 RSS 与 tracemalloc 快照的行号增量，别用 getsizeof 或引用计数推断；想让内存尽快回落到系统，要么减少短命小对象，要么把布局换成 `__slots__` / array / 列式缓冲，让分配落在少数大块上。
 

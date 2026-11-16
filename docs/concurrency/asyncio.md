@@ -14,11 +14,9 @@ description: 掌握任务生命周期与取消语义
 
 ## 压测里莫名少了几条计数，日志却没有任何异常
 
-一个对账服务用 `asyncio.create_task` 起了几十个子任务拉数据，压测时发现计数总比预期少几条，日志里却没有任何异常；
+一个对账服务用 `asyncio.create_task` 起了几十个子任务拉数据，压测时发现计数总比预期少几条，日志里却没有任何异常；换一台机器又正常。
 
-换一台机器又正常。排查两周才定位到两件事：事件循环对 `Task` 只持弱引用，没被变量持有的任务会在执行途中被 GC 回收；
-
-另一个协程里用 `except Exception` 想把收尾逻辑兜住，结果取消时清理代码根本没跑——因为 3.8 起 `asyncio.CancelledError` 已改成 `BaseException` 子类，except Exception 捕获不到它。
+排查两周才定位到两件事：事件循环对 `Task` 只持弱引用，没被变量持有的任务会在执行途中被 GC 回收；另一个协程里用 `except Exception` 想把收尾逻辑兜住，结果取消时清理代码根本没跑——因为 3.8 起 `asyncio.CancelledError` 已改成 `BaseException` 子类，except Exception 捕获不到它。
 
 有人以为调用 `task.cancel()` 是「强杀线程」，实际它只是请求在下一个 `await` 点抛 CancelledError。这些都不是语法细节，而是 `Task`、`Future`、事件循环三者分工与取消语义没对齐。本讲把任务生命周期、`Future` 状态机与结构化并发讲到能推导线上行为。
 
@@ -60,9 +58,7 @@ description: 掌握任务生命周期与取消语义
 
 `loop._run_once` 先用最近定时器算出 select 的超时，取就绪 fd 把对应回调 `call_soon` 入队，再把到期定时器移入就绪队列，最后逐个执行 `Handle._run`。
 
-`Task.__step` 调用 `coro.send(None)`：协程 yield 出 None 就重新入队、yield 出未完成 `Future` 就给它挂 done 回调、`Future` 完成则把结果 send 回去；
-
-`asyncio.sleep` 正是 `call_later` 加一个 `Future`。
+`Task.__step` 调用 `coro.send(None)`：协程 yield 出 None 就重新入队、yield 出未完成 `Future` 就给它挂 done 回调、`Future` 完成则把结果 send 回去；`asyncio.sleep` 正是 `call_later` 加一个 `Future`。
 
 `cancel()` 设置 `_must_cancel`，下一次 `__step` 改为 `throw(CancelledError)` 而非 `send(None)`，所以取消点必然落在 `await`。
 
@@ -188,9 +184,7 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 
 ## 取消是协作式的：CancelledError 与 finally 清理
 
-`task.cancel()` 并不中断线程，只是把 `Task` 标成「待取消」；
-
-当下一次 `Task.__step` 驱动协程时，不再 `send(None)` 而是在当前 `await` 点 `throw(asyncio.CancelledError)`。
+`task.cancel()` 并不中断线程，只是把 `Task` 标成「待取消」；当下一次 `Task.__step` 驱动协程时，不再 `send(None)` 而是在当前 `await` 点 `throw(asyncio.CancelledError)`。
 
 自 3.8 起 `asyncio.CancelledError` 继承 `BaseException`（其 `__mro__` 是 CancelledError → BaseException → object），因此 except Exception 完全捕获不到它，清理逻辑必须放在 `finally`，或用 except `asyncio.CancelledError` 显式接住后再 raise。
 
@@ -219,9 +213,7 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 
 ## 结构化并发：TaskGroup 与异常组
 
-`asyncio.gather(*aws)` 并发收集结果，默认 `return_exceptions=False`：某个 awaitable 抛异常时立即把异常抛给调用方，但不会自动取消其它兄弟任务，它们仍在后台跑；
-
-`return_exceptions=True` 则把异常当普通结果返回。
+`asyncio.gather(*aws)` 并发收集结果，默认 `return_exceptions=False`：某个 awaitable 抛异常时立即把异常抛给调用方，但不会自动取消其它兄弟任务，它们仍在后台跑；`return_exceptions=True` 则把异常当普通结果返回。
 
 3.11 的 `asyncio.TaskGroup`（配合 PEP 654 的异常组）提供结构化并发：把它作为异步上下文管理器，块内用 `tg.create_task(coro)` 建任务，任意子任务失败时组内其余任务被取消，退出时统一抛 `ExceptionGroup`（含 BaseException 时为 `BaseExceptionGroup`），必须用 except* 按类型拆组处理。
 
@@ -279,7 +271,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='用 TaskGroup 做结构化并发，设置超时与失败策略，并显式处理屏蔽取消的清理段' />
 
-<CheckList id='P069b' title='上线前自检' :items='["能复现并解释「裸 asyncio.create_task(...) 不保存…」", "能复现并解释「用 except Exception 兜住取消并做清理」", "能复现并解释「以为 gather 里一个任务抛异常其它会自动停」", "能用一条命令验证 loop 与策略", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P069a' title='上线前自检' :items='["能复现并解释「裸 asyncio.create_task(...) 不保存…」", "能复现并解释「用 except Exception 兜住取消并做清理」", "能复现并解释「以为 gather 里一个任务抛异常其它会自动停」", "能用一条命令验证 loop 与策略", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 
@@ -300,9 +292,7 @@ Task 的恢复点在 CPython 里有两套实现：纯 Python 回退在 `Lib/asyn
 
 两者字段一致：`_coro` 是被驱动的协程，`_fut_waiter` 指向当前 await 挂起所等的 Future，`_must_cancel` 是取消请求标志，`_context` 是 `contextvars.Context` 的快照。
 
-`__step` 里执行 `coro.send(None)`；
-
-若协程 yield 出一个未完成的 Future，`Task` 把它写进 `_fut_waiter` 并给它挂 `add_done_callback(self.__wakeup)`，随后自己退出、不再进入就绪队列，这就是挂起的全部含义。
+`__step` 里执行 `coro.send(None)`；若协程 yield 出一个未完成的 Future，`Task` 把它写进 `_fut_waiter` 并给它挂 `add_done_callback(self.__wakeup)`，随后自己退出、不再进入就绪队列，这就是挂起的全部含义。
 
 `__wakeup` 被回调时先读一次 `fut.result()`（连异常一并取走，避免日志刷出 Future exception was never retrieved），清空 `_fut_waiter`，再用 `loop.call_soon(self.__step)` 把任务重新排入 `_ready`。
 
@@ -412,20 +402,18 @@ for line in loop.log:
 
 <OutputBox title='扩展示例运行结果' output='task result 84\nworker step 1\nyield Future -&gt; wait __wakeup\n__wakeup: result 42\nworker step 2 got 42' />
 
-<LineByLine code='import collections\n\nclass MiniFuture:\n    def __init__(self, loop):\n        self.loop = loop\n        self._done = False\n        self._result = None\n        self._callbacks = []\n    def done(self):\n        return self._done\n    def set_result(self, v):\n        self._done = True\n        self._result = v\n        for cb in self._callbacks:\n            self.loop.ready.append((cb, self))\n        self._callbacks.clear()\n    def add_done_callback(self, cb):\n        if self._done:\n            self.loop.ready.append((cb, self))\n        else:\n            self._callbacks.append(cb)\n    def result(self):\n        return self._result\n    def __await__(self):\n        if not self._done:\n            yield self\n        return self._result\n        yield\n\nclass MiniLoop:\n    def __init__(self):\n        self.ready = collections.deque()\n        self.log = []\n    def call_soon(self, cb, arg=None):\n        self.ready.append((cb, arg))\n    def create_future(self):\n        return MiniFuture(self)\n    def run(self):\n        while self.ready:\n            cb, arg = self.ready.popleft()\n            cb(arg)\n\nclass CancelledError(BaseException):\n    pass\n\ndef step(task):\n    loop = task.loop\n    try:\n        if task.must_cancel:\n            task.must_cancel = False\n            yielded = task.coro.throw(CancelledError)\n        else:\n            yielded = task.coro.send(None)\n    except StopIteration as e:\n        task.done = True\n        task.result = e.value\n        return\n    if yielded is None:\n        loop.call_soon(step, task)\n        loop.log.append(&#39;yield None -&gt; call_soon&#39;)\n    else:\n        task.fut_waiter = yielded\n        yielded.add_done_callback(lambda f: wakeup(task, f))\n        loop.log.append(&#39;yield Future -&gt; wait __wakeup&#39;)\n\ndef wakeup(task, fut):\n    task.fut_waiter = None\n    task.loop.log.append(&#39;__wakeup: result &#39; + str(fut.result()))\n    task.loop.call_soon(step, task)\n\nclass MiniTask:\n    def __init__(self, coro, loop):\n        self.coro = coro\n        self.loop = loop\n        self.fut_waiter = None\n        self.must_cancel = False\n        self.done = False\n        self.result = None\n        loop.call_soon(step, self)\n\nasync def worker(loop):\n    loop.log.append(&#39;worker step 1&#39;)\n    f = loop.create_future()\n    loop.call_soon(lambda _: f.set_result(42))\n    v = await f\n    loop.log.append(&#39;worker step 2 got &#39; + str(v))\n    return v * 2\n\nloop = MiniLoop()\nt = MiniTask(worker(loop), loop)\nloop.run()\nprint(&#39;task result&#39;, t.result)\nfor line in loop.log:\n    print(line)\n' :notes='["导入 collections，用 deque 充当事件循环的就绪队列", "空行，只用于分隔逻辑块，不影响执行结果。", "MiniFuture 模拟 lib/asyncio 的 Future，只保留 done 与回调表", "回调挂进 loop.ready，等价于 add_done_callback 经 call_soon 调度", "__await__ 在未完成时 yield 出自身，把暂停点交给调度器", "MiniLoop.ready 是 FIFO deque，call_soon 只是 append", "run 逐个 popleft 并执行回调，对应 _run_once 的 Handle 消费", "自定义 CancelledError 继承 BaseException，复刻 3.8 起的层级", "step 对应 Task.__step：send 驱动协程，must_cancel 时改 throw", "协程正常结束以 StopIteration.value 落地为 Task 的结果", "yield None 是 sleep(0) 捷径，直接重新入队", "yield 出未完成 Future 时把它记进 _fut_waiter 并挂 __wakeup", "wakeup 先 result() 取回值，再 call_soon 排下一次 step", "MiniTask 构造只 call_soon 排首跳，创建时不执行函数体", "worker 用 await f 制造一次真实的 Future 挂起", "打印执行日志，验证一次 await 跨两次事件循环迭代", "这一行 `def add_done_callback(self, cb):` 的作用，可对照上方输出逐项核对。", "这一行 `if self._done:` 的作用，可对照上方输出逐项核对。", "这一行 `self.loop.ready.append((cb, self))` 的作用，可对照上方输出逐项核对。", "这一行 `else:` 的作用，可对照上方输出逐项核对。", "这一行 `self._callbacks.append(cb)` 的作用，可对照上方输出逐项核对。", "这一行 `def result(self):` 的作用，可对照上方输出逐项核对。", "这一行 `return self._result` 的作用，可对照上方输出逐项核对。", "这一行 `def __await__(self):` 的作用，可对照上方输出逐项核对。", "这一行 `if not self._done:` 的作用，可对照上方输出逐项核对。", "这一行 `yield self` 的作用，可对照上方输出逐项核对。", "这一行 `return self._result` 的作用，可对照上方输出逐项核对。", "这一行 `yield` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class MiniLoop:` 的作用，可对照上方输出逐项核对。", "这一行 `def __init__(self):` 的作用，可对照上方输出逐项核对。", "这一行 `self.ready = collections.deque()` 的作用，可对照上方输出逐项核对。", "这一行 `self.log = []` 的作用，可对照上方输出逐项核对。", "这一行 `def call_soon(self, cb, arg=None):` 的作用，可对照上方输出逐项核对。", "这一行 `self.ready.append((cb, arg))` 的作用，可对照上方输出逐项核对。", "这一行 `def create_future(self):` 的作用，可对照上方输出逐项核对。", "这一行 `return MiniFuture(self)` 的作用，可对照上方输出逐项核对。", "这一行 `def run(self):` 的作用，可对照上方输出逐项核对。", "这一行 `while self.ready:` 的作用，可对照上方输出逐项核对。", "这一行 `cb, arg = self.ready.popleft()` 的作用，可对照上方输出逐项核对。", "这一行 `cb(arg)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class CancelledError(BaseException):` 的作用，可对照上方输出逐项核对。", "这一行 `pass` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def step(task):` 的作用，可对照上方输出逐项核对。", "这一行 `loop = task.loop` 的作用，可对照上方输出逐项核对。", "这一行 `try:` 的作用，可对照上方输出逐项核对。", "这一行 `if task.must_cancel:` 的作用，可对照上方输出逐项核对。", "这一行 `task.must_cancel = False` 的作用，可对照上方输出逐项核对。", "这一行 `yielded = task.coro.throw(CancelledError)` 的作用，可对照上方输出逐项核对。", "这一行 `else:` 的作用，可对照上方输出逐项核对。", "这一行 `yielded = task.coro.send(None)` 的作用，可对照上方输出逐项核对。", "这一行 `except StopIteration as e:` 的作用，可对照上方输出逐项核对。", "这一行 `task.done = True` 的作用，可对照上方输出逐项核对。", "这一行 `task.result = e.value` 的作用，可对照上方输出逐项核对。", "这一行 `return` 的作用，可对照上方输出逐项核对。", "这一行 `if yielded is None:` 的作用，可对照上方输出逐项核对。", "这一行 `loop.call_soon(step, task)` 的作用，可对照上方输出逐项核对。", "这一行 `loop.log.append(&#39;yield None -&gt; call_soon&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `else:` 的作用，可对照上方输出逐项核对。", "这一行 `task.fut_waiter = yielded` 的作用，可对照上方输出逐项核对。", "这一行 `yielded.add_done_callback(lambda f: wakeup(task, f))` 的作用，可对照上方输出逐项核对。", "这一行 `loop.log.append(&#39;yield Future -&gt; wait __wakeup&#39;)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def wakeup(task, fut):` 的作用，可对照上方输出逐项核对。", "这一行 `task.fut_waiter = None` 的作用，可对照上方输出逐项核对。", "这一行 `task.loop.log.append(&#39;__wakeup: result &#39; + str(fut.r` 的作用，可对照上方输出逐项核对。", "这一行 `task.loop.call_soon(step, task)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class MiniTask:` 的作用，可对照上方输出逐项核对。", "这一行 `def __init__(self, coro, loop):` 的作用，可对照上方输出逐项核对。", "这一行 `self.coro = coro` 的作用，可对照上方输出逐项核对。", "这一行 `self.loop = loop` 的作用，可对照上方输出逐项核对。", "这一行 `self.fut_waiter = None` 的作用，可对照上方输出逐项核对。", "这一行 `self.must_cancel = False` 的作用，可对照上方输出逐项核对。", "这一行 `self.done = False` 的作用，可对照上方输出逐项核对。", "这一行 `self.result = None` 的作用，可对照上方输出逐项核对。", "这一行 `loop.call_soon(step, self)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `async def worker(loop):` 的作用，可对照上方输出逐项核对。", "这一行 `loop.log.append(&#39;worker step 1&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `f = loop.create_future()` 的作用，可对照上方输出逐项核对。", "这一行 `loop.call_soon(lambda _: f.set_result(42))` 的作用，可对照上方输出逐项核对。", "这一行 `v = await f` 的作用，可对照上方输出逐项核对。", "这一行 `loop.log.append(&#39;worker step 2 got &#39; + str(v))` 的作用，可对照上方输出逐项核对。", "这一行 `return v * 2` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `loop = MiniLoop()` 的作用，可对照上方输出逐项核对。", "这一行 `t = MiniTask(worker(loop), loop)` 的作用，可对照上方输出逐项核对。", "这一行 `loop.run()` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;task result&#39;, t.result)` 的作用，可对照上方输出逐项核对。", "这一行 `for line in loop.log:` 的作用，可对照上方输出逐项核对。", "这一行 `print(line)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import collections\n\nclass MiniFuture:\n    def __init__(self, loop):\n        self.loop = loop\n        self._done = False\n        self._result = None\n        self._callbacks = []\n    def done(self):\n        return self._done\n    def set_result(self, v):\n        self._done = True\n        self._result = v\n        for cb in self._callbacks:\n            self.loop.ready.append((cb, self))\n        self._callbacks.clear()\n    def add_done_callback(self, cb):\n        if self._done:\n            self.loop.ready.append((cb, self))\n        else:\n            self._callbacks.append(cb)\n    def result(self):\n        return self._result\n    def __await__(self):\n        if not self._done:\n            yield self\n        return self._result\n        yield\n\nclass MiniLoop:\n    def __init__(self):\n        self.ready = collections.deque()\n        self.log = []\n    def call_soon(self, cb, arg=None):\n        self.ready.append((cb, arg))\n    def create_future(self):\n        return MiniFuture(self)\n    def run(self):\n        while self.ready:\n            cb, arg = self.ready.popleft()\n            cb(arg)\n\nclass CancelledError(BaseException):\n    pass\n\ndef step(task):\n    loop = task.loop\n    try:\n        if task.must_cancel:\n            task.must_cancel = False\n            yielded = task.coro.throw(CancelledError)\n        else:\n            yielded = task.coro.send(None)\n    except StopIteration as e:\n        task.done = True\n        task.result = e.value\n        return\n    if yielded is None:\n        loop.call_soon(step, task)\n        loop.log.append(&#39;yield None -&gt; call_soon&#39;)\n    else:\n        task.fut_waiter = yielded\n        yielded.add_done_callback(lambda f: wakeup(task, f))\n        loop.log.append(&#39;yield Future -&gt; wait __wakeup&#39;)\n\ndef wakeup(task, fut):\n    task.fut_waiter = None\n    task.loop.log.append(&#39;__wakeup: result &#39; + str(fut.result()))\n    task.loop.call_soon(step, task)\n\nclass MiniTask:\n    def __init__(self, coro, loop):\n        self.coro = coro\n        self.loop = loop\n        self.fut_waiter = None\n        self.must_cancel = False\n        self.done = False\n        self.result = None\n        loop.call_soon(step, self)\n\nasync def worker(loop):\n    loop.log.append(&#39;worker step 1&#39;)\n    f = loop.create_future()\n    loop.call_soon(lambda _: f.set_result(42))\n    v = await f\n    loop.log.append(&#39;worker step 2 got &#39; + str(v))\n    return v * 2\n\nloop = MiniLoop()\nt = MiniTask(worker(loop), loop)\nloop.run()\nprint(&#39;task result&#39;, t.result)\nfor line in loop.log:\n    print(line)\n' :notes='["导入 collections，用 deque 充当事件循环的就绪队列", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 MiniFuture，模拟 lib/asyncio 的 Future，只保留 done 与回调表", "构造时收下所属的 loop", "保存 loop 引用", "_done 初始为 False", "_result 初始为 None", "_callbacks 收集完成时要触发的回调", "done 返回是否已完成", "读回 _done", "set_result 填入结果", "标记完成", "保存结果值", "遍历已登记的回调", "把回调挂进 loop.ready，等价于 add_done_callback 经 call_soon 调度", "清空回调表，避免重复触发", "add_done_callback 登记一个回调", "若已完成", "立即把回调排进就绪队列", "否则尚未完成", "暂存进回调表等待 set_result", "result 返回结果", "读回 _result", "__await__ 让 Future 可被 await", "若未完成", "yield 出自身，把暂停点交给调度器", "恢复后返回结果", "补一条 yield，保证 __await__ 是生成器", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 MiniLoop，模拟事件循环", "构造就绪队列与日志", "ready 是 FIFO deque", "log 记录执行轨迹", "call_soon 安排回调", "只是 append 一个 (回调, 参数) 元组", "create_future 造一个 Future", "绑定当前 loop", "run 消费就绪队列", "队列非空就一直循环", "从队首取出回调与参数", "执行回调，对应 _run_once 的 Handle 消费", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义 CancelledError 继承 BaseException，复刻 3.8 起的层级", "空实现，只借继承关系", "空行，只用于分隔逻辑块，不影响执行结果。", "step 对应 Task.__step", "取出所属 loop", "try 包裹 send 与 throw", "若有取消请求", "清掉取消标志", "用 throw 注入 CancelledError", "否则正常推进", "send(None) 驱动协程到下一个暂停点", "协程以 StopIteration 结束", "标记完成", "以 StopIteration.value 落地为 Task 的结果", "结束本次 step", "若 yield 出的是 None", "sleep(0) 捷径，直接重新入队", "记录这次重新入队", "若 yield 出的是未完成 Future", "把它记进 _fut_waiter", "给它挂上 __wakeup 回调", "记录进入挂起链", "空行，只用于分隔逻辑块，不影响执行结果。", "wakeup 是 Future 完成后的回调", "清空 _fut_waiter", "先 result() 取回值并记日志，避免异常未取", "再 call_soon 排下一次 step", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 MiniTask，模拟 Task", "构造时收协程与 loop", "保存协程", "保存 loop", "_fut_waiter 初始为空", "must_cancel 初始为 False", "done 初始为 False", "result 初始为 None", "构造只 call_soon 排首跳，创建时不执行函数体", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 worker 协程", "记录第一步", "造一个 Future", "排一个回调稍后给 Future 设结果 42", "await f 制造一次真实的 Future 挂起", "恢复后记录取到的值", "返回 v 乘 2 作为协程结果", "空行，只用于分隔逻辑块，不影响执行结果。", "造事件循环实例", "用 worker 协程构造 MiniTask", "启动事件循环", "打印任务最终结果", "遍历执行日志", "逐行打印，验证一次 await 跨两次事件循环迭代", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### cancelling 与 uncancel 的取消计数协议
 
 3.11 起取消不再是单个布尔位。
 
-`Task.cancel(msg=None)` 除把 `_must_cancel` 置真外，还把 `_num_cancels_requested` 加一；
+`Task.cancel(msg=None)` 除把 `_must_cancel` 置真外，还把 `_num_cancels_requested` 加一；`cancelling()` 返回这个计数，`uncancel()` 减一。
 
-`cancelling()` 返回这个计数，`uncancel()` 减一。它解决的是正文没展开的问题：timeout 与 `TaskGroup` 需要区分「被取消了几次」与「是否已经补偿」。
+它解决的是正文没展开的问题：timeout 与 `TaskGroup` 需要区分「被取消了几次」与「是否已经补偿」。
 
-`asyncio.timeout` 的 `__aexit__` 在超时分支里调用 `self._task.uncancel()`，只有计数归零且捕获到 `CancelledError` 时才把异常换成 `TimeoutError`；
-
-若协程里接住 `CancelledError`、调了 `uncancel()` 却不重抛，await 会正常返回，`__aexit__` 看到的 exc_type 为 None，超时被静默吞掉，这是升级到 3.11 之后新出现的一类故障。
+`asyncio.timeout` 的 `__aexit__` 在超时分支里调用 `self._task.uncancel()`，只有计数归零且捕获到 `CancelledError` 时才把异常换成 `TimeoutError`；若协程里接住 `CancelledError`、调了 `uncancel()` 却不重抛，await 会正常返回，`__aexit__` 看到的 exc_type 为 None，超时被静默吞掉，这是升级到 3.11 之后新出现的一类故障。
 
 shield 的实现（同样在 `Lib/asyncio/tasks.py`）也靠这套协议：它给外层 Future 挂 `_outer_done_callback`，外层被取消时只把外层标成 `CANCELLED`、内层继续跑，内层异常由 `_inner_done_callback` 消费，既屏蔽取消又不丢错误。
 
@@ -486,7 +474,7 @@ asyncio.run(main())
 <Exercise title='观测就绪队列与两次迭代的 await 往返' task='用 loop._ready 的长度在 call_soon 前后打点，说明一次 await Future 为何至少两次 _run_once，再对比 asyncio.sleep(0) 的 yield None 捷径。' solution='import asyncio\n\nasync def main():\n    loop = asyncio.get_running_loop()\n    fut = loop.create_future()\n    loop.call_soon(lambda: fut.set_result(&#39;ok&#39;))\n    print(&#39;ready before await&#39;, len(loop._ready))\n    await fut\n    print(&#39;after await result&#39;, fut.result())\n\nasyncio.run(main())\n' explain='await 一个未完成 Future 时 Task 把 __step 挂到 __wakeup，__wakeup 再 call_soon 重新排入 _ready，所以至少两次 _run_once 才恢复；sleep(0) 走 yield None 的捷径，Task 直接重新入队，只多一次迭代。_ready 是 collections.deque，call_soon 是 O(1) 的 append、消费是 popleft，而 _scheduled 是按到期时间组织的小根堆，插入 O(log n)。' />
 
 
-### eager_task_factory 的同步首跳权衡
+### __wakeup 回调与首跳到恢复的调度时序
 
 <Term word='Task.__wakeup' text='Task 挂起所等的 Future 落定时被 add_done_callback 触发的私有回调：它先取回结果或异常以免日志报出未读取的异常，清空 _fut_waiter，再用 loop.call_soon(__step) 把任务重新排进就绪队列。它是 await 能恢复的唯一入口，也是「一次 await 至少两轮事件循环」的来源。' />
 

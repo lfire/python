@@ -42,10 +42,6 @@ try:
 except TypeError as e:
     print(type(e).__name__, str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # int: 3 list of 2 other: str
@@ -84,10 +80,6 @@ c = Config([1, 2, 3])
 print(c.parsed, c.parsed, c.builds)
 print('parsed' in c.__dict__, callable(describe))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # 3 3.0
@@ -107,10 +99,6 @@ print(f.cache_info().hits, f.cache_info().misses, f.cache_parameters())
 print(inspect.isfunction(f.__wrapped__), f.__wrapped__(9))
 print(functools.partial(int, base=2).keywords)
 print(callable(f), callable(functools.partial(int, base=2)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

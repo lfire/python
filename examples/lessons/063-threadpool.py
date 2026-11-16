@@ -41,10 +41,6 @@ print('cancelled', all(not f.cancelled() for f in futs))
 with cf.ThreadPoolExecutor(2) as ex:
     print('map', list(ex.map(job, [0, 1, 3])))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # cancel pending True
@@ -67,10 +63,6 @@ with cf.ThreadPoolExecutor(max_workers=1) as ex:
     gate.set()
     print('f0 result', f0.result(), 'exception', f0.exception())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # submit (self, fn, /, *args, **kwargs)
@@ -89,10 +81,6 @@ print('shutdown', str(inspect.signature(cf.Executor.shutdown)))
 cpu = getattr(os, 'process_cpu_count', os.cpu_count)()
 print('default max_workers', min(32, cpu + 4))
 print('Future states', cf._base.PENDING, cf._base.RUNNING, cf._base.FINISHED)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -14,11 +14,9 @@ description: 理解所有序列共享的一套接口
 
 ## 改了半天切片，原列表却一动不动
 
-一个数据面板要展示最近若干条记录，工程师把内部 `list` 直接切成 `view = records[1:4]` 交给前端组件，组件里给 `view[0]` 赋了个新值，刷新后发现原 `records` 纹丝不动，状态标记全丢了；
+一个数据面板要展示最近若干条记录，工程师把内部 `list` 直接切成 `view = records[1:4]` 交给前端组件，组件里给 `view[0]` 赋了个新值，刷新后发现原 `records` 纹丝不动，状态标记全丢了；反过来另一个模块以为切片一定是副本，对 `memoryview` 的切片原地改字节，结果把整块缓冲区写坏。
 
-反过来另一个模块以为切片一定是副本，对 `memoryview` 的切片原地改字节，结果把整块缓冲区写坏。两处 bug 都来自把「切片」当成一个笼统动作，没区分谁返回副本、谁返回视图。
-
-更深一层是：有人手写了一个只实现 `__getitem__` 的容器，发现 `for x in obj` 与 `'Wed' in obj` 居然能用，而 `obj[1:3]` 却抛 `TypeError`，于是给每个方法都补一份样板代码。
+两处 bug 都来自把「切片」当成一个笼统动作，没区分谁返回副本、谁返回视图。更深一层是：有人手写了一个只实现 `__getitem__` 的容器，发现 `for x in obj` 与 `'Wed' in obj` 居然能用，而 `obj[1:3]` 却抛 `TypeError`，于是给每个方法都补一份样板代码。
 
 实际上 CPython 的序列协议只要求 `__len__` 与 `__getitem__` 两个方法，迭代、成员判断、`reversed` 都由固定回退规则或 `collections.abc.Sequence` 的 mixin 免费提供。
 
@@ -33,9 +31,7 @@ CPython 对序列的操作分两条独立通道。
 
 `len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽（即 `__len__`），返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数抛 `ValueError`、超过 `sys.maxsize` 抛 `OverflowError`。
 
-下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；
-
-编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是单个 `slice` 对象，而不是三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
+下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是单个 `slice` 对象，而不是三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
 
 「序列」与「可迭代」不是一回事：可迭代只要求 `__iter__` 返回一个迭代器；而序列要求 `__len__` 加 `__getitem__`，能按整数下标随机访问。
 
@@ -180,9 +176,7 @@ print('mixin owner', Sequence.__iter__.__qualname__)
 
 CPython 对序列的操作分成两条独立通道。`len(obj)` 走 `PyObject_Size` 对应的 `sq_length` 槽，返回值必须能用 `__index__` 转成 `Py_ssize_t`，负数或超过 `sys.maxsize` 分别抛 `ValueError` 与 `OverflowError`。
 
-下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；
-
-编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是 `slice` 对象而非三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
+下标 `obj[i]` 走 `mp_subscript` 或 `sq_item` 槽，最终调用 `__getitem__`；编译器把 `obj[a:b:c]` 编译成 `BUILD_SLICE` 加 `BINARY_SUBSCR`，因此自定义 `__getitem__` 收到的是 `slice` 对象而非三个整数，是否支持切片完全取决于实现里有没有处理 `isinstance(index, slice)`。
 
 迭代更微妙：`iter(obj)` 先查 `tp_iter`（`__iter__`），缺失时回退到 `PySeqIter_New`，它持有从 0 开始的自增计数器，反复调用 `__getitem__(i)` 直到 `IndexError`——这就是只写 `__getitem__` 也能 `for` 的底层机制。
 
@@ -246,7 +240,7 @@ print('slice', v[1:3], 'reversed', list(reversed(v)))
 | range | 实现 __len__ 与 __getitem__ 的惰性序列 | 内存恒定，不存全部元素 |
 | memoryview 切片 | 返回共享内存的视图 | 与 list / tuple / str 的切片副本语义相反 |
 
-<CheckList id='P017b' title='上线前自检' :items='["能复现并解释「改了切片得到的子序列，原列表却没变」", "能复现并解释「自定义类只写了 __getitem__，obj[a:b] 抛…」", "能复现并解释「from collections import Sequen…」", "能用一条命令验证 序列与可迭代的区别", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P017a' title='上线前自检' :items='["能复现并解释「改了切片得到的子序列，原列表却没变」", "能复现并解释「自定义类只写了 __getitem__，obj[a:b] 抛…」", "能复现并解释「from collections import Sequen…」", "能用一条命令验证 序列与可迭代的区别", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 错因速查与动手自测

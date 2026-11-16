@@ -16,9 +16,9 @@ description: 理解框架之下发生了什么
 
 把一个同步的报表接口挂到新装的 `ASGI` 网关上，压测时 QPS 不升反降，还偶发全部请求一起卡住。排查发现处理函数里用了一个只提供同步接口的旧 SDK，在 `async def` 视图里被直接调用；这一调用占住了事件循环所在线程，loop 上其它协程全被拖停。
 
-另一条线索是有人想在这个接口上加 WebSocket 推送，却发现同步栈根本没法维持长连接。两次返工指向同一个被跳过的层次：框架之下是一份明确的调用契约。`WSGI` 是 PEP 3333 定义的一请求一响应可调用对象，`ASGI` 是带 `scope`、`receive`、`send` 三参数的异步双工协议；
+另一条线索是有人想在这个接口上加 WebSocket 推送，却发现同步栈根本没法维持长连接。两次返工指向同一个被跳过的层次：框架之下是一份明确的调用契约。
 
-前者跑不了长连接，后者一旦混入阻塞调用就失去意义。本讲用标准库 `wsgiref` 与一个最小 `ASGI` 应用把两份契约跑通，让「同步还是异步」不再是口号。
+`WSGI` 是 PEP 3333 定义的一请求一响应可调用对象，`ASGI` 是带 `scope`、`receive`、`send` 三参数的异步双工协议；前者跑不了长连接，后者一旦混入阻塞调用就失去意义。本讲用标准库 `wsgiref` 与一个最小 `ASGI` 应用把两份契约跑通，让「同步还是异步」不再是口号。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='在 async 视图里直接调用同步阻塞库，压测时全部请求一起卡住：同步调用不 await、不让出，占死事件循环所在线程，loop 上其它协程全部停摆' />
 
@@ -31,19 +31,17 @@ description: 理解框架之下发生了什么
 application(environ, start_response)
 ```
 
-`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`、`CONTENT_TYPE`，以及 `wsgi.input`（请求体文件对象）、`wsgi.errors`、`wsgi.version`（默认 `(1, 0)`）、`wsgi.url_scheme`、`wsgi.multithread`、`wsgi.run_once` 等 `wsgi.*` 键；
+`environ` 是 CGI 风格的 `dict`，含 `REQUEST_METHOD`、`PATH_INFO`、`QUERY_STRING`、`SERVER_PROTOCOL`、`CONTENT_TYPE`，以及 `wsgi.input`（请求体文件对象）、`wsgi.errors`、`wsgi.version`（默认 `(1, 0)`）、`wsgi.url_scheme`、`wsgi.multithread`、`wsgi.run_once` 等 `wsgi.*` 键；`wsgiref.util.setup_testing_defaults` 正是按这份清单补齐一个最小 `environ`。
 
-`wsgiref.util.setup_testing_defaults` 正是按这份清单补齐一个最小 `environ`。
-
-`start_response` 必须在应用返回可迭代对象之前（或第一次迭代产出前）被调用，`status` 形如 `'200 OK'`，`headers` 是 `(name, value)` 元组列表；
+`start_response` 必须在应用返回可迭代对象之前（或第一次迭代产出前）被调用，`status` 形如 `'200 OK'`，`headers` 是 `(name, value)` 元组列表；它返回一个 `write(body)` 供遗留风格追加输出，但现代写法直接返回 `bytes` 的可迭代对象。
 
 ```python
 start_response(status, response_headers, exc_info=None)
 ```
 
-它返回一个 `write(body)` 供遗留风格追加输出，但现代写法直接返回 `bytes` 的可迭代对象。返回值的每个元素都必须是 `bytes`，不能是 `str`，服务器会对每个字节块调用一次写操作。
+返回值的每个元素都必须是 `bytes`，不能是 `str`，服务器会对每个字节块调用一次写操作。这个模型天然是一问一答：没有「请求还活着」的概念，因此 WebSocket、SSE 这类需要服务端持续推送的通道在纯 `WSGI` 上无法实现，只能靠脱离请求周期的独立进程。
 
-这个模型天然是一问一答：没有「请求还活着」的概念，因此 WebSocket、SSE 这类需要服务端持续推送的通道在纯 `WSGI` 上无法实现，只能靠脱离请求周期的独立进程。中间件就是包一层可调用对象，在调用前后改 `environ` 或拦截 `start_response`。
+中间件就是包一层可调用对象，在调用前后改 `environ` 或拦截 `start_response`。
 
 ```python
 from wsgiref.util import setup_testing_defaults
@@ -191,9 +189,9 @@ print('asgi version', scope['asgi']['version'])
 asyncio.to_thread(blocking_fn, ...)
 ```
 
-反过来，纯 CPU 密集的活即使放进线程也受 GIL 限制，应交给进程池。`WSGI` 侧没有这个问题：每个请求本来就在独立线程或进程里跑，阻塞是默认语义。选型判据由此清晰：传统 `CRUD`、依赖成熟同步 SDK 用同步栈省心；
+反过来，纯 CPU 密集的活即使放进线程也受 GIL 限制，应交给进程池。`WSGI` 侧没有这个问题：每个请求本来就在独立线程或进程里跑，阻塞是默认语义。
 
-需要 WebSocket、SSE、海量长连接与高并发 IO 时上 `ASGI`，并逐一审查调用链里是否还有同步阻塞点。
+选型判据由此清晰：传统 `CRUD`、依赖成熟同步 SDK 用同步栈省心；需要 WebSocket、SSE、海量长连接与高并发 IO 时上 `ASGI`，并逐一审查调用链里是否还有同步阻塞点。
 
 **同步异步混跑的正确处置**
 
@@ -258,7 +256,7 @@ print('headers keys', sorted(k for k in (captured['headers'] or {}) if k.startsw
 
 <Callout type="idea" title='落地提示' text='按协议选框架：传统 CRUD 用同步栈更省心，需要长连接与高并发 IO 时上 ASGI' />
 
-<CheckList id='P082b' title='上线前自检' :items='["能复现并解释「在 async 视图里直接调用同步阻塞库，压测时全部请求一起…」", "能复现并解释「WSGI 应用返回 str 列表，服务器报断言错误」", "能复现并解释「给 ASGI 应用发 http.response.body…」", "能用一条命令验证 请求响应模型", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P082a' title='上线前自检' :items='["能复现并解释「在 async 视图里直接调用同步阻塞库，压测时全部请求一起…」", "能复现并解释「WSGI 应用返回 str 列表，服务器报断言错误」", "能复现并解释「给 ASGI 应用发 http.response.body…」", "能用一条命令验证 请求响应模型", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
@@ -271,9 +269,9 @@ python -c "from urllib.parse import urlencode; print(urlencode({'page':2}))"
 
 `WSGI` 服务器（如 `gunicorn` 的 sync worker、`wsgiref.simple_server`）为每个请求分配线程或进程，调用一次应用、收集返回的字节迭代、逐块写给客户端，请求结束即释放，因此 `environ` 是请求级快照、应用天然无状态。
 
-`ASGI` 服务器（`uvicorn`、`hypercorn`）则维护一个事件循环：接受连接后构造一次 `scope`，把 `await receive()` / `await send()` 包成协程交给 loop 调度；
+`ASGI` 服务器（`uvicorn`、`hypercorn`）则维护一个事件循环：接受连接后构造一次 `scope`，把 `await receive()` / `await send()` 包成协程交给 loop 调度；协程在 `await` 处让出执行权，loop 据此在单线程里交错处理成千上万条连接。
 
-协程在 `await` 处让出执行权，loop 据此在单线程里交错处理成千上万条连接。这套机制的吞吐前提是任何 `await` 之间都不发生长时间阻塞，否则整个 loop 停摆——这正是同步库不能直接进 `async def` 视图的原因。
+这套机制的吞吐前提是任何 `await` 之间都不发生长时间阻塞，否则整个 loop 停摆——这正是同步库不能直接进 `async def` 视图的原因。
 
 消息顺序由协议强制保证：`http.response.start` 必须先于 `http.response.body`，`more_body` 为真表示还有后续块，服务器据此实现流式响应与 SSE。
 

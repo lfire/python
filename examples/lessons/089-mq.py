@@ -51,10 +51,6 @@ for m in [
 print('ledger rows', db.execute('SELECT COUNT(*) FROM ledger').fetchone()[0])
 print('dlq size', len(dlq))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # acked [0, 2]
@@ -81,10 +77,6 @@ print('acked', acked)
 print('dlq', dlq)
 print('deliveries of id1', 3)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # backoff [0.01, 0.02, 0.04, 0.08]
@@ -96,10 +88,6 @@ print('backoff', [backoff(a) for a in range(4)])
 import collections
 deliveries = ['m1','m1','m2','m1','m3']
 print('delivery counts', dict(collections.Counter(deliveries)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

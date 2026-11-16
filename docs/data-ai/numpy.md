@@ -14,11 +14,13 @@ description: 写出比纯 Python 快一个量级的数值代码
 
 ## 一批像素加 20，循环为什么比向量化慢两个量级
 
-图像服务里有个批量调亮度的任务：对 1000 乘 1000 的像素矩阵逐元素加 20，用两层 Python for 循环写了 8 秒还没跑完，换成一行向量化表达式 0.02 秒结束。团队照着改快了，却踩到第二个坑：有人用 `sub=a[a>0]` 取出正像素后对 sub 赋零，原矩阵 a 一个都没变；
+图像服务里有个批量调亮度的任务：对 1000 乘 1000 的像素矩阵逐元素加 20，用两层 Python for 循环写了 8 秒还没跑完，换成一行向量化表达式 0.02 秒结束。
 
-另有人写 `b=a[:,0]` 之后 `b+=1`，结果整列之外的数据也被悄悄改了。朴素解法有两层想当然：一是『循环最直观、逐个元素处理最稳』，却忽略了每个元素在 CPython 里都是带引用计数的 PyObject、每次加法都走一遍字节码分派；
+团队照着改快了，却踩到第二个坑：有人用 `sub=a[a>0]` 取出正像素后对 sub 赋零，原矩阵 a 一个都没变；另有人写 `b=a[:,0]` 之后 `b+=1`，结果整列之外的数据也被悄悄改了。
 
-二是『切片当然会复制一份数据』，而 ndarray 的基本切片返回的是共享同一块内存的视图。要解释为什么快、什么时候改得动原数组，必须落到 dtype、连续内存、stride 寻址与广播规则这四件事上，而不是记住『NumPy 快』这个标签。
+朴素解法有两层想当然：一是『循环最直观、逐个元素处理最稳』，却忽略了每个元素在 CPython 里都是带引用计数的 PyObject、每次加法都走一遍字节码分派；二是『切片当然会复制一份数据』，而 ndarray 的基本切片返回的是共享同一块内存的视图。
+
+要解释为什么快、什么时候改得动原数组，必须落到 dtype、连续内存、stride 寻址与广播规则这四件事上，而不是记住『NumPy 快』这个标签。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='布尔索引取出后赋值，原数组纹丝不动：sub = a[a &gt; 0]; sub[:] = 0 里的 sub 是布尔索引产生的副本，改动落在副本上' />
 
@@ -31,9 +33,9 @@ dtype 决定每个元素的字节数 itemsize：`np.int64`、`np.float64` 都是
 
 因为整块内存元素等长且类型已知，C 层的循环可以一条指令接着一条指令扫过去，不需要像 Python list 那样先解引用指针、再判断对象类型、再增减引用计数。
 
-对比之下，Python 的 list 存的是指向各对象的指针数组，每个 float 是约 24 字节的独立 PyObject 加一个 8 字节指针，同样一百万个数，内存与寻址成本都高一个量级。`np.empty` 只分配不初始化，`np.zeros` 填零，`np.arange` 按步长生成；
+对比之下，Python 的 list 存的是指向各对象的指针数组，每个 float 是约 24 字节的独立 PyObject 加一个 8 字节指针，同样一百万个数，内存与寻址成本都高一个量级。
 
-`astype` 会分配一块新数组做类型转换，绝不原地改写 dtype。混合类型运算会按类型提升规则向上转型，例如 int64 数组与 float64 标量相加得到 float64 数组。
+`np.empty` 只分配不初始化，`np.zeros` 填零，`np.arange` 按步长生成；`astype` 会分配一块新数组做类型转换，绝不原地改写 dtype。混合类型运算会按类型提升规则向上转型，例如 int64 数组与 float64 标量相加得到 float64 数组。
 
 所谓 ufunc（`np.add`、`np.exp`、`np.sqrt`、`np.multiply`）是在 C 里对整个 buffer 跑的循环，一次 Python 层调用就完成整批计算，`np.sum`、`np.mean` 这类归约也是把累加放到 C 层，Python 只付一次调用开销——这正是『写出 Python for 循环就丢掉优势』的根本原因。
 
@@ -106,11 +108,9 @@ print('list per element', (sys.getsizeof(lst) + 6 * sys.getsizeof(lst[0])) // 6)
 
 ## 广播规则：右对齐逐维比较
 
-广播让形状不同的数组逐元素运算，规则是：先把两个 shape 右对齐，从最右边的维度逐个比较，两个维度相等、或其中一个为 1、或某数组该维度缺失（视为 1）就兼容，结果取两者中较大的值；
+广播让形状不同的数组逐元素运算，规则是：先把两个 shape 右对齐，从最右边的维度逐个比较，两个维度相等、或其中一个为 1、或某数组该维度缺失（视为 1）就兼容，结果取两者中较大的值；任何一维既不相等又都不为 1，NumPy 会拒绝这次广播，报错文案形如：`ValueError: oper…`。
 
-任何一维既不相等又都不为 1，就抛 `ValueError: oper…`。
-
-```python
+```text
 ValueError: operands could not be broadcast together with shapes
 ```
 
@@ -120,9 +120,9 @@ ValueError: operands could not be broadcast together with shapes
 
 向量化的判据是『用一套形状表达批量运算，把循环留在 C 层』，写完再用 timeit 验证收益，别凭感觉。
 
-还要看清边界：`a*b+c` 会先产生一个临时数组再相加，超大数组时应写成 `np.multiply(a,b,out=tmp)` 再 `np.add(tmp,c,out=tmp)`，或用 `+=` 之类就地运算省下中间内存；
+还要看清边界：`a*b+c` 会先产生一个临时数组再相加，超大数组时应写成 `np.multiply(a,b,out=tmp)` 再 `np.add(tmp,c,out=tmp)`，或用 `+=` 之类就地运算省下中间内存；聚合要指定 axis 并用 `keepdims=True` 保住维度以便后续广播。
 
-聚合要指定 axis 并用 `keepdims=True` 保住维度以便后续广播。向量化省的是解释器开销，不改变算法本身的算术次数，遇到需要顺序依赖的递推仍得换思路。
+向量化省的是解释器开销，不改变算法本身的算术次数，遇到需要顺序依赖的递推仍得换思路。
 
 **常见 dtype 与每元素字节数（itemsize）**
 
@@ -228,7 +228,7 @@ print('same length', len(transform(pixels, 100, 1.2, 10)) == len(pixels))
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：布尔索引取出后赋值，原数组纹丝不动", "body": "sub = a[a &gt; 0]; sub[:] = 0 里的 sub 是布尔索引产生的副本，改动落在副本上", "tip": "用赋值语法 a[a &gt; 0] = 0 走 __setitem__ 原地写回，或先算 mask 再用 np.copyto / mask 定位"}, {"title": "第 2 步：uint8 像素加 20 后数值反而变小", "body": "同 dtype 运算不会自动提升类型，200 加 100 溢出后按 256 取模回绕成 44", "tip": "先 a.astype(np.int16) 或 astype(np.float32) 再运算，或用 np.add 指定 dtype"}, {"title": "第 3 步：本想拿一份独立数据，改 b 却把 a 也改了", "body": "a[:, 0]、a[1:] 等基本切片返回共享内存的视图，b += 1 是原地写", "tip": "需要独立副本就显式 a[:, 0].copy()；用 np.shares_memory(a, b) 提前确认是否共享"}]' />
 
-<CheckList id='P093b' title='上线前自检' :items='["能复现并解释「布尔索引取出后赋值，原数组纹丝不动」", "能复现并解释「uint8 像素加 20 后数值反而变小」", "能复现并解释「本想拿一份独立数据，改 b 却把 a 也改了」", "能用一条命令验证 ndarray 与 dtype", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P093a' title='上线前自检' :items='["能复现并解释「布尔索引取出后赋值，原数组纹丝不动」", "能复现并解释「uint8 像素加 20 后数值反而变小」", "能复现并解释「本想拿一份独立数据，改 b 却把 a 也改了」", "能用一条命令验证 ndarray 与 dtype", "关键路径有自动化测试与失败分支"]' />
 
 
 ## PyArrayObject 的字段布局与 ufunc 内层循环分发
@@ -249,9 +249,9 @@ ufunc（实现在 `numpy/_core/src/umath/ufunc_object.c`）调用时先做 type 
 
 实测很直观：十万个 0.1 朴素累加误差约 1.885e-08，两两求和为 0；更极端的 1e16 加十个 1.0 再减 1e16，朴素累加得 0.0（十个 1.0 全被大数吞掉）、两两求和得 4.0、`math.fsum` 用 Shewchuk 补偿算法给出精确的 10.0。
 
-触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；
+触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。
 
-金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
+架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
 
 ```python
 import math
@@ -295,7 +295,7 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 <OutputBox title='扩展示例运行结果' output='exact 10000.0\nnaive 10000.000000018848\npairwise 10000.0\nmath.fsum 10000.0\nnaive abs err 1.885e-08\npairwise abs err 0.000e+00\ncancellation naive 0.0\ncancellation pairwise 4.0\ncancellation fsum 10.0\nC (2,1) 72\nF (2,1) 40' />
 
-<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，用 fsum 作精确基准", "空行，只用于分隔逻辑块，不影响执行结果。", "naive_sum 复刻顺序累加，对应误差界 O(n u)", "pairwise_sum 递归二分，树深 log2(n) 对应 O(u log n)", "block=8 时退化为朴素小段，整棵树仍是对数深度", "构造十万个 0.1，真值恰为 10000.0", "打印三种累加结果，观察朴素值的尾数漂移", "空行，只用于分隔逻辑块，不影响执行结果。", "用科学计数法对比朴素与两两求和的绝对误差", "构造 1e16 加十个 1.0 再减的相消场景", "朴素累加把十个 1.0 全部吞掉得到 0.0", "两两求和保住部分精度得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "byte_offset 实现 offset 等于索引与 strides 的点积", "C 序 (3,4) float64 的 strides 是 (32, 8)，元素 (2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `xs = [0.1] * 100000` 的作用，可对照上方输出逐项核对。", "这一行 `exact = 10000.0` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;exact&#39;, exact)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;naive&#39;, repr(naive_sum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;pairwise&#39;, repr(pairwise_sum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;math.fsum&#39;, repr(math.fsum(xs)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - ex` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `xs2 = [1e16] + [1.0] * 10 + [-1e16]` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation naive&#39;, naive_sum(xs2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cancellation fsum&#39;, math.fsum(xs2))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def byte_offset(idx, strides):` 的作用，可对照上方输出逐项核对。", "这一行 `return sum(i * s for i, s in zip(idx, strides))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import math\n\ndef naive_sum(xs):\n    s = 0.0\n    for x in xs:\n        s += x\n    return s\n\ndef pairwise_sum(xs, block=8):\n    if len(xs) &lt;= block:\n        s = 0.0\n        for x in xs:\n            s += x\n        return s\n    mid = len(xs) // 2\n    return pairwise_sum(xs[:mid], block) + pairwise_sum(xs[mid:], block)\n\nxs = [0.1] * 100000\nexact = 10000.0\nprint(&#39;exact&#39;, exact)\nprint(&#39;naive&#39;, repr(naive_sum(xs)))\nprint(&#39;pairwise&#39;, repr(pairwise_sum(xs)))\nprint(&#39;math.fsum&#39;, repr(math.fsum(xs)))\nprint(&#39;naive abs err&#39;, format(abs(naive_sum(xs) - exact), &#39;.3e&#39;))\nprint(&#39;pairwise abs err&#39;, format(abs(pairwise_sum(xs) - exact), &#39;.3e&#39;))\n\nxs2 = [1e16] + [1.0] * 10 + [-1e16]\nprint(&#39;cancellation naive&#39;, naive_sum(xs2))\nprint(&#39;cancellation pairwise&#39;, pairwise_sum(xs2))\nprint(&#39;cancellation fsum&#39;, math.fsum(xs2))\n\ndef byte_offset(idx, strides):\n    return sum(i * s for i, s in zip(idx, strides))\n\nprint(&#39;C (2,1)&#39;, byte_offset((2, 1), (32, 8)))\nprint(&#39;F (2,1)&#39;, byte_offset((2, 1), (8, 24)))\n' :notes='["导入 math，后面用 math.fsum 作为精确求和的参照", "空行，只用于分隔逻辑块，不影响执行结果。", "定义朴素顺序累加，逐个元素往上累积舍入误差", "累加器从 0.0 起，保证全程按浮点相加", "按输入顺序遍历每个元素", "每步做一次加法，舍入误差随步数累积", "返回顺序累加的最终结果", "空行，只用于分隔逻辑块，不影响执行结果。", "定义两两求和，block 是退化为朴素小段的阈值", "段长不超过 block 时停止递归", "小段内同样从 0.0 起累加", "小段内按顺序遍历元素", "小段内逐元素累加", "返回该小段的部分和", "取中点把当前段对半切分", "对两半分别递归求和再相加，递归树深为 log2(n)", "空行，只用于分隔逻辑块，不影响执行结果。", "构造十万个 0.1，精确真值应为 10000.0", "写下精确真值，供后面计算绝对误差", "先打印真值作为对照基准", "打印朴素累加，尾数会偏离真值", "打印两两求和，结果应精确等于真值", "打印 math.fsum，同样给出精确值", "用科学计数法打印朴素累加的绝对误差", "打印两两求和的绝对误差，应为 0", "空行，只用于分隔逻辑块，不影响执行结果。", "构造 1e16 加十个 1.0 再减 1e16 的相消场景", "朴素累加把十个 1.0 全部吞掉，得到 0.0", "两两求和保住部分精度，得到 4.0", "math.fsum 用补偿算法给出精确 10.0", "空行，只用于分隔逻辑块，不影响执行结果。", "定义字节偏移函数，入参是索引元组与 strides", "偏移等于各维索引与对应 stride 的乘积之和", "空行，只用于分隔逻辑块，不影响执行结果。", "C 序 (3,4) float64 的 strides 是 (32, 8)，(2,1) 落在 72 字节", "F 序 strides 是 (8, 24)，同一逻辑元素落在 40 字节", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### np.sum 两两求和的误差界推导
@@ -306,9 +306,9 @@ print('F (2,1)', byte_offset((2, 1), (8, 24)))
 
 实测很直观：十万个 0.1 朴素累加误差约 1.885e-08，两两求和为 0；更极端的 1e16 加十个 1.0 再减 1e16，朴素累加得 0.0（十个 1.0 全被大数吞掉）、两两求和得 4.0、`math.fsum` 用 Shewchuk 补偿算法给出精确的 10.0。
 
-触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；
+触发条件要记牢：pairwise 只在数组内存连续且 dtype 为浮点时启用，非连续切片或 object dtype 会退回朴素循环，误差又回到 `O(n*u)`。
 
-金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
+架构权衡是 pairwise 比朴素多约两倍加法换精度、fsum 精确却慢数倍且要额外存部分和；金融累加不能靠 `np.sum` 的 pairwise 兜底，仍要 `Decimal` 或 Kahan 补偿。正文只说『聚合放到 C 层』，这里把 C 层里选了哪种求和算法讲清楚。
 
 **NumPy 源码组件与数值行为**
 

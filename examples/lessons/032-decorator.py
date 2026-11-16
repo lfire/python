@@ -46,10 +46,6 @@ print(hasattr(bad, '__wrapped__'), hasattr(good, '__wrapped__'))
 print(inspect.signature(good, follow_wrapped=False))
 print(bad(2, 3), good(2, 3, 4))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # ['task']
@@ -91,10 +87,6 @@ print(events)
 print(job.__name__)
 print(work(1), work(2), work.calls)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # orig (x)
@@ -119,10 +111,6 @@ print(w.__name__, inspect.signature(w))
 print('__wrapped__' in w.__dict__)
 print(inspect.unwrap(w) is orig)
 print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPER_ASSIGNMENTS)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

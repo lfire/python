@@ -29,10 +29,6 @@ print('both_positive', loop_t > 0 and builtin_t > 0)
 print('builtin_faster', builtin_t < loop_t)
 print('repeat_len', len(timeit.repeat(builtin_stmt, setup=setup, number=200, repeat=3)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # warning_level 30
@@ -50,10 +46,6 @@ log.warning('retry %s', 'once')
 print('warning_level', logging.WARNING)
 print('has_rows', 'rows=12' in stream.getvalue())
 print('has_retry', 'retry once' in stream.getvalue())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：

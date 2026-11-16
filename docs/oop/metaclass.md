@@ -46,15 +46,13 @@ description: 能读懂并写出框架级的类定制逻辑
 
 类有三种创建方式：`class` 语句、`type(name, bases, ns)` 三参数调用、以及自定义元类。
 
-`type` 与写 `class Dyn: value = 42` 等价，返回一个可直接实例化、可赋属性的类对象；
+`type` 与写 `class Dyn: value = 42` 等价，返回一个可直接实例化、可赋属性的类对象；`bases` 是基类元组，`namespace` 是字符串键到对象的映射，类体里的名字、方法、注解都落在里面。
 
 ```python
 type('Dyn', (object,), {'value': 42})
 ```
 
-`bases` 是基类元组，`namespace` 是字符串键到对象的映射，类体里的名字、方法、注解都落在里面。默认元类的选择规则是：显式写了 `metaclass=` 就用它；否则取所有基类 `type(base)` 里最派生的那一个；
-
-若这些元类互不为子类，就报 `metaclass conflict`。
+默认元类的选择规则是：显式写了 `metaclass=` 就用它；否则取所有基类 `type(base)` 里最派生的那一个；若这些元类互不为子类，就报 `metaclass conflict`。
 
 类对象上能读到的东西都在它的字典与槽里：`__name__`、`__bases__`、`__mro__`、`__dict__`。理解「类是 `type` 的实例」后，元类就不再神秘——它只是「类的类」，重写它的 `__new__` / `__init__` 就能干预类创建。
 
@@ -103,23 +101,19 @@ print('bases', [b.__name__ for b in Model.__bases__])
 
 ## 类创建时间线：__prepare__、类体、__new__、set_name、init_subclass、__init__
 
-执行 `class` 语句时，CPython 的 `__build_class__` 先确定元类，再调用元类的 `__prepare__(name, bases)` 拿到命名空间映射，默认返回普通 `dict`；
-
-3.7 起 `dict` 正式保证插入顺序（CPython 3.6 已实现，只是当时尚未写进语言规范），所以在 `__prepare__` 里专门返回 `collections.OrderedDict` 来保序的旧写法已无必要，但这个钩子仍可用来注入名字或记录声明顺序。
+执行 `class` 语句时，CPython 的 `__build_class__` 先确定元类，再调用元类的 `__prepare__(name, bases)` 拿到命名空间映射，默认返回普通 `dict`；3.7 起 `dict` 正式保证插入顺序（CPython 3.6 已实现，只是当时尚未写进语言规范），所以在 `__prepare__` 里专门返回 `collections.OrderedDict` 来保序的旧写法已无必要，但这个钩子仍可用来注入名字或记录声明顺序。
 
 接着类体在独立帧里执行，所有赋值与方法定义写进这个映射。
 
 然后调用 `metaclass(name, bases, ns)`，即 `type.__call__` → 元类 `__new__` → 元类 `__init__`。
 
-顺序里有两处常被忽略：`type.__new__` 内部会遍历 `namespace`，对每个定义了 `__set_name__` 的描述符回调（PEP 487，3.6 引入，回调时收到 `owner` 与 `name`），让描述符知道自己在类里的属性名；
-
-随后调用基类的 `__init_subclass__`（同样是 3.6，自动是 `classmethod`），把子类创建通知给父类。
+顺序里有两处常被忽略：`type.__new__` 内部会遍历 `namespace`，对每个定义了 `__set_name__` 的描述符回调（PEP 487，3.6 引入，回调时收到 `owner` 与 `name`），让描述符知道自己在类里的属性名；随后调用基类的 `__init_subclass__`（同样是 3.6，自动是 `classmethod`），把子类创建通知给父类。
 
 这两步都在 `__new__` 里完成，早于元类 `__init__`。
 
-所以「在 `__init__` 里收集字段」拿到的是已经跑过 `__set_name__` 和 `__init_subclass__` 的类，顺序与内容都可能被改过；
+所以「在 `__init__` 里收集字段」拿到的是已经跑过 `__set_name__` 和 `__init_subclass__` 的类，顺序与内容都可能被改过；要改写 `namespace`、`bases` 或注入属性，必须放在 `__new__` 里，并且务必 `return` 新建的类对象。
 
-要改写 `namespace`、`bases` 或注入属性，必须放在 `__new__` 里，并且务必 `return` 新建的类对象。`__init__` 只做初始化，此时类已定型，换不了 `bases` 也换不了对象本身。
+`__init__` 只做初始化，此时类已定型，换不了 `bases` 也换不了对象本身。
 
 ```python
 import inspect
@@ -160,9 +154,7 @@ CPython 把每个类表示为 `PyTypeObject`（heap type 或 static type）。
 
 执行 `class` 语句时 `__build_class__` 先按 `bases` 计算 metaclass，调用其 `__prepare__` 拿到 `namespace`，再让类体字节码在独立帧里把名字写进这个映射，最后调用 `metaclass(name, bases, ns)`。
 
-这一次调用经 `type.__call__` 分派到 `type.__new__`：它分配 `PyTypeObject`、把 `ns` 里的函数包装成 slot（`PyType_Ready`）、遍历 `ns` 对带 `__set_name__` 的描述符回调 `type_new_set_names`，再调用 `super().__init_subclass__`（`type_new_init_subclass`），最后返回类对象；
-
-随后才是元类 `__init__`。
+这一次调用经 `type.__call__` 分派到 `type.__new__`：它分配 `PyTypeObject`、把 `ns` 里的函数包装成 slot（`PyType_Ready`）、遍历 `ns` 对带 `__set_name__` 的描述符回调 `type_new_set_names`，再调用 `super().__init_subclass__`（`type_new_init_subclass`），最后返回类对象；随后才是元类 `__init__`。
 
 因此 `__set_name__` 与 `__init_subclass__` 都发生在 `__new__` 内、早于 `__init__`。
 
@@ -192,13 +184,11 @@ CPython 把每个类表示为 `PyTypeObject`（heap type 或 static type）。
 
 元类控制「类如何被创建」，能力最强，也最容易让 IDE、类型检查器与调试器失去线索：静态工具看不到运行时注入的属性，反射出来的 MRO 也和源码不一致。
 
-绝大多数需求有更轻的替代：只是想在子类创建时做登记或校验，用基类上的 `__init_subclass__`；
+绝大多数需求有更轻的替代：只是想在子类创建时做登记或校验，用基类上的 `__init_subclass__`；只是想给描述符拿到属性名，用 `__set_name__`；只是想给成品类加方法或改属性，用类装饰器（接收类、返回类，不改变继承关系）。
 
-只是想给描述符拿到属性名，用 `__set_name__`；只是想给成品类加方法或改属性，用类装饰器（接收类、返回类，不改变继承关系）。元类真正不可替代的场景是必须改 `bases`、必须替换 `namespace` 类型、或必须让 `isinstance` / 类级别行为随创建过程改变，ORM 字段收集与接口注册属于经典用法。
+元类真正不可替代的场景是必须改 `bases`、必须替换 `namespace` 类型、或必须让 `isinstance` / 类级别行为随创建过程改变，ORM 字段收集与接口注册属于经典用法。元类冲突的修复是新建一个同时继承所有相关元类的新元类，再让子类用它，或统一让所有基类共用同一元类。
 
-元类冲突的修复是新建一个同时继承所有相关元类的新元类，再让子类用它，或统一让所有基类共用同一元类。还有两个细节：零参数 `super()` 依赖编译器在类体里生成的 `__class__` cell，元类若重建类要留意这个闭包是否仍指向预期类；
-
-`super().__new__(mcls, ...)` 必须显式传 `mcls`，漏了会把 `name` 当成元类参数而触发类型错误。
+还有两个细节：零参数 `super()` 依赖编译器在类体里生成的 `__class__` cell，元类若重建类要留意这个闭包是否仍指向预期类；`super().__new__(mcls, ...)` 必须显式传 `mcls`，漏了会把 `name` 当成元类参数而触发类型错误。
 
 写元类前先问一句「`__init_subclass__` 能不能做」，能就别上元类。
 
@@ -281,7 +271,7 @@ print(create_sql(User))
 
 <Callout type="idea" title='落地提示' text='ORM 映射、字段注册、接口校验是元类的经典场景；写之前先确认没有更轻的方案' />
 
-<CheckList id='P045b' title='上线前自检' :items='["能复现并解释「元类 __new__ 里漏写 return super().…」", "能复现并解释「把字段收集或校验放进元类 __init__，结果与声明顺序不…」", "能复现并解释「同时继承两个带不同自定义元类的基类」", "能用一条命令验证 类也是对象", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P045a' title='上线前自检' :items='["能复现并解释「元类 __new__ 里漏写 return super().…」", "能复现并解释「把字段收集或校验放进元类 __init__，结果与声明顺序不…」", "能复现并解释「同时继承两个带不同自定义元类的基类」", "能用一条命令验证 类也是对象", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "print(type('Demo', (), {'x':1}).__mro__)"
@@ -305,13 +295,11 @@ python -c "print(type('Demo', (), {'x':1}).__mro__)"
 
 ## __build_class__ 到 type_new：类创建的 C 层调用链
 
-class 语句编译出 `LOAD_BUILD_CLASS`，把类体函数、类名与基类元组交给 Python/`bltinmodule.c` 的 builtin`___build_class__`：先对每个 base 调 `__mro_entries__`（PEP 560）归一化基类，再按 _PyType_CalculateMetaclass 选元类，然后调 `__prepare__` 拿到命名空间映射，类体在独立帧执行，赋值、方法、注解与编译器为 `super()` 生成的 `__classcell__` 都写进去。
+class 语句编译出 `LOAD_BUILD_CLASS`，把类体函数、类名与基类元组交给 `Python/bltinmodule.c` 的 `builtin___build_class__`：先对每个 base 调 `__mro_entries__`（PEP 560）归一化基类，再按 _PyType_CalculateMetaclass 选元类，然后调 `__prepare__` 拿到命名空间映射，类体在独立帧执行，赋值、方法、注解与编译器为 `super()` 生成的 `__classcell__` 都写进去。
 
-真正创建类在 Objects/`typeobject.c` 的 type_new：把 namespace 复制进 tp_dict，type_new_set_names 对 `__set_name__` 描述符逐个回调，type_new_init_subclass 调基类的 `__init_subclass__`，最后 PyType_Ready 固化 MRO、填 tp_slots、把 `__dict__` 变成 mappingproxy。
+真正创建类在 `Objects/typeobject.c` 的 type_new：把 namespace 复制进 tp_dict，type_new_set_names 对 `__set_name__` 描述符逐个回调，type_new_init_subclass 调基类的 `__init_subclass__`，最后 PyType_Ready 固化 MRO、填 tp_slots、把 `__dict__` 变成 mappingproxy。
 
-关键边界：类体用的 dict 在类创建后被丢弃，元类 `__init__` 拿到的 `cls.__dict__` 是只读代理；
-
-`__set_name__` 与 `__init_subclass__` 都在 type_new 内、早于元类 `__init__`，因此改 bases 或 namespace 只能放在 `__new__`。
+关键边界：类体用的 dict 在类创建后被丢弃，元类 `__init__` 拿到的 `cls.__dict__` 是只读代理；`__set_name__` 与 `__init_subclass__` 都在 type_new 内、早于元类 `__init__`，因此改 bases 或 namespace 只能放在 `__new__`。
 
 ```python
 import types
@@ -336,7 +324,7 @@ print('cell points to C', C.m.__closure__[0].cell_contents is C)
 
 <OutputBox title='扩展示例运行结果' output='classcell in ns True\ncell type cell\ncell points to C True' />
 
-<LineByLine code='import types\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns, **kw):\n        cell = ns.get(&#39;__classcell__&#39;)\n        print(&#39;classcell in ns&#39;, isinstance(cell, types.CellType))\n        return super().__new__(mcls, name, bases, ns)\n\nclass Base:\n    pass\n\nclass C(Base, metaclass=Meta):\n    def m(self):\n        return super().m()\n\nprint(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__)\nprint(&#39;cell points to C&#39;, C.m.__closure__[0].cell_contents is C)\n' :notes='["types.CellType 用来核验 ns 里的 __classcell__ 是不是闭包单元", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义元类继承 type，才能在 __new__ 阶段读到原始命名空间", "类体用了零参数 super()，编译器会把 __classcell__ 写进 ns", "把 ns 原样交给 type.__new__，cell 才会被取出并回填到方法闭包", "读回方法闭包的第一个 cell，确认其运行时类型", "cell 内容指向 C 本身，证明 __classcell__ 已被 type_new 正确回填", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class Base:` 的作用，可对照上方输出逐项核对。", "这一行 `pass` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class C(Base, metaclass=Meta):` 的作用，可对照上方输出逐项核对。", "这一行 `def m(self):` 的作用，可对照上方输出逐项核对。", "这一行 `return super().m()` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `print(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;cell points to C&#39;, C.m.__closure__[0].cell_co` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import types\n\nclass Meta(type):\n    def __new__(mcls, name, bases, ns, **kw):\n        cell = ns.get(&#39;__classcell__&#39;)\n        print(&#39;classcell in ns&#39;, isinstance(cell, types.CellType))\n        return super().__new__(mcls, name, bases, ns)\n\nclass Base:\n    pass\n\nclass C(Base, metaclass=Meta):\n    def m(self):\n        return super().m()\n\nprint(&#39;cell type&#39;, type(C.m.__closure__[0]).__name__)\nprint(&#39;cell points to C&#39;, C.m.__closure__[0].cell_contents is C)\n' :notes='["导入 types，后面用 types.CellType 判断 __classcell__ 是不是闭包单元。", "空行，只用于分隔逻辑块，不影响执行结果。", "自定义元类继承 type，才能在 __new__ 阶段读到类体执行完的原始命名空间。", "重写 __new__ 拿到 ns：这个字典里既有用户写的名字，也有编译器注入的 __classcell__。", "取出 __classcell__；类体里用了零参数 super()，编译器就会把它写进 ns。", "用 isinstance(cell, types.CellType) 确认取到的确实是闭包单元，而不是普通对象。", "把 ns 原样交给 type.__new__，__classcell__ 才会被取出并回填进方法闭包；清洗 ns 时若把它丢掉，3.8 起会直接报错。", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个普通基类，让子类 C 的方法里能用 super()。", "基类不提供实现，占位即可。", "空行，只用于分隔逻辑块，不影响执行结果。", "用 metaclass=Meta 指定元类；创建 C 时会先走 Meta.__new__，触发上面的探测逻辑。", "定义用到零参数 super() 的方法，编译器正是为它生成 __classcell__。", "super() 依赖 __class__ cell；这一行决定了 ns 里必然出现 __classcell__。", "空行，只用于分隔逻辑块，不影响执行结果。", "读回 C.m 闭包的第一个 cell，打印它的运行时类型，验证确实是 cell。", "cell 内容指向 C 本身，证明 __classcell__ 已被 type.__new__ 正确回填，零参数 super() 才成立。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ### __classcell__ 如何穿过 namespace 回到零参数 super
@@ -348,11 +336,11 @@ print('cell points to C', C.m.__closure__[0].cell_contents is C)
 
 ## _PyType_CalculateMetaclass 与 __mro_entries__ 的基类归一化
 
-_PyType_CalculateMetaclass（Objects/`typeobject.c`）在 `__prepare__` 之前执行：遍历归一化后的 bases，对每个取 `Py_TYPE(base)` 作候选元类，维护 winner，winner 是 candidate 子类则保留、candidate 是 winner 子类则替换，互不相关就抛 TypeError: metaclass conflict。
+_PyType_CalculateMetaclass（`Objects/typeobject.c`）在 `__prepare__` 之前执行：遍历归一化后的 bases，对每个取 `Py_TYPE(base)` 作候选元类，维护 winner，winner 是 candidate 子类则保留、candidate 是 winner 子类则替换，互不相关就抛 TypeError: metaclass conflict。
 
 这解释了显式 `metaclass=` 也要与所有基类的元类兼容，修复冲突只能造一个同时继承双方的新元类。
 
-`__mro_entries__` 来自 PEP 560：base 不是 type 实例但定义了该钩子时，builtin`___build_class__` 调它拿回替换元组，`typing.Generic[T]` 才能出现在 class 括号里。
+`__mro_entries__` 来自 PEP 560：base 不是 type 实例但定义了该钩子时，`builtin___build_class__` 调它拿回替换元组，`typing.Generic[T]` 才能出现在 class 括号里。
 
 顺序固定：先归一化 bases，再算元类，最后 `__prepare__`，所以 `__mro_entries__` 返回的类会改变元类选择。
 
@@ -374,9 +362,9 @@ _PyType_CalculateMetaclass（Objects/`typeobject.c`）在 `__prepare__` 之前�
 
 某 ORM 元类把双下划线开头的键全过滤掉再交给 `super().__new__`，上线后所有用零参数 `super()` 的模型类在定义阶段就崩：RuntimeError: `__class__` not set defining 'User' ... Was `__classcell__` propagated to `type.__new__`?。
 
-根因是编译器为 `super()` 生成的 `__classcell__` 也是双下划线开头，被一并丢掉，type_new 拿不到 cell 就填不进方法闭包，3.8 起显式报错。修复是清洗后补回该键，或先复制 ns 再 pop，别误伤解释器注入的键；
+根因是编译器为 `super()` 生成的 `__classcell__` 也是双下划线开头，被一并丢掉，type_new 拿不到 cell 就填不进方法闭包，3.8 起显式报错。
 
-`__qualname__`、`__annotations__` 同理要进白名单。
+修复是清洗后补回该键，或先复制 ns 再 pop，别误伤解释器注入的键；`__qualname__`、`__annotations__` 同理要进白名单。
 
 下面用同一个 Cleaning 元类配开关，先复现报错再验收修复，以闭包内容是否指向类本身为准。
 

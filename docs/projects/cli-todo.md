@@ -14,9 +14,7 @@ description: 交付一个可安装、可测试、可持久化的命令行工具
 
 ## 进程被杀后，待办文件只剩半截 JSON
 
-一个待办清单 CLI 用 `open(path, 'w').write(json.dumps(todos))` 存盘，某次进程写到一半被 `kill -9`，磁盘上留下截断的半截 `JSON`；
-
-第二天所有命令一起抛 `json.JSONDecodeError`，用户数据就此丢失。
+一个待办清单 CLI 用 `open(path, 'w').write(json.dumps(todos))` 存盘，某次进程写到一半被 `kill -9`，磁盘上留下截断的半截 `JSON`；第二天所有命令一起抛 `json.JSONDecodeError`，用户数据就此丢失。
 
 团队还发现没有退出码约定：`todo done 99` 明明没找到条目却返回 `0`，外层脚本以为成功，继续把后续步骤全带偏。最朴素的写法「直接覆盖写、报错就 `print` 一句」失败在两处：写操作不是原子的，进程随时可能停在文件写到一半；错误只打印给人看，没有通过进程退出码传给调用方，自动化脚本无从判定成败。
 
@@ -27,13 +25,11 @@ description: 交付一个可安装、可测试、可持久化的命令行工具
 
 `ArgumentParser(prog='todo')` 建出解析器，`add_subparsers` 再挂子命令，其中 `dest='cmd'` 决定命令名存到哪个字段、`required=True` 让缺子命令时直接报错而不是静默返回 `None`——这个参数从 3.7 起才支持。
 
-每个 `add_parser('add')` 返回一台独立的子解析器，可以继续用 `add_argument('title')` 声明位置参数、用 `add_argument` 声明整数参数；
+每个 `add_parser('add')` 返回一台独立的子解析器，可以继续用 `add_argument('title')` 声明位置参数、用 `add_argument` 声明整数参数；`type=int` 会在解析阶段把字符串转成整数，转不动就由 `argparse` 统一报错。
 
 ```python
 add_argument('tid', type=int)
 ```
-
-`type=int` 会在解析阶段把字符串转成整数，转不动就由 `argparse` 统一报错。
 
 `parse_args(argv)` 返回 `Namespace`，把 `argv` 做成参数（默认 `None` 表示读 `sys.argv`）是让 `main` 可测试的关键。
 
@@ -140,13 +136,9 @@ print('atomic restore', json.loads(open(target, encoding='utf-8').read()))
 
 `json.dump` 负责序列化、`json.load` 负责反序列化，`ensure_ascii=False` 让中文原样写进文件，`indent=2` 便于人读。
 
-原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；
+原子写有一套固定姿势：先让 `tempfile.mkstemp` 在目标文件所在目录（也就是同一文件系统）建临时文件，它返回一个文件描述符与临时路径；用 `os.fdopen(fd, 'w')` 包成文件对象后写入，`f.flush()` 把用户态缓冲刷进内核，`os.fsync(f.fileno())` 再把页缓存真正落盘，最后 `os.replace(tmp, target)` 一步原子替换。
 
-用 `os.fdopen(fd, 'w')` 包成文件对象后写入，`f.flush()` 把用户态缓冲刷进内核，`os.fsync(f.fileno())` 再把页缓存真正落盘，最后 `os.replace(tmp, target)` 一步原子替换。
-
-之所以稳妥，是因为 `POSIX` 的 `rename(2)` 在同一文件系统内是原子的：任何时刻的读者要么看到完整的旧文件、要么看到完整的新文件，绝不会撞上半截；
-
-而直接 `open(target,'w')` 会先截断再逐字节写，做不到这一点。
+之所以稳妥，是因为 `POSIX` 的 `rename(2)` 在同一文件系统内是原子的：任何时刻的读者要么看到完整的旧文件、要么看到完整的新文件，绝不会撞上半截；而直接 `open(target,'w')` 会先截断再逐字节写，做不到这一点。
 
 跨文件系统 rename 会抛 `OSError` 的 `EXDEV`（errno 18），所以临时文件必须与目标同目录，这正是上面那条约束的由来；再用 `try/finally` 保证异常时删掉残留的临时文件。
 
@@ -181,9 +173,9 @@ print('atomic restore', json.loads(open(target, encoding='utf-8').read()))
 
 前提正卡在挂载点上——临时文件建在 `/tmp`、目标却在另一块盘，就跨不了设备，会抛 `OSError` 的 `EXDEV`（errno 18）。
 
-所以 `tempfile.mkstemp` 的 `dir` 必须指向目标文件所在目录；
+所以 `tempfile.mkstemp` 的 `dir` 必须指向目标文件所在目录；提交前还要 `f.flush()` 加 `os.fsync(fd)` 把数据真正落盘。
 
-提交前还要 `f.flush()` 加 `os.fsync(fd)` 把数据真正落盘。后面的探针会复现 `EXDEV`。
+后面的探针会复现 `EXDEV`。
 
 ```python
 import os, tempfile
@@ -212,17 +204,11 @@ print('same dir', os.path.dirname(a) == os.path.dirname(b))
 
 把 CLI 拆成四层：输入层用 `argparse`，领域层是纯逻辑（比如 `add` 与 `done`），存储层管 `load` 与 `save` 的原子写，输出层只做 `print` 格式化。每层都能单独替换与测试：领域层注入一份内存里的假存储就能测，完全不用碰磁盘。
 
-`main(argv)` 返回整数而不是自己调 `sys.exit`，测试里可以直接断言返回值；
+`main(argv)` 返回整数而不是自己调 `sys.exit`，测试里可以直接断言返回值；真正把整数变成进程退出码的是入口那行守卫——`if __name__ == '__main__'` 里调用 `sys.exit(main())`。
 
-真正把整数变成进程退出码的是入口那行守卫——`if __name__ == '__main__'` 里调用 `sys.exit(main())`。
+端到端测试有两条路：`click` 生态用 `click.testing.CliRunner` 捕获 `stdout` 与 `exit_code`；只用标准库就用 `subprocess.run` 断言 `stdout` 与 `returncode`，或者把 `main` 设计成可注入 `argv` 与输出流后直接调用。
 
-端到端测试有两条路：`click` 生态用 `click.testing.CliRunner` 捕获 `stdout` 与 `exit_code`；
-
-只用标准库就用 `subprocess.run` 断言 `stdout` 与 `returncode`，或者把 `main` 设计成可注入 `argv` 与输出流后直接调用。
-
-打包入口写在 `pyproject.toml` 的 `[project.scripts]` 下，一行 `todo = 'todo.cli:main'`；
-
-`pip install` 后由 setuptools 或 hatchling 生成可执行脚本，脚本调用 `main()` 并拿它的返回值当退出码。
+打包入口写在 `pyproject.toml` 的 `[project.scripts]` 下，一行 `todo = 'todo.cli:main'`；`pip install` 后由 setuptools 或 hatchling 生成可执行脚本，脚本调用 `main()` 并拿它的返回值当退出码。
 
 ```bash
 pip install -e .
@@ -237,9 +223,7 @@ pip install -e .
 
 约定三层：`0` 成功、`1` 业务错误（如 `done 99` 没找到条目）、`2` 用法错误——`argparse` 的 `parser.error` 自带 `2`，`add_subparsers` 的 `required=True` 自 3.7 起支持，缺子命令不再静默返回 `None`。
 
-实现上让 `main(argv)` 返回整数，末尾用 `sys.exit(main())` 透传；
-
-领域层把「没找到」映射成 `1`，断言 `main(['done','99']) == 1` 就能锁住。
+实现上让 `main(argv)` 返回整数，末尾用 `sys.exit(main())` 透传；领域层把「没找到」映射成 `1`，断言 `main(['done','99']) == 1` 就能锁住。
 
 下表列出码值与产生方式。
 
@@ -259,13 +243,11 @@ pip install -e .
 
 待办文件损坏时按「能不能读、会不会覆盖、看退出码」三步查。
 
-`json.load` 抛 `json.JSONDecodeError`，说明磁盘上是半截 `JSON`；
+`json.load` 抛 `json.JSONDecodeError`，说明磁盘上是半截 `JSON`；此时若在 `except` 里当成空列表继续 `save`，会抹掉仅存的数据——只有文件不存在才返回空列表，存在却解析失败必须报错退出、留着原文件供恢复。
 
-此时若在 `except` 里当成空列表继续 `save`，会抹掉仅存的数据——只有文件不存在才返回空列表，存在却解析失败必须报错退出、留着原文件供恢复。
+写侧依次核对：`tempfile.mkstemp` 的 `dir` 是否与目标同目录、有没有 `f.flush()` 与 `os.fsync(fd)`、是否走了 `os.replace`；缺一步就可能在崩溃窗口留下半成品，跨设备则会报 `EXDEV`。
 
-写侧依次核对：`tempfile.mkstemp` 的 `dir` 是否与目标同目录、有没有 `f.flush()` 与 `os.fsync(fd)`、是否走了 `os.replace`；
-
-缺一步就可能在崩溃窗口留下半成品，跨设备则会报 `EXDEV`。最后确认 `main` 把业务失败映射成了非 `0`。
+最后确认 `main` 把业务失败映射成了非 `0`。
 
 **错因速查**
 

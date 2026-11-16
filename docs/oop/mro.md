@@ -14,9 +14,7 @@ description: 能推导多继承下的方法解析顺序
 
 ## 菱形继承里，初始化为什么跑两次
 
-一个菱形继承里 `D(B, C)`，`B` 和 `C` 都继承 `A`，每个 `__init__` 都写 `super().__init__()`，结果 `A.__init__` 只跑了一次，团队里有人以为 `super` 调父类所以该跑两次；
-
-另一个人把某个类改成显式 `A.__init__(self)`，链式调用立刻断掉，`C.__init__` 被整个跳过。
+一个菱形继承里 `D(B, C)`，`B` 和 `C` 都继承 `A`，每个 `__init__` 都写 `super().__init__()`，结果 `A.__init__` 只跑了一次，团队里有人以为 `super` 调父类所以该跑两次；另一个人把某个类改成显式 `A.__init__(self)`，链式调用立刻断掉，`C.__init__` 被整个跳过。
 
 更隐蔽的是零参数 `super()` 为什么能工作——它依赖编译器悄悄塞进来的 `__class__` cell，把方法整体挪到别的类里就会失效。本讲把 `C3` 线性化、`super` 的真实语义、协作式多继承与属性查找链讲清楚，让 `MRO` 变成能自己推导、`super` 变成能解释的东西，而不是背结论。
 
@@ -51,7 +49,7 @@ description: 能推导多继承下的方法解析顺序
 
 若基类顺序自相矛盾，例如 `class C(A, B)` 且 `B` 已经继承 `A`，则抛 `TypeError: Canno…`。
 
-```python
+```text
 TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B
 ```
 
@@ -137,15 +135,11 @@ except TypeError as e:
 
 `super()` 不是调用父类，而是返回一个代理对象，沿 `type(self).__mro__` 里当前类之后的位置查找属性：`super(C, obj).m()` 从 `MRO` 中 `C` 的下一个类开始找 `m`。
 
-实例方法里的零参数 `super()` 等价于 `super(__class__, self)`，其中 `__class__` 是编译器为任何用到 `super()` 或 `__class__` 的方法自动创建的一个闭包 cell（可在该方法的 `co_freevars` 里看到），运行时由解释器填充；
-
-这也解释了为什么把方法整体复制到别的类、或用 `super(C, self)` 写死类名容易出错。
+实例方法里的零参数 `super()` 等价于 `super(__class__, self)`，其中 `__class__` 是编译器为任何用到 `super()` 或 `__class__` 的方法自动创建的一个闭包 cell（可在该方法的 `co_freevars` 里看到），运行时由解释器填充；这也解释了为什么把方法整体复制到别的类、或用 `super(C, self)` 写死类名容易出错。
 
 类方法里 `super()` 等价 `super(__class__, cls)`，而静态方法没有 `self` 也没有 `cls`，零参数形式不可用。
 
-协作式多继承要求链上每个类的 `__init__` 都调用 `super().__init__()` 并统一用 `**kwargs` 透传参数，这样每个初始化才恰好执行一次、参数不丢；
-
-一旦混用显式 `A.__init__(self)`，协作链就从那里断开，`MRO` 后续类的 `__init__` 被跳过或被重复调用。
+协作式多继承要求链上每个类的 `__init__` 都调用 `super().__init__()` 并统一用 `**kwargs` 透传参数，这样每个初始化才恰好执行一次、参数不丢；一旦混用显式 `A.__init__(self)`，协作链就从那里断开，`MRO` 后续类的 `__init__` 被跳过或被重复调用。
 
 `Mixin` 只提供单一能力、全部方法用 `super` 协作、不持有实例状态，是稳妥的用法。
 
@@ -191,13 +185,11 @@ print(C.__init__.__code__.co_freevars)
 
 `MRO` 由 `C3` 线性化在类创建时（`type.__new__`）计算并固化进 `__mro__` 元组：它把子类、各基类 `MRO` 与基类声明顺序当作约束序列反复合并，选出一个不违反任何序列相对顺序的类，无法合并就抛 `TypeError`。
 
-`super` 的实现是一个代理对象，内部持有 `__class__`（当前类）与 `self`（实例或类），查找属性时从 `type(self).__mro__` 里 `__class__` 之后的位置开始扫描，因此它找的是 `MRO` 的下一个实现而非语法上的父类；
+`super` 的实现是一个代理对象，内部持有 `__class__`（当前类）与 `self`（实例或类），查找属性时从 `type(self).__mro__` 里 `__class__` 之后的位置开始扫描，因此它找的是 `MRO` 的下一个实现而非语法上的父类；零参数 `super()` 之所以成立，是因为编译器扫描到方法体里的 `super` 或 `__class__` 时，会自动创建一个 `__class__` cell 放进该方法的 `co_freevars`，运行时由解释器填充。
 
-零参数 `super()` 之所以成立，是因为编译器扫描到方法体里的 `super` 或 `__class__` 时，会自动创建一个 `__class__` cell 放进该方法的 `co_freevars`，运行时由解释器填充。
+属性查找统一由 `object.__getattribute__` 驱动：它先在类及基类上按 `MRO` 找同名属性，若该属性是数据描述符就优先调用其 `__get__`，否则再查实例 `__dict__`，随后才轮到非数据描述符与普通类属性；全失败后才把控制权交给 `__getattr__`。
 
-属性查找统一由 `object.__getattribute__` 驱动：它先在类及基类上按 `MRO` 找同名属性，若该属性是数据描述符就优先调用其 `__get__`，否则再查实例 `__dict__`，随后才轮到非数据描述符与普通类属性；
-
-全失败后才把控制权交给 `__getattr__`。这条优先级正是 `property` 能拦截赋值、而实例同名键能盖住方法的根本原因。
+这条优先级正是 `property` 能拦截赋值、而实例同名键能盖住方法的根本原因。
 
 <ConceptDiagram type='layers3' title='第 039 讲 · 分层视角' labels='C3 线性化与 __mro__|super 的真实语义与零参数形式|属性查找链与 __getattribut…|__getattribute__ 入口' caption='属性查找链与 __getattribute__ 入口' />
 
@@ -214,13 +206,11 @@ object.__getattribute__(obj, 'attr')
 
 查找优先级是：数据描述符（实现了 `__set__` 或 `__delete__`）→ 实例 `__dict__` → 非数据描述符（只有 `__get__`，如 `function`、`staticmethod`）→ 类属性 → 若以上都失败且定义了 `__getattr__` 才调用它 → 否则抛 `AttributeError`。
 
-关键结论有两条：数据描述符优先于实例字典，所以 `property` 的 `setter` 无法被实例同名键绕过；非数据描述符会被实例字典遮蔽，所以可以给实例赋一个同名值盖住类里的方法。`__getattr__` 只在常规查找失败后触发，适合懒加载与代理；
+关键结论有两条：数据描述符优先于实例字典，所以 `property` 的 `setter` 无法被实例同名键绕过；非数据描述符会被实例字典遮蔽，所以可以给实例赋一个同名值盖住类里的方法。
 
-`__getattribute__` 则每次访问都触发。
+`__getattr__` 只在常规查找失败后触发，适合懒加载与代理；`__getattribute__` 则每次访问都触发。
 
-类属性查找走 `type.__getattribute__`，与实例链不同；
-
-描述符的 `__get__(self, obj, objtype)` 在类访问时 `obj` 为 `None`。
+类属性查找走 `type.__getattribute__`，与实例链不同；描述符的 `__get__(self, obj, objtype)` 在类访问时 `obj` 为 `None`。
 
 用 `dis` 看 `LOAD_METHOD` / `LOAD_ATTR`，或打印 `__mro__`，都能把顺序变成可核对的证据。
 
@@ -252,9 +242,7 @@ object.__getattribute__(obj, 'attr')
 
 一个用户对象需要 `JSON` 序列化、问候语加前缀、以及基础姓名存储三种能力。若每种能力各写一套显式调用，加一个新 `Mixin` 就要改所有类的初始化顺序；用协作式多继承则不必：每个 `Mixin` 只提供单一能力、不持有状态，需要下一环时统一用 `super()`。
 
-下面定义 `PrefixMixin.greet` 与 `JSONMixin.to_json`、`Base` 提供姓名与基础 `greet`，再让 `User` 组合三者；
-
-打印 `MRO`、问候语与序列化结果，可以看到 `PrefixMixin` 的 `super().greet()` 会跳过没有 `greet` 的 `JSONMixin`、落到 `Base`，正是沿 `MRO` 查找的直观证据。
+下面定义 `PrefixMixin.greet` 与 `JSONMixin.to_json`、`Base` 提供姓名与基础 `greet`，再让 `User` 组合三者；打印 `MRO`、问候语与序列化结果，可以看到 `PrefixMixin` 的 `super().greet()` 会跳过没有 `greet` 的 `JSONMixin`、落到 `Base`，正是沿 `MRO` 查找的直观证据。
 
 真实项目里所有 `__init__` 还要用 `**kwargs` 透传参数。
 
@@ -289,7 +277,7 @@ print(u.as_dict())
 
 <Callout type="idea" title='落地提示' text='Mixin 只做单一能力、全部用 super 协作、不持有状态，是多继承唯一稳妥的用法' />
 
-<CheckList id='P039b' title='上线前自检' :items='["能复现并解释「以为 super() 是调用父类，菱形继承里 A.__ini…」", "能复现并解释「混用 super() 与显式 A.__init__(self…」", "能复现并解释「重写 __getattribute__ 时忘了调 super…」", "能用一条命令验证 __mro__ 与 C3 线性化", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P039a' title='上线前自检' :items='["能复现并解释「以为 super() 是调用父类，菱形继承里 A.__ini…」", "能复现并解释「混用 super() 与显式 A.__init__(self…」", "能复现并解释「重写 __getattribute__ 时忘了调 super…」", "能用一条命令验证 __mro__ 与 C3 线性化", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "print(type('Demo', (), {}).__mro__)"
@@ -310,7 +298,7 @@ python -c "print(type('Demo', (), {}).__mro__)"
 
 <Callout type="warn" title='本讲最容易踩的坑' text='以为 super() 是调用父类，菱形继承里 A.__init__ 应该跑两次：super 沿 MRO 找当前类之后的下一实现，C3 保证 A 在链尾只出现一次' />
 
-<CheckList id='P039a' title='学完你应当能' :items='["能讲清 C3 线性化与 __mro__", "能讲清 super 的真实语义与零参数形式", "能讲清 属性查找链与 __getattribute__ 入口", "能在工程里处理 __getattribute__ 入口"]' />
+<CheckList id='P039b' title='学完你应当能' :items='["能讲清 C3 线性化与 __mro__", "能讲清 super 的真实语义与零参数形式", "能讲清 属性查找链与 __getattribute__ 入口", "能在工程里处理 __getattribute__ 入口"]' />
 
 
 ## 推导 MRO 的练习与自测

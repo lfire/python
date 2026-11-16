@@ -37,10 +37,6 @@ print('commit_after_replication', c.commit_index())
 print('alive3_writable', c.writable(3))
 print('alive2_writable', c.writable(2))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # valid_now True
@@ -65,10 +61,6 @@ print('valid_later', l.valid(t0 + 11))
 l.renew(t0 + 11)
 print('valid_after_renew', l.valid(t0 + 12))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # accept
@@ -89,10 +81,6 @@ print(r.step(3))
 print(r.step(2))
 print(r.step(5))
 print('term', r.current)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

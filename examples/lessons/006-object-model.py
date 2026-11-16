@@ -29,10 +29,6 @@ print('values_equal', big_a == big_b)
 print('bool_is_int', isinstance(True, int), True + True)
 print('type_ok', type(small_a) is int)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # int_rebound True
@@ -50,10 +46,6 @@ lst += [2]
 print('list_inplace', id(lst) == lst_id)
 print('list_value', lst)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # cached True
@@ -70,10 +62,6 @@ print('sizeof_list_grows', sys.getsizeof([]) < sys.getsizeof([1, 2, 3]))
 print('refcount_ge', sys.getrefcount(a) >= 2)
 print('none_singleton', None is None)
 print('type_vs_isinstance', isinstance(True, int) and type(True) is bool)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -49,10 +49,6 @@ print('resolve', resolve(c1))
 print('missing', resolve('zzzz'))
 print('clicks', db.execute('SELECT clicks FROM links WHERE code=?', (c1,)).fetchone()[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # burst [True, True, False]
@@ -81,10 +77,6 @@ print('burst', [b.allow(t0) for _ in range(3)])
 print('after 0.5s', b.allow(t0 + 0.5))
 print('after 1.0s', b.allow(t0 + 1.0))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # 1000 decimal 4 base62 2
@@ -97,10 +89,6 @@ for n in (1000, 1000000, 1000000000):
     dec = len(str(n))
     b62 = math.ceil(math.log(n + 1, 62)) if n > 0 else 1
     print(n, 'decimal', dec, 'base62', b62)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

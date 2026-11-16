@@ -35,10 +35,6 @@ pairs = [((3, 1), (1, 4)), ((2, 3), (3,)), ((2, 3), (2,)), ((5, 4), (3, 4))]
 for a, b in pairs:
     print(a, '+', b, '->', broadcast_shape(a, b))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # row [4, 5, 6, 7]
@@ -57,10 +53,6 @@ print('row', [row.get((j,)) for j in range(4)])
 base[5] = 99
 print('after', [row.get((j,)) for j in range(4)])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # list container 120 one float 24
@@ -73,10 +65,6 @@ arr = array.array('d', lst)
 print('list container', sys.getsizeof(lst), 'one float', sys.getsizeof(lst[0]))
 print('array container', sys.getsizeof(arr), 'itemsize', arr.itemsize)
 print('list per element', (sys.getsizeof(lst) + 6 * sys.getsizeof(lst[0])) // 6)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

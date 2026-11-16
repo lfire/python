@@ -16,22 +16,18 @@ description: 管理并发度、结果收集与失败传播
 
 一个导出服务把待办任务无上限地 `submit` 进线程池，平时没事，流量峰值时内存先被几十万个待办 Future 撑爆，服务被自己压垮；另一个版本按顺序对 `futures` 里的每个 Future 调 `result()`，结果第一个慢任务把后面早已失败的任务全挡住，异常迟迟发不出来。
 
-还有人调用 `future.cancel()` 以为能停掉正在跑的任务，返回 False 后不检查就当已取消；
+还有人调用 `future.cancel()` 以为能停掉正在跑的任务，返回 False 后不检查就当已取消；或者 submit 完从不取结果，异常被永久吞掉。
 
-或者 submit 完从不取结果，异常被永久吞掉。这些问题的共同点是：把线程池当成「自动并行的黑盒」，没意识到它同时管着并发度、队列、结果状态与失败传播。`Executor` 抽象把创建销毁收敛到一处，`Future` 把异步结果变成可传递的值，但队列是否有界、按什么顺序收结果、取消到底对哪种状态有效，都必须显式设计。
+这些问题的共同点是：把线程池当成「自动并行的黑盒」，没意识到它同时管着并发度、队列、结果状态与失败传播。`Executor` 抽象把创建销毁收敛到一处，`Future` 把异步结果变成可传递的值，但队列是否有界、按什么顺序收结果、取消到底对哪种状态有效，都必须显式设计。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='无上限 submit，峰值把内存撑爆：executor 内部待办队列无界，流量峰值时 Future 与参数对象全堆在内存' />
 
 
 ## Executor 抽象与默认并发度
 
-`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；
+`concurrent.futures.Executor` 是抽象基类，对外主要是三个接口：`submit(fn, *args, **kwargs)` 返回 `Future`、`map` 返回迭代器、`shutdown` 负责收尾；用 with 包住 executor，退出时会自动调用 `shutdown(wait=True)`。
 
-用 with 包住 executor，退出时会自动调用 `shutdown(wait=True)`。
-
-`ThreadPoolExecutor` 的默认并发度在 3.8 到 3.12 是 `min(32, cpu + 4)`，其中 cpu 取自 `os.cpu_count()`；
-
-3.13 起改用 `os.process_cpu_count()` 来数可用核，会把 cgroup 与 CPU 亲和性的限制算进去。
+`ThreadPoolExecutor` 的默认并发度在 3.8 到 3.12 是 `min(32, cpu + 4)`，其中 cpu 取自 `os.cpu_count()`；3.13 起改用 `os.process_cpu_count()` 来数可用核，会把 cgroup 与 CPU 亲和性的限制算进去。
 
 本机 12 核按这个式子得到 16。这个「CPU 数加 4」是给 IO 等待留余量的经验值，CPU 密集任务不要照抄，应设成接近核数甚至更小。`initializer`（3.7+）在每个工作线程启动时跑一次，适合建线程局部连接。
 
@@ -119,15 +115,11 @@ with cf.ThreadPoolExecutor(max_workers=1) as ex:
 
 `cancel()` 只在 `PENDING` 时有效——把状态置为 `CANCELLED` 并返回 True；一旦任务已进入 `RUNNING`，`cancel()` 就返回 False，无法从外部强杀线程。
 
-`cancelled()`、`running()`、`done()` 用来查询状态，`result(timeout=None)` 阻塞取结果并在异常时重新抛出，`exception(timeout=None)` 只取异常对象、不抛；
-
-`add_done_callback(fn)` 在状态变成 `FINISHED` 时回调。
+`cancelled()`、`running()`、`done()` 用来查询状态，`result(timeout=None)` 阻塞取结果并在异常时重新抛出，`exception(timeout=None)` 只取异常对象、不抛；`add_done_callback(fn)` 在状态变成 `FINISHED` 时回调。
 
 关键陷阱：submit 之后若不调用 `result()` 或 `exception()`，worker 里抛出的异常只存在 Future 里，日志里什么都没有。`map` 按输入顺序 yield 结果，迭代器走到某个失败项时才抛异常；`as_completed` 则按完成先后 yield，能最早暴露失败与超时。
 
-`wait` 返回具名元组 (done, not_done)，配合 `FIRST_COMPLETED` / `FIRST_EXCEPTION` 可做分批收集；
-
-3.9+ 的 `shutdown(cancel_futures=True)` 会丢弃尚未启动的待办。
+`wait` 返回具名元组 (done, not_done)，配合 `FIRST_COMPLETED` / `FIRST_EXCEPTION` 可做分批收集；3.9+ 的 `shutdown(cancel_futures=True)` 会丢弃尚未启动的待办。
 
 **Future 状态机与 cancel 结果**
 
@@ -179,9 +171,7 @@ Future 是一个带 Condition 的状态机：`set_result` / `set_exception` 在�
 
 `cancel()` 只能在 `PENDING` 抢到锁时改状态，`RUNNING` 之后 work item 已被 worker 持有，无法从外部强杀——这正是它返回 False 的原因。
 
-`as_completed` 给每个 Future 挂上 `add_done_callback`，把已完成者放进另一条队列再 yield，因此顺序由完成时间决定；
-
-`map` 则先把所有输入一次性 submit 完，再按输入顺序对 Future 逐个 `result()`，所以既没有背压，也会被最慢的前置项拖住。
+`as_completed` 给每个 Future 挂上 `add_done_callback`，把已完成者放进另一条队列再 yield，因此顺序由完成时间决定；`map` 则先把所有输入一次性 submit 完，再按输入顺序对 Future 逐个 `result()`，所以既没有背压，也会被最慢的前置项拖住。
 
 默认并发度的版本差异（3.13 起用 `os.process_cpu_count()` 取代 `os.cpu_count()`）已在上一节说过，它改变的是取哪个核数，不改变队列无界这一事实。
 
@@ -207,11 +197,9 @@ Future 是一个带 Condition 的状态机：`set_result` / `set_exception` 在�
 
 一个数据导入接口一次收到上万条记录，要并发写库但绝不能把待办一次性塞满内存，且任何一条失败都要进报表。
 
-做法是给生产者加一把 `BoundedSemaphore` 限制在途 Future 数，每条 submit 后挂 `add_done_callback` 释放许可；
+做法是给生产者加一把 `BoundedSemaphore` 限制在途 Future 数，每条 submit 后挂 `add_done_callback` 释放许可；用 `as_completed` 分批收结果，对每个 Future 单独 `result()` 把异常转成记录；最后对未完成项 `cancel()` 并检查返回值。
 
-用 `as_completed` 分批收结果，对每个 Future 单独 `result()` 把异常转成记录；最后对未完成项 `cancel()` 并检查返回值。下面用标准库模拟：worker 随机睡眠并对特定输入抛错，导入器打印成功、失败、取消三类计数。
-
-真实项目把写库换成 DB 调用即可，重点是「在途有上界、异常必被读取、取消有反馈」这三条契约。
+下面用标准库模拟：worker 随机睡眠并对特定输入抛错，导入器打印成功、失败、取消三类计数。真实项目把写库换成 DB 调用即可，重点是「在途有上界、异常必被读取、取消有反馈」这三条契约。
 
 ```python
 import concurrent.futures as cf
@@ -253,7 +241,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='按依赖类型分池、设置有界队列与超时、对 Future 逐一取结果以暴露异常' />
 
-<CheckList id='P063b' title='上线前自检' :items='["能复现并解释「无上限 submit，峰值把内存撑爆」", "能复现并解释「submit 后从不取结果，异常永久静默」", "能复现并解释「以为 cancel() 能停掉正在跑的任务」", "能用一条命令验证 Executor 抽象", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P063a' title='上线前自检' :items='["能复现并解释「无上限 submit，峰值把内存撑爆」", "能复现并解释「submit 后从不取结果，异常永久静默」", "能复现并解释「以为 cancel() 能停掉正在跑的任务」", "能用一条命令验证 Executor 抽象", "关键路径有自动化测试与失败分支"]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='无上限 submit，峰值把内存撑爆：executor 内部待办队列无界，流量峰值时 Future 与参数对象全堆在内存' />
 

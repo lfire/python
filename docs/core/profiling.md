@@ -18,20 +18,16 @@ description: 用数据而不是直觉做优化
 
 另一处，团队用 `time.perf_counter` 包住一段含 `time.sleep` 的逻辑，得出「CPU 很重、要上多进程」的结论，实际那段几乎全在等网络。
 
-还有人把微基准写在 `REPL` 里跑一次就下结论，结果被缓存预热、GC 与哈希随机化搅得忽快忽慢。三件事的共同错误是：把直觉当数据，把墙钟时间当 CPU 时间，把一次运行当基准。优化的第一步永远是把耗时拆到函数级，再决定换算法、换数据结构还是换实现层；
+还有人把微基准写在 `REPL` 里跑一次就下结论，结果被缓存预热、GC 与哈希随机化搅得忽快忽慢。三件事的共同错误是：把直觉当数据，把墙钟时间当 CPU 时间，把一次运行当基准。
 
-而要做到这一点，得先弄清 timeit 怎么隔离噪声、cProfile 的 `tottime` 与 `cumtime` 各代表什么、`tracemalloc` 的快照差值能证明什么，以及 3.12 起 `sys.monitoring` 为何能把采样开销降下来。
+优化的第一步永远是把耗时拆到函数级，再决定换算法、换数据结构还是换实现层；而要做到这一点，得先弄清 timeit 怎么隔离噪声、cProfile 的 `tottime` 与 `cumtime` 各代表什么、`tracemalloc` 的快照差值能证明什么，以及 3.12 起 `sys.monitoring` 为何能把采样开销降下来。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='用 perf_counter 量含 sleep 的逻辑，得出「该上多进程」：墙钟把等待时间也算进去，误判成 CPU 密集' />
 
 
 ## 测量先定口径：墙钟、CPU 时间与 timeit
 
-`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；
-
-`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；
-
-3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。
+`time.perf_counter()` 是单调、最高分辨率的墙钟，包含 sleep 与等待 IO；`time.process_time()` 只累计当前进程的 CPU 时间，不含睡眠；3.7+ 另有 `perf_counter_ns` 与 `process_time_ns` 返回整数纳秒，避免浮点误差。
 
 判断任务类型要看两者之差：`wall` 减去 `cpu` 近似等待时长，占比高就是 IO 密集。
 
@@ -145,9 +141,9 @@ tracemalloc.stop()
 
 `pstats.Stats` 的列含义必须分清：`ncalls` 是调用次数（含 3/2 形式的递归标记），`tottime` 是本函数自身消耗、不含子调用，`cumtime` 是含所有子调用的累计，`percall` 为二者之商，最后一列是 `filename:lineno(function)`。
 
-排序用 `sort_stats(pstats.SortKey.CUMULATIVE)`，也可以写字符串 'cumtime'、'tottime'、'calls'；
+排序用 `sort_stats(pstats.SortKey.CUMULATIVE)`，也可以写字符串 'cumtime'、'tottime'、'calls'；3.7+ 推荐 `SortKey` 枚举。
 
-3.7+ 推荐 `SortKey` 枚举。cProfile 看不到 C 函数内部，也不区分行级耗时——`line_profiler`（第三方，`kernprof -l -v`）按行统计但侵入更大。确定性 profiler 本身会扭曲结果：函数越多、调用越碎，附加事件越多，所以结论要看相对占比而非绝对毫秒数。
+cProfile 看不到 C 函数内部，也不区分行级耗时——`line_profiler`（第三方，`kernprof -l -v`）按行统计但侵入更大。确定性 profiler 本身会扭曲结果：函数越多、调用越碎，附加事件越多，所以结论要看相对占比而非绝对毫秒数。
 
 **cProfile / pstats 列与排序键**
 
@@ -166,9 +162,7 @@ tracemalloc.stop()
 
 ## tracemalloc 快照差值与可复现基线
 
-`tracemalloc.start(nframe=1)` 在 Python 对象分配器（pymalloc）层挂钩，记录每块分配的回溯；
-
-`take_snapshot()` 生成快照，`statistics('lineno')` 一类调用按维度聚合，`compare_to(other, 'lineno')` 返回 `StatisticDiff` 列表，含 `size_diff` 与 `count_diff`，是定位「哪一行多分配了内存」的直接证据。
+`tracemalloc.start(nframe=1)` 在 Python 对象分配器（pymalloc）层挂钩，记录每块分配的回溯；`take_snapshot()` 生成快照，`statistics('lineno')` 一类调用按维度聚合，`compare_to(other, 'lineno')` 返回 `StatisticDiff` 列表，含 `size_diff` 与 `count_diff`，是定位「哪一行多分配了内存」的直接证据。
 
 `get_traced_memory()` 返回 (current, peak) 字节数，`reset_peak()`（3.9+）可重置峰值，`stop()` 关闭追踪。
 
@@ -246,7 +240,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='把关键基准写进 CI 并设回归阈值；优化前后保留同一组数据与同一台机器' />
 
-<CheckList id='P058b' title='上线前自检' :items='["能复现并解释「用 perf_counter 量含 sleep 的逻辑，得出…」", "能复现并解释「微基准只跑一次、且把数据构造写在被测语句里」", "能复现并解释「看 cProfile 的 tottime 找热点，结果优化了…」", "能用一条命令验证 测量优先于猜测", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P058a' title='上线前自检' :items='["能复现并解释「用 perf_counter 量含 sleep 的逻辑，得出…」", "能复现并解释「微基准只跑一次、且把数据构造写在被测语句里」", "能复现并解释「看 cProfile 的 tottime 找热点，结果优化了…」", "能用一条命令验证 测量优先于猜测", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

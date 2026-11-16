@@ -40,10 +40,6 @@ for m in range(1, 4):
     mse = sum((a - b) ** 2 for a, b in zip(y, F)) / len(y)
     print('round', m, 'threshold', t, 'mse', round(mse, 3))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # lr=0.8 x3 [4.99, 1.81, 0.82]
@@ -62,10 +58,6 @@ def boost(lr, rounds):
 print('lr=0.8 x3', boost(0.8, 3))
 print('lr=0.2 x12', boost(0.2, 12))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # exact split candidates 999999
@@ -77,10 +69,6 @@ n_bins = 255
 print('exact split candidates', n_samples - 1)
 print('histogram candidates', n_bins - 1)
 print('ratio', round((n_samples - 1) / (n_bins - 1)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

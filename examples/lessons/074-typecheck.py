@@ -33,10 +33,6 @@ x: typing.Any = 'not an int'
 y: int = x
 print('Any to int at runtime', y)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # stored as string True
@@ -51,10 +47,6 @@ exec('from __future__ import annotations' + chr(10)
 f = ns['f']
 print('stored as string', isinstance(f.__annotations__['x'], str))
 print('resolved hints', {k: getattr(v, '__name__', str(v)) for k, v in typing.get_type_hints(f).items()})
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -71,10 +63,6 @@ print('args list[int]', [a.__name__ for a in typing.get_args(list[int])])
 print('Literal args', typing.get_args(typing.Literal['a', 'b']))
 print('Union pipe equals', (int | str) == typing.Union[int, str])
 print('python', sys.version_info[0], sys.version_info[1])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

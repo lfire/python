@@ -44,9 +44,7 @@ description: 构建可插拔的框架式代码
 
 ## 属性查找链与 getattr / hasattr 的真实语义
 
-`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之，最后才回退实例字典；
-
-都没找到且未提供 `default` 时抛 `AttributeError`。
+`getattr` 本质是调用类型的 `tp_getattro`，也就是 `PyObject_GenericGetAttr` 那条查找链：先按 MRO 在类的字典里找同名描述符，数据描述符（定义了 `__set__` 或 `__delete__`）优先于实例 `__dict__`，非数据描述符次之，最后才回退实例字典；都没找到且未提供 `default` 时抛 `AttributeError`。
 
 `setattr` / `delattr` / `hasattr` / `vars` 是同一套机制的封装：`vars(obj)` 直接返回 `obj.__dict__`，对象没有 `__dict__`（如 `__slots__` 类或内置类型）时 `vars()` 会抛 `TypeError`，提示缺少 `__dict__` 属性。
 
@@ -113,23 +111,15 @@ except ValueError as e:
 
 ## inspect 与注解：signature、getmembers、get_type_hints
 
-`inspect.signature` 返回一个 `Signature` 对象，它的 `parameters` 是按定义顺序排列的映射，每个 `Parameter` 带 `name`、`kind`（`POSITIONAL_ONLY` / `POSITIONAL_OR_KEYWORD` / `VAR_POSITIONAL` / `KEYWORD_ONLY` / `VAR_KEYWORD`）、`default` 与 `annotation`；
-
-想读某个参数的默认值，顺着映射一路取到 `inspect.signature(f).parameters['acc'].default` 即可。
+`inspect.signature` 返回一个 `Signature` 对象，它的 `parameters` 是按定义顺序排列的映射，每个 `Parameter` 带 `name`、`kind`（`POSITIONAL_ONLY` / `POSITIONAL_OR_KEYWORD` / `VAR_POSITIONAL` / `KEYWORD_ONLY` / `VAR_KEYWORD`）、`default` 与 `annotation`；想读某个参数的默认值，顺着映射一路取到 `inspect.signature(f).parameters['acc'].default` 即可。
 
 绑定方法会自动去掉 `self`，所以 `inspect.signature(obj.method)` 看不到它。
 
-`Signature.bind` / `Signature.bind_partial` 能按签名预先校验参数，是写路由分发时的可靠工具；
+`Signature.bind` / `Signature.bind_partial` 能按签名预先校验参数，是写路由分发时的可靠工具；对部分 C 实现的 builtin（如某些内置类型的方法）没有 `__code__`，`signature` 会抛 `ValueError`，提示找不到签名。
 
-对部分 C 实现的 builtin（如某些内置类型的方法）没有 `__code__`，`signature` 会抛 `ValueError`，提示找不到签名。
+`inspect.getmembers` 返回按名字排序的 `(name, value)` 元组列表，可传 `predicate` 过滤，配合 `inspect.isfunction` / `ismethod` / `isclass` / `ismodule` 判定函数使用；`inspect.getsource`、`inspect.getmodule`、`inspect.getmro` 分别取源码、所属模块与方法解析顺序。
 
-`inspect.getmembers` 返回按名字排序的 `(name, value)` 元组列表，可传 `predicate` 过滤，配合 `inspect.isfunction` / `ismethod` / `isclass` / `ismodule` 判定函数使用；
-
-`inspect.getsource`、`inspect.getmodule`、`inspect.getmro` 分别取源码、所属模块与方法解析顺序。
-
-注解读取有两个层次：直接读 `func.__annotations__` 拿到的是原样值，未启用 PEP 563 延迟注解时是真实类型对象，启用后全是字符串；
-
-`typing.get_type_hints(func)` 会解析字符串、前向引用与 `Optional` / `Union`，给出可用的类型对象，3.10 起还提供 `inspect.get_annotations` 做更细的控制。
+注解读取有两个层次：直接读 `func.__annotations__` 拿到的是原样值，未启用 PEP 563 延迟注解时是真实类型对象，启用后全是字符串；`typing.get_type_hints(func)` 会解析字符串、前向引用与 `Optional` / `Union`，给出可用的类型对象，3.10 起还提供 `inspect.get_annotations` 做更细的控制。
 
 把 `__annotations__` 直接当类型用，是跨项目复用框架代码时最常见的类型错误来源。
 
@@ -174,9 +164,7 @@ print('hints:', get_type_hints(f))
 
 ## 动态导入与反射的安全边界：白名单注册表
 
-`importlib.import_module('pkg.mod')` 按字符串动态导入模块并返回模块对象，是插件加载、CLI 命令发现与配置驱动架构的基础；
-
-它执行的是真实导入（会跑模块顶层代码），因此模块名必须来自可信配置而非原始用户输入。
+`importlib.import_module('pkg.mod')` 按字符串动态导入模块并返回模块对象，是插件加载、CLI 命令发现与配置驱动架构的基础；它执行的是真实导入（会跑模块顶层代码），因此模块名必须来自可信配置而非原始用户输入。
 
 反射的安全边界不在 API 上，而在「允许被调用什么」有没有被收敛：对用户传入的字符串直接 `getattr(obj, name)()` 等于把对象所有公开方法暴露成远程调用面，私有清理、删除、重置方法都可能被触发。
 
@@ -188,15 +176,11 @@ CLI 路由是这套模式的典型：命令名到函数的字典、用 `Signatur
 
 CPython 的属性读取由 `PyObject_GenericGetAttr` 驱动：按类型 MRO 查 `tp_dict`，若找到的是数据描述符（`tp_descr_set` 非空，即定义了 `__set__` 或 `__delete__`）就优先调用其 `__get__`，否则再看实例 `__dict__`，最后才回退非数据描述符或类属性。
 
-`getattr` / `hasattr` / `vars` 都落在这一条链上；
-
-`hasattr` 的实现调用 `PyObject_GetAttr` 后用 `PyErr_ExceptionMatches(PyExc_AttributeError)` 判断是否吞异常，所以 `property` 内部抛的 `AttributeError` 与「属性不存在」无法区分。
+`getattr` / `hasattr` / `vars` 都落在这一条链上；`hasattr` 的实现调用 `PyObject_GetAttr` 后用 `PyErr_ExceptionMatches(PyExc_AttributeError)` 判断是否吞异常，所以 `property` 内部抛的 `AttributeError` 与「属性不存在」无法区分。
 
 `inspect.signature` 从函数的 `__code__`（`co_varnames`、`co_argcount` 等）、`__defaults__`、`__kwdefaults__`、`__annotations__` 重建 `Signature`，绑定方法先剥离已绑定的 `self`，C 函数没有 `__code__` 因而可能失败。
 
-`typing.get_type_hints` 对字符串注解调用 `eval`（在 `func` 的全局命名空间里）解析前向引用；
-
-PEP 563 的延迟注解把所有注解存成字符串，正是它让直接读 `__annotations__` 的代码失效。
+`typing.get_type_hints` 对字符串注解调用 `eval`（在 `func` 的全局命名空间里）解析前向引用；PEP 563 的延迟注解把所有注解存成字符串，正是它让直接读 `__annotations__` 的代码失效。
 
 `importlib.import_module` 走完整的查找器—加载器流程并执行模块顶层代码，因此它既是扩展点也是执行入口。
 
@@ -219,9 +203,9 @@ PEP 563 的延迟注解把所有注解存成字符串，正是它让直接读 `_
 
 ## CLI 路由：注册表 + signature.bind 做安全分发
 
-运维 CLI 要支持按名字调用命令，又不能把服务对象上的任意方法暴露出去。做法是显式路由表：`ROUTE` 字典把命令名收敛到具体函数，`dispatch` 先查表、未登记直接抛 `KeyError`；
+运维 CLI 要支持按名字调用命令，又不能把服务对象上的任意方法暴露出去。
 
-再用 `inspect.signature(fn).bind` 按方法签名预校验参数，把缺参数、多参数这类错误在入口处转成清晰的 `TypeError`，而不是让它们流到业务深处。
+做法是显式路由表：`ROUTE` 字典把命令名收敛到具体函数，`dispatch` 先查表、未登记直接抛 `KeyError`；再用 `inspect.signature(fn).bind` 按方法签名预校验参数，把缺参数、多参数这类错误在入口处转成清晰的 `TypeError`，而不是让它们流到业务深处。
 
 下面用标准库跑通：`add` 正常求和、`echo` 回显、缺参数与未知命令分别被拦下并打印异常类型。要点是「发现能力」与「执行能力」分离——反射只用于读签名，真正调用永远经过白名单。真实项目还会在这层加权限校验、参数类型转换与审计日志。
 
@@ -258,7 +242,7 @@ except KeyError:
 
 <Callout type="idea" title='落地提示' text='反射入口要配白名单与显式注册表，把「能被调用什么」收敛到可控集合' />
 
-<CheckList id='P046b' title='上线前自检' :items='["能复现并解释「对用户传入的字符串直接 getattr(obj, name)…」", "能复现并解释「用 hasattr 判断 property 是否存在」", "能复现并解释「把 func.__annotations__ 直接当类型对象…」", "能用一条命令验证 getattr / setattr / hasattr", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P046a' title='上线前自检' :items='["能复现并解释「对用户传入的字符串直接 getattr(obj, name)…」", "能复现并解释「用 hasattr 判断 property 是否存在」", "能复现并解释「把 func.__annotations__ 直接当类型对象…」", "能用一条命令验证 getattr / setattr / hasattr", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import importlib.util; print(importlib.util.find_spec('json').origin)"

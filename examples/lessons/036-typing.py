@@ -32,10 +32,6 @@ print(distance.__annotations__['a'] is int)
 print(str(int | None))
 print(get_type_hints(distance) == distance.__annotations__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # True
@@ -66,10 +62,6 @@ print(sorted(Config.__required_keys__))
 print(Mode)
 print(TYPE_CHECKING)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # {'a': <class 'int'>, 'return': <class 'int'>}
@@ -89,10 +81,6 @@ ns = {}
 exec(compile(src, '<s>', 'exec'), ns)
 print('x' in ns, '__annotations__' in ns, ns['__annotations__'])
 print([i.opname for i in dis.get_instructions(f) if i.opname == 'RETURN_VALUE'])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

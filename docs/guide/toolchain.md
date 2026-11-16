@@ -21,9 +21,7 @@ description: 掌握日常开发的高频命令与验证手段
 
 ## python -m 与工具入口：为什么 -m 比直接敲命令更可靠
 
-`python -m` 后面跟上模块名，语义不是「运行一个叫 module 的文件」，而是让当前解释器在 `sys.path` 里找到该模块并把它当作 `__main__` 执行；
-
-`runpy.run_module` 正是 -m 的底层实现，`runpy.run_path` 则对应直接跑路径。
+`python -m` 后面跟上模块名，语义不是「运行一个叫 module 的文件」，而是让当前解释器在 `sys.path` 里找到该模块并把它当作 `__main__` 执行；`runpy.run_module` 正是 -m 的底层实现，`runpy.run_path` 则对应直接跑路径。
 
 这一字之差决定了用的是哪个解释器与哪套依赖：`python -m` 保证 pip 模块由 `sys.executable` 对应的解释器加载、装进它的 site-packages，而裸 pip 是 `PATH` 上一个 shebang 固定的脚本，可能属于另一个 python。
 
@@ -33,9 +31,7 @@ python -m pip
 
 同理，跑测试、批量编译、起静态文件服务都该带 `python -m`：`python -m pytest`、`python -m compileall`、`python -m http.server`。
 
-标准库里一批可直接当工具用的模块也靠 -m 暴露，如做微基准的 timeit、跑文档测试的 doctest、统计覆盖的 trace、进调试器的 pdb、格式化 `JSON` 的 `json.tool`；
-
-带上 `python -m` 前缀就是 `python -m timeit` 这类命令。
+标准库里一批可直接当工具用的模块也靠 -m 暴露，如做微基准的 timeit、跑文档测试的 doctest、统计覆盖的 trace、进调试器的 pdb、格式化 `JSON` 的 `json.tool`；带上 `python -m` 前缀就是 `python -m timeit` 这类命令。
 
 版本细节：3.4 起 `-I` 隔离模式可叠加，让这些命令忽略 `PYTHONPATH` 与用户站点；包内若带 `__main__.py`，`python -m` 会以包上下文执行它，相对导入仍成立。
 
@@ -79,15 +75,13 @@ print('repeat_len', len(timeit.repeat(builtin_stmt, setup=setup, number=200, rep
 
 ## 把反馈循环压到几秒：四类验证工具各管一段
 
-四类工具解决四类不同的问题，混着用或漏一段都会让 bug 溜到线上。timeit 负责量化：`timeit.timeit` 返回 number 次执行的秒数，`timeit.repeat` 给三个样本，工程上取最小值以抵消系统调度抖动；
+四类工具解决四类不同的问题，混着用或漏一段都会让 bug 溜到线上。
 
-把热点写成纯 Python 循环与内置函数对照，能立刻看出循环下沉到 C 层带来的差距，这比凭感觉说「这里慢」可靠。
+timeit 负责量化：`timeit.timeit` 返回 number 次执行的秒数，`timeit.repeat` 给三个样本，工程上取最小值以抵消系统调度抖动；把热点写成纯 Python 循环与内置函数对照，能立刻看出循环下沉到 C 层带来的差距，这比凭感觉说「这里慢」可靠。
 
 ruff（Rust 实现，可覆盖 flake8 与 isort 的一部分）做静态 lint，black 做不妥协的格式化，两者都可借 `python -m` 在提交前跑：`python -m ruff check .`、`python -m black --check .`，`--check` 只报告不改写，适合 CI。
 
-mypy 或 pyright 读类型注解做静态检查，默认不改动运行时行为；
-
-pytest 用 assert 重写让失败信息更可读，`python -m` 是统一入口。
+mypy 或 pyright 读类型注解做静态检查，默认不改动运行时行为；pytest 用 assert 重写让失败信息更可读，`python -m` 是统一入口。
 
 ```bash
 python -m pytest -q
@@ -104,13 +98,11 @@ logging 把记录抽象成 Logger、Handler、Formatter 三级：`logging.getLog
 
 用 `contextlib.redirect_stdout(buf)` 还能把第三方库的 print 临时收进缓冲区做断言，是给旧代码补测试的常用手段。
 
-pdb 提供断点与栈内省：`python -m` 启动即停，b 行号下断点、p 表达式打印、n 单步、c 继续、pp 美化打印；
+pdb 提供断点与栈内省：`python -m` 启动即停，b 行号下断点、p 表达式打印、n 单步、c 继续、pp 美化打印；代码里也能 `import pdb` 后调用 `pdb.set_trace()`，3.7 起更推荐内置 `breakpoint()`，它由 `PYTHONBREAKPOINT` 环境变量决定调到哪个调试器。
 
 ```bash
 python -m pdb script.py
 ```
-
-代码里也能 `import pdb` 后调用 `pdb.set_trace()`，3.7 起更推荐内置 `breakpoint()`，它由 `PYTHONBREAKPOINT` 环境变量决定调到哪个调试器。
 
 生成器、协程、闭包这类状态跨帧的问题，靠一次性 print 很难看清变量在每一帧的值，pdb 的 up 与 down 切帧、logging 的名字上下文才能定位。生产环境务必给 logger 配 Handler 与级别，别让调试 print 混进 stdout 污染管道下游。
 
@@ -187,9 +179,7 @@ print('level', logging.INFO)
 
 ## 排障动作固化前：错因速查
 
-固化进 Makefile 前，先确认命令绑对环境：`python -c` 打印 `sys.executable` 与 which python 对照，不一致说明 -m 没指向当前解释器；
-
-再跑 `python -m` 核对。
+固化进 Makefile 前，先确认命令绑对环境：`python -c` 打印 `sys.executable` 与 which python 对照，不一致说明 -m 没指向当前解释器；再跑 `python -m` 核对。
 
 ```bash
 python -m pytest -q

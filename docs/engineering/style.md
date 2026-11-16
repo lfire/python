@@ -49,15 +49,11 @@ PEP 8 规定 4 空格缩进、顶层定义间 2 空行、行宽 79（文档/注�
 
 ruff 用 Rust 实现，把 lint、格式化、import 排序合进一个二进制，配置集中在 `pyproject.toml` 的 `[tool.ruff]`（line-length、`target-version = 'py311'`、exclude）与 `[tool.ruff.lint]`（select、ignore、per-file-ignores、fixable）。
 
-`select=['E','F','I','N','UP','B']` 是常见起点，`ignore=['E501']` 把行宽交给格式化器；
-
-`per-file-ignores` 里让测试目录跳过 `S101`，允许测试用 assert。
+`select=['E','F','I','N','UP','B']` 是常见起点，`ignore=['E501']` 把行宽交给格式化器；`per-file-ignores` 里让测试目录跳过 `S101`，允许测试用 assert。
 
 逐行抑制用 `# noqa` 或精确到码的 `# noqa: E501`，文件级用文件顶部的一行 ruff 指令，但要配合 `--warn-unused-ignores` 治理。
 
-`I001` 要求导入分三组：标准库、第三方、本地，每组内按字典序排列、组间空一行；
-
-isort 用 `profile = 'black'` 与格式化器对齐。
+`I001` 要求导入分三组：标准库、第三方、本地，每组内按字典序排列、组间空一行；isort 用 `profile = 'black'` 与格式化器对齐。
 
 `ruff check` 只自动修可安全修复的规则，`ruff format` 负责外观，二者分开跑才不会在评审里混进无关改动。
 
@@ -147,13 +143,13 @@ ruff 的 lint 则在同一份 AST/Token 流上跑数百条规则：F 系列做�
 
 ## pre-commit 钩子与渐进式接入 legacy
 
-pre-commit 用 `.pre-commit-config.yaml` 声明 repos/rev/hooks：`pre-commit install` 把钩子装进 `.git/hooks`，`pre-commit run --all-files` 全量跑，提交时默认只对暂存文件执行（`pass_filenames: true` 把文件名传给钩子），因此新代码天然按增量检查；
+pre-commit 用 `.pre-commit-config.yaml` 声明 repos/rev/hooks：`pre-commit install` 把钩子装进 `.git/hooks`，`pre-commit run --all-files` 全量跑，提交时默认只对暂存文件执行（`pass_filenames: true` 把文件名传给钩子），因此新代码天然按增量检查；stages 可选 pre-commit、pre-push、commit-msg。
 
-stages 可选 pre-commit、pre-push、commit-msg。把 ruff、ruff-format、以及 trailing-whitespace/end-of-file-fixer 等 hook 固定 rev 并提交配置，开发者与 CI 用同一套命令。
+把 ruff、ruff-format、以及 trailing-whitespace/end-of-file-fixer 等 hook 固定 rev 并提交配置，开发者与 CI 用同一套命令。
 
-老仓库一次性开全量规则会产生海量无关 diff，正确路径是：先用 ruff 的 diff 模式看影响面，把 legacy 目录放进 exclude 或 per-file-ignores，只对新代码和改动行逐步提高严格度，按目录把忽略清单清零；
+老仓库一次性开全量规则会产生海量无关 diff，正确路径是：先用 ruff 的 diff 模式看影响面，把 legacy 目录放进 exclude 或 per-file-ignores，只对新代码和改动行逐步提高严格度，按目录把忽略清单清零；用 `tomllib` 读配置、用 `ast` 判定命名与行宽规则，能证明「检查器读的是结构化配置、格式化不改 AST」。
 
-用 `tomllib` 读配置、用 `ast` 判定命名与行宽规则，能证明「检查器读的是结构化配置、格式化不改 AST」。把命令写进 Makefile/justfile 与编辑器设置，评审里就只剩逻辑讨论。
+把命令写进 Makefile/justfile 与编辑器设置，评审里就只剩逻辑讨论。
 
 
 ## 增量检查器：按路径应用 per-file-ignores

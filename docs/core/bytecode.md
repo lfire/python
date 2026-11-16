@@ -16,9 +16,11 @@ description: 通过字节码验证语言层面的结论
 
 一段看似等价的代码，有人把 3.10 上的反汇编结论写成团队规范：说「加法一定对应 `BINARY_ADD`、调用一定对应 `CALL_FUNCTION`」，升级到 3.11 后所有断言全挂，CI 里报了一堆看不懂的指令名。
 
-另一处排查更费时：闭包里读外部变量，有人按 `LOAD_FAST` 去找，怎么都对不上帧里的局部变量表，实际那条指令是 `LOAD_DEREF`，值存在 cell 里。还有人想在推导式里访问循环变量，按 Python 2 的经验以为变量会泄漏到外层，结果 3.x 里推导式有自己的作用域；
+另一处排查更费时：闭包里读外部变量，有人按 `LOAD_FAST` 去找，怎么都对不上帧里的局部变量表，实际那条指令是 `LOAD_DEREF`，值存在 cell 里。
 
-到了 3.12 又变了，推导式被内联、连独立帧都没有了。字节码是「为什么」最直接的证据层，但它随版本演进。本讲把栈式指令、闭包与自由变量、推导式帧、异常表以及 3.10 到 3.13 的关键变化逐条对齐，并给出用 `dis` 现场验证而不是背指令名的方法。
+还有人想在推导式里访问循环变量，按 Python 2 的经验以为变量会泄漏到外层，结果 3.x 里推导式有自己的作用域；到了 3.12 又变了，推导式被内联、连独立帧都没有了。字节码是「为什么」最直接的证据层，但它随版本演进。
+
+本讲把栈式指令、闭包与自由变量、推导式帧、异常表以及 3.10 到 3.13 的关键变化逐条对齐，并给出用 `dis` 现场验证而不是背指令名的方法。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把 3.10 的 BINARY_ADD / CALL_FUNCTION 写成跨版本断言：3.11 起改为 BINARY_OP 与 CALL，3.12 又移除 PRECALL，指令集持续变化' />
 
@@ -36,17 +38,15 @@ description: 通过字节码验证语言层面的结论
 
 ## 栈式虚拟机与常见指令：值在栈上流动
 
-CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查字典快；
+CPython 的 ceval 是基于栈的求值循环：每条指令从栈顶取操作数、把结果压回栈，函数名里的 `LOAD` / `STORE` / `BINARY` 就是这个意思。
 
-全局与内置名字走 `LOAD_GLOBAL`，3.11 起这条指令带一个标志位，反汇编里会带出 `NULL + print` 这样的提示，表示同时压入 `NULL` 与函数对象供 `CALL` 使用。常量走 `LOAD_CONST`，结果用 `RETURN_VALUE` 返回，表达式语句用 `POP_TOP` 丢弃。
+局部变量存在帧的 fast locals 数组里，`LOAD_FAST` / `STORE_FAST` 用数组索引直接读写，比查字典快；全局与内置名字走 `LOAD_GLOBAL`，3.11 起这条指令带一个标志位，反汇编里会带出 `NULL + print` 这样的提示，表示同时压入 `NULL` 与函数对象供 `CALL` 使用。
 
-二元运算在 3.11 起统一为 `BINARY_OP` 并带操作码参数（如 `BINARY_OP 0 (+)` 表示加），此前是 `BINARY_ADD` / `BINARY_MULTIPLY` 等分散指令；
+常量走 `LOAD_CONST`，结果用 `RETURN_VALUE` 返回，表达式语句用 `POP_TOP` 丢弃。
 
-函数调用在 3.11 起由 `PRECALL` + `CALL` 承担（3.12 移除 `PRECALL`，只留 `CALL`），此前是 `CALL_FUNCTION` / `CALL_METHOD`。
+二元运算在 3.11 起统一为 `BINARY_OP` 并带操作码参数（如 `BINARY_OP 0 (+)` 表示加），此前是 `BINARY_ADD` / `BINARY_MULTIPLY` 等分散指令；函数调用在 3.11 起由 `PRECALL` + `CALL` 承担（3.12 移除 `PRECALL`，只留 `CALL`），此前是 `CALL_FUNCTION` / `CALL_METHOD`。
 
-查指令不要靠记忆，用 `dis.dis(fn)`、`dis.get_instructions(fn)`、`dis.Bytecode(fn)` 与 `dis.show_code(fn)` 现场看；
-
-`co_stacksize` 给出这帧需要的最大栈深度，能解释为什么某些表达式更费栈。
+查指令不要靠记忆，用 `dis.dis(fn)`、`dis.get_instructions(fn)`、`dis.Bytecode(fn)` 与 `dis.show_code(fn)` 现场看；`co_stacksize` 给出这帧需要的最大栈深度，能解释为什么某些表达式更费栈。
 
 ```python
 import dis
@@ -121,11 +121,9 @@ ceval 是一个基于栈的大循环：每条字节码指令从求值栈取参�
 
 `co_freevars` 与 `co_cellvars` 两个元组分别列出自由变量与 cell 变量，是判断闭包结构最省事的属性。
 
-推导式在 3.12 之前会编译成独立的 code object（`co_name` 为 `<listcomp>` / `<genexpr>` / `<dictcomp>`），运行时创建单独帧，因此循环变量不会泄漏到外层作用域；
+推导式在 3.12 之前会编译成独立的 code object（`co_name` 为 `<listcomp>` / `<genexpr>` / `<dictcomp>`），运行时创建单独帧，因此循环变量不会泄漏到外层作用域；3.12 的 PEP 709 把推导式内联进外层函数，消除帧创建开销，也不再有独立 code object，但变量仍不泄漏。
 
-3.12 的 PEP 709 把推导式内联进外层函数，消除帧创建开销，也不再有独立 code object，但变量仍不泄漏。异常处理在 3.11 之前靠 `SETUP_FINALLY` / `SETUP_EXCEPT` 块指令，无异常也要执行额外指令；
-
-3.11 起改为 `co_exceptiontable` 里的「受保护区间 → 处理器」跳转表，实现零成本异常，`dis` 会额外打印一段 `ExceptionTable`。
+异常处理在 3.11 之前靠 `SETUP_FINALLY` / `SETUP_EXCEPT` 块指令，无异常也要执行额外指令；3.11 起改为 `co_exceptiontable` 里的「受保护区间 → 处理器」跳转表，实现零成本异常，`dis` 会额外打印一段 `ExceptionTable`。
 
 这三条结构在不同版本长得很不一样，读反汇编时先确认解释器版本。
 
@@ -234,7 +232,7 @@ print('has line table', hasattr(loop_sum.__code__, 'co_linetable') or hasattr(lo
 
 <Callout type="idea" title='落地提示' text='排查诡异行为时先 dis 一小段，再决定是语言规则、优化还是库的问题；性能热点也常在这里显形' />
 
-<CheckList id='P050b' title='上线前自检' :items='["能复现并解释「把 3.10 的 BINARY_ADD / CALL_FUN…」", "能复现并解释「按 Python 2 经验以为推导式变量会泄漏到外层，或以为…」", "能复现并解释「只看源码行数评估热路径性能」", "能用一条命令验证 栈式指令与 LOAD / STORE", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P050a' title='上线前自检' :items='["能复现并解释「把 3.10 的 BINARY_ADD / CALL_FUN…」", "能复现并解释「按 Python 2 经验以为推导式变量会泄漏到外层，或以为…」", "能复现并解释「只看源码行数评估热路径性能」", "能用一条命令验证 栈式指令与 LOAD / STORE", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"

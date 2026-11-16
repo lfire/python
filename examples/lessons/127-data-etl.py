@@ -64,10 +64,6 @@ print('agg', con.execute('SELECT bucket,total FROM agg ORDER BY bucket').fetchal
 print('watermark', con.execute('SELECT v FROM meta WHERE k=?', ('watermark',)).fetchone()[0])
 print('rows', con.execute('SELECT count(*) FROM agg').fetchone()[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # naive rows 6
@@ -102,10 +98,6 @@ gated_replay(con, rows); gated_replay(con, rows)
 print('gated rows', con.execute('SELECT count(*) FROM events').fetchone()[0])
 print('wm', con.execute('SELECT v FROM meta WHERE k=?', ('wm',)).fetchone()[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # eager type list 1000
@@ -122,10 +114,6 @@ print('eager type', type(eager).__name__, len(eager))
 print('lazy type', type(lazy).__name__)
 print('list heavier', sys.getsizeof(eager) > sys.getsizeof(lazy))
 print('first', next(lazy))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

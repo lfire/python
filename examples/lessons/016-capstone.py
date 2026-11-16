@@ -54,10 +54,6 @@ for bad in ('abs(-2)', '1 / 0', 'x + 1'):
     except (ValueError, ZeroDivisionError) as e:
         print('reject', repr(bad), type(e).__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # float 0.30000000000000004
@@ -80,10 +76,6 @@ except ValueError as e:
     print('literal_eval reject', type(e).__name__)
 print('eval runs call', eval('len([1, 2, 3])'))
 print('restricted eval', eval('40 + 2', {'__builtins__': {}}, {}))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -109,10 +101,6 @@ def f(x):
     return eval(x)
 
 print('eval compiles to LOAD_GLOBAL', 'LOAD_GLOBAL' in dis.Bytecode(f).dis())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

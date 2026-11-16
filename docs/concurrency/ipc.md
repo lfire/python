@@ -16,9 +16,7 @@ description: 构建可停止、可监控的多进程程序
 
 一个多进程 ETL 跑得好好的，主进程被 Kubernetes 发来 `SIGTERM` 后强杀，队列里已取未确认的消息永久丢失；重启后又重复处理了一批，下游出现重复扣款。运维查 ps 发现一堆 `<defunct>` 僵尸进程——父进程 join 没设超时，卡在某个不响应退出的子进程上。
 
-还有人把 `multiprocessing.Queue` 当成 `queue.Queue` 用，调 `task_done()` 直接抛 `AttributeError`；
-
-或以为 `Manager().dict()` 和普通 dict 一样快，结果每次自增都走一次 IPC，吞吐掉了一个量级。
+还有人把 `multiprocessing.Queue` 当成 `queue.Queue` 用，调 `task_done()` 直接抛 `AttributeError`；或以为 `Manager().dict()` 和普通 dict 一样快，结果每次自增都走一次 IPC，吞吐掉了一个量级。
 
 IPC 的难点从来不在「把数据传过去」，而在收尾：生产者崩了消费者要能感知、退出信号要能被转发、未确认消息要可重放、子进程要能被回收。这几条契约定不下来，选 Queue 还是 Pipe 其实无关紧要。
 
@@ -27,9 +25,7 @@ IPC 的难点从来不在「把数据传过去」，而在收尾：生产者崩�
 
 ## Queue 与 Pipe 的语义差别
 
-`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；
-
-get 阻塞取，`qsize()` 在 macOS 上因 sem_getvalue 未实现会抛 `NotImplementedError`，`empty()` 与 `full()` 也不可靠。
+`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取，`qsize()` 在 macOS 上因 sem_getvalue 未实现会抛 `NotImplementedError`，`empty()` 与 `full()` 也不可靠。
 
 它没有 `task_done()` / `join()`——那是线程版 `queue.Queue` 的 API，确认语义得自己用 ack 通道实现。
 
@@ -37,11 +33,7 @@ get 阻塞取，`qsize()` 在 macOS 上因 sem_getvalue 未实现会抛 `NotImpl
 
 `SimpleQueue` 是更简单的锁定管道，没有 feeder 线程，也没有 task_done。
 
-`Pipe(duplex=True)` 返回 (conn1, conn2)，`duplex=False` 时返回 (只读, 只写)；
-
-`Connection.send` / `recv` 走 pickle，`poll(timeout)` 查询就绪，对端关闭后 recv 抛 `EOFError`；
-
-`multiprocessing.connection.wait` 可一次等多路。
+`Pipe(duplex=True)` 返回 (conn1, conn2)，`duplex=False` 时返回 (只读, 只写)；`Connection.send` / `recv` 走 pickle，`poll(timeout)` 查询就绪，对端关闭后 recv 抛 `EOFError`；`multiprocessing.connection.wait` 可一次等多路。
 
 Queue 适合多对多，Pipe 适合确定的一对一双向对话。
 
@@ -140,9 +132,7 @@ Pipe 是一对 Connection，`duplex=False` 时一端只读一端只写，底层�
 
 Manager 起一个服务进程持有真实对象，代理把每次 `__getitem__` / `__setitem__` 序列化成请求再等回复，故 `d['k'] += 1` 至少是读、加、写三次往返且非原子。
 
-僵尸进程的本质是子进程退出后父进程未 `wait(2)`，`join()` 与 `active_children()` 都会触发 waitpid 回收；
-
-`SIGTERM` 只在主进程主线程可注册 handler，容器里 PID 1 必须转发信号，否则子进程永远等不到通知。
+僵尸进程的本质是子进程退出后父进程未 `wait(2)`，`join()` 与 `active_children()` 都会触发 waitpid 回收；`SIGTERM` 只在主进程主线程可注册 handler，容器里 PID 1 必须转发信号，否则子进程永远等不到通知。
 
 <Term word='Queue 与 Pipe 语义' text='`multiprocessing.Queue(maxsize=0)` 是多生产者多消费者队列：内部用一个 Pipe 加一把锁，put 把对象 pickle 后先放进本进程的 buffer，再由独立的 feeder 线程后台刷进管道，因此 put 通常立即返回、并不保证对方已经收到；get 阻塞取，`qsize()` 在…' />
 
@@ -169,9 +159,7 @@ print('platform', sys.platform)
 
 ## Manager 代理、共享 ctypes 值与跨进程 Event
 
-`Manager()` 启动一个服务进程，返回 `DictProxy` / `ListProxy` / `Namespace` / `Lock` / `Event` / `Queue` 等代理对象；
-
-代理可以 pickle 后继续传给其它进程，但每一次 `d['k'] += 1` 都是一次进程间调用（读、改、写至少三次往返），比共享 ctypes 慢一两个量级，还可能因「读—改—写」非原子而丢更新。
+`Manager()` 启动一个服务进程，返回 `DictProxy` / `ListProxy` / `Namespace` / `Lock` / `Event` / `Queue` 等代理对象；代理可以 pickle 后继续传给其它进程，但每一次 `d['k'] += 1` 都是一次进程间调用（读、改、写至少三次往返），比共享 ctypes 慢一两个量级，还可能因「读—改—写」非原子而丢更新。
 
 `Value` 与 `Array` 基于 ctypes 分配在共享内存上，`lock=True` 时自带一把进程间锁，适合计数器与定长数组；小标量用它比 Manager 轻得多。
 
@@ -257,7 +245,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='明确 ack 语义、设置 join 超时、注册信号处理，并在容器环境里由 PID 1 负责转发信号' />
 
-<CheckList id='P065b' title='上线前自检' :items='["能复现并解释「对 multiprocessing.Queue 调 task…」", "能复现并解释「主进程被 SIGTERM 强杀后消息丢失或重复」", "能复现并解释「用 Manager().dict() 高频自增计数，吞吐掉一…」", "能用一条命令验证 Queue 与 Pipe 语义", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P065a' title='上线前自检' :items='["能复现并解释「对 multiprocessing.Queue 调 task…」", "能复现并解释「主进程被 SIGTERM 强杀后消息丢失或重复」", "能复现并解释「用 Manager().dict() 高频自增计数，吞吐掉一…」", "能用一条命令验证 Queue 与 Pipe 语义", "关键路径有自动化测试与失败分支"]' />
 
 <Callout type="warn" title='本讲最容易踩的坑' text='对 multiprocessing.Queue 调 task_done()：task_done/join 是线程版 queue.Queue 的 API，进程版 Queue 没有' />
 

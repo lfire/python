@@ -133,9 +133,9 @@ print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPE
 
 `functools.wraps` 是 `functools.update_wrapper` 的偏函数式封装：它按 `WRAPPER_ASSIGNMENTS`（默认含 `__module__`、`__name__`、`__qualname__`、`__annotations__`、`__doc__`，3.12 起还含 `__type_params__`）逐个从被包装函数复制字段，再执行 `wrapper.__dict__.update(wrapped.__dict__)` 保留自定义属性，最后把 wrapped 记到 `wrapper.__wrapped__` 上。
 
-其中 `__wrapped__` 最关键：`inspect.signature` 默认 `follow_wrapped=True`，会沿这条链一路解包到没有 `__wrapped__` 的函数再取签名，所以加了 wraps 才能把签名还原成 `(w, h, d)`；
+其中 `__wrapped__` 最关键：`inspect.signature` 默认 `follow_wrapped=True`，会沿这条链一路解包到没有 `__wrapped__` 的函数再取签名，所以加了 wraps 才能把签名还原成 `(w, h, d)`；`inspect.unwrap` 能显式取到最内层的原函数。
 
-`inspect.unwrap` 能显式取到最内层的原函数。wraps 还提供 assigned 与 updated 参数用于裁剪复制项。要清楚 wraps 只搬元数据，调用链仍然走 wrapper，`f` 与 `f.__wrapped__` 用 is 判断为假。
+wraps 还提供 assigned 与 updated 参数用于裁剪复制项。要清楚 wraps 只搬元数据，调用链仍然走 wrapper，`f` 与 `f.__wrapped__` 用 is 判断为假。
 
 **functools.wraps 复制与设置的字段**
 
@@ -162,13 +162,11 @@ print('__name__' in functools.WRAPPER_ASSIGNMENTS, '__doc__' in functools.WRAPPE
 
 装饰器返回的 wrapper 是一个全新的函数对象，它通过闭包 cell 保存原函数引用（wrapper 的 `co_freevars` 里有 fn，读取走 `LOAD_DEREF`），因此调用链是 wrapper 再到 fn。
 
-`update_wrapper` 的实现很直接：遍历 `WRAPPER_ASSIGNMENTS`，用 `getattr` 从 wrapped 取值、`setattr` 到 wrapper，缺失字段跳过；
+`update_wrapper` 的实现很直接：遍历 `WRAPPER_ASSIGNMENTS`，用 `getattr` 从 wrapped 取值、`setattr` 到 wrapper，缺失字段跳过；随后 `wrapper.__dict__.update(wrapped.__dict__)`，最后设 `__wrapped__ = wrapped`。
 
-随后 `wrapper.__dict__.update(wrapped.__dict__)`，最后设 `__wrapped__ = wrapped`。
+`inspect.signature` 默认 `follow_wrapped=True`，会沿 `__wrapped__` 链一路 unwrap 到没有该属性的函数再取签名，所以加了 wraps 才能还原 `(w, h, d)`；`inspect.unwrap` 做的是同一件事。
 
-`inspect.signature` 默认 `follow_wrapped=True`，会沿 `__wrapped__` 链一路 unwrap 到没有该属性的函数再取签名，所以加了 wraps 才能还原 `(w, h, d)`；
-
-`inspect.unwrap` 做的是同一件事。这也解释了身份变化：f 本身是 wrapper，`f.__wrapped__` 才是原函数，二者用 is 比较为假。
+这也解释了身份变化：f 本身是 wrapper，`f.__wrapped__` 才是原函数，二者用 is 比较为假。
 
 <ConceptDiagram type='layers3' title='第 032 讲 · 分层视角' labels='@ 语法的求值时机与函数替换|functools.wraps 到底搬回…|带状态装饰器、闭包与常见应用|常见应用' caption='带状态装饰器、闭包与常见应用' />
 
@@ -265,9 +263,11 @@ python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print
 
 ## 可禁用、可观测、可单测的计时装饰器
 
-生产环境的计时装饰器至少要满足三点：一个开关能在测试与灰度里彻底绕开包装；用 wraps 让日志与指标带上真实函数名；把被装饰函数的原始逻辑通过 `__wrapped__` 暴露出来，方便单元测试直接验证业务而不必穿透计时代码。下面实现一个带参装饰器 `timed(enabled)`，未启用时直接返回原函数；
+生产环境的计时装饰器至少要满足三点：一个开关能在测试与灰度里彻底绕开包装；用 wraps 让日志与指标带上真实函数名；把被装饰函数的原始逻辑通过 `__wrapped__` 暴露出来，方便单元测试直接验证业务而不必穿透计时代码。
 
-启用时把每次耗时记到 wrapper 的 `last_ms` 属性，并用 `try / finally` 保证函数抛异常时也能记录耗时。最后演示通过 `__wrapped__` 直接调用原始逻辑、以及关闭开关后拿回的是普通函数。真实项目还应把耗时上报到指标系统，并给异常路径单独打点。
+下面实现一个带参装饰器 `timed(enabled)`，未启用时直接返回原函数；启用时把每次耗时记到 wrapper 的 `last_ms` 属性，并用 `try / finally` 保证函数抛异常时也能记录耗时。最后演示通过 `__wrapped__` 直接调用原始逻辑、以及关闭开关后拿回的是普通函数。
+
+真实项目还应把耗时上报到指标系统，并给异常路径单独打点。
 
 ```python
 import time

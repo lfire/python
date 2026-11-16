@@ -41,17 +41,9 @@ def __getattribute__(self, name):
 
 任何 `obj.x` 都先调用 `type(obj).__getattribute__(obj, 'x')`，object 的默认实现按固定次序解析。
 
-第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；
+第一步在 `type(obj)` 的 MRO 上查找名字，得到类属性 `cls_attr`，找不到记为 `None`；第二步若 `cls_attr` 是数据描述符，也就是类型定义了 `__set__` 或 `__delete__`，就无条件调用它的 `__get__(obj, type(obj))` 并返回，实例 `__dict__` 里的同名键完全不参与；第三步查 `obj.__dict__`，命中即返回；第四步若 `cls_attr` 是非数据描述符（只定义 `__get__`），调用它的 `__get__`；第五步 `cls_attr` 非 `None` 就直接返回类属性；第六步以上都没结果才抛 `AttributeError`，此时若类定义了 `__getattr__(self, name)`，解释器通过 `slot_tp_getattr_hook` 再调用它兜底。
 
-第二步若 `cls_attr` 是数据描述符，也就是类型定义了 `__set__` 或 `__delete__`，就无条件调用它的 `__get__(obj, type(obj))` 并返回，实例 `__dict__` 里的同名键完全不参与；
-
-第三步查 `obj.__dict__`，命中即返回；第四步若 `cls_attr` 是非数据描述符（只定义 `__get__`），调用它的 `__get__`；第五步 `cls_attr` 非 `None` 就直接返回类属性；
-
-第六步以上都没结果才抛 `AttributeError`，此时若类定义了 `__getattr__(self, name)`，解释器通过 `slot_tp_getattr_hook` 再调用它兜底。
-
-由此能解释几种常见现象：`property` 是数据描述符（property 类型带一个会抛 `AttributeError` 的 `__set__`），实例字典盖不住它；函数对象是非数据描述符（只有 `__get__`），因此实例属性可以遮蔽同名方法；
-
-`staticmethod` 与 `classmethod` 同样是非数据描述符。
+由此能解释几种常见现象：`property` 是数据描述符（property 类型带一个会抛 `AttributeError` 的 `__set__`），实例字典盖不住它；函数对象是非数据描述符（只有 `__get__`），因此实例属性可以遮蔽同名方法；`staticmethod` 与 `classmethod` 同样是非数据描述符。
 
 `__slots__` 声明的属性是类上的 `member_descriptor`，也属于数据描述符，且实例通常不再有 `__dict__`。
 
@@ -77,13 +69,11 @@ def __getattribute__(self, name):
 
 覆盖 `__getattribute__` 时，方法体内任何 `self.xxx`、`getattr(self, ...)`、甚至访问 `self.__dict__`，都会再次触发 `__getattribute__`，形成无限递归，最终抛 `RecursionError`（报错文字是 maximum recursion depth exceeded）。
 
-唯一安全的底座是 `object.__getattribute__`，它执行上一段那六步而不回调你的覆盖；
+唯一安全的底座是 `object.__getattribute__`，它执行上一段那六步而不回调你的覆盖；需要拦截的分支单独判断，其余一律委托给它。
 
-需要拦截的分支单独判断，其余一律委托给它。因为它在每次属性访问的热路径上，拦截逻辑应尽量薄：只判断少量名字，重计算放到函数或缓存里。
+因为它在每次属性访问的热路径上，拦截逻辑应尽量薄：只判断少量名字，重计算放到函数或缓存里。
 
-赋值侧对称地有 `__setattr__`，所有 `self.x = v` 都经过它，内部必须用 `object.__setattr__` 委托，否则同样递归；
-
-数据描述符的 `__set__` 也由 `object.__setattr__` 负责分派，所以给 property 赋值会走 setter 而不是写实例字典。
+赋值侧对称地有 `__setattr__`，所有 `self.x = v` 都经过它，内部必须用 `object.__setattr__` 委托，否则同样递归；数据描述符的 `__set__` 也由 `object.__setattr__` 负责分派，所以给 property 赋值会走 setter 而不是写实例字典。
 
 `del obj.x` 对应 `__delattr__` 与描述符的 `__delete__`。
 
@@ -176,9 +166,9 @@ print('opnames', [i.opname for i in dis.get_instructions(read)])
 
 描述符是类属性里实现了 `__get__`、`__set__` 或 `__delete__` 任一方法的对象；`__set_name__`（3.6+）在类创建时由 `type.__new__` 自动调用，可省去手写字段名。区分数据与非数据只看有没有 `__set__` 或 `__delete__`，与 `__get__` 无关。
 
-`functools.cached_property`（3.8+）刻意做成非数据描述符：首次访问计算后把结果写进实例的 `__dict__`，此后实例字典优先命中，描述符不再执行，等价于「一次性懒加载且可被覆盖」；
+`functools.cached_property`（3.8+）刻意做成非数据描述符：首次访问计算后把结果写进实例的 `__dict__`，此后实例字典优先命中，描述符不再执行，等价于「一次性懒加载且可被覆盖」；代价是实例必须有 `__dict__`（与 `__slots__` 冲突），而且它不是线程安全的。
 
-代价是实例必须有 `__dict__`（与 `__slots__` 冲突），而且它不是线程安全的。远程属性、ORM 懒加载、代理对象应优先用 `__getattr__` 实现：只在正常查找彻底失败时被调用，不拖慢已有属性的访问。
+远程属性、ORM 懒加载、代理对象应优先用 `__getattr__` 实现：只在正常查找彻底失败时被调用，不拖慢已有属性的访问。
 
 若确实要拦截所有访问（审计、透明代理），用 `__getattribute__` 并全程委托 `object.__getattribute__`，同时用 `inspect.getattr_static` 和 `dis` 验证分派路径。
 
@@ -204,9 +194,9 @@ print('opnames', [i.opname for i in dis.get_instructions(read)])
 
 ## _PyObject_GenericGetAttrWithDict 的执行路径
 
-在 CPython 里，实例属性解析由 `Objects/object.c` 的 `_PyObject_GenericGetAttrWithDict` 完成：它先在类型的 MRO 上做 `_PyType_Lookup` 得到 descr，再用 `PyDescr_IsData` 判断 descr 类型是否带 `tp_descr_set`，成立就调 `descr.__get__`；
+在 CPython 里，实例属性解析由 `Objects/object.c` 的 `_PyObject_GenericGetAttrWithDict` 完成：它先在类型的 MRO 上做 `_PyType_Lookup` 得到 descr，再用 `PyDescr_IsData` 判断 descr 类型是否带 `tp_descr_set`，成立就调 `descr.__get__`；否则查实例字典，再处理非数据 descr 的 `__get__`，最后返回 descr 或抛 `AttributeError`。
 
-否则查实例字典，再处理非数据 descr 的 `__get__`，最后返回 descr 或抛 `AttributeError`。类型对象创建时 `type.__new__` 会扫描命名空间里带 `__set_name__` 的描述符并回调，让描述符知道自己的属性名。
+类型对象创建时 `type.__new__` 会扫描命名空间里带 `__set_name__` 的描述符并回调，让描述符知道自己的属性名。
 
 `__getattribute__` 的插槽是 `tp_getattro`：用户类覆盖它后，`slot_tp_getattr_hook` 还会在 `AttributeError` 时转去 `tp_getattr`（也就是 `__getattr__`），这一层包装正是「`__getattr__` 只作兜底」的实现来源。
 
@@ -217,9 +207,9 @@ print('opnames', [i.opname for i in dis.get_instructions(read)])
 
 一个模型对象有 id、name 等普通列，profile 字段来自另一张表，希望第一次读才查库、之后读缓存；同时 profile 的赋值必须走校验。
 
-若把逻辑写进 `__getattribute__`，读取 `self.id` 也会递归；
+若把逻辑写进 `__getattribute__`，读取 `self.id` 也会递归；若用普通实例属性缓存，又会被后续赋值绕过校验。
 
-若用普通实例属性缓存，又会被后续赋值绕过校验。正确的分工是：校验交给 `property`（数据描述符，保证 setter 生效），懒加载与未知字段交给 `__getattr__`（只在正常链失败时触发），缓存写进实例的 `__dict__`，由 property 的读路径读取。
+正确的分工是：校验交给 `property`（数据描述符，保证 setter 生效），懒加载与未知字段交给 `__getattr__`（只在正常链失败时触发），缓存写进实例的 `__dict__`，由 property 的读路径读取。
 
 下面的片段把这三种机制组合成一个可运行的最小模型，并用 `__getattribute__` 只做一层薄薄的访问计数，所有真实取属性都委托给 `object.__getattribute__`，避免递归。
 
@@ -261,7 +251,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='代理对象、懒加载、远程属性用 __getattr__ 实现；不要滥改 __getattribute__，它位于每次属性访问的热路径上' />
 
-<CheckList id='P056b' title='上线前自检' :items='["能复现并解释「在 __getattribute__ 里用 self.xxx…」", "能复现并解释「给实例塞同名属性想覆盖 property 的校验」", "能复现并解释「用 hasattr / getattr 判断属性是否存在就万…」", "能用一条命令验证 __getattribute__ 总入口", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P056a' title='上线前自检' :items='["能复现并解释「在 __getattribute__ 里用 self.xxx…」", "能复现并解释「给实例塞同名属性想覆盖 property 的校验」", "能复现并解释「用 hasattr / getattr 判断属性是否存在就万…」", "能用一条命令验证 __getattribute__ 总入口", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

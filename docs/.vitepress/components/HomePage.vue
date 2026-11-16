@@ -49,7 +49,7 @@ const loop = [{"title": "建立直觉", "desc": "类比 + 概念图，先知道�
       <div class="hp-grid">
         <div class="hp-feature"><div class="ico">🧭</div><h4>三条学习路线</h4><p>零基础顺序学、按短板切入、只查一个具体问题，都能找到自己的入口；不要求从头到尾一字不落。</p></div>
         <div class="hp-feature"><div class="ico">🪜</div><h4>逐级递进</h4><p>先能对，再能快；先单进程，再并发；先会写，再会发布。每讲开头都有一段引入，交代承接、前置与展开顺序。</p></div>
-        <div class="hp-feature"><div class="ico">🧰</div><h4>需要准备什么</h4><p>一台能联网的电脑、Python 3.10 以上、一个顺手的编辑器。虚拟环境与工具链会在导学阶段带着装。</p></div>
+        <div class="hp-feature"><div class="ico">🧰</div><h4>需要准备什么</h4><p>一台能联网的电脑、建议 3.12 以上的 Python（个别讲次需要 3.13）、一个顺手的编辑器。虚拟环境与工具链会在导学阶段带着装。</p></div>
         <div class="hp-feature"><div class="ico">🎛️</div><h4>站点怎么用</h4><p>逐行讲解、先猜输出、随堂检测、可放大概念图、练习与打卡怎么用，都在开篇页里逐项说明。</p></div>
       </div>
       <p style="margin-top:1.2rem;color:var(--go-muted);font-size:14px;line-height:1.9">

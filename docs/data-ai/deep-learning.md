@@ -16,26 +16,22 @@ description: 从零跑通一个神经网络训练
 
 手写的训练循环里，loss 一路下降，验证指标却来回跳，显存还一轮比一轮高，最后 OOM。
 
-查了半天是两处低级错误：每轮 backward 之前忘了 `optimizer.zero_grad()`，梯度被累加到上一轮；
+查了半天是两处低级错误：每轮 backward 之前忘了 `optimizer.zero_grad()`，梯度被累加到上一轮；验证阶段既没包 `no_grad`、也没切 `eval`，dropout 和 BatchNorm 还在按训练模式更新，又给验证批次白建了一堆计算图。
 
-验证阶段既没包 `no_grad`、也没切 `eval`，dropout 和 BatchNorm 还在按训练模式更新，又给验证批次白建了一堆计算图。另一组同事的问题更隐蔽：随机种子没固定，同一份代码两次跑出的指标差两个点，根本判断不了某次改动是不是真有效。
-
-自动微分把反向传播变成了「普通前向代码加一行 `backward`」，看着省事，真正需要自己设计的反而是数据管道、损失口径与评估纪律。本讲用纯标准库实现一个极简自动微分，把梯度累加、链式法则和训练循环都变成能核对的数字。
+另一组同事的问题更隐蔽：随机种子没固定，同一份代码两次跑出的指标差两个点，根本判断不了某次改动是不是真有效。自动微分把反向传播变成了「普通前向代码加一行 `backward`」，看着省事，真正需要自己设计的反而是数据管道、损失口径与评估纪律。本讲用纯标准库实现一个极简自动微分，把梯度累加、链式法则和训练循环都变成能核对的数字。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='每轮忘 zero_grad，梯度被累加到上一轮：PyTorch 的 .grad 是累加语义，支持多损失分支，但训练循环默认不会自动清零' />
 
 
 ## 张量、设备与计算图：autograd 记了什么
 
-PyTorch 的核心对象是 `torch.Tensor`：一个带 dtype、shape、device、requires_grad 等属性的多维数组。dtype 默认是 `torch.float32`，混合精度用 float16 / bfloat16 省显存；
+PyTorch 的核心对象是 `torch.Tensor`：一个带 dtype、shape、device、requires_grad 等属性的多维数组。
 
-device 决定张量落在 cpu、cuda 还是 mps 上，模型与输入必须在同一设备，否则会报 Expected all tensors to be on the same device。
+dtype 默认是 `torch.float32`，混合精度用 float16 / bfloat16 省显存；device 决定张量落在 cpu、cuda 还是 mps 上，模型与输入必须在同一设备，否则会报 Expected all tensors to be on the same device。
 
 设 `requires_grad=True` 时，PyTorch 采用动态图（eager）：前向每做一次运算就动态记下一个 Function 节点，连成一张有向无环图，节点里存着反向所需的输入与反向函数。
 
-对标量 loss 调用 `loss.backward()`，autograd 便从根节点反向拓扑遍历，按链式法则把梯度累加到每个叶子张量的 `.grad`；
-
-若 loss 不是标量，必须传 gradient 参数指定初始梯度。
+对标量 loss 调用 `loss.backward()`，autograd 便从根节点反向拓扑遍历，按链式法则把梯度累加到每个叶子张量的 `.grad`；若 loss 不是标量，必须传 gradient 参数指定初始梯度。
 
 `tensor.detach()` 得到一个共享存储但不建图的新张量，`with torch.no_grad()` 在上下文里彻底关掉图构建，`.item()` 把单元素张量取成 Python 标量。
 
@@ -110,15 +106,11 @@ for x in (0.0, 2.0, -3.0):
 
 数据管道决定训练能不能稳定跑起来。
 
-Dataset 实现 `__len__` 与 `__getitem__` 定义「怎么取一条样本」，DataLoader 在其上负责 `batch_size`、`shuffle`（每轮打乱顺序）、`num_workers` 多进程并行加载、`collate_fn` 把单条样本拼成批、`pin_memory` 锁页内存加速主机到 GPU 的拷贝；
-
-图像任务把 Resize、Normalize 与随机增强放进 transform，且归一化用的均值方差只能在训练集上统计。
+Dataset 实现 `__len__` 与 `__getitem__` 定义「怎么取一条样本」，DataLoader 在其上负责 `batch_size`、`shuffle`（每轮打乱顺序）、`num_workers` 多进程并行加载、`collate_fn` 把单条样本拼成批、`pin_memory` 锁页内存加速主机到 GPU 的拷贝；图像任务把 Resize、Normalize 与随机增强放进 transform，且归一化用的均值方差只能在训练集上统计。
 
 损失函数按任务挑：回归用 `MSELoss`，多分类用 `CrossEntropyLoss`（内部已含 LogSoftmax 与 NLLLoss，输入应是原始 logits 而不是 softmax 概率，重复 softmax 会破坏数值稳定），二分类用 `BCEWithLogitsLoss`（把 sigmoid 与 BCE 合并，用 log-sum-exp 技巧避免溢出）。
 
-优化器方面，SGD 带 momentum、Adam 自适应一阶二阶矩估计，学习率 lr 是最敏感的超参，配合 `StepLR` / `CosineAnnealingLR` 等 scheduler 衰减；
-
-一步更新是 `optimizer.step()`，梯度裁剪用 `clip_grad_norm_` 防爆炸。
+优化器方面，SGD 带 momentum、Adam 自适应一阶二阶矩估计，学习率 lr 是最敏感的超参，配合 `StepLR` / `CosineAnnealingLR` 等 scheduler 衰减；一步更新是 `optimizer.step()`，梯度裁剪用 `clip_grad_norm_` 防爆炸。
 
 可复现要把 `torch.manual_seed`、`numpy.random.seed`、`random.seed` 一起固定，确定性再严一点就设 `torch.backends.cudnn.deterministic=True`，并把 `torch.backends.cudnn.benchmark=False` 一起关掉，必要时用 `torch.use_deterministic_algorithms(True)` 兜住其它算子，DataLoader 的 worker 初始化也固定下来。
 
@@ -145,13 +137,15 @@ Dataset 实现 `__len__` 与 `__getitem__` 定义「怎么取一条样本」，D
 
 一个可靠的 epoch 循环顺序是固定的：`model.train()` 开训练模式 → 遍历 DataLoader → `optimizer.zero_grad()` → forward 得 logits → 计算 loss → `loss.backward()` → `optimizer.step()`。
 
-验证阶段必须 `model.eval()` 把 dropout 关掉、让 BatchNorm 切到用 running 统计量，并包在 `with torch.no_grad()` 里不建图，既省显存又避免指标抖动；
+验证阶段必须 `model.eval()` 把 dropout 关掉、让 BatchNorm 切到用 running 统计量，并包在 `with torch.no_grad()` 里不建图，既省显存又避免指标抖动；验证完回到训练态要再 `model.train()`。
 
-验证完回到训练态要再 `model.train()`。每个 epoch 都把训练与验证的 loss 和指标一起记下来，而不是只盯着训练 loss 往下走。工程上有两条性价比很高的纪律：先固定随机种子，拿几十条样本让模型过拟合到接近零误差，能记住就说明数据管道、损失与反向链路都通了，再放大数据量；
+每个 epoch 都把训练与验证的 loss 和指标一起记下来，而不是只盯着训练 loss 往下走。
 
-训练中盯着梯度范数与显存，梯度消失 / 爆炸、显存悄悄涨满，往往是忘了 `zero_grad()` 或验证没关梯度的信号。CNN 的结构动机是用局部感受野、权值共享与池化提取平移不变的空间特征，同样层数下参数量远小于全连接，适合图像；
+工程上有两条性价比很高的纪律：先固定随机种子，拿几十条样本让模型过拟合到接近零误差，能记住就说明数据管道、损失与反向链路都通了，再放大数据量；训练中盯着梯度范数与显存，梯度消失 / 爆炸、显存悄悄涨满，往往是忘了 `zero_grad()` 或验证没关梯度的信号。
 
-RNN 用隐状态在序列间传递信息，但朴素 RNN 存在长程梯度消失，`LSTM` / GRU 用门控缓解，Transformer 干脆用自注意力替代循环，把长依赖并行地建起来。理解这些结构为什么被设计出来，比记住层名更有用。
+CNN 的结构动机是用局部感受野、权值共享与池化提取平移不变的空间特征，同样层数下参数量远小于全连接，适合图像；RNN 用隐状态在序列间传递信息，但朴素 RNN 存在长程梯度消失，`LSTM` / GRU 用门控缓解，Transformer 干脆用自注意力替代循环，把长依赖并行地建起来。
+
+理解这些结构为什么被设计出来，比记住层名更有用。
 
 ```python
 xs = [1, 2, 3]
@@ -236,7 +230,7 @@ for epoch in range(5):
 
 <Callout type="idea" title='落地提示' text='固定随机种子、先在小样本上过拟合验证管道正确性，再放大数据量；记录每个 epoch 的训练与验证指标' />
 
-<CheckList id='P103b' title='上线前自检' :items='["能复现并解释「每轮忘 zero_grad，梯度被累加到上一轮」", "能复现并解释「验证阶段没关梯度也没 eval，指标抖动、显存涨满」", "能复现并解释「随机种子未固定，无法判断改动是否真的有效」", "能用一条命令验证 张量与设备", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P103a' title='上线前自检' :items='["能复现并解释「每轮忘 zero_grad，梯度被累加到上一轮」", "能复现并解释「验证阶段没关梯度也没 eval，指标抖动、显存涨满」", "能复现并解释「随机种子未固定，无法判断改动是否真的有效」", "能用一条命令验证 张量与设备", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 反向模式自动微分：一次 backward 拿全部梯度
@@ -247,7 +241,7 @@ for epoch in range(5):
 
 实现上每个节点存局部雅可比向量积 VJP，按拓扑逆序把上游梯度累加进子节点，累加用 += 而非覆盖，故共享节点的梯度来自多个分支之和，`optimizer.zero_grad()` 必须每轮清空。
 
-源码路径（PyTorch 2.x）：torch/csrc/autograd/`engine.cpp` 的 Engine::execute 用 ready queue 做拓扑调度、torch/csrc/autograd/functions/`accumulate_grad.h` 把梯度写回叶子 .grad、torch/csrc/autograd/`autograd_meta.cpp` 维护 version counter。
+源码路径（PyTorch 2.x）：`torch/csrc/autograd/engine.cpp` 的 Engine::execute 用 ready queue 做拓扑调度、`torch/csrc/autograd/functions/accumulate_grad.h` 把梯度写回叶子 .grad、`torch/csrc/autograd/autograd_meta.cpp` 维护 version counter。
 
 推论：输出维度远大于输入（求完整 Jacobian、灵敏度分析）时反向模式反而吃亏，这时才该用 forward-mode。
 
@@ -258,15 +252,11 @@ for epoch in range(5):
 
 交叉熵的数值稳定不是技巧而是必须：对 logits z，softmax 分母是各 `exp(z_i)` 之和，z 里有一个 1000，float32 的 exp 就上溢成 inf，随后 `log(0)` 得 -inf，梯度全线崩掉。
 
-log-sum-exp 令 `m = max(z)`，把 log sum `exp(z_i)` 改写成 m + log sum `exp(z_i - m)`，最大指数项恒为 `exp(0)`=1，所有项落在 (0,1]，既不上溢又保留可导。
+log-sum-exp 令 `m = max(z)`，把 log sum `exp(z_i)` 改写成 m + log sum `exp(z_i - m)`，最大指数项恒为 `exp(0)=1`，所有项落在 (0,1]，既不上溢又保留可导。
 
-PyTorch 的 CrossEntropyLoss 把 LogSoftmax 与 NLLLoss 合并成一步，aten/src/ATen/native/`SoftMax.cpp` 的 log_softmax 先减最大值再算 exp；
+PyTorch 的 CrossEntropyLoss 把 LogSoftmax 与 NLLLoss 合并成一步，`aten/src/ATen/native/SoftMax.cpp` 的 log_softmax 先减最大值再算 exp；合并后对 logits 的梯度化简成 `dL/dz_i = p_i - y_i`，一次前向一次反传，无需单独对 softmax 求导。
 
-合并后对 logits 的梯度化简成 dL/`dz_i = p_i` - y_i，一次前向一次反传，无需单独对 softmax 求导。由此推出三个结论：输入必须是原始 logits，手动再 softmax 会把概率重新归一化、梯度不再是 p-y；
-
-BCEWithLogitsLoss 用 `log(1+exp(-|x|))` + `max(x,0)` 合并 sigmoid 与 BCE，梯度是 `sigmoid(z)`-y；
-
-loss 非标量时 backward 必须传 gradient 指定初始种子。
+由此推出三个结论：输入必须是原始 logits，手动再 softmax 会把概率重新归一化、梯度不再是 p-y；BCEWithLogitsLoss 用 `log(1+exp(-|x|)) + max(x,0)` 合并 sigmoid 与 BCE，梯度是 `sigmoid(z)`-y；loss 非标量时 backward 必须传 gradient 指定初始种子。
 
 ```python
 import math
@@ -320,13 +310,11 @@ print('stable_big', [round(v, 4) for v in softmax_stable(big)])
 
 一个图像分类服务在第 12 个 epoch 后显存每轮涨约 80MB，第 20 轮 OOM。
 
-排查发现验证函数写成 `def validate(mod…`，既没 `with torch.no_grad()` 也没 `model.eval()`：每个验证批次都建了完整计算图，中间特征被 autograd 历史引用挂住，峰值显存随批次数线性叠加；
+排查发现验证函数写成 `def validate(mod…`，既没 `with torch.no_grad()` 也没 `model.eval()`：每个验证批次都建了完整计算图，中间特征被 autograd 历史引用挂住，峰值显存随批次数线性叠加；BatchNorm 还用当前批统计量更新 running_mean，验证指标随批次顺序抖动。
 
 ```python
 def validate(model, loader): return sum(loss_fn(model(x), y) for x, y in loader)
 ```
-
-BatchNorm 还用当前批统计量更新 running_mean，验证指标随批次顺序抖动。
 
 补上 `model.eval()` 与 `with torch.no_grad()` 后显存回落到训练峰值的三分之一。
 

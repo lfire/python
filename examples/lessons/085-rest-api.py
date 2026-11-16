@@ -36,10 +36,6 @@ print(place_order('k-100', 50))
 print(place_order('k-100', 50))
 print('order count', db.execute('SELECT COUNT(*) FROM orders').fetchone()[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 201 created
@@ -61,10 +57,6 @@ print(charge('pay-1', 99))
 print(charge('pay-1', 99))
 print(charge('pay-2', 10))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # POST idempotent False params ['body', 'idempotency_key']
@@ -82,10 +74,6 @@ IDEMPOTENT = frozenset(('GET', 'PUT', 'DELETE', 'HEAD', 'OPTIONS'))
 for method, fn in (('POST', write_endpoint), ('PUT', write_endpoint), ('GET', read_endpoint)):
     param_names = list(inspect.signature(fn).parameters)
     print(method, 'idempotent', method in IDEMPOTENT, 'params', param_names)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

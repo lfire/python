@@ -75,9 +75,7 @@ for name, p in sig.parameters.items():
 
 ## 默认值只在定义时求值一次
 
-def 是一条执行语句，解释器执行到它时才创建 function 对象；
-
-默认值表达式就在这一刻求值，结果对象被存进 `function.__defaults__`（对应位置/位置或关键字参数，是一个元组）与 `function.__kwdefaults__`（对应仅关键字参数，是一个 dict），而不是每次调用重算。
+def 是一条执行语句，解释器执行到它时才创建 function 对象；默认值表达式就在这一刻求值，结果对象被存进 `function.__defaults__`（对应位置/位置或关键字参数，是一个元组）与 `function.__kwdefaults__`（对应仅关键字参数，是一个 dict），而不是每次调用重算。
 
 因此默认值若是可变对象（空列表、空字典、空集合），所有调用共享的是同一个对象引用，任何原地修改都会累积到后续调用，这正是串单 bug 的根因。
 
@@ -91,9 +89,9 @@ def f(x, acc=None):
 
 因为 `None` 是不可变单例，每次调用拿到的都是新容器，不会被上一次的原地修改污染。
 
-同类陷阱还有 `def f(t=time.time())`：时间戳是导入那一刻，不是调用时刻；
+同类陷阱还有 `def f(t=time.time())`：时间戳是导入那一刻，不是调用时刻；默认值表达式若引用了尚未定义的名字，会在 def 执行时直接抛 `NameError`。
 
-默认值表达式若引用了尚未定义的名字，会在 def 执行时直接抛 `NameError`。可以用 `__defaults__` 与 `__kwdefaults__` 直接读出当前绑定，ruff 的 `B006` 规则会静态告警可变默认值。
+可以用 `__defaults__` 与 `__kwdefaults__` 直接读出当前绑定，ruff 的 `B006` 规则会静态告警可变默认值。
 
 还要区分没有默认值的情况：此时 `Parameter.default` 是哨兵对象 `inspect.Parameter.empty`，而不是 `None`，用它做判断才不会把显式的 `None` 默认值误判为缺失。
 
@@ -121,9 +119,7 @@ print(add2('a'), add2('b'))
 
 ## def 是一次执行期构造：从 code object 到 __defaults__
 
-def 语句在 CPython 里是一次对象构造：编译器先把函数体编译成独立的 code object，记录 `co_argcount`、`co_posonlyargcount`、`co_kwonlyargcount`、`co_varnames` 与 `co_flags`；
-
-等模块执行到 def 这一行时，运行时才求值默认值表达式，用 `MAKE_FUNCTION` 指令把 code object、默认值元组、注解字典、闭包 cell 等打包成 `PyFunctionObject` 并绑定到名字。
+def 语句在 CPython 里是一次对象构造：编译器先把函数体编译成独立的 code object，记录 `co_argcount`、`co_posonlyargcount`、`co_kwonlyargcount`、`co_varnames` 与 `co_flags`；等模块执行到 def 这一行时，运行时才求值默认值表达式，用 `MAKE_FUNCTION` 指令把 code object、默认值元组、注解字典、闭包 cell 等打包成 `PyFunctionObject` 并绑定到名字。
 
 默认值因此是 function 对象上的 `__defaults__` / `__kwdefaults__`，属于对象状态而非字节码常量，函数体 code object 的 `co_consts` 里并不包含默认值，只有函数体内用到的字面量。
 
@@ -136,9 +132,7 @@ def 语句在 CPython 里是一次对象构造：编译器先把函数体编译�
 
 ## 解包、绑定与一等对象
 
-调用侧用 `*seq` 把可迭代展开成位置参数、`**mapping` 把映射展开成关键字参数，二者都发生在调用前；映射的键必须是 str，否则抛 `TypeError`（keywords must be strings）；
-
-同一个参数既由位置又由关键字给出时抛 `TypeError`（got multiple values for argument）；位置专属参数被写成关键字则抛 `TypeError`（got some positional-only arguments passed as keyword arguments）。
+调用侧用 `*seq` 把可迭代展开成位置参数、`**mapping` 把映射展开成关键字参数，二者都发生在调用前；映射的键必须是 str，否则抛 `TypeError`（keywords must be strings）；同一个参数既由位置又由关键字给出时抛 `TypeError`（got multiple values for argument）；位置专属参数被写成关键字则抛 `TypeError`（got some positional-only arguments passed as keyword arguments）。
 
 `inspect.signature(f).bind(*args, **kwargs)` 与 `bind_partial` 按签名规则做绑定，返回 `BoundArguments`，其 `.arguments` 是有序字典，`apply_defaults()` 能补上默认值，这是框架在真正调用前校验参数的正确工具，比手写 `isinstance` 可靠。
 
@@ -149,9 +143,9 @@ def 与 lambda 生成的是同一种 function 类型，区别只在有无名字�
 
 ## 参数语法、版本与绑定错误速查
 
-调用崩在 `TypeError`，先分语法还是绑定。`/` 之前仅位置参数（PEP 570，3.8 起）不收关键字；裸 `*` 之后仅关键字（PEP 3102，3.0 起），漏名报 unexpected keyword。同一名字重复给值报 got multiple values；
+调用崩在 `TypeError`，先分语法还是绑定。`/` 之前仅位置参数（PEP 570，3.8 起）不收关键字；裸 `*` 之后仅关键字（PEP 3102，3.0 起），漏名报 unexpected keyword。
 
-用 `**` 解包映射的键非 str 报 keywords must be strings。
+同一名字重复给值报 got multiple values；用 `**` 解包映射的键非 str 报 keywords must be strings。
 
 查签名用 `inspect.signature(f)`，默认值在 `__defaults__` 与 `__kwdefaults__`。
 
@@ -189,9 +183,7 @@ def 与 lambda 生成的是同一种 function 类型，区别只在有无名字�
 
 一个数据 SDK 的 `query(page, size)` 已被数千处调用，现在要加 timeout、retries 两个可选配置，同时库作者想在未来把内部参数名换掉而不破坏旧代码。
 
-做法是用 `/` 把 page、size 锁成仅位置：调用方只能按位置给，库内部重命名不影响任何人；新增配置全部放到裸 `*` 之后成为仅关键字参数，调用处自带说明、以后再插入新配置也不会打乱位置顺序；
-
-再用 `inspect.signature.bind` 做一层前置校验，把参数错误挡在真正执行之前。
+做法是用 `/` 把 page、size 锁成仅位置：调用方只能按位置给，库内部重命名不影响任何人；新增配置全部放到裸 `*` 之后成为仅关键字参数，调用处自带说明、以后再插入新配置也不会打乱位置顺序；再用 `inspect.signature.bind` 做一层前置校验，把参数错误挡在真正执行之前。
 
 下面这段把这套约束写成一个 safe_call 包装：它先 `bind()`、`apply_defaults()`，再转发，并演示按关键字传仅位置参数会被当场拒绝。
 

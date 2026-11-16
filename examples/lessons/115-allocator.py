@@ -40,10 +40,6 @@ found = gc.collect(2)
 print('cycle_collectable', found >= 2)
 print('gen0_below_threshold', gc.get_count()[0] < gc.get_threshold()[0])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # alive_without_gc True
@@ -64,10 +60,6 @@ n = gc.collect()
 print('collected', n >= 1)
 print('weak_dead', r() is None)
 gc.enable()
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -90,10 +82,6 @@ print('alloc_positive', top.size > 0)
 print('getsizeof_dict', sys.getsizeof({}))
 print('getsizeof_int', sys.getsizeof(1))
 tracemalloc.stop()
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

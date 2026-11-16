@@ -30,10 +30,6 @@ try:
 except TypeError as e:
     print(type(e).__name__, str(e)[:40])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 6 abab [1, 2, 1, 2]
@@ -44,10 +40,6 @@ def twice(x):
 
 print(twice(3), twice('ab'), twice([1, 2]))
 print(twice.__annotations__)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -64,10 +56,6 @@ def twice(x):
 
 print(twice.__code__.co_varnames, twice.__code__.co_consts)
 dis.dis(twice)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

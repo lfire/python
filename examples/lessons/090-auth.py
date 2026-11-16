@@ -48,10 +48,6 @@ print('tampered', verify(tok[:-2] + 'xx'))
 old = sign({'alg':'HS256','typ':'JWT'}, {'sub':'u42','exp': time.time() - 1})
 print('expired', verify(old))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # salt bytes 16
@@ -73,10 +69,6 @@ print('digest bytes', len(bytes.fromhex(h)))
 print('verify', hmac.compare_digest(h, h2))
 print('wrong', hmac.compare_digest(h, hash_password('wrong', bytes.fromhex(s))[1]))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # method S256
@@ -90,10 +82,6 @@ challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
 print('method S256')
 print('challenge', challenge)
 print('plain != hashed', verifier != challenge)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

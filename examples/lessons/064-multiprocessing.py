@@ -46,10 +46,6 @@ if __name__ == '__main__':
     sh.close()
     sh.unlink()
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # top-level picklable True
@@ -71,10 +67,6 @@ if __name__ == '__main__':
     ctx = mp.get_context('fork')
     print('fork context', ctx.get_start_method())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # pickle bytes 29778
@@ -92,10 +84,6 @@ print('pickle bytes', len(blob))
 print('protocol', pickle.HIGHEST_PROTOCOL)
 print('payload bytes', sys.getsizeof(payload))
 print('start method', mp.get_start_method())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

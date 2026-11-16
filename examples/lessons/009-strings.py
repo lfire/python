@@ -27,10 +27,6 @@ print('hex', b.hex())
 print('roundtrip', b.decode('utf-8') == s)
 print('codepoint', ord('中'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # decoded 中
@@ -52,10 +48,6 @@ print('ignore_len', len(bytes([0xff]).decode('utf-8', errors='ignore')))
 print('bom', codecs.BOM_UTF8.hex())
 print('utf16_hex', 'A'.encode('utf-16-le').hex())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # default_encoding utf-8
@@ -70,10 +62,6 @@ print('fs_encoding_utf8', 'utf' in sys.getfilesystemencoding().lower())
 print('bom_utf8', codecs.BOM_UTF8.hex())
 print('codepoint_hex', hex(ord('中')))
 print('ascii_of_A', 'A'.encode('ascii').hex())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

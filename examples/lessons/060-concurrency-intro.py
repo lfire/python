@@ -50,10 +50,6 @@ print('io waits more', wall - cpu > cpu)
 print('little law', round(200 * 0.05, 1))
 print('cores >= 2', os.cpu_count() >= 2)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # would_block True
@@ -75,10 +71,6 @@ print('blocking flag', b.gettimeout() == 0.0)
 a.close()
 b.close()
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # gil_enabled True
@@ -92,10 +84,6 @@ print('gil_enabled', getattr(sys, '_is_gil_enabled', lambda: 'n/a')())
 print('switch_interval_is_float', isinstance(sys.getswitchinterval(), float))
 print('interval_positive', sys.getswitchinterval() > 0)
 print('interval_default', sys.getswitchinterval() == 0.005)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

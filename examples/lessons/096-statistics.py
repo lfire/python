@@ -34,10 +34,6 @@ lo, hi = q[0] - 1.5 * iqr, q[2] + 1.5 * iqr
 print('fences', round(lo, 1), round(hi, 1))
 print('outliers', [x for x in data if x < lo or x > hi])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # population mean 50.5
@@ -55,10 +51,6 @@ print('population pstdev', round(st.pstdev(pop), 3))
 print('means mean', round(st.mean(means), 3))
 print('means stdev', round(st.stdev(means), 3))
 print('predicted SE', round(st.pstdev(pop) / (30 ** 0.5), 3))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -78,10 +70,6 @@ ice = [20 + 3 * i for i in t]
 drown = [5 + 2 * i for i in t]
 print('r(ice, drown)', pearson(ice, drown))
 print('alpha .05 x20 false-positive', round(1 - 0.95 ** 20, 3))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

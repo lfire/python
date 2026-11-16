@@ -51,10 +51,6 @@ print('outer iterable captured', list(g))
 doubled = [y for x in [1, 2, 3] if (y := x * 2) > 2]
 print('walrus', doubled)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # pipeline [16, 25]
@@ -82,10 +78,6 @@ try:
     compile(code, '<s>', 'eval')
 except SyntaxError as e:
     print('walrus in iterable', type(e).__name__)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -119,10 +111,6 @@ t0 = perf_counter(); loop(n); t_loop = perf_counter() - t0
 t0 = perf_counter(); [i * i for i in range(n)]; t_comp = perf_counter() - t0
 print('comprehension faster', t_comp < t_loop)
 print('LIST_APPEND present', 'LIST_APPEND' in dis.Bytecode(lambda: [i for i in range(3)]).dis())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -42,10 +42,6 @@ print(u.age)
 print(type(User.__dict__['age']).__name__)
 print(isinstance(User.__dict__['age'], property))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 10 price _price
@@ -84,10 +80,6 @@ try:
 except ValueError as e:
     print(type(e).__name__, str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # True True
@@ -114,10 +106,6 @@ print('_C__hidden' in C.__dict__)
 print([n for n in C.__dict__ if 'hidden' in n])
 ops = [i.argval for i in dis.get_instructions(C.m)]
 print('_C__hidden' in ops)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

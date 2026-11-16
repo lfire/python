@@ -38,10 +38,6 @@ print('exact match ok', verify(lock[0], 'requests-2.32.3'))
 print('tampered rejected', not verify(lock[0], 'requests-2.32.3-tampered'))
 print('unpinned upgrade rejected', not verify(lock[0], 'requests-2.33.0'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # name demo-pkg
@@ -68,10 +64,6 @@ with tempfile.TemporaryDirectory() as d:
     print('requires-python', dist.metadata['Requires-Python'])
     print('requires', dist.requires)
     sys.path.remove(d)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -100,10 +92,6 @@ with tempfile.TemporaryDirectory() as d:
     have = int(versions['lib'].split('.')[0])
     print('conflict detected', have < need)
     sys.path.remove(d)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

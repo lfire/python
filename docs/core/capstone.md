@@ -14,11 +14,11 @@ description: 把运行时机制做成一个可用工具
 
 ## 想加哨兵，却把吞吐和内存都拖垮
 
-生产服务偶发内存涨到 OOM，团队想加一个「慢调用 + 内存增长」的哨兵，可 cProfile 全量采集会拖垮吞吐，`tracemalloc` 常驻又多出近两倍内存。有人写了个基于 `sys.setprofile` 的采集器，灰度报告里混进了别的线程事件，调用树对不上；
+生产服务偶发内存涨到 OOM，团队想加一个「慢调用 + 内存增长」的哨兵，可 cProfile 全量采集会拖垮吞吐，`tracemalloc` 常驻又多出近两倍内存。
 
-还有人把每个函数进出都记一条日志，分析器自身的开销比业务还高，测出来的耗时全是噪声。阈值也不好定：按总内存设会被正常缓存误报，按单次增量设又漏掉缓慢泄漏。这几处矛盾不是调参能绕过去的——采集越细、侵入越大，得先把这份开销量出来，再决定开到什么程度。
+有人写了个基于 `sys.setprofile` 的采集器，灰度报告里混进了别的线程事件，调用树对不上；还有人把每个函数进出都记一条日志，分析器自身的开销比业务还高，测出来的耗时全是噪声。阈值也不好定：按总内存设会被正常缓存误报，按单次增量设又漏掉缓慢泄漏。
 
-本讲把运行时机制真正做成一个可用工具：用 `sys.setprofile` 建调用树、用 `tracemalloc` 快照差值做阈值、用开关与采样间隔把开销关进笼子，并解释 3.12+ 为什么该换成 `sys.monitoring`。
+这几处矛盾不是调参能绕过去的——采集越细、侵入越大，得先把这份开销量出来，再决定开到什么程度。本讲把运行时机制真正做成一个可用工具：用 `sys.setprofile` 建调用树、用 `tracemalloc` 快照差值做阈值、用开关与采样间隔把开销关进笼子，并解释 3.12+ 为什么该换成 `sys.monitoring`。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='多线程里用全局 setprofile，调用树对不上：setprofile 只作用于当前线程，但 profile 状态可被 threading.setprofile 传播到新线程，事件混在一起' />
 
@@ -40,9 +40,7 @@ description: 把运行时机制做成一个可用工具
 
 `sys.getprofile()` 读回，`sys.setprofile(None)` 关闭。
 
-它只对设置它的那个线程生效，其他线程要用 `threading.setprofile`；
-
-因此在多线程程序里用全局回调会把无关线程的事件也算进当前调用树，必须按 `threading.get_ident()` 分桶。
+它只对设置它的那个线程生效，其他线程要用 `threading.setprofile`；因此在多线程程序里用全局回调会把无关线程的事件也算进当前调用树，必须按 `threading.get_ident()` 分桶。
 
 重建调用树的标准做法是维护一个栈：'call' 时压入 (函数名, perf_counter 起点, 子耗时累加器)，'return' 时弹出并算 `dt = now - t0`，本帧 `self = dt - child_time`，`cumulative = dt`，再把 dt 累加到父帧的 child_time。
 
@@ -185,9 +183,9 @@ print('overhead ratio > 1', profiled / plain > 1.0)
 
 工程上必须留三个开关：按函数名过滤（只追踪关心的前缀）、采样间隔（每 N 次事件记一次）、上下文开关（灰度时临时开启）。
 
-3.12 起 `sys.monitoring`（PEP 669）给出更轻的路径：`use_tool_id` 占一个工具槽，`set_events` 订阅 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等事件位，`register_callback` 注册回调，事件在解释器指令流里就地检查、不构造 frame 对象，开销比 setprofile 低一个量级；
+3.12 起 `sys.monitoring`（PEP 669）给出更轻的路径：`use_tool_id` 占一个工具槽，`set_events` 订阅 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等事件位，`register_callback` 注册回调，事件在解释器指令流里就地检查、不构造 frame 对象，开销比 setprofile 低一个量级；用完 `free_tool_id` 释放。
 
-用完 `free_tool_id` 释放。工具槽一共 6 个（0-5），其中 0 留给调试器、1 留给覆盖率、2 留给分析器、5 留给优化器，用户能用的是剩下几个编号；同一事件位只能被一个工具订阅，冲突时 `set_events` 会抛 `ValueError`。
+工具槽一共 6 个（0-5），其中 0 留给调试器、1 留给覆盖率、2 留给分析器、5 留给优化器，用户能用的是剩下几个编号；同一事件位只能被一个工具订阅，冲突时 `set_events` 会抛 `ValueError`。
 
 3.13 沿用这套接口并加入实验性 JIT 骨架，跨版本采集脚本要在启动时探测 `hasattr(sys, 'monitoring')`，再决定走哪条路径。
 
@@ -257,9 +255,9 @@ tracemalloc 在 `_PyObject_Malloc` 层把分配大小与回溯压进哈希表，
 
 ## 可灰度开启的简易性能分析器与内存哨兵
 
-给一个内部服务加观测能力，要求默认零成本、灰度时临时开启、报告能直接进日志管道。实现思路是把「调用树采集」和「内存快照」合成一个类：构造时接收关心的函数名前缀、采样间隔与内存阈值；`start` 里按探测结果选择 `sys.monitoring` 或回退到 `sys.setprofile`，同时启动 tracemalloc；
+给一个内部服务加观测能力，要求默认零成本、灰度时临时开启、报告能直接进日志管道。
 
-每次检查点用 `compare_to` 求净增长，超阈值就生成一条带 Top-N 分配行的告警；`stop` 输出按 `cumtime` 排序的调用树并释放所有钩子。
+实现思路是把「调用树采集」和「内存快照」合成一个类：构造时接收关心的函数名前缀、采样间隔与内存阈值；`start` 里按探测结果选择 `sys.monitoring` 或回退到 `sys.setprofile`，同时启动 tracemalloc；每次检查点用 `compare_to` 求净增长，超阈值就生成一条带 Top-N 分配行的告警；`stop` 输出按 `cumtime` 排序的调用树并释放所有钩子。
 
 开关采用上下文管理器，保证异常路径也会执行 `sys.setprofile(None)` 与 `tracemalloc.stop()`，不把钩子永久留在进程里。
 
@@ -311,7 +309,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='提供按函数过滤、采样间隔与上下文开关，让工具能在生产灰度环境里安全开启' />
 
-<CheckList id='P059b' title='上线前自检' :items='["能复现并解释「多线程里用全局 setprofile，调用树对不上」", "能复现并解释「按 get_traced_memory() 的绝对值设内存告…」", "能复现并解释「在 profile 回调里做日志、格式化或加锁」", "能用一条命令验证 sys.setprofile 采集", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P059a' title='上线前自检' :items='["能复现并解释「多线程里用全局 setprofile，调用树对不上」", "能复现并解释「按 get_traced_memory() 的绝对值设内存告…」", "能复现并解释「在 profile 回调里做日志、格式化或加锁」", "能用一条命令验证 sys.setprofile 采集", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
@@ -333,19 +331,17 @@ python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 
 ## sys_setprofile 到 _PyEval_SetProfile：frame 物化的开销根源
 
-`sys.setprofile(f)` 落到 Python/`sysmodule.c` 的 sys_setprofile，再调 _PyEval_SetProfile 把回调挂在 PyThreadState 的 c_profilefunc / cprofileobj 上；
-
-之后 `ceval.c` 在每次 `CALL` 分派前后经 Python/`legacy_tracing.c` 触发 call / return / c_call / c_return 事件。
+`sys.setprofile(f)` 落到 `Python/sysmodule.c` 的 sys_setprofile，再调 _PyEval_SetProfile 把回调挂在 PyThreadState 的 c_profilefunc / cprofileobj 上；之后 `ceval.c` 在每次 `CALL` 分派前后经 `Python/legacy_tracing.c` 触发 call / return / c_call / c_return 事件。
 
 真正的开销不在回调里的几行 Python，而在回调签名要求一个 frame 对象。
 
-3.11 起解释器帧不再是常驻的 PyFrameObject：_PyInterpreterFrame 直接放在线程的数据栈 chunk 里（Python/`frame.c` 的 _PyThreadState_PushFrame），只有谁真正需要 frame 对象时才由 _PyFrame_MakeAndSetFrameObject 物化一次，顺带填 f_locals、f_back 链与 f_lineno。
+3.11 起解释器帧不再是常驻的 PyFrameObject：_PyInterpreterFrame 直接放在线程的数据栈 chunk 里（`Python/frame.c` 的 _PyThreadState_PushFrame），只有谁真正需要 frame 对象时才由 _PyFrame_MakeAndSetFrameObject 物化一次，顺带填 f_locals、f_back 链与 f_lineno。
 
-setprofile 每个 call/return 都强制走这一步，于是函数越小、调用越密，物化占整段时间的比重越高，这就是分析器自身开销比业务还高的结构性原因。由此还能推出两条：回调里再调用任何 Python 函数都会被解释器暂时屏蔽事件分发（本机实测 cb 自己不会出现在采集列表里），否则会无限递归；
+setprofile 每个 call/return 都强制走这一步，于是函数越小、调用越密，物化占整段时间的比重越高，这就是分析器自身开销比业务还高的结构性原因。
 
-而 setprofile 只看当前线程，多线程要配合 `threading.setprofile` 并按 `threading.get_ident` 分桶。
+由此还能推出两条：回调里再调用任何 Python 函数都会被解释器暂时屏蔽事件分发（本机实测 cb 自己不会出现在采集列表里），否则会无限递归；而 setprofile 只看当前线程，多线程要配合 `threading.setprofile` 并按 `threading.get_ident` 分桶。
 
-3.12 把这套旧 tracing 单独抽到 Python/`legacy_tracing.c`，本身就是为了给新机制让路。
+3.12 把这套旧 tracing 单独抽到 `Python/legacy_tracing.c`，本身就是为了给新机制让路。
 
 ```python
 import sys
@@ -371,26 +367,22 @@ print('tool ids', [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.m
 
 <OutputBox title='扩展示例运行结果' output='has monitoring True\nhas setprofile True\ncaptured leaf True\ncaptured cb False\ntool ids [0, 2, 5]' />
 
-<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["3.12 起 sys.monitoring 可用，旧 setprofile 仍保留", "空行，只用于分隔逻辑块，不影响执行结果。", "setprofile 是历代都有的接口", "用列表收集 call 事件里的函数名", "回调签名固定为 frame、event、arg", "只记 call 事件，return 与 C 事件不进列表", "frame.f_code.co_name 就是被调函数的名字", "返回自身以维持回调，某些实现里可不写", "安装回调到当前线程", "空行，只用于分隔逻辑块，不影响执行结果。", "定义一个极小函数，放大回调的相对开销", "调用一次 leaf，触发一次 call 与一次 return", "关闭回调，避免后续打印继续产生事件", "leaf 被采集到，证明回调确实看到了用户函数", "cb 自身没被采集，解释器在回调期间屏蔽了事件分发", "3.13 的保留槽位是 0 调试器、2 分析器、5 优化器", "这一行 `print(&#39;captured cb&#39;, &#39;cb&#39; in seen)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.m` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import sys\n\nprint(&#39;has monitoring&#39;, hasattr(sys, &#39;monitoring&#39;))\nprint(&#39;has setprofile&#39;, hasattr(sys, &#39;setprofile&#39;))\nseen = []\ndef cb(frame, event, arg):\n    if event == &#39;call&#39;:\n        seen.append(frame.f_code.co_name)\n    return cb\n\nsys.setprofile(cb)\ndef leaf(x):\n    return x + 1\nleaf(1)\nsys.setprofile(None)\nprint(&#39;captured leaf&#39;, &#39;leaf&#39; in seen)\nprint(&#39;captured cb&#39;, &#39;cb&#39; in seen)\nprint(&#39;tool ids&#39;, [sys.monitoring.DEBUGGER_ID, sys.monitoring.PROFILER_ID, sys.monitoring.OPTIMIZER_ID])\n' :notes='["导入 sys，检查两套剖析接口并读取 sys.monitoring 的工具槽编号。", "空行，只用于分隔逻辑块，不影响执行结果。", "3.12 起才有 sys.monitoring（PEP 669），用 hasattr 探测，跨版本脚本据此选择采集路径。", "sys.setprofile 是历代都有的旧接口，作为回退路径保留。", "用列表收集 call 事件里出现的函数名。", "profile 回调签名固定为 frame、event、arg。", "只记 call 事件，return 与 C 层事件都不进列表。", "frame.f_code.co_name 就是被调函数的名字，把它记下来。", "返回自身作为局部追踪函数；某些实现里可省略这一步。", "空行，只用于分隔逻辑块，不影响执行结果。", "把回调装到当前线程，之后的每次函数调用都会触发它。", "定义一个极小函数，用来放大回调固定开销的相对占比。", "函数体尽量短，只有一条返回语句。", "调用一次 leaf，触发一组 call / return 事件。", "关闭回调，避免后续打印语句再产生新的事件干扰结果。", "leaf 出现在列表里，证明回调确实看到了用户函数。", "cb 自身没被采集，因为解释器在回调执行期间屏蔽了事件分发，否则会无限递归。", "打印 3.13 保留的工具槽：DEBUGGER_ID=0、PROFILER_ID=2、OPTIMIZER_ID=5，其余编号才供用户使用。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 <ConceptDiagram type='flow4' title='第 059 讲 · 扩展图解' labels='_PyInterpreterFrame 在数据栈|setprofile 回调|强制物化 PyFrameObject|f_back 链与 f_locals 填充' caption='旧式 profile 的开销不在回调逻辑，而在每次调用边界把轻量解释器帧物化成完整 frame 对象。' />
 
 
 ### instrumentation.c 与 specializing interpreter 的反优化代价
 
-PEP 669 把事件检查搬到指令层：Python/`instrumentation.c` 在 `sys.monitoring.set_events` 之后，直接改写 code object 的 co_code_adaptive，在 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等位置插入 `INSTRUMENTED_`* 变体指令；
+PEP 669 把事件检查搬到指令层：`Python/instrumentation.c` 在 `sys.monitoring.set_events` 之后，直接改写 code object 的 co_code_adaptive，在 `PY_START` / `PY_RETURN` / `PY_UNWIND` 等位置插入 `INSTRUMENTED_`* 变体指令；回调收到的是 code 对象、指令偏移与若干参数，不构造 frame，因此少了一整层物化。
 
 ```python
 sys.monitoring.set_events(tool_id, event_set)
 ```
 
-回调收到的是 code 对象、指令偏移与若干参数，不构造 frame，因此少了一整层物化。
+代价与 specializing interpreter 直接冲突：3.11 起热点指令会被 quicken 成 `ADAPTIVE` 家族并特化成具体类型，开启 instrumentation 时这些已特化的指令要 deopt 回通用形式，因为插入的监控点会破坏指令替换的前提；也就是说，即便工具一次回调都不干活，热路径也会因为失去特化而固定回退几个百分点。
 
-代价与 specializing interpreter 直接冲突：3.11 起热点指令会被 quicken 成 `ADAPTIVE` 家族并特化成具体类型，开启 instrumentation 时这些已特化的指令要 deopt 回通用形式，因为插入的监控点会破坏指令替换的前提；
-
-也就是说，即便工具一次回调都不干活，热路径也会因为失去特化而固定回退几个百分点。工具槽位有限且按用途保留，本机 3.13 实测 `DEBUGGER_ID=0`、`PROFILER_ID=2`、`OPTIMIZER_ID=5`，用户可用的是剩余编号；
-
-同一事件位只能被一个工具订阅，冲突时 set_events 抛 ValueError。
+工具槽位有限且按用途保留，本机 3.13 实测 `DEBUGGER_ID=0`、`PROFILER_ID=2`、`OPTIMIZER_ID=5`，用户可用的是剩余编号；同一事件位只能被一个工具订阅，冲突时 set_events 抛 ValueError。
 
 回调还可以返回 `sys.monitoring.DISABLE`，让某个 (code, offset) 位置永久关闭该事件，实现采几次就不采的零成本采样。
 

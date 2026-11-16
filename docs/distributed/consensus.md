@@ -14,9 +14,11 @@ description: 理解一致性组件替你承担了什么
 
 ## Raft 集群做成四节点，为什么只容忍一台故障
 
-一个团队把服务发现当作万能注册中心：实例启动时写一条记录，之后既不续约也不下线；配置中心被用来高频读写业务开关，每次请求都去查一次。某次网络抖动，半数实例与注册中心短暂失联，健康检查还没来得及剔除，流量继续打到已不可用的实例，错误率飙升；
+一个团队把服务发现当作万能注册中心：实例启动时写一条记录，之后既不续约也不下线；配置中心被用来高频读写业务开关，每次请求都去查一次。
 
-更糟的是配置中心被当成数据库扛读写，Raft 组因为频繁写入和 leader 切换出现延迟，依赖它的服务集体超时。根因是把共识组件承担的职责理解反了：Raft 解决的是多台机器对同一序列达成一致，它昂贵，只该承载少量关键元数据，不该承载业务数据或高频读。本讲把选举、日志复制、租约、健康检查、配置推送这几层各自的边界拆清楚。
+某次网络抖动，半数实例与注册中心短暂失联，健康检查还没来得及剔除，流量继续打到已不可用的实例，错误率飙升；更糟的是配置中心被当成数据库扛读写，Raft 组因为频繁写入和 leader 切换出现延迟，依赖它的服务集体超时。
+
+根因是把共识组件承担的职责理解反了：Raft 解决的是多台机器对同一序列达成一致，它昂贵，只该承载少量关键元数据，不该承载业务数据或高频读。本讲把选举、日志复制、租约、健康检查、配置推送这几层各自的边界拆清楚。
 
 <Callout type="warn" title='先看一个真实会出错的写法' text='把配置中心当业务数据库每次请求都读写：每次写都要走 Raft 日志复制与多数派落盘，吞吐受限，leader 切换时全部依赖方一起超时' />
 
@@ -25,13 +27,15 @@ description: 理解一致性组件替你承担了什么
 
 ## Raft 的多数派与任期：Leader 选举、日志复制
 
-Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；
+Raft 把一致性问题拆成 Leader 选举、日志复制、安全性三个子问题。
 
-follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数）内没收到心跳就自增 term 转为 candidate 拉票，获得多数派选票才成为 leader。多数派是 `floor(N/2)+1`：5 节点集群 quorum 为 3，能容忍 2 节点故障；
+节点处于 follower / candidate / leader 三态，任期 `term` 单调递增；follower 在选举超时（etcd 默认 1000ms 量级，实际按 heartbeat interval 的倍数）内没收到心跳就自增 term 转为 candidate 拉票，获得多数派选票才成为 leader。
 
-4 节点 quorum 仍是 3，只容忍 1 节点故障，所以生产集群一律用奇数节点。日志复制时 leader 把条目追加到本地并并行发给 follower，收到多数派确认后才推进 `commitIndex` 并应用状态机；`commitIndex` 等于把各节点 `matchIndex` 降序排列后第 quorum 个值。
+多数派是 `floor(N/2)+1`：5 节点集群 quorum 为 3，能容忍 2 节点故障；4 节点 quorum 仍是 3，只容忍 1 节点故障，所以生产集群一律用奇数节点。
 
-只有已提交条目对客户端可见，未提交条目在新 leader 上任后可能被覆盖。任期保证旧 leader 的过期请求被拒绝：任何 RPC 携带小于当前 term 的任期，都会让接收方返回失败并促使对方退位。
+日志复制时 leader 把条目追加到本地并并行发给 follower，收到多数派确认后才推进 `commitIndex` 并应用状态机；`commitIndex` 等于把各节点 `matchIndex` 降序排列后第 quorum 个值。只有已提交条目对客户端可见，未提交条目在新 leader 上任后可能被覆盖。
+
+任期保证旧 leader 的过期请求被拒绝：任何 RPC 携带小于当前 term 的任期，都会让接收方返回失败并促使对方退位。
 
 **Raft 集群规模与容错**
 
@@ -85,9 +89,9 @@ print('term', r.current)
 
 etcd 基于 Raft 存键值，提供 `Watch`、`Lease`、`Txn`：服务注册通常不是写一条永久记录，而是申请一个带 TTL 的租约并周期性 `KeepAlive`，实例崩溃后停止续约，租约到期键自动删除，这比依赖主动注销可靠。
 
-Consul 用 Raft 存服务目录、用 gossip 协议做成员与故障探测，定位类似但实现不同。关键边界是共识组件只存少量需要强一致的元数据（成员、租约、配置版本、leader 归属），业务数据留在各自存储；
+Consul 用 Raft 存服务目录、用 gossip 协议做成员与故障探测，定位类似但实现不同。
 
-把配置中心当数据库高频读写，会让每次写都走一次 Raft 日志复制与落盘，吞吐上不去，还会放大 leader 切换的影响。
+关键边界是共识组件只存少量需要强一致的元数据（成员、租约、配置版本、leader 归属），业务数据留在各自存储；把配置中心当数据库高频读写，会让每次写都走一次 Raft 日志复制与落盘，吞吐上不去，还会放大 leader 切换的影响。
 
 ```python
 class Cluster:
@@ -221,7 +225,7 @@ print('expired', r.expire(t + 31))
 
 <Callout type="idea" title='落地提示' text='关键元数据放 etcd 并用租约维持，业务数据留在各自存储；配置变更要可灰度、可回滚、可审计' />
 
-<CheckList id='P109b' title='上线前自检' :items='["能复现并解释「把配置中心当业务数据库每次请求都读写」", "能复现并解释「服务注册写一条永久记录，不续约也不下线」", "能复现并解释「4 节点 Raft 集群期望能容忍 2 节点故障」", "能用一条命令验证 Leader 选举与日志复制", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P109a' title='上线前自检' :items='["能复现并解释「把配置中心当业务数据库每次请求都读写」", "能复现并解释「服务注册写一条永久记录，不续约也不下线」", "能复现并解释「4 节点 Raft 集群期望能容忍 2 节点故障」", "能用一条命令验证 Leader 选举与日志复制", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
@@ -240,7 +244,7 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 
 ## 多数派交集与 Leader Completeness 的证明
 
-Raft 的安全性不靠「leader 不会出错」，而靠两条可证明的不变量。第一条是多数派交集：任意两个多数派 A、B 都在 N 个节点里，|A| 与 |B| 都至少 `floor(N/2)`+1，于是 |A|+|B| 不小于 N+2，严格大于 N，故 A 与 B 交集非空。
+Raft 的安全性不靠「leader 不会出错」，而靠两条可证明的不变量。第一条是多数派交集：任意两个多数派 A、B 都在 N 个节点里，|A| 与 |B| 都至少 `floor(N/2)+1`，于是 |A|+|B| 不小于 N+2，严格大于 N，故 A 与 B 交集非空。
 
 一条日志被标记 committed 意味着它已存于某个多数派；此后任何新 leader 必须拿到另一个多数派的选票，两个多数派至少共享一个节点，该节点持有这条已提交日志。
 
@@ -250,24 +254,22 @@ Raft 的安全性不靠「leader 不会出错」，而靠两条可证明的不�
 
 推论有三：commitIndex 只推进当前 term 的条目、leader 不能靠数副本直接提交前任任期的日志、成员变更必须走 joint consensus 让新旧配置多数派在过渡期同时生效。
 
-源码路径（etcd 3.5/3.6）：raft/`raft.go` 的 Step 与 becomeCandidate、raft/`log.go` 的 commitTo、raft/`rawnode.go` 的 Advance。
+源码路径（etcd 3.5/3.6）：`raft/raft.go` 的 Step 与 becomeCandidate、`raft/log.go` 的 commitTo、`raft/rawnode.go` 的 Advance。
 
-<ConceptDiagram type='flow4' title='第 109 讲 · 扩展图解' labels='A 与 B 的票数之和大于 N|A 与 B 交集非空|共享节点持已提交条目|isUpToDate 过滤落后候选' caption='多数派交集与选举限制共同保证新 leader 必含全部已提交条目，缺一不可' />
+<ConceptDiagram type='flow4' title='第 109 讲 · 扩展图解' labels='A 与 B 的节点数之和大于 N|A 与 B 交集非空|共享节点持已提交条目|isUpToDate 过滤落后候选' caption='多数派交集与选举限制共同保证新 leader 必含全部已提交条目，缺一不可' />
 
 
 ### RequestVote 里 isUpToDate 的比较式
 
 把 isUpToDate 写成可核对的谓词：`upToDate(cand, voter)` 成立当且仅当 `cand.lastTerm` > `voter.lastTerm`，或两者 lastTerm 相等且 `cand.lastIndex` 不小于 `voter.lastIndex`。
 
-etcd 的 raft/`raft.go` 里对应函数先比 term、再比 index，返回 false 就拒绝投票并附当前 term；hashicorp/raft 的 `raft.go` 在 electSelf 之前做同样检查。这条规则解释两个常被忽略的现象。
+etcd 的 `raft/raft.go` 里对应函数先比 term、再比 index，返回 false 就拒绝投票并附当前 term；hashicorp/raft 的 `raft.go` 在 electSelf 之前做同样检查。这条规则解释两个常被忽略的现象。
 
-其一，刚重启、日志落后的 follower 不会拖慢选举：它拿不到票也不会当选，但会投给日志最新的 candidate，集群恢复取决于「至少 `floor(N/2)`+1 个节点持有最新日志」而非全部节点。
+其一，刚重启、日志落后的 follower 不会拖慢选举：它拿不到票也不会当选，但会投给日志最新的 candidate，集群恢复取决于「至少 `floor(N/2)+1` 个节点持有最新日志」而非全部节点。
 
 其二，日志截断只发生在 follower 与 leader 冲突时：AppendEntries 带 prevLogIndex 与 prevLogTerm，不匹配就返回失败，leader 递减 nextIndex 重试直到找到一致前缀再删冲突条目——所以「已提交」与「已复制」必须严格区分，未提交条目被覆盖是预期行为。
 
-参数上论文要求 broadcastTime 远小于 electionTimeout，后者远小于 `MTBF`；
-
-etcd 默认 `heartbeat-interval=100ms`、`election-timeout=1000ms`，并把超时随机化到[election-timeout, 2·election-timeout)。
+参数上论文要求 broadcastTime 远小于 electionTimeout，后者远小于 `MTBF`；etcd 默认 `heartbeat-interval=100ms`、`election-timeout=1000ms`，并把超时随机化到[election-timeout, 2·election-timeout)。
 
 若 electionTimeout 小于一次跨机房广播往返，follower 会频繁误判 leader 失联、自增 term 触发重选，出现「term 飙升但无写入」的假活状态，监控必须同时看 term 变化率与 commit 延迟。
 

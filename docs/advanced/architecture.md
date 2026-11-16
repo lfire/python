@@ -57,9 +57,7 @@ SDP 说依赖方向要指向更稳定的组件，用不稳定性 `I = Ce / (Ce +
 
 Python 里最轻量的抽象是 `typing.Protocol`（PEP 544，3.8 起）：端口由领域层定义为结构化子类型，方法体写 `...`，实现类无需继承，只要方法名与签名匹配即被视为满足协议，这叫结构化子类型。
 
-加上 `@runtime_checkable`（同样 3.8 起）后 `isinstance(obj, Port)` 才可用，但它只检查成员是否存在、不校验类型注解与签名；
-
-3.12 起非方法成员的运行时检查才被放宽，早期版本对数据协议会抛 `TypeError`。
+加上 `@runtime_checkable`（同样 3.8 起）后 `isinstance(obj, Port)` 才可用，但它只检查成员是否存在、不校验类型注解与签名；3.12 起非方法成员的运行时检查才被放宽，早期版本对数据协议会抛 `TypeError`。
 
 需要强制实现时用 `abc.ABC` 配 `@abstractmethod`，未实现的方法在实例化阶段就报 TypeError。
 
@@ -164,13 +162,15 @@ print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain
 
 拆服务的触发条件是团队规模、独立伸缩、发布节奏差异与故障隔离，不是代码行数；康威定律提醒组织沟通结构会复刻进系统边界，边界没理清时拆得越碎，分布式故障越多。
 
-跨边界行为靠消费者驱动契约测试（consumer-driven contract，Pact 的思想）锁定：消费方把期望的请求与响应写成一份契约文件，提供方在自己的 CI 里回放，两侧即可独立发布而不互相等。接口版本用 semver：`MAJOR` 用于不兼容变更、`MINOR` 向后兼容新增、`PATCH` 修 bug；
+跨边界行为靠消费者驱动契约测试（consumer-driven contract，Pact 的思想）锁定：消费方把期望的请求与响应写成一份契约文件，提供方在自己的 CI 里回放，两侧即可独立发布而不互相等。
 
-不兼容变更必须升 `MAJOR` 并保留 `/v1` 与 `/v2` 并存窗口。演进用绞杀者模式（strangler fig）：在旧系统前加一层门面路由，新实现按路由逐条接管，旧路径保留到流量归零，配合特性开关与影子流量（shadow traffic）双跑比对结果。
+接口版本用 semver：`MAJOR` 用于不兼容变更、`MINOR` 向后兼容新增、`PATCH` 修 bug；不兼容变更必须升 `MAJOR` 并保留 `/v1` 与 `/v2` 并存窗口。
 
-重构前先补行为保持测试（characterization test，也叫 Golden Master）：把旧实现的一组输入与输出录成黄金样本，重构后逐字节回放必须一致，这是「行为不变」的唯一证据。技术债用圈复杂度、改动耦合率、测试覆盖率、构建时长与平均恢复时间 `MTTR` 五个量跟踪；
+演进用绞杀者模式（strangler fig）：在旧系统前加一层门面路由，新实现按路由逐条接管，旧路径保留到流量归零，配合特性开关与影子流量（shadow traffic）双跑比对结果。
 
-没有契约测试就拆服务、大爆炸式重写、没有回退开关，是三种最典型的失败模式。
+重构前先补行为保持测试（characterization test，也叫 Golden Master）：把旧实现的一组输入与输出录成黄金样本，重构后逐字节回放必须一致，这是「行为不变」的唯一证据。
+
+技术债用圈复杂度、改动耦合率、测试覆盖率、构建时长与平均恢复时间 `MTTR` 五个量跟踪；没有契约测试就拆服务、大爆炸式重写、没有回退开关，是三种最典型的失败模式。
 
 **架构风格选型：按故障边界与团队结构决定**
 
@@ -195,7 +195,7 @@ print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain
 
 <Compare :panels='[{"label": "主示例", "code": "import json\nfrom typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass RatePort(Protocol):\n    def get(self, key: str) -&gt; float: ...\n    def put(self, key: str, value: float) -&gt; None: ...\n\nclass MemoryAdapter:\n    def __init__(self):\n        self._d = {}\n    def get(self, key):\n        return self._d.get(key, 1.0)\n    def put(self, key, value):\n        self._d[key] = value\n\nclass JsonAdapter:\n    def __init__(self):\n        self._blob = &#39;{}&#39;\n    def get(self, key):\n        return json.loads(self._blob).get(key, 1.0)\n    def put(self, key, value):\n        d = json.loads(self._blob)\n        d[key] = value\n        self._blob = json.dumps(d)\n\nclass Pricing:\n    def __init__(self, port: RatePort):\n        self.port = port\n    def total(self, base, key):\n        return round(base * self.port.get(key), 2)\n\ndef contract(port, label):\n    assert isinstance(port, RatePort), label\n    port.put(&#39;vip&#39;, 0.8)\n    svc = Pricing(port)\n    assert svc.total(100.0, &#39;vip&#39;) == 80.0, label\n    assert svc.total(100.0, &#39;guest&#39;) == 100.0, label\n    return label + &#39; pass&#39;\n\nfor label, port in [(&#39;memory&#39;, MemoryAdapter()), (&#39;json&#39;, JsonAdapter())]:\n    print(label, isinstance(port, RatePort), contract(port, label))\nprint(&#39;annotation&#39;, list(Pricing.__init__.__annotations__))", "note": "变化方向与边界：用提交历史把耦合量化出来"}, {"label": "对照 / 进阶", "code": "class CompliantStore:\n    def get(self, key):\n        return 0.9\n\nclass ViolatingStore:\n    def get(self, key):\n        return 0.0\n\ndef verify(store):\n    v = store.get(&#39;x&#39;)\n    if v != 0.9:\n        return &#39;contract violated: got &#39; + str(v)\n    return &#39;pass&#39;\n\nprint(&#39;compliant&#39;, verify(CompliantStore()))\nprint(&#39;violating&#39;, verify(ViolatingStore()))", "note": "依赖倒置与端口适配器：让领域层不认识基础设施"}]' title='两种写法对照' note='差异集中在 变化方向与边界；先看输出，再找背后的规则。' />
 
-<CheckList id='P120b' title='上线前自检' :items='["能复现并解释「领域层 import pymysql/redis，换个存储要…」", "能复现并解释「没有清晰边界就按「一个服务一个库」提前拆微服务」", "能复现并解释「大爆炸式重写，上线后行为漂移且无法回退」", "能用一条命令验证 变化方向与边界", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P120a' title='上线前自检' :items='["能复现并解释「领域层 import pymysql/redis，换个存储要…」", "能复现并解释「没有清晰边界就按「一个服务一个库」提前拆微服务」", "能复现并解释「大爆炸式重写，上线后行为漂移且无法回退」", "能用一条命令验证 变化方向与边界", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 绞杀者模式、影子流量与技术决策的回退路径
@@ -216,9 +216,9 @@ print('fan-out delta', len(set(coupled.__code__.co_names)) - len(set(pure_domain
 
 依赖倒置的底层机制，是把「编译期或导入期的具体依赖」换成「运行期的多态分派」。
 
-Protocol 在类创建时由 typing 的元类收集成员名构成 `_ProtocolMeta`，isinstance 走的是 `__instancecheck__` 的运行时成员探测，因此不要求实现类继承任何基类，只需在 MRO 或实例字典里能找到同名可调用属性；
+Protocol 在类创建时由 typing 的元类收集成员名构成 `_ProtocolMeta`，isinstance 走的是 `__instancecheck__` 的运行时成员探测，因此不要求实现类继承任何基类，只需在 MRO 或实例字典里能找到同名可调用属性；这让它既能被静态检查器（mypy）静态使用，也能在 runtime_checkable 下被动态检查。
 
-这让它既能被静态检查器（mypy）静态使用，也能在 runtime_checkable 下被动态检查。构造函数注入把「谁来 new 具体实现」推迟到 composition root，于是对象图在启动时一次装配完成，运行期领域对象只持有抽象的引用，在 C 级别看就是一次普通的属性查表。
+构造函数注入把「谁来 new 具体实现」推迟到 composition root，于是对象图在启动时一次装配完成，运行期领域对象只持有抽象的引用，在 C 级别看就是一次普通的属性查表。
 
 契约测试之所以能替代集成测试守住边界，是因为它把跨组件的隐含假设显式化为可回放的输入输出对；绞杀者模式依赖的则是路由层对请求的分派，本质是策略模式作用在流量入口。拆成微服务后，本地事务变成跨网络的 Saga，CAP 约束下只能用补偿换可用性，这正是「一次函数调用变一次分布式故障」在系统层的根因。
 
@@ -242,11 +242,11 @@ Protocol 在类创建时由 typing 的元类收集成员名构成 `_ProtocolMeta
 
 ## 模块化单体：装配根 + 可替换适配器
 
-一个订单服务要同时支持本地开发与云端持久化：本地用内存折扣表便于调试，云端用 `JSON` 文件适配器，但定价规则必须完全一致。做法是领域层只定义 RatePort 协议与 PricingService，两个适配器各实现 get 与 put；composition root 按配置名装配具体实现；
+一个订单服务要同时支持本地开发与云端持久化：本地用内存折扣表便于调试，云端用 `JSON` 文件适配器，但定价规则必须完全一致。
 
-一组 `contract_suite` 对两个实现跑同样断言，任何适配器违约都会被拦在合并前。这样未来把 `JSON` 换成 PostgreSQL 时，只新增一个适配器、在映射表里登记，领域代码与契约测试一行不改。真实项目还会给适配器加连接池、超时、指标埋点，并把契约文件随版本库提交，让跨团队发布不必互相等待。
+做法是领域层只定义 RatePort 协议与 PricingService，两个适配器各实现 get 与 put；composition root 按配置名装配具体实现；一组 `contract_suite` 对两个实现跑同样断言，任何适配器违约都会被拦在合并前。
 
-下面片段可直接运行，重点看装配根如何把变化挡在领域层之外。
+这样未来把 `JSON` 换成 PostgreSQL 时，只新增一个适配器、在映射表里登记，领域代码与契约测试一行不改。真实项目还会给适配器加连接池、超时、指标埋点，并把契约文件随版本库提交，让跨团队发布不必互相等待。下面片段可直接运行，重点看装配根如何把变化挡在领域层之外。
 
 ```python
 import json

@@ -27,13 +27,11 @@ description: 补齐服务端的外部依赖版图
 
 大文件不该经过应用服务器：预签名 URL 让服务端只做鉴权与元数据，客户端拿一个带签名的临时 URL 直传对象存储（S3、MinIO、COS），带宽与内存压力转给存储。
 
-签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出签名放进查询参数（`X-Amz-Algorithm`、`X-Amz-Date`、`X-Amz-Expires`、`X-Amz-Signature`），篡改 path 或过期时间都会让服务端重算的签名不匹配；
+签名思路（AWS SigV4）是把 `HTTP` method、资源 path、过期时间、日期等按规范拼成待签串，用 `HMAC-SHA256` 派生出签名放进查询参数（`X-Amz-Algorithm`、`X-Amz-Date`、`X-Amz-Expires`、`X-Amz-Signature`），篡改 path 或过期时间都会让服务端重算的签名不匹配；签发时还要限定 Content-Type、最大大小与有效期（如 900 秒）。
 
-签发时还要限定 Content-Type、最大大小与有效期（如 900 秒）。分片上传是 initiate 拿 `uploadId`、逐片 PUT（带 `partNumber`，返回 `ETag`）、complete 合并；
+分片上传是 initiate 拿 `uploadId`、逐片 PUT（带 `partNumber`，返回 `ETag`）、complete 合并；失败只重传某片，断点续传靠客户端记录已传 part 或服务端返回 offset，续传带 Range 或 uploadId。
 
-失败只重传某片，断点续传靠客户端记录已传 part 或服务端返回 offset，续传带 Range 或 uploadId。对象存储一致性有个常被写错的结论：S3 自 2020 年 12 月起对 PUT、GET、`DELETE`、`LIST` 提供强一致的 read-after-write，旧教程里『最终一致』的说法已经过时；
-
-但 CDN 缓存与跨区域复制仍有延迟，元数据（原始名、owner、size、hash）要存自己的数据库，不能只信对象存储。
+对象存储一致性有个常被写错的结论：S3 自 2020 年 12 月起对 PUT、GET、`DELETE`、`LIST` 提供强一致的 read-after-write，旧教程里『最终一致』的说法已经过时；但 CDN 缓存与跨区域复制仍有延迟，元数据（原始名、owner、size、hash）要存自己的数据库，不能只信对象存储。
 
 **预签名 URL 与上传要点**
 
@@ -137,13 +135,11 @@ print('expiry bound', a.split('Signature=')[1] != c.split('Signature=')[1])
 
 倒排索引把『文档 → 词』反转成『词 → 文档列表』（posting list）：先分词（英文 lowercase、去停用词、词干化；中文要 jieba 等分词器），为每个 term 记录 (doc_id, tf, positions)。
 
-查询时对多个 term 取 posting list 合并，用 `BM25` 打分：逆文档频率 `idf=ln(1+(N-df+0.5)/(df+0.5))`，df 越高区分度越低；
+查询时对多个 term 取 posting list 合并，用 `BM25` 打分：逆文档频率 `idf=ln(1+(N-df+0.5)/(df+0.5))`，df 越高区分度越低；词频饱和项 `tf*(k1+1)/(tf+k1*(1-b+b*dl/avgdl))`，k1 常取 1.2、b 取 0.75，避免长文档靠堆词占优。
 
-词频饱和项 `tf*(k1+1)/(tf+k1*(1-b+b*dl/avgdl))`，k1 常取 1.2、b 取 0.75，避免长文档靠堆词占优。
+倒排把『包含某词』从全表扫描 `O(N)` 降到直接定位 posting list，是 Lucene 与 Elasticsearch 的核心。ES 之上还有分片与副本、analyzer、mapping、评分与高亮。
 
-倒排把『包含某词』从全表扫描 `O(N)` 降到直接定位 posting list，是 Lucene 与 Elasticsearch 的核心。ES 之上还有分片与副本、analyzer、mapping、评分与高亮。索引与业务库的一致性靠异步双写（经消息队列解耦）或 CDC 订阅 binlog，做到最终一致；
-
-重建索引用别名切换（reindex 到新索引再原子换 alias）避免停服。
+索引与业务库的一致性靠异步双写（经消息队列解耦）或 CDC 订阅 binlog，做到最终一致；重建索引用别名切换（reindex 到新索引再原子换 alias）避免停服。
 
 深翻页用 `search_after` 而非 `from+size`，后者受 `max_result_window` 默认 10000 限制且深页数成本高。
 
@@ -162,9 +158,9 @@ print('expiry bound', a.split('Signature=')[1] != c.split('Signature=')[1])
 
 ## gRPC、Protobuf 与跨服务错误传播
 
-gRPC 基于 `HTTP/2` 多路复用与 Protobuf 二进制编码：在 .proto 里定义 service 与 message，字段用 varint（每字节 7 位有效数据、最高位表示是否还有后续字节）与 zigzag 编码有符号整数，字段号加 wire type 打标签，比 `JSON` 更省带宽且强类型；
+gRPC 基于 `HTTP/2` 多路复用与 Protobuf 二进制编码：在 .proto 里定义 service 与 message，字段用 varint（每字节 7 位有效数据、最高位表示是否还有后续字节）与 zigzag 编码有符号整数，字段号加 wire type 打标签，比 `JSON` 更省带宽且强类型；代码生成产出客户端 stub 与服务端基类，契约由 .proto 唯一确定。
 
-代码生成产出客户端 stub 与服务端基类，契约由 .proto 唯一确定。四种流式：unary、server streaming、client streaming、bidirectional。
+四种流式：unary、server streaming、client streaming、bidirectional。
 
 错误传播用标准 status code，按数值排开是 `OK=0`、`CANCELLED=1`、`INVALID_ARGUMENT=3`、`DEADLINE_EXCEEDED=4`、`NOT_FOUND=5`、`ALREADY_EXISTS=6`、`PERMISSION_DENIED=7`、`RESOURCE_EXHAUSTED=8`、`INTERNAL=13`、`UNAVAILABLE=14`、`UNAUTHENTICATED=16`，别把业务错误塞进 `HTTP` 200 的 body。
 
@@ -198,9 +194,9 @@ gRPC 借 `HTTP/2` 的多路复用在一条连接上并发多个 stream，状态�
 
 ## 预签名直传加倒排检索的最小服务层
 
-下面把两个外部依赖拼成一个自包含服务层：`presign` 用 `HMAC` 把 method、path、有效期绑进签名，`verify_sig` 在服务端重算比对，模拟客户端拿 URL 直传前的校验；
+下面把两个外部依赖拼成一个自包含服务层：`presign` 用 `HMAC` 把 method、path、有效期绑进签名，`verify_sig` 在服务端重算比对，模拟客户端拿 URL 直传前的校验；`InvertedIndex` 建 term 到 doc_id 的倒排表并用简化 `BM25` 打分，`add`/`search` 分别对应写入与检索。
 
-`InvertedIndex` 建 term 到 doc_id 的倒排表并用简化 `BM25` 打分，`add`/`search` 分别对应写入与检索。重点看两个『边界』：签名把资源与过期时间绑定，改一个字节就失效；索引把查询从扫全表变成查 posting list。
+重点看两个『边界』：签名把资源与过期时间绑定，改一个字节就失效；索引把查询从扫全表变成查 posting list。
 
 真实项目把 `presign` 换成 SDK 的 `generate_presigned_url`、把内存索引换成 ES、把业务库到索引的同步换成 CDC 或消息队列双写，鉴权、签名绑定、倒排打分这三层结构不变。
 
@@ -245,7 +241,7 @@ print('search redis cache', idx.search('redis cache'))
 
 <Callout type="idea" title='落地提示' text='对象存储配生命周期与 CDN、搜索用异步双写或 CDC 保持索引最终一致、内部 RPC 用 gRPC 并统一错误码' />
 
-<CheckList id='P091b' title='上线前自检' :items='["能复现并解释「把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失…」", "能复现并解释「用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表…」", "能复现并解释「内部服务把业务错误塞进 HTTP 200 的 body，字段…」", "能用一条命令验证 上传与断点续传", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P091a' title='上线前自检' :items='["能复现并解释「把上传文件先落到应用服务器本地磁盘，容器重启或扩容后文件丢失…」", "能复现并解释「用 SQL 的 LIKE &#39;%词%&#39; 做搜索，数据量大后全表…」", "能复现并解释「内部服务把业务错误塞进 HTTP 200 的 body，字段…」", "能用一条命令验证 上传与断点续传", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE TABLE t(k TEXT UNIQUE)'); print('ok')"

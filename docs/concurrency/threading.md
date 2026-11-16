@@ -29,11 +29,9 @@ description: 能安全地在线程间传递数据
 
 `threading.Thread` 的构造参数有 `group`、`target`、`name`、`args`、`kwargs` 与 `daemon`，其中 `group` 是保留参数，必须传 `None`。
 
-`start()` 只能调一次，重复调用抛 `RuntimeError`（threads can only be started once）；
+`start()` 只能调一次，重复调用抛 `RuntimeError`（threads can only be started once）；`join(timeout=None)` 等待结束，但既不返回目标函数的结果，也不重抛子线程的异常；`is_alive()`、ident、`native_id`（3.8+）与 name 用于观测。
 
-`join(timeout=None)` 等待结束，但既不返回目标函数的结果，也不重抛子线程的异常；
-
-`is_alive()`、ident、`native_id`（3.8+）与 name 用于观测。`daemon=True` 的线程在解释器关闭时被直接丢弃，finally 与 atexit 都不保证执行，写文件、刷缓冲这类收尾不能放进去；非 daemon 线程则会在退出时被解释器隐式 join。
+`daemon=True` 的线程在解释器关闭时被直接丢弃，finally 与 atexit 都不保证执行，写文件、刷缓冲这类收尾不能放进去；非 daemon 线程则会在退出时被解释器隐式 join。
 
 `threading.local()` 给每个线程一份独立属性空间，子类可重写 `__init__` 做初始化，但它不感知协程，async 场景要换用 `contextvars`（3.7+）。
 
@@ -84,7 +82,7 @@ print('all joined', all(not t.is_alive() for t in ts))
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-<CheckList id='P061b' title='上线前自检' :items='["能复现并解释「认为有 GIL 就不用给 counter 加锁」", "能复现并解释「子线程抛异常后主线程 join 完打印成功」", "能复现并解释「用 daemon 线程做日志落盘或缓存刷新」", "能用一条命令验证 Thread 与 daemon", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P061a' title='上线前自检' :items='["能复现并解释「认为有 GIL 就不用给 counter 加锁」", "能复现并解释「子线程抛异常后主线程 join 完打印成功」", "能复现并解释「用 daemon 线程做日志落盘或缓存刷新」", "能用一条命令验证 Thread 与 daemon", "关键路径有自动化测试与失败分支"]' />
 
 
 ## GIL 原子边界与竞态的可复现条件
@@ -171,9 +169,7 @@ print('main tls value', tls.value)
 
 `LifoQueue`、`PriorityQueue` 换的是出队顺序，`SimpleQueue`（3.7+，C 实现）更轻，但没有 task_done 机制。
 
-要拿到返回值与异常，用 `ThreadPoolExecutor.submit` 返回 `Future`，再逐个 `result()`：异常存在 Future 里，`result()` 时重新抛出；
-
-若 Future 从不被读取，异常就永远没人发现。
+要拿到返回值与异常，用 `ThreadPoolExecutor.submit` 返回 `Future`，再逐个 `result()`：异常存在 Future 里，`result()` 时重新抛出；若 Future 从不被读取，异常就永远没人发现。
 
 给线程起有意义的 name 并接入统一日志，配合 `threading.enumerate()` 与 `active_count()` 做存活观测。
 
@@ -196,9 +192,7 @@ CPython 的 ceval 主循环在执行字节码前假定当前线程持有 GIL；`
 
 于是「单条字节码原子、多条字节码可被打断」成了硬事实：`counter += 1` 编译为 `LOAD_GLOBAL` / `LOAD_CONST` / `BINARY_OP` / `STORE_GLOBAL`，两个线程完全可能在 `LOAD` 之后、`STORE` 之前各读到同一个旧值。
 
-`threading.Thread` 在 C 层对应一个 `PyThreadState` 与一条 OS 线程，异常若未被捕获，会走 `threading.excepthook` 输出到 `sys.stderr`，不会沿 join 传播到父线程；
-
-`Future.result()` 之所以能重抛，是因为 worker 把异常对象存进 Future 状态，`result()` 检查到异常再 raise。
+`threading.Thread` 在 C 层对应一个 `PyThreadState` 与一条 OS 线程，异常若未被捕获，会走 `threading.excepthook` 输出到 `sys.stderr`，不会沿 join 传播到父线程；`Future.result()` 之所以能重抛，是因为 worker 把异常对象存进 Future 状态，`result()` 检查到异常再 raise。
 
 `threading.local` 用线程状态里的字典实现，因此与协程调度不兼容。
 

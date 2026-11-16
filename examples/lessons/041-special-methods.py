@@ -42,10 +42,6 @@ print('hash', Vec.__hash__)
 print('bool', bool(a), bool(Vec(0, 0)), 'len', len(a))
 print('contains', 2 in a, 9 in a)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # True True
@@ -70,10 +66,6 @@ class Score:
 print(Score(3) < Score(5), Score(3) <= Score(3))
 print('ge', Score(5) >= Score(4))
 print('radd', repr(10 + Score(1)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -100,10 +92,6 @@ except TypeError as e:
     print('TypeError:', str(e)[:36])
 print('hash equal:', WithHash().__hash__() == WithHash().__hash__())
 print('ne uses eq:', EqOnly() != object())
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

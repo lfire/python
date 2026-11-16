@@ -37,10 +37,6 @@ folded = compile('1 + 2', 'f', 'eval')
 print('folded consts', folded.co_consts)
 print('mode eval returns', eval(folded))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # rewritten 20 + 10
@@ -58,10 +54,6 @@ new = Double().visit(tree)
 ast.fix_missing_locations(new)
 print('rewritten', ast.unparse(new))
 print('result', eval(compile(new, 'r', 'eval')))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -82,10 +74,6 @@ print('folded consts', lit.co_consts)
 print('co_names', lit.co_names)
 print('opt2 removes assert', len(compile('assert False', 'a', 'exec', optimize=2).co_code) < len(compile('assert False', 'a', 'exec', optimize=0).co_code))
 print('sys module ok', hasattr(sys, 'getsizeof'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

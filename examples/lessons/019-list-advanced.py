@@ -63,10 +63,6 @@ for x in nums[:]:
         nums.remove(x)
 print('safe removal', nums)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # reverse keeps stability [(2, 'c'), (1, 'b'), (1, 'a'), (1, 'd')]
@@ -85,10 +81,6 @@ print('by score then name', sorted(rows, key=itemgetter(1, 0)))
 def by_abs(a, b):
     return (abs(a) > abs(b)) - (abs(a) < abs(b))
 print('cmp_to_key', sorted([-3, 1, -2, 2], key=cmp_to_key(by_abs)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -123,10 +115,6 @@ b = []
 for _ in range(1000):
     b.append(None)
 print('prealloc no larger', sys.getsizeof(a) <= sys.getsizeof(b))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

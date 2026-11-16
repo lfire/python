@@ -43,10 +43,6 @@ inner = outer()
 print('freevars', inner.__code__.co_freevars)
 print('has LOAD_DEREF', 'LOAD_DEREF' in [i.opname for i in dis.get_instructions(inner)])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # nested code objects []（3.12+ PEP 709 内联；3.11 及以前为 ['<listcomp>']）
@@ -66,10 +62,6 @@ try:
 except FileNotFoundError:
     print('caught in python')
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # stack ins ['LOAD_FAST', 'LOAD_CONST', 'RETURN_VALUE']
@@ -88,10 +80,6 @@ print('has binary op', any(o in ins for o in ('BINARY_OP', 'BINARY_ADD')))
 print('dis has adaptive', 'adaptive' in inspect.signature(dis.dis).parameters)
 print('int bits positive', sys.int_info.bits_per_digit > 0)
 print('stacksize positive', f.__code__.co_stacksize > 0)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

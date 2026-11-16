@@ -37,10 +37,6 @@ with tempfile.TemporaryDirectory() as root:
     del sys.modules['myapp']
     sys.path.remove(os.path.join(root, 'src'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # add via package 9
@@ -66,10 +62,6 @@ with tempfile.TemporaryDirectory() as root:
     sys.path.remove(root)
     del sys.modules['webapp']
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # implicit relative fails True
@@ -89,10 +81,6 @@ with tempfile.TemporaryDirectory() as root:
     except ModuleNotFoundError as e:
         print('implicit relative fails', "No module named 'a'" in str(e))
     sys.path.remove(root)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

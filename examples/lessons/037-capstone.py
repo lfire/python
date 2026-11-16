@@ -54,10 +54,6 @@ print(calls['n'], slow.cache_info())
 slow.cache_clear()
 print(slow(3), calls['n'])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # 2 2 1
@@ -109,10 +105,6 @@ except ValueError as e:
     print(type(e).__name__, str(e))
 print(len(calls))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # 1 10 build (k)
@@ -147,10 +139,6 @@ ts = [threading.Thread(target=task) for _ in range(8)]
 for t in ts: t.start()
 for t in ts: t.join()
 print(build.calls['n'], build(1), build.__name__, inspect.signature(build))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -27,19 +27,13 @@ description: 串起办公文档的全套自动化流水线
 
 `email.message.EmailMessage` 自 3.6 起提供现代 API，构造时传 `policy=policy.SMTP` 会用 `CRLF` 作行分隔（`policy.default` 用 LF，发送场景要前者）。
 
-`msg.set_content(text)` 自动设 `Content-Type` 为 `text/plain` 并按内容挑 `Content-Transfer-Encoding`（文本通常 quoted-printable），`msg.add_alternative` 会把容器升级成 `multipart/alternative` 并追加 `text/html` part；
+`msg.set_content(text)` 自动设 `Content-Type` 为 `text/plain` 并按内容挑 `Content-Transfer-Encoding`（文本通常 quoted-printable），`msg.add_alternative` 会把容器升级成 `multipart/alternative` 并追加 `text/html` part；再调用 `add_attachment` 则进一步变成 `multipart/mixed` 用于附件。
 
-再调用 `add_attachment` 则进一步变成 `multipart/mixed` 用于附件。
-
-非 `ASCII` 头字段（如中文 Subject）在 `msg.as_bytes()` 序列化时才按 RFC 2047 编码成 `=?utf-8?b?...?=`，因为 `SMTP` 头只允许 `ASCII`；
-
-直接读 `msg['Subject']` 得到的是原始 `str`，这一点常被误判。
+非 `ASCII` 头字段（如中文 Subject）在 `msg.as_bytes()` 序列化时才按 RFC 2047 编码成 `=?utf-8?b?...?=`，因为 `SMTP` 头只允许 `ASCII`；直接读 `msg['Subject']` 得到的是原始 `str`，这一点常被误判。
 
 回解析用 `email.parser.BytesParser(policy=policy.default).parsebytes(raw)`，`iter_parts()` 可遍历各 part 的 `get_content_type()`。
 
-发送侧用 `smtplib.SMTP_SSL(host, 465)` 或 `SMTP(host, 587)` 加 `starttls(context=ssl.create_default_context())`，最后 `send_message(msg)` 由库负责 `DATA` 命令、点号转义与 `CRLF`；
-
-手工拼字符串既容易破坏转义，也会残留 `${...}` 占位符，还可能把用户输入拼进 `HTML` 造成内容错乱甚至 XSS。
+发送侧用 `smtplib.SMTP_SSL(host, 465)` 或 `SMTP(host, 587)` 加 `starttls(context=ssl.create_default_context())`，最后 `send_message(msg)` 由库负责 `DATA` 命令、点号转义与 `CRLF`；手工拼字符串既容易破坏转义，也会残留 `${...}` 占位符，还可能把用户输入拼进 `HTML` 造成内容错乱甚至 XSS。
 
 **邮件构造 API 与 MIME 结构**
 
@@ -143,9 +137,7 @@ print('crlf present', bytes([13, 10]) in raw)
 
 模板 + 数据 + 批量渲染是文档自动化的通用套路：不变的部分留在模板里，代码只填变化字段。
 
-标准库 `string.Template` 用 `$name` 或 `${name}` 作占位符，`$$` 表示字面量 `$`；
-
-`substitute(**row)` 用字典一次填满，缺键会抛 `KeyError`，`safe_substitute` 则把缺失占位符原样保留——两者差别正是「宁可失败也不要把 `${amount}` 发给客户」的关键。
+标准库 `string.Template` 用 `$name` 或 `${name}` 作占位符，`$$` 表示字面量 `$`；`substitute(**row)` 用字典一次填满，缺键会抛 `KeyError`，`safe_substitute` 则把缺失占位符原样保留——两者差别正是「宁可失败也不要把 `${amount}` 发给客户」的关键。
 
 它只做标识符替换、不求值表达式，因此比 `eval` 或把用户输入当模板编译安全；相较之下 `str.format` 能访问属性与索引，模板来自用户输入时有信息泄漏风险。
 
@@ -186,16 +178,14 @@ Jinja2 用 `{{ name }}`、`{% for %}` 与模板继承，`HTML` 场景必须开 `
 
 ## 批量发送的限速、重试与失败清单
 
-<CheckList id='P124b' title='上线前自检' :items='["能复现并解释「把 SMTP 授权码写死在脚本里并随代码提交」", "能复现并解释「用字符串拼 HTML 邮件正文」", "能复现并解释「只按文件名或客户端声明的 Content-Type 判附件」", "能用一条命令验证 smtplib / yagmail 与授权码", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P124a' title='上线前自检' :items='["能复现并解释「把 SMTP 授权码写死在脚本里并随代码提交」", "能复现并解释「用字符串拼 HTML 邮件正文」", "能复现并解释「只按文件名或客户端声明的 Content-Type 判附件」", "能用一条命令验证 smtplib / yagmail 与授权码", "关键路径有自动化测试与失败分支"]' />
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：把 SMTP 授权码写死在脚本里并随代码提交", "body": "凭证进入版本库与日志，任何能看到仓库的人都能发信，且难以只吊销单个客户端", "tip": "用 os.environ.get 或 .env（加入 .gitignore）读取，用后可轮换；缺失凭证时直接禁用发送"}, {"title": "第 2 步：用字符串拼 HTML 邮件正文", "body": "转义被破坏、姓名里的 &amp; 与 &lt; 截断标签、${amount} 占位符残留发给客户", "tip": "用 EmailMessage.set_content 与 add_alternative 构造 MIME，正文交给 string.Template.substitute 渲染，HTML 场景开 autoescape"}, {"title": "第 3 步：只按文件名或客户端声明的 Content-T…", "body": "伪装的 .exe 或超大附件被放进队列，SMTP 拒收整批或带来存储型风险", "tip": "扩展名白名单 + len(data) 上限 + magic bytes（PDF 为 b&#39;%PDF-&#39;）三重校验，并给批量发送设限速与失败清单"}]' />
 
 
 ## MIME 是一棵树：为什么 HTML part 必须放最后
 
-`MIME` 把一封邮件表示成树：`multipart/alternative` 里每个 part 是同一内容的不同表示，客户端按由先到后的优先级选最后一个能渲染的类型，所以 `HTML` 必须放在 `text/plain` 之后；
-
-`multipart/mixed` 才用于挂载附件。
+`MIME` 把一封邮件表示成树：`multipart/alternative` 里每个 part 是同一内容的不同表示，客户端按由先到后的优先级选最后一个能渲染的类型，所以 `HTML` 必须放在 `text/plain` 之后；`multipart/mixed` 才用于挂载附件。
 
 `Content-Transfer-Encoding` 把 8-bit 内容编码成 7-bit 以适配 `SMTP` 线路（文本用 quoted-printable、二进制用 base64），RFC 2047 的 encoded-word 则在 `as_bytes()` 序列化阶段把非 `ASCII` 头折成 `=?charset?b?...?=`，因为 RFC 5322 头字段只允许 `ASCII`。
 
@@ -239,9 +229,7 @@ Jinja2 用 `{{ name }}`、`{% for %}` 与模板继承，`HTML` 场景必须开 `
 
 两千封账单要在十分钟内发完，又要保证不重发、不发错附件、不被 `SMTP` 拒收。
 
-把流程拆成四步：`render` 用 `string.Template.substitute` 把行数据填进固定模板，缺字段直接抛 `KeyError` 而不是把占位符发出去；
-
-`check` 对附件做扩展名白名单与 `len(data)` 大小上限校验；`build` 用 `EmailMessage` 生成一封合规邮件；`run` 按 `limit` 限速，把失败原因（type / size / rate limit）连同收件人记进失败清单供重试。
+把流程拆成四步：`render` 用 `string.Template.substitute` 把行数据填进固定模板，缺字段直接抛 `KeyError` 而不是把占位符发出去；`check` 对附件做扩展名白名单与 `len(data)` 大小上限校验；`build` 用 `EmailMessage` 生成一封合规邮件；`run` 按 `limit` 限速，把失败原因（type / size / rate limit）连同收件人记进失败清单供重试。
 
 真实项目把 `limit` 换成每秒令牌、给每封加幂等键、把 `Pillow` 缩略图与 `pypdf` 合并放进后台 worker，并用 `smtplib.SMTP_SSL` 配超时发送。
 

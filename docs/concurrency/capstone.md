@@ -38,9 +38,7 @@ description: 把单机脚本演进到可限流的分布式抓取
 
 串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。
 
-线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个等待能重叠，吞吐约提升到 min(k, 单机上限) 倍；
-
-代价是每线程栈内存与上下文切换，k 过大反而退化。
+线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前释放 GIL，k 个等待能重叠，吞吐约提升到 min(k, 单机上限) 倍；代价是每线程栈内存与上下文切换，k 过大反而退化。
 
 asyncio 版把 fetch 换成原生异步客户端（`aiohttp` / `httpx.AsyncClient`）并复用连接池，单线程事件循环用 `await` 让出控制权，连接数由连接器上限约束，不再为每个请求付线程栈。
 
@@ -59,9 +57,7 @@ asyncio 版把 fetch 换成原生异步客户端（`aiohttp` / `httpx.AsyncClien
 
 <Callout type="tip" title='核心心智模型' text='串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚点。线程池版用 `concurrent.futures.ThreadPoolExecutor(max_workers=k)`，把阻塞 IO 换成线程池：因为 requests 这类同步调用在进入 socket 等待前…' />
 
-同步 socket 进入阻塞系统调用前由 CPython 释放 GIL，因此 `ThreadPoolExecutor` 能让多个网络等待重叠，这是二级加速的来源；
-
-但线程有独立栈（默认常为 8 MB 级虚拟内存）与调度开销，并发度上千就不划算。
+同步 socket 进入阻塞系统调用前由 CPython 释放 GIL，因此 `ThreadPoolExecutor` 能让多个网络等待重叠，这是二级加速的来源；但线程有独立栈（默认常为 8 MB 级虚拟内存）与调度开销，并发度上千就不划算。
 
 asyncio 把等待点显式化：协程在 `await` 处把控制权交回事件循环，底层用 selectors（epoll/kqueue）把就绪 fd 映射回回调，单 OS 线程即可维持数万连接，连接由 `AsyncClient` 的连接池复用而非每请求新建。
 
@@ -184,11 +180,11 @@ print('materialized peak > generator peak', peak_all > peak_stream)
 
 去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 hash），命中即跳过，避免重复页、分页参数与重定向环把名额吃光；分布式下换成布隆过滤器或共享 Redis 集合。
 
-限流用 `asyncio.Semaphore(limit)` 包住真正发请求的临界区，把「在途请求数」而非「已创建任务数」压在上限内；
+限流用 `asyncio.Semaphore(limit)` 包住真正发请求的临界区，把「在途请求数」而非「已创建任务数」压在上限内；再加每域名最小间隔与令牌桶，遵守 `robots.txt` 的 Crawl-delay。
 
-再加每域名最小间隔与令牌桶，遵守 `robots.txt` 的 Crawl-delay。失败重试只对幂等的 GET 生效，设最大次数（如 3）与指数退避，区分可重试状态码（429/5xx/超时）与永久失败（404/解析错误）。断点把 seen、待抓队列、已抓结果持久化，重启时从 checkpoint 恢复而不是全量重来；
+失败重试只对幂等的 GET 生效，设最大次数（如 3）与指数退避，区分可重试状态码（429/5xx/超时）与永久失败（404/解析错误）。
 
-用 `tracemalloc` 对比「一次性物化全部结果」与「生成器流式产出」的峰值内存，能证明流式管线更省内存，这正是背压的基础。
+断点把 seen、待抓队列、已抓结果持久化，重启时从 checkpoint 恢复而不是全量重来；用 `tracemalloc` 对比「一次性物化全部结果」与「生成器流式产出」的峰值内存，能证明流式管线更省内存，这正是背压的基础。
 
 **限流与合规策略（默认开启）**
 
@@ -229,9 +225,11 @@ print('materialized peak > generator peak', peak_all > peak_stream)
 
 ## 组件化与可观测：把策略写成配置
 
-把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负责编排；这样升级限流算法不会动到解析逻辑。合规策略必须默认开启且写成配置：`User-Agent`、并发上限、每域名间隔、robots 白名单、超时。监控要打点四个量：在途任务数、单位时间请求数、各类状态码分布、队列积压长度；
+把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负责编排；这样升级限流算法不会动到解析逻辑。合规策略必须默认开启且写成配置：`User-Agent`、并发上限、每域名间隔、robots 白名单、超时。
 
-任一指标越界就降速或熔断。分布式化后还会出现重复抓取（多 worker 同时取到同一 URL）与顺序不确定，必须靠共享去重与幂等写入兜底。断点续抓要记录「已分配但未确认」的任务，worker 崩溃时重新入队，避免消息永久丢失。把这些约束显式化，才能说清每一次演进的收益来自并发模型、连接池，还是限流策略，而不是靠换框架碰运气。
+监控要打点四个量：在途任务数、单位时间请求数、各类状态码分布、队列积压长度；任一指标越界就降速或熔断。分布式化后还会出现重复抓取（多 worker 同时取到同一 URL）与顺序不确定，必须靠共享去重与幂等写入兜底。断点续抓要记录「已分配但未确认」的任务，worker 崩溃时重新入队，避免消息永久丢失。
+
+把这些约束显式化，才能说清每一次演进的收益来自并发模型、连接池，还是限流策略，而不是靠换框架碰运气。
 
 <FlowTimeline :steps='[{"title": "一级到三级：并发模型只替换一个变量", "desc": "串行基线用 for 循环逐个 fetch，耗时约等于单次延迟乘以数量，是唯一的对照锚…", "tone": "blue"}, {"title": "四级：去重、限流、失败重试与断点", "desc": "去重靠 seen 集合：入队前先查 URL 指纹（规范化后的 URL 或内容 has…", "tone": "purple"}, {"title": "组件化与可观测：把策略写成配置", "desc": "把 URL 去重器、优先级队列、限速器、失败队列、持久化各自抽成独立组件，主循环只负…", "tone": "orange"}, {"title": "工程落地", "desc": "带去重、限流与断点续抓的抓取管线", "tone": "red"}]' direction="horizontal" title='本讲的知识推进' />
 
@@ -281,7 +279,7 @@ if __name__ == '__main__':
 
 <Callout type="idea" title='落地提示' text='把 URL 去重、优先级、限速、失败队列抽成独立组件，合规策略写成配置并默认开启' />
 
-<CheckList id='P070b' title='上线前自检' :items='["能复现并解释「把 Top 结果一次性塞进列表再统一处理」", "能复现并解释「不做去重与限速直接开满并发」", "能复现并解释「对所有失败都无限重试」", "能用一条命令验证 串行基线", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P070a' title='上线前自检' :items='["能复现并解释「把 Top 结果一次性塞进列表再统一处理」", "能复现并解释「不做去重与限速直接开满并发」", "能复现并解释「对所有失败都无限重试」", "能用一条命令验证 串行基线", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(0,i) for i in range(3)]))))"
@@ -292,15 +290,13 @@ python -c "import asyncio; print(len(asyncio.run(asyncio.gather(*[asyncio.sleep(
 
 ## 令牌桶限速的连续时间推导与 GCRA 等价形式
 
-设桶容量 b、补充速率 r（个每秒），t 时刻的令牌数 `T(t)=min(b,T(t0)+r*(t-t0))`，即不超容量 b 的前提下按速率 r 从上一个时刻线性补充；
+设桶容量 b、补充速率 r（个每秒），t 时刻的令牌数 `T(t)=min(b,T(t0)+r*(t-t0))`，即不超容量 b 的前提下按速率 r 从上一个时刻线性补充；请求到达时若令牌数不小于本次消耗 cost 就扣除并放行，否则拒绝或等待。
 
-请求到达时若令牌数不小于本次消耗 cost 就扣除并放行，否则拒绝或等待。由此得到两条硬约束：任意瞬间最多放行 b 个（突发上限），任意长度 L 的窗口内最多放行 b + rL 个（长期速率被 r 钳住），既不靠后台定时器也不靠固定窗口计数。
+由此得到两条硬约束：任意瞬间最多放行 b 个（突发上限），任意长度 L 的窗口内最多放行 b + rL 个（长期速率被 r 钳住），既不靠后台定时器也不靠固定窗口计数。
 
-等价的 `GCRA`（Generic Cell Rate Algorithm）把「理论到达时间 TAT」当唯一状态：到达时刻 t 若不小于 TAT 减 tau 就接受，并把 TAT 更新为 `TAT=max(TAT,t)+T`，其中 `T=1/r`、`tau=b/r` 是突发容差；
+等价的 `GCRA`（Generic Cell Rate Algorithm）把「理论到达时间 TAT」当唯一状态：到达时刻 t 若不小于 TAT 减 tau 就接受，并把 TAT 更新为 `TAT=max(TAT,t)+T`，其中 `T=1/r`、`tau=b/r` 是突发容差；它只需一个时间戳就能表达同样的允许流量，是网关与 Redis 限流器的常见实现。
 
-它只需一个时间戳就能表达同样的允许流量，是网关与 Redis 限流器的常见实现。固定窗口计数器的边界突刺是反例：两个窗口交界处的一秒内可放行 2r，滑动窗口日志要存每个请求时间戳、内存 O(r 乘窗口)，而令牌桶状态 `O(1)`。
-
-实测里 `capacity=10`、`rate=5` 时连续 12 次取令牌恰好放过 10 次，随后按 0.2 秒每个的节奏恢复，正是「突发有界、长期匀速」的数学表现。
+固定窗口计数器的边界突刺是反例：两个窗口交界处的一秒内可放行 2r，滑动窗口日志要存每个请求时间戳、内存 O(r 乘窗口)，而令牌桶状态 `O(1)`。实测里 `capacity=10`、`rate=5` 时连续 12 次取令牌恰好放过 10 次，随后按 0.2 秒每个的节奏恢复，正是「突发有界、长期匀速」的数学表现。
 
 实现必须用 `time.monotonic` 而非 `time.time`：NTP 校时让系统时钟回拨或跳变时，基于挂钟的令牌数会倒退或暴增，曾有线上限流器在时钟校正后瞬间放行整桶的真实故障。
 
@@ -363,7 +359,7 @@ print('burst allowed with capacity 10', allowed)
 
 <OutputBox title='扩展示例运行结果' output='m/n 10 k 7\ntheoretical p 0.0082\nmeasured fp / 5000 41 rate 0.0082\nburst allowed with capacity 10 10' />
 
-<LineByLine code='import hashlib\nimport math\nimport time\n\nclass TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self.tokens = capacity\n        self.stamp = time.monotonic()\n    def take(self, n=1):\n        now = time.monotonic()\n        self.tokens = min(self.capacity, self.tokens + (now - self.stamp) * self.rate)\n        self.stamp = now\n        if self.tokens &gt;= n:\n            self.tokens -= n\n            return True\n        return False\n\nclass Bloom:\n    def __init__(self, m, k):\n        self.m = m\n        self.k = k\n        self.bits = bytearray((m + 7) // 8)\n    def _positions(self, item):\n        d = hashlib.sha256(item.encode()).digest()\n        for i in range(self.k):\n            a = int.from_bytes(d[i * 4:i * 4 + 2], &#39;big&#39;)\n            b = int.from_bytes(d[i * 4 + 2:i * 4 + 4], &#39;big&#39;)\n            yield (a + b * i) % self.m\n    def add(self, item):\n        for p in self._positions(item):\n            self.bits[p // 8] |= 1 &lt;&lt; (p % 8)\n    def contains(self, item):\n        return all(self.bits[p // 8] &amp; (1 &lt;&lt; (p % 8)) for p in self._positions(item))\n\ndef theory_p(m, n, k):\n    return (1 - math.exp(-k * n / m)) ** k\n\nn = 2000\nm = 20000\nk = round(m / n * math.log(2))\nbloom = Bloom(m, k)\nfor i in range(n):\n    bloom.add(&#39;url-&#39; + str(i))\nfp = sum(1 for i in range(n, n + 5000) if bloom.contains(&#39;url-&#39; + str(i)))\nprint(&#39;m/n&#39;, m // n, &#39;k&#39;, k)\nprint(&#39;theoretical p&#39;, round(theory_p(m, n, k), 4))\nprint(&#39;measured fp / 5000&#39;, fp, &#39;rate&#39;, round(fp / 5000, 4))\n\nbucket = TokenBucket(rate=5, capacity=10)\nallowed = sum(1 for _ in range(12) if bucket.take())\nprint(&#39;burst allowed with capacity 10&#39;, allowed)\n' :notes='["导入 hashlib 造哈希、math 算公式、time 取单调时钟", "TokenBucket 在取令牌时按时间差惰性补充，无需后台定时器", "stamp 用 monotonic，避免系统时钟回拨让令牌数失真", "空行，只用于分隔逻辑块，不影响执行结果。", "tokens 上限被 capacity 钳住，这就是突发上限 b", "Bloom 用 bytearray 存 m 位，每字节装 8 个标志位", "_positions 从 SHA-256 摘要切出 k 对双字节，拼出 k 个位置", "取模 m 把哈希值压进位数组下标", "add 把对应位或上 1，共享位正是不能删除的原因", "contains 全部位为 1 才判存在，故不存在一定被判否", "theory_p 实现 (1 - e 的 -kn/m 次方) 的 k 次方", "m/n = 10 位每元素，最优 k 取 (m/n)ln2 约 7", "插入 2000 个 URL 后统计 5000 个未见 URL 的误判数", "实测误判率 0.0082 与理论值吻合，验证公式可用", "capacity 10 的桶连续 12 次取令牌只放过前 10 次", "这一行 `self.tokens -= n` 的作用，可对照上方输出逐项核对。", "这一行 `return True` 的作用，可对照上方输出逐项核对。", "这一行 `return False` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `class Bloom:` 的作用，可对照上方输出逐项核对。", "这一行 `def __init__(self, m, k):` 的作用，可对照上方输出逐项核对。", "这一行 `self.m = m` 的作用，可对照上方输出逐项核对。", "这一行 `self.k = k` 的作用，可对照上方输出逐项核对。", "这一行 `self.bits = bytearray((m + 7) // 8)` 的作用，可对照上方输出逐项核对。", "这一行 `def _positions(self, item):` 的作用，可对照上方输出逐项核对。", "这一行 `d = hashlib.sha256(item.encode()).digest()` 的作用，可对照上方输出逐项核对。", "这一行 `for i in range(self.k):` 的作用，可对照上方输出逐项核对。", "这一行 `a = int.from_bytes(d[i * 4:i * 4 + 2], &#39;big&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `b = int.from_bytes(d[i * 4 + 2:i * 4 + 4], &#39;big&#39;)` 的作用，可对照上方输出逐项核对。", "这一行 `yield (a + b * i) % self.m` 的作用，可对照上方输出逐项核对。", "这一行 `def add(self, item):` 的作用，可对照上方输出逐项核对。", "这一行 `for p in self._positions(item):` 的作用，可对照上方输出逐项核对。", "这一行 `self.bits[p // 8] |= 1 &lt;&lt; (p % 8)` 的作用，可对照上方输出逐项核对。", "这一行 `def contains(self, item):` 的作用，可对照上方输出逐项核对。", "这一行 `return all(self.bits[p // 8] &amp; (1 &lt;&lt; (p % 8)) for p ` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `def theory_p(m, n, k):` 的作用，可对照上方输出逐项核对。", "这一行 `return (1 - math.exp(-k * n / m)) ** k` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `n = 2000` 的作用，可对照上方输出逐项核对。", "这一行 `m = 20000` 的作用，可对照上方输出逐项核对。", "这一行 `k = round(m / n * math.log(2))` 的作用，可对照上方输出逐项核对。", "这一行 `bloom = Bloom(m, k)` 的作用，可对照上方输出逐项核对。", "这一行 `for i in range(n):` 的作用，可对照上方输出逐项核对。", "这一行 `bloom.add(&#39;url-&#39; + str(i))` 的作用，可对照上方输出逐项核对。", "这一行 `fp = sum(1 for i in range(n, n + 5000) if bloom.cont` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;m/n&#39;, m // n, &#39;k&#39;, k)` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;theoretical p&#39;, round(theory_p(m, n, k), 4))` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;measured fp / 5000&#39;, fp, &#39;rate&#39;, round(fp / 5` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。", "这一行 `bucket = TokenBucket(rate=5, capacity=10)` 的作用，可对照上方输出逐项核对。", "这一行 `allowed = sum(1 for _ in range(12) if bucket.take())` 的作用，可对照上方输出逐项核对。", "这一行 `print(&#39;burst allowed with capacity 10&#39;, allowed)` 的作用，可对照上方输出逐项核对。", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
+<LineByLine code='import hashlib\nimport math\nimport time\n\nclass TokenBucket:\n    def __init__(self, rate, capacity):\n        self.rate = rate\n        self.capacity = capacity\n        self.tokens = capacity\n        self.stamp = time.monotonic()\n    def take(self, n=1):\n        now = time.monotonic()\n        self.tokens = min(self.capacity, self.tokens + (now - self.stamp) * self.rate)\n        self.stamp = now\n        if self.tokens &gt;= n:\n            self.tokens -= n\n            return True\n        return False\n\nclass Bloom:\n    def __init__(self, m, k):\n        self.m = m\n        self.k = k\n        self.bits = bytearray((m + 7) // 8)\n    def _positions(self, item):\n        d = hashlib.sha256(item.encode()).digest()\n        for i in range(self.k):\n            a = int.from_bytes(d[i * 4:i * 4 + 2], &#39;big&#39;)\n            b = int.from_bytes(d[i * 4 + 2:i * 4 + 4], &#39;big&#39;)\n            yield (a + b * i) % self.m\n    def add(self, item):\n        for p in self._positions(item):\n            self.bits[p // 8] |= 1 &lt;&lt; (p % 8)\n    def contains(self, item):\n        return all(self.bits[p // 8] &amp; (1 &lt;&lt; (p % 8)) for p in self._positions(item))\n\ndef theory_p(m, n, k):\n    return (1 - math.exp(-k * n / m)) ** k\n\nn = 2000\nm = 20000\nk = round(m / n * math.log(2))\nbloom = Bloom(m, k)\nfor i in range(n):\n    bloom.add(&#39;url-&#39; + str(i))\nfp = sum(1 for i in range(n, n + 5000) if bloom.contains(&#39;url-&#39; + str(i)))\nprint(&#39;m/n&#39;, m // n, &#39;k&#39;, k)\nprint(&#39;theoretical p&#39;, round(theory_p(m, n, k), 4))\nprint(&#39;measured fp / 5000&#39;, fp, &#39;rate&#39;, round(fp / 5000, 4))\n\nbucket = TokenBucket(rate=5, capacity=10)\nallowed = sum(1 for _ in range(12) if bucket.take())\nprint(&#39;burst allowed with capacity 10&#39;, allowed)\n' :notes='["导入 hashlib，用 SHA-256 造哈希位置", "导入 math，算指数与对数", "导入 time，取单调时钟", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 TokenBucket，实现令牌桶", "__init__ 收速率 rate 与容量 capacity", "保存补充速率 rate", "保存桶容量 capacity", "初始令牌数给满，等于容量", "stamp 用 monotonic 记起始时刻，避免系统时钟回拨让令牌数失真", "定义 take，尝试取 n 个令牌", "读取当前单调时刻 now", "按时间差惰性补充令牌，再用 capacity 钳住上限，这就是突发上限 b；无需后台定时器", "把 stamp 推进到 now", "若剩余令牌够本次消耗", "扣掉 n 个令牌", "返回 True 表示放行", "令牌不足返回 False", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 Bloom，实现布隆过滤器", "__init__ 收位数组长度 m 与哈希函数数 k", "保存位数组长度 m", "保存哈希函数个数 k", "bits 用 bytearray 存 m 位，每字节装 8 个标志位", "定义 _positions，产出元素的 k 个位置", "先对 item 取 SHA-256 摘要", "循环取出 k 组双字节", "从摘要第 i 组切出前两字节拼成整数 a", "再切出后两字节拼成整数 b", "用 (a + b*i) 取模 m 压进位数组下标，逐个 yield", "定义 add，插入一个元素", "遍历该元素的全部位置", "把对应位或上 1，共享位正是不能删除的原因", "定义 contains，判断元素是否可能存在", "全部位为 1 才判存在，故不存在的元素一定被判否", "空行，只用于分隔逻辑块，不影响执行结果。", "定义 theory_p，计算理论误判率", "实现 (1 - e 的 -kn/m 次方) 的 k 次方", "空行，只用于分隔逻辑块，不影响执行结果。", "设定插入元素数 n = 2000", "位数组取 m = 20000，即 m/n = 10 位每元素", "最优 k 按 (m/n)ln2 取整，约 7", "用 m、k 构造 Bloom 实例", "循环插入 n 个元素", "逐个把 url-i 加进布隆", "统计 5000 个未见 URL 中被误判为存在的个数", "打印 m/n 与最优 k", "打印理论误判率 theory_p", "打印实测误判数与误判率 0.0082，与理论值吻合，验证公式可用", "空行，只用于分隔逻辑块，不影响执行结果。", "另建 rate=5、capacity=10 的令牌桶", "连续 12 次取令牌，只放过前 10 次", "打印突发放行次数，验证 capacity 的硬上限", "空行，只用于分隔逻辑块，不影响执行结果。"]' title='扩展示例逐行讲解' />
 
 
 ## 布隆过滤器的误判率与位数组参数求解
@@ -374,9 +370,9 @@ print('burst allowed with capacity 10', allowed)
 
 对 k 求导并令导数为零，得最优 `k*=(m/n)ln2`，代回得 `m=-n*ln(p)/(ln2)^2`，约等于 -2.08 乘 n 乘 ln p，即每元素约需 -ln p 除以 (ln2) 平方 位：p 取 1% 时约 9.6 位每元素，p 取 0.1% 时约 14.4 位。
 
-工程含义很具体：100 万 URL 压到 1% 误判只需约 1.2 MB，用 set 存字符串则要几十 MB；代价是「判存在」可能误判，把没抓过的 URL 当成抓过而漏抓，所以布隆只做「一定不存在」的前置拦截，命中之后还得回查权威去重表。另一个边界是标准布隆不支持删除，因为多个元素共享同一位，清零会毁掉别人；
+工程含义很具体：100 万 URL 压到 1% 误判只需约 1.2 MB，用 set 存字符串则要几十 MB；代价是「判存在」可能误判，把没抓过的 URL 当成抓过而漏抓，所以布隆只做「一定不存在」的前置拦截，命中之后还得回查权威去重表。
 
-计数布隆用每格 4 位计数器换删除能力但要防溢出。分布式下换成 Redis 的 `SETBIT` 或布隆模块时，网络往返必须算进收益账。这些推导把「用布隆去重」这句经验说法落到了可核算的参数上。
+另一个边界是标准布隆不支持删除，因为多个元素共享同一位，清零会毁掉别人；计数布隆用每格 4 位计数器换删除能力但要防溢出。分布式下换成 Redis 的 `SETBIT` 或布隆模块时，网络往返必须算进收益账。这些推导把「用布隆去重」这句经验说法落到了可核算的参数上。
 
 **限流与去重的参数、公式与失效边界**
 
@@ -434,7 +430,7 @@ print('wal events', len(log.events))
 <Exercise title='按目标误判率反推布隆过滤器参数' task='给定 n = 100000、目标 p 不大于 0.01，用 m = -n 乘 ln p 除以 (ln2) 的平方 与 k = (m/n) 乘 ln2 求 m 与 k，并说明为什么标准布隆过滤器不能删除单个元素。' solution='import math\n\nn = 100000\np = 0.01\nm = math.ceil(-n * math.log(p) / (math.log(2) ** 2))\nk = round(m / n * math.log(2))\nprint(&#39;m bits&#39;, m, &#39;k&#39;, k)\nprint(&#39;bits per item&#39;, round(m / n, 2))\nprint(&#39;MB&#39;, round(m / 8 / 1024 / 1024, 2))\n' explain='p 取 0.01 时每元素约需 9.6 位，10 万 URL 约 120 KB，k 取 (m/n)ln2 约 7 个哈希。标准布隆的位数组被多个元素共享，删一个元素把某位清零可能同时毁掉别的元素，故只能用计数布隆（每格 4 位计数器）或整表重建；误判率公式里的 k 偏离最优值时 p 会上升，这正是参数需要推导而非拍脑袋的原因。' />
 
 
-### AIMD 自适应并发与 429 退避的成本
+### 令牌桶与布隆过滤器的判据自测
 
 <Quiz no='070-1' q='关于令牌桶与布隆过滤器，下面哪项准确？' :options='["令牌桶用 O(1) 状态约束长期速率 r 与突发上限 b；布隆误判率随位数组 m 增大按公式下降", "令牌桶必须后台定时器每秒补充令牌，否则无法工作", "布隆过滤器判定存在时一定存在，判定不存在时可能误判", "布隆过滤器支持直接删除单个元素，把对应位清零即可"]' answer="0" explain='令牌桶在取令牌时按时间差惰性补充，无需定时器，突发上限恰为 b、长期速率被 r 钳住。布隆的方向相反：判「不存在」一定不存在，判「存在」可能误判，且共享位数组不支持直接删除。误判率 p = (1 - e 的 -kn/m 次方) 的 k 次方，在 k* = (m/n)ln2 时取得最小，这与正文只提「用布隆去重」相比才是可核算的参数依据。' />
 

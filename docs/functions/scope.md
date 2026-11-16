@@ -49,13 +49,9 @@ description: 能解释并修复闭包捕获的经典 bug
 
 名字查找顺序是 Local → Enclosing → Global → Built-in，四层都找不到才抛 `NameError`。
 
-关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`、`def` / `class` 绑定），编译器就把它标记为局部并放进 `co_varnames`，于是整个函数体对它的读取都走 `LOAD_FAST`；
+关键在于作用域不是运行时逐行判断，而是编译期由符号表决定：只要函数体内任何地方给某名字赋值（含 `+=`、`for` 目标、`with as`、`import`、`def` / `class` 绑定），编译器就把它标记为局部并放进 `co_varnames`，于是整个函数体对它的读取都走 `LOAD_FAST`；在赋值之前读取该槽位就抛 `UnboundLocalError`，3.11 及以后的文案是 cannot access local variable 'x' where it is not associated with a value，3.10 及以前是 local variable 'x' referenced before assignment。
 
-在赋值之前读取该槽位就抛 `UnboundLocalError`，3.11 及以后的文案是 cannot access local variable 'x' where it is not associated with a value，3.10 及以前是 local variable 'x' referenced before assignment。
-
-`global x` 把名字绑定到模块命名空间，读写走 `LOAD_GLOBAL` / `STORE_GLOBAL`；
-
-`nonlocal x`（PEP 3104，3.0+）绑定到最近一层非全局的闭包 cell，读写走 `LOAD_DEREF` / `STORE_DEREF`，且要求该名字确实存在于外层函数作用域，否则编译期就报 `SyntaxError`（no binding for nonlocal 'x' found）。
+`global x` 把名字绑定到模块命名空间，读写走 `LOAD_GLOBAL` / `STORE_GLOBAL`；`nonlocal x`（PEP 3104，3.0+）绑定到最近一层非全局的闭包 cell，读写走 `LOAD_DEREF` / `STORE_DEREF`，且要求该名字确实存在于外层函数作用域，否则编译期就报 `SyntaxError`（no binding for nonlocal 'x' found）。
 
 只读名字沿 `LEGB` 逐层回退，`dis` 里能看到 `LOAD_GLOBAL`；内建名如 `len` 属 Built-in 层，一旦被同名局部变量遮蔽就优先取局部。
 
@@ -108,17 +104,15 @@ except UnboundLocalError as e:
 
 ## 闭包与 cell：捕获的是变量不是值
 
-闭包等于函数加上它引用的自由变量环境。被内层函数引用的外层局部名字叫自由变量，编译器把它们放进 cell 对象：外层 code object 的 `co_cellvars` 列出自己创建供内层使用的 cell，内层的 `co_freevars` 列出引用的自由变量名；
+闭包等于函数加上它引用的自由变量环境。
 
-运行时 `function.__closure__` 是与 `co_freevars` 顺序对应的 cell 元组，`cell.cell_contents` 是当前值，3.7 起还可写。
+被内层函数引用的外层局部名字叫自由变量，编译器把它们放进 cell 对象：外层 code object 的 `co_cellvars` 列出自己创建供内层使用的 cell，内层的 `co_freevars` 列出引用的自由变量名；运行时 `function.__closure__` 是与 `co_freevars` 顺序对应的 cell 元组，`cell.cell_contents` 是当前值，3.7 起还可写。
 
 cell 是引用语义，内外层共用同一个 cell，内层读到的始终是此刻的 `cell_contents`，而不是定义那一刻的快照，这正是延迟绑定的根源。
 
 循环里创建的一批 lambda 引用同一个循环变量，共享同一个 cell，循环结束时 `cell_contents` 是最终值，于是所有函数行为一致，且没有任何运行时报错，排查成本很高。
 
-修复有三条：默认参数捕获 `i=i`，因为默认表达式在每次 lambda 定义时求值，把当前值固化进一个新的 function 对象的 `__defaults__`，不再走 cell；工厂函数 `make(i)` 每调用一次就新建一层局部作用域与独立 cell；
-
-`functools.partial(f, i)` 把值作为已绑定参数存进对象。
+修复有三条：默认参数捕获 `i=i`，因为默认表达式在每次 lambda 定义时求值，把当前值固化进一个新的 function 对象的 `__defaults__`，不再走 cell；工厂函数 `make(i)` 每调用一次就新建一层局部作用域与独立 cell；`functools.partial(f, i)` 把值作为已绑定参数存进对象。
 
 三者都把值从共享变量里复制出来。
 
@@ -187,11 +181,9 @@ CPython 里闭包靠 cell 对象实现。
 
 其二，`class` 语句体不参与外层函数的闭包：方法里引用外层函数的局部变量不会走 enclosing，而是按 global 查找，于是明明在 `make()` 里定义的变量，在类方法里却读不到，这是经典的失效信号。
 
-判定工具很直接：`dis.dis` 看 `LOAD_FAST` / `LOAD_GLOBAL` / `LOAD_DEREF` / `STORE_DEREF` 就能判断名字被定型到哪一层；
+判定工具很直接：`dis.dis` 看 `LOAD_FAST` / `LOAD_GLOBAL` / `LOAD_DEREF` / `STORE_DEREF` 就能判断名字被定型到哪一层；`inspect.getclosurevars(fn)` 返回 nonlocals、globals、builtins、unbound 四个映射，一眼看清函数到底捕获了什么；把 `co_freevars` 与 `__closure__` 对照还能读出每个 cell 的当前值。
 
-`inspect.getclosurevars(fn)` 返回 nonlocals、globals、builtins、unbound 四个映射，一眼看清函数到底捕获了什么；
-
-把 `co_freevars` 与 `__closure__` 对照还能读出每个 cell 的当前值。global 的代价是引入模块级可变状态、难以隔离测试，计数器这类封装状态更适合 nonlocal。
+global 的代价是引入模块级可变状态、难以隔离测试，计数器这类封装状态更适合 nonlocal。
 
 <StepBox title='现象 → 根因：按这个顺序排查' :steps='[{"title": "第 1 步：循环里 lambda 引用 i，全部返回最终…", "body": "闭包共享同一个 cell，读到的是循环结束后的值，且没有任何报错", "tip": "用 lambda i=i: ... 把当前值固化，或用工厂函数 make(i) 造独立作用域"}, {"title": "第 2 步：函数里先 print(x) 再 x = 1…", "body": "x 因函数内赋值被编译期判为局部，赋值前读取的槽位还是空的", "tip": "要改全局先声明 global x；要读外层用 nonlocal 或把值当参数传入；或先初始化再读取"}, {"title": "第 3 步：声明了 nonlocal 却报 Syntax…", "body": "nonlocal 要求名字确实存在于某个外层函数作用域，模块全局或压根不存在都不行", "tip": "确认外层有该局部变量；模块级变量改用 global；或重构为传参与类属性"}]' />
 
@@ -241,9 +233,9 @@ CPython 里闭包靠 cell 对象实现。
 
 ## 工厂函数造闭包：带状态的校验器与计数器
 
-配置中心要按不同上限生成一批校验函数，还要给每个数据源配一个自增序号生成器。若在循环里直接写 lambda 引用 cap，所有校验器会用同一个最终上限；
+配置中心要按不同上限生成一批校验函数，还要给每个数据源配一个自增序号生成器。
 
-正确做法是写一个工厂 `make_validator(limit)`，每次调用都新建一层局部作用域，limit 成为该层独立的 cell，返回的内层函数各自绑定自己的上限。
+若在循环里直接写 lambda 引用 cap，所有校验器会用同一个最终上限；正确做法是写一个工厂 `make_validator(limit)`，每次调用都新建一层局部作用域，limit 成为该层独立的 cell，返回的内层函数各自绑定自己的上限。
 
 计数器同理：`make_counter` 里用 nonlocal 让内层 bump 改写外层 cell，状态被封装在闭包里而不污染模块全局。下面这段用标准库实现并验证：打印三个校验器对同一个值的判断、读出一个校验器 cell 的内容、以及计数器的连续调用结果和 `co_cellvars`，把捕获了什么变成可核对的证据。
 
@@ -275,7 +267,7 @@ print(make_counter.__code__.co_cellvars)
 
 <Callout type="idea" title='落地提示' text='用默认参数把值当场绑定，或用工厂函数制造新的作用域；写装饰器时尤其要注意这一层' />
 
-<CheckList id='P030b' title='上线前自检' :items='["能复现并解释「循环里 lambda 引用 i，全部返回最终值」", "能复现并解释「函数里先 print(x) 再 x = 1 抛 Unboun…」", "能复现并解释「声明了 nonlocal 却报 SyntaxError」", "能用一条命令验证 LEGB 查找顺序", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P030a' title='上线前自检' :items='["能复现并解释「循环里 lambda 引用 i，全部返回最终值」", "能复现并解释「函数里先 print(x) 再 x = 1 抛 Unboun…」", "能复现并解释「声明了 nonlocal 却报 SyntaxError」", "能用一条命令验证 LEGB 查找顺序", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import inspect; print(inspect.signature(print))"
@@ -311,7 +303,7 @@ python -c "import inspect; print(inspect.signature(print))"
 | 延迟绑定根因是内外共享 cell 而非复制值；修复用默认参数 i=i、工厂函数或 functools.partial 固化当前值 | 随堂检测 |
 | inspect.getclosurevars 返回 nonlocals / globals / builtins / unbound；class 作用域不参与外层函数闭包 | 复盘 |
 
-<CheckList id='P030a' title='学完你应当能' :items='["能讲清 LEGB 与赋值即局部：名字在编译期定型", "能讲清 闭包与 cell：捕获的是变量不是值", "能讲清 边界、失效信号与装饰器里的延迟绑定", "能在工程里处理 cell 与闭包字节码"]' />
+<CheckList id='P030b' title='学完你应当能' :items='["能讲清 LEGB 与赋值即局部：名字在编译期定型", "能讲清 闭包与 cell：捕获的是变量不是值", "能讲清 边界、失效信号与装饰器里的延迟绑定", "能在工程里处理 cell 与闭包字节码"]' />
 
 1. LEGB：Local → Enclosing → Global → Built-in；名字作用域由编译期符号表定型，不是运行时决定
 

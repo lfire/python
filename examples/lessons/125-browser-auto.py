@@ -49,10 +49,6 @@ print('explicit never', wait_for(Page(ready_at=99), timeout=4, poll=1))
 print('fixed on early', fixed_wait(Page(ready_at=3), 10))
 print('fixed on late', fixed_wait(Page(ready_at=9), 2))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # rate gate False True
@@ -72,10 +68,6 @@ print('backoff ticks', retry_budget(4))
 os.environ['LOGIN_PASSWORD'] = 'from-vault'
 print('credential injected', os.environ.get('LOGIN_PASSWORD') == 'from-vault')
 os.environ.pop('LOGIN_PASSWORD', None)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -99,10 +91,6 @@ print('found at 9', wait_loop(10, 9))
 print('timeout at 99', wait_loop(10, 99))
 ops = [i.opname for i in dis.get_instructions(wait_loop)]
 print('has jump backward', any(o.startswith('JUMP_BACKWARD') for o in ops))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

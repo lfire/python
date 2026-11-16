@@ -29,9 +29,9 @@ description: 能自己实现一个惰性数据源
 
 `for x in obj` 展开后，先 `it = iter(obj)` 拿到迭代器，再反复 `next(it)`，直到捕获 `StopIteration` 才跳出；编译后对应 `GET_ITER` 与 `FOR_ITER` 字节码，因此「遍历结束」是一个异常信号，而不是长度判断。
 
-`collections.abc.Iterator` 只把 `__next__` 声明为抽象方法，mixin 免费提供返回 self 的 `__iter__`；
+`collections.abc.Iterator` 只把 `__next__` 声明为抽象方法，mixin 免费提供返回 self 的 `__iter__`；Iterable 只抽象 `__iter__`。
 
-Iterable 只抽象 `__iter__`。关键差别在状态归属：迭代器把游标放在自己对象里，消耗一次前进一步，耗尽后 `next()` 持续抛 `StopIteration`，所以 `list(it)` 第二次得到 `[]` 且不报错——这是把迭代器当列表用最隐蔽的坑。
+关键差别在状态归属：迭代器把游标放在自己对象里，消耗一次前进一步，耗尽后 `next()` 持续抛 `StopIteration`，所以 `list(it)` 第二次得到 `[]` 且不报错——这是把迭代器当列表用最隐蔽的坑。
 
 可迭代对象与迭代器可以分离：list 的 `__iter__` 每次返回一个新的 list_iterator，因此能反复遍历；文件对象 TextIOWrapper 的 `__iter__` 返回 self，本身就是迭代器，`iter(f) is f` 为真，只能读一遍，重读要 reopen 或 `seek(0)`。
 
@@ -105,9 +105,7 @@ except ValueError as e:
 
 这张图把本讲串成三段：先看输入从哪里来，再看规则在哪一步生效，最后看输出带了什么代价。建议对照主示例里的实现逐格看一遍。图可以点击放大，滚轮与双指缩放，也可以拖拽平移。
 
-CPython 的迭代分两层：`iter(obj)` 先查 tp_iter 槽调用 `__iter__`，拿到的迭代器必须有 tp_iternext 槽（`__next__`）；
-
-`for` 循环编译出的 `FOR_ITER` 指令每次调用 `next()`，捕获 `StopIteration` 后跳出，因此遍历结束是一个异常信号而不是长度判断。
+CPython 的迭代分两层：`iter(obj)` 先查 tp_iter 槽调用 `__iter__`，拿到的迭代器必须有 tp_iternext 槽（`__next__`）；`for` 循环编译出的 `FOR_ITER` 指令每次调用 `next()`，捕获 `StopIteration` 后跳出，因此遍历结束是一个异常信号而不是长度判断。
 
 迭代器把状态放在自身对象里（生成器还有 gi_frame 保存指令指针与局部变量），消耗一次就前进一步，耗尽后再次 `next()` 仍抛 `StopIteration`，所以 `list(it)` 第二次得到空列表且不会报错，这正是把迭代器当列表用的静默陷阱。
 
@@ -120,13 +118,11 @@ itertools 的工具全部基于这套协议在 C 层实现、返回迭代器而�
 
 ## iter() 的两种形式与 StopIteration 的版本约束
 
-`iter(obj)` 是单参数形式，调用 `obj.__iter__()`；
+`iter(obj)` 是单参数形式，调用 `obj.__iter__()`；`iter(callable, sentinel)` 是两参数形式，反复调用一个无参 callable，返回值等于 sentinel 时停止，常用于按块读文件或读输入：`f.read(64)` 一直读到空串为止，完全不需要知道总共有多少字节。
 
-`iter(callable, sentinel)` 是两参数形式，反复调用一个无参 callable，返回值等于 sentinel 时停止，常用于按块读文件或读输入：`f.read(64)` 一直读到空串为止，完全不需要知道总共有多少字节。
+手动调用 `next(it)` 时，耗尽抛出的 `StopIteration` 要自己处理，而 `for` 循环帮你捕获了它。
 
-手动调用 `next(it)` 时，耗尽抛出的 `StopIteration` 要自己处理，而 `for` 循环帮你捕获了它。版本上有两条要记：Python 2 的 map / filter / zip 返回 list，Python 3 改为返回迭代器，需要 `list()` 才物化；
-
-3.7 起 PEP 479 把生成器内部意外抛出的 `StopIteration` 转成 `RuntimeError`，防止它伪装成正常结束、悄悄截断循环，结束生成器应该用 `return` 而不是 `raise StopIteration`。
+版本上有两条要记：Python 2 的 map / filter / zip 返回 list，Python 3 改为返回迭代器，需要 `list()` 才物化；3.7 起 PEP 479 把生成器内部意外抛出的 `StopIteration` 转成 `RuntimeError`，防止它伪装成正常结束、悄悄截断循环，结束生成器应该用 `return` 而不是 `raise StopIteration`。
 
 3.10 起 `zip(..., strict=True)` 会在各可迭代对象长度不等时抛 `ValueError`，避免静默截断。
 
@@ -278,7 +274,7 @@ print('exhausted again', list(orders))
 
 <Callout type="idea" title='落地提示' text='大文件、数据库游标、分页 API 都该包成迭代器，让调用方决定消费多少，内存才不会随数据量线性增长' />
 
-<CheckList id='P025b' title='上线前自检' :items='["能复现并解释「把迭代器当列表用，第二次遍历拿到空结果」", "能复现并解释「对文件对象遍历两次，第二次什么都没有」", "能复现并解释「在生成器里手动 raise StopIteration 想结…」", "能用一条命令验证 __iter__ 与 __next__", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P025a' title='上线前自检' :items='["能复现并解释「把迭代器当列表用，第二次遍历拿到空结果」", "能复现并解释「对文件对象遍历两次，第二次什么都没有」", "能复现并解释「在生成器里手动 raise StopIteration 想结…」", "能用一条命令验证 __iter__ 与 __next__", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))"

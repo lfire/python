@@ -16,26 +16,24 @@ description: 用集合把成员判断与去重做到 O(1)
 
 一个日志去重脚本用 `seen = []` 配合 `if rid in seen` 过滤 10 万行重复请求，跑了几分钟还没结束；把 `seen` 换成 set 后同样的输入几秒就跑完。原因是 list 的 `in` 是线性扫描，n 次判重累计 `O(n²)`，而 set 的成员判断平均 `O(1)`。
 
-但换过去又冒出新问题：有人直接把 `set(seq)` 的结果写进报告，抱怨顺序乱了，甚至不同进程跑出的顺序不一样；有人想把一组标签当 dict 的键，用可变 set 时抛 `TypeError`（set 不可哈希）；
+但换过去又冒出新问题：有人直接把 `set(seq)` 的结果写进报告，抱怨顺序乱了，甚至不同进程跑出的顺序不一样；有人想把一组标签当 dict 的键，用可变 set 时抛 `TypeError`（set 不可哈希）；还有人写 `empty = {}` 以为得到空集合，结果拿了个 dict，`empty.add(4)` 直接抛 `AttributeError`。
 
-还有人写 `empty = {}` 以为得到空集合，结果拿了个 dict，`empty.add(4)` 直接抛 `AttributeError`。这些现象都指向同一套机制：set 是与 dict 同源的哈希表，顺序不由插入决定，且只有不可变版本才可哈希。这一讲把集合运算、frozenset、哈希随机化与保序去重一条条摆清楚。
+这些现象都指向同一套机制：set 是与 dict 同源的哈希表，顺序不由插入决定，且只有不可变版本才可哈希。这一讲把集合运算、frozenset、哈希随机化与保序去重一条条摆清楚。
 
 
 ## 哈希表实现与集合运算：O(1) 的边界
 
-CPython 的 set 与 dict 同源，都是开放寻址哈希表，只是表项只存 `(hash, key)` 而不存 value。`add` / `remove` / `in` 平均 `O(1)`、最坏 `O(n)`（哈希冲突严重时会退化成线性探测），负载因子超过约 2/3 就扩容并 rehash；
+CPython 的 set 与 dict 同源，都是开放寻址哈希表，只是表项只存 `(hash, key)` 而不存 value。
 
-删除同样写墓碑标记，到扩容时才清理。
+`add` / `remove` / `in` 平均 `O(1)`、最坏 `O(n)`（哈希冲突严重时会退化成线性探测），负载因子超过约 2/3 就扩容并 rehash；删除同样写墓碑标记，到扩容时才清理。
 
-运算符与方法名是两套等价写法：并集用 `|` 或 `union()`、交集用 `&` 或 `intersection()`、差集（在左不在右）用 `-` 或 `difference()`、对称差用 `^` 或 `symmetric_difference()`；
-
-原地版本 `|=`、`&=`、`-=`、`^=` 对应 `update()`、`intersection_update()` 等，会直接改左操作数。
+运算符与方法名是两套等价写法：并集用 `|` 或 `union()`、交集用 `&` 或 `intersection()`、差集（在左不在右）用 `-` 或 `difference()`、对称差用 `^` 或 `symmetric_difference()`；原地版本 `|=`、`&=`、`-=`、`^=` 对应 `update()`、`intersection_update()` 等，会直接改左操作数。
 
 判断关系用 `<=` 判子集、`<` 判真子集、`>=` 判超集、`>` 判真超集，再用 `isdisjoint()` 确认两组没有公共元素。
 
-增删上，`add(x)` 新增一个元素，`remove(x)` 缺失时抛 `KeyError`，`discard(x)` 缺失时静默忽略，`pop()` 返回并移除任意一个元素（空集合抛 `KeyError`），`clear()` 清空。空集合必须写 `set()`，因为 `{}` 是空 dict；
+增删上，`add(x)` 新增一个元素，`remove(x)` 缺失时抛 `KeyError`，`discard(x)` 缺失时静默忽略，`pop()` 返回并移除任意一个元素（空集合抛 `KeyError`），`clear()` 清空。
 
-集合推导式 `{expr for x in iterable}` 与字面量 `{1, 2, 3}` 都受「元素必须可哈希」这条约束。
+空集合必须写 `set()`，因为 `{}` 是空 dict；集合推导式 `{expr for x in iterable}` 与字面量 `{1, 2, 3}` 都受「元素必须可哈希」这条约束。
 
 ```python
 s = {1, 2, 3}
@@ -95,15 +93,11 @@ print('empty set is dict?', isinstance({}, dict))
 
 ## frozenset、哈希随机化与保序去重
 
-set 是可变对象，所以不可哈希，既不能作 dict 键也不能塞进另一个 set；
+set 是可变对象，所以不可哈希，既不能作 dict 键也不能塞进另一个 set；`frozenset(iterable)` 把表冻结后允许求 hash，于是能表达「顺序无关的一组标签」这类键：`frozenset(['a','b'])` 与 `frozenset(['b','a'])` 相等且哈希相同，会命中同一条规则；它与 set 做 `|` `&` `-` `^` 时，结果仍是 frozenset。
 
-`frozenset(iterable)` 把表冻结后允许求 hash，于是能表达「顺序无关的一组标签」这类键：`frozenset(['a','b'])` 与 `frozenset(['b','a'])` 相等且哈希相同，会命中同一条规则；
+顺序不保证是哈希表结构的直接后果：遍历按表槽位走，而 str / bytes 的哈希从 3.3 起默认带 `PYTHONHASHSEED` 随机盐（用来防哈希碰撞攻击），同一份字符串集合在不同进程里遍历顺序可能不同；整数哈希等于自身（`-1` 被保留作错误码，故映射为 `-2`），纯整数集合看起来顺序稳定，但仍不该依赖它，输出前一律 `sorted()` 或按业务字段排序。
 
-它与 set 做 `|` `&` `-` `^` 时，结果仍是 frozenset。顺序不保证是哈希表结构的直接后果：遍历按表槽位走，而 str / bytes 的哈希从 3.3 起默认带 `PYTHONHASHSEED` 随机盐（用来防哈希碰撞攻击），同一份字符串集合在不同进程里遍历顺序可能不同；
-
-整数哈希等于自身（`-1` 被保留作错误码，故映射为 `-2`），纯整数集合看起来顺序稳定，但仍不该依赖它，输出前一律 `sorted()` 或按业务字段排序。去重有两条路：`list(set(seq))` 是 `O(n)` 但不保序；
-
-`list(dict.fromkeys(seq))` 借助 3.7 起 dict 的插入顺序，按首次出现保序去重，是报表与流水线的首选。
+去重有两条路：`list(set(seq))` 是 `O(n)` 但不保序；`list(dict.fromkeys(seq))` 借助 3.7 起 dict 的插入顺序，按首次出现保序去重，是报表与流水线的首选。
 
 真要依赖顺序，先确认手上用的是哪一种结构。
 
@@ -135,9 +129,11 @@ print('str hash is int', isinstance(hash('python'), int))
 
 ### 增删方法与失效信号
 
-往集合里改元素，先看方法在元素缺失时怎么反应：`remove(x)` 抛 `KeyError`，适合断言元素存在；`discard(x)` 静默忽略，适合清理可选项；`pop()` 在空集合上同样抛 `KeyError`。`add(x)` 要求元素可哈希，塞进 list 会抛 `TypeError`（list 不可哈希）；
+往集合里改元素，先看方法在元素缺失时怎么反应：`remove(x)` 抛 `KeyError`，适合断言元素存在；`discard(x)` 静默忽略，适合清理可选项；`pop()` 在空集合上同样抛 `KeyError`。
 
-要当键得先冻成 `frozenset()`。两个高频误会：`{}` 是空 dict（空集合得写 `set()`），遍历中改大小会抛 `RuntimeError`（Set changed size during iteration），改前先复制一份快照。下表按方法列出缺失时的行为。
+`add(x)` 要求元素可哈希，塞进 list 会抛 `TypeError`（list 不可哈希）；要当键得先冻成 `frozenset()`。
+
+两个高频误会：`{}` 是空 dict（空集合得写 `set()`），遍历中改大小会抛 `RuntimeError`（Set changed size during iteration），改前先复制一份快照。下表按方法列出缺失时的行为。
 
 **增删方法与失效信号**
 
@@ -157,9 +153,7 @@ print('str hash is int', isinstance(hash('python'), int))
 
 顺序飘不飘得实测。
 
-3.3 起 str、bytes 的哈希带 `PYTHONHASHSEED` 随机盐，同一段 `list(set(words))` 在两个进程里顺序可能不同；
-
-设 `PYTHONHASHSEED=0` 重跑即固定，证明乱序来自哈希。
+3.3 起 str、bytes 的哈希带 `PYTHONHASHSEED` 随机盐，同一段 `list(set(words))` 在两个进程里顺序可能不同；设 `PYTHONHASHSEED=0` 重跑即固定，证明乱序来自哈希。
 
 整数不受影响：`hash(7)` 恒为 7，`hash(-1)` 为 -2（-1 留作错误码）。把十万个 id 分别喂给 list 与 set 的 `in` 计时，能量出 `O(n²)` 与平均 `O(1)` 的差距。后面的探针给出可复现计时，实测表把规则归位。
 
@@ -202,9 +196,9 @@ print('empty literal is dict', isinstance({}, dict), 'empty set', type(set()).__
 
 选容器前先算操作分布。判断某个值在不在里面，set 平均 `O(1)`、list 是 `O(n)`，因此高频判重必须先把数据规整成 set 或 dict，绝不能对 list 反复用 `in`；一次判重的差距不明显，n 次判重就是 `O(n²)` 与 `O(n)` 的量级差。
 
-需要去重又不关心顺序时用 `set(seq)`，需要保序时用 `dict.fromkeys`；需要把一组值当作不可变键时用 frozenset；需要集合代数（并交差）时直接用运算符，而不是手写双层循环。还有几处边界要留意：`s.pop()` 的返回值是任意的，不能拿来实现「取最小」；
+需要去重又不关心顺序时用 `set(seq)`，需要保序时用 `dict.fromkeys`；需要把一组值当作不可变键时用 frozenset；需要集合代数（并交差）时直接用运算符，而不是手写双层循环。
 
-`remove` 与 `discard` 对缺失元素的行为不同，清理可选元素用后者；遍历 set 时增删会与 dict 一样抛 `RuntimeError`，应遍历副本。
+还有几处边界要留意：`s.pop()` 的返回值是任意的，不能拿来实现「取最小」；`remove` 与 `discard` 对缺失元素的行为不同，清理可选元素用后者；遍历 set 时增删会与 dict 一样抛 `RuntimeError`，应遍历副本。
 
 哈希随机化是安全设计而非 bug，跨进程的顺序差异要靠 `sorted()` 消除，不能靠固定 `PYTHONHASHSEED` 来掩盖——那会重新暴露哈希碰撞攻击面。
 

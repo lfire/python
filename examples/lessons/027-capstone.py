@@ -67,10 +67,6 @@ big = count_lines(['w' + str(i) for i in range(2000)])
 cost = perf_counter() - t0
 print('bench ran', big.total() == 2000, cost >= 0)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # stream count [('a', 3), ('b', 2)]
@@ -103,10 +99,6 @@ for suffix in ('', '.db', '.dat', '.dir', '.bak'):
     except OSError:
         pass
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # list much larger than gen True
@@ -130,10 +122,6 @@ for line in io.StringIO(text):
 peak = tracemalloc.get_traced_memory()[1]
 tracemalloc.stop()
 print('incremental total', lazy.total(), 'peak positive', peak > 0)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

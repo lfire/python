@@ -16,9 +16,7 @@ description: 选对数据建模工具并理解校验边界
 
 一个接口服务把外部 `JSON` 直接喂给一个 `@dataclass` 的请求模型，开发同学以为写了 `amount: int` 就会拦住脏数据，结果字符串 `'12'` 和负数原样进了领域层，直到扣款时才爆出类型错误，异常栈离入口已经隔了五层。
 
-另一处工单来自缓存：有人给 dataclass 字段写了 `tags: list = []`，所有实例共享同一个列表，一个请求 `append` 之后，后续请求全带着别人的标签；
-
-这个写法只要 `@dataclass` 真正生效，类创建期就会抛 `ValueError`、提示可变默认值要改用 `default_factory`，是旧代码绕过了装饰器，才让这份共享状态留到线上。
+另一处工单来自缓存：有人给 dataclass 字段写了 `tags: list = []`，所有实例共享同一个列表，一个请求 `append` 之后，后续请求全带着别人的标签；这个写法只要 `@dataclass` 真正生效，类创建期就会抛 `ValueError`、提示可变默认值要改用 `default_factory`，是旧代码绕过了装饰器，才让这份共享状态留到线上。
 
 还有人给 dataclass 加了 `frozen=True` 就宣称对象「不可变」，字段里却装着 `list`，内容照样被改。`dataclass`、`attrs`、`pydantic` 解决的是三层不同的问题：样板方法生成、可选的数据类增强、以及运行时校验。
 
@@ -64,9 +62,7 @@ description: 选对数据建模工具并理解校验边界
 
 它的默认取值是 `init=True`、`repr=True`、`eq=True`、`order=False`、`unsafe_hash=False`、`frozen=False`、`match_args=True`、`kw_only=False`、`slots=False`、`weakref_slot=False`。
 
-默认生成 `__init__`、`__repr__`、`__eq__`；`order=True` 时额外生成 `__lt__` / `__le__` / `__gt__` / `__ge__`（要求 `eq=True`，否则抛 `ValueError`），按字段定义顺序组装元组比较；
-
-`unsafe_hash=True` 在 `eq=True` 且未冻结时强制生成一个 `__hash__`（之所以叫 unsafe，是因为字段可变会破坏哈希契约）。
+默认生成 `__init__`、`__repr__`、`__eq__`；`order=True` 时额外生成 `__lt__` / `__le__` / `__gt__` / `__ge__`（要求 `eq=True`，否则抛 `ValueError`），按字段定义顺序组装元组比较；`unsafe_hash=True` 在 `eq=True` 且未冻结时强制生成一个 `__hash__`（之所以叫 unsafe，是因为字段可变会破坏哈希契约）。
 
 它不生成任何运行时类型校验：注解只是元数据，构造时把 `'12'` 赋给 `amount: int` 完全合法；也不做事后赋值拦截，普通实例可随时改字段。`__post_init__` 在 `__init__` 末尾被调用，是放显式校验或派生字段的钩子。
 
@@ -106,9 +102,9 @@ except FrozenInstanceError as e:
 
 `dataclass` 装饰器在类创建完成后运行：它读 `__annotations__` 与类属性，按字段顺序用 `exec` 生成 `__init__` 等方法的源码，再 `setattr` 到类上，因此注解从头到尾都只是元数据，不参与任何赋值检查。
 
-`frozen=True` 时生成的方法把 `__setattr__` / `__delattr__` 替换成抛 `FrozenInstanceError` 的版本，而生成的 `__init__` 内部改用 `object.__setattr__` 绕过限制完成初始赋值；
+`frozen=True` 时生成的方法把 `__setattr__` / `__delattr__` 替换成抛 `FrozenInstanceError` 的版本，而生成的 `__init__` 内部改用 `object.__setattr__` 绕过限制完成初始赋值；它只冻结字段绑定，不改字段值对象本身。
 
-它只冻结字段绑定，不改字段值对象本身。哈希联动直接复用第 41 讲的规则：`eq=True` 且未冻结时把 `__hash__` 设为 `None`，`frozen=True` 时按参与 `compare` 的字段生成哈希，这正是值对象可直接进 `set` 的原因。
+哈希联动直接复用第 41 讲的规则：`eq=True` 且未冻结时把 `__hash__` 设为 `None`，`frozen=True` 时按参与 `compare` 的字段生成哈希，这正是值对象可直接进 `set` 的原因。
 
 `slots=True` 之所以要重建类，是因为 `__slots__` 必须由 `type.__new__` 在类创建期处理，装饰器介入太晚，只能新建一个类对象返回。
 
@@ -121,13 +117,11 @@ except FrozenInstanceError as e:
 
 ## field、frozen、order 与哈希联动的具体规则
 
-`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；
+`field()` 控制单个字段：`default` 给默认值，`default_factory` 给可变默认值的工厂，`list`、`dict`、`set` 都必须用它，否则类创建期抛 `ValueError`；`init` 决定是否进 `__init__` 参数，`repr` / `compare` / `hash` 分别控制是否进 repr、是否参与比较与哈希，`metadata` 挂自定义元信息。
 
-`init` 决定是否进 `__init__` 参数，`repr` / `compare` / `hash` 分别控制是否进 repr、是否参与比较与哈希，`metadata` 挂自定义元信息。默认值之后不能再放无默认值字段，否则 `__init__` 签名非法；
+默认值之后不能再放无默认值字段，否则 `__init__` 签名非法；3.10 起可用 `KW_ONLY` 哨兵或 `kw_only=True` 把后续字段改成仅关键字参数。
 
-3.10 起可用 `KW_ONLY` 哨兵或 `kw_only=True` 把后续字段改成仅关键字参数。
-
-这和普通函数避开可变默认参数是同一个道理，通常写成下面这段代码，用 `None` 作哨兵、把建列表推迟到每次调用；
+这和普通函数避开可变默认参数是同一个道理，通常写成下面这段代码，用 `None` 作哨兵、把建列表推迟到每次调用；`default_factory` 只是把这件事交给 `dataclass` 在每个实例上各做一次。
 
 ```python
 def f(x, acc=None):
@@ -135,15 +129,9 @@ def f(x, acc=None):
         acc = []
 ```
 
-`default_factory` 只是把这件事交给 `dataclass` 在每个实例上各做一次。
+`frozen=True` 把 `__setattr__` / `__delattr__` 换成抛 `dataclasses.FrozenInstanceError` 的版本（它是 `AttributeError` 的子类），生成 `__init__` 时内部用 `object.__setattr__` 绕过这个限制；它冻结的是「字段绑定」，字段值本身若是 `list` / `dict` 仍可被原地修改，真正不可变要把字段换成 `tuple` 或 `frozenset`。
 
-`frozen=True` 把 `__setattr__` / `__delattr__` 换成抛 `dataclasses.FrozenInstanceError` 的版本（它是 `AttributeError` 的子类），生成 `__init__` 时内部用 `object.__setattr__` 绕过这个限制；
-
-它冻结的是「字段绑定」，字段值本身若是 `list` / `dict` 仍可被原地修改，真正不可变要把字段换成 `tuple` 或 `frozenset`。哈希联动与第 41 讲一致：`eq=True` 且 `frozen=False` 时 `__hash__` 被设为 `None`；
-
-`eq=True` 且 `frozen=True` 时按参与 `compare` 的字段自动生成 `__hash__`；
-
-`eq=False` 则保留 `object.__hash__`。
+哈希联动与第 41 讲一致：`eq=True` 且 `frozen=False` 时 `__hash__` 被设为 `None`；`eq=True` 且 `frozen=True` 时按参与 `compare` 的字段自动生成 `__hash__`；`eq=False` 则保留 `object.__hash__`。
 
 `order=True` 生成的比较方法在字段多时是 Python 层元组比较，热路径不如直接实现。
 
@@ -192,9 +180,9 @@ except ValueError as e:
 
 `pydantic`（v2 用 Rust 核心重写）在实例化时按字段类型做解析、强制转换与验证：字符串 `'12'` 会被转成 `int` 12，缺失必填字段或类型完全不符会抛 `ValidationError` 并附带逐字段错误位置，它是边界层（接口请求体、消息队列、配置文件）的正确工具。
 
-工程上的分层是：外部输入先经 `pydantic` 校验并转成干净值，再构造 `frozen` 的 `dataclass` 作为内部领域对象在业务层流转，ORM 映射与数据库校验又是另一层。把脏数据直接交给 `dataclass`，错误会推迟到业务深处才暴露；
+工程上的分层是：外部输入先经 `pydantic` 校验并转成干净值，再构造 `frozen` 的 `dataclass` 作为内部领域对象在业务层流转，ORM 映射与数据库校验又是另一层。
 
-反过来给所有内部对象套 `pydantic`，则把校验开销带进了不需要它的热路径。认清「生成样板 / 赋值校验 / 实例化解析」三条职责，选型就不会摇摆。
+把脏数据直接交给 `dataclass`，错误会推迟到业务深处才暴露；反过来给所有内部对象套 `pydantic`，则把校验开销带进了不需要它的热路径。认清「生成样板 / 赋值校验 / 实例化解析」三条职责，选型就不会摇摆。
 
 ```python
 from dataclasses import dataclass, fields
@@ -275,7 +263,7 @@ print('frozen value:', validate({'host': 'h', 'port': 80}).port)
 
 <Callout type="idea" title='落地提示' text='边界层（HTTP、消息队列、配置文件）用 pydantic 校验，内部领域对象用 frozen dataclass' />
 
-<CheckList id='P047b' title='上线前自检' :items='["能复现并解释「可变默认值写成 tags: list = []」", "能复现并解释「把外部输入直接交给 dataclass 以为注解会校验」", "能复现并解释「以为 frozen=True 让对象彻底不可变」", "能用一条命令验证 dataclass 生成了什么", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P047a' title='上线前自检' :items='["能复现并解释「可变默认值写成 tags: list = []」", "能复现并解释「把外部输入直接交给 dataclass 以为注解会校验」", "能复现并解释「以为 frozen=True 让对象彻底不可变」", "能用一条命令验证 dataclass 生成了什么", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "print(type('Demo', (), {}).__mro__)"

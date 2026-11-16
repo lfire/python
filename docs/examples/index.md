@@ -17,6 +17,9 @@ python3 examples/lessons/007-variables.py
 
 <Callout type="tip" title="代码与内容严格对应" text="讲次文件由该讲的精讲数据直接生成，不是另写一套示例；专题文件按专题正文整理，依赖第三方库的部分在文件头注明安装命令。" />
 
+全站共 141 个示例文件：132 讲各一个，加上 9 篇技术专题各一个。
+[专题补遗](/topics/)板块另有 1 篇[参考课程对照与学习路线](/topics/reference-map)对照索引页，不配独立示例文件，因此板块共 10 页。
+
 ## 132 讲
 
 | 讲次 | 课程页面 | 示例文件 |
@@ -167,7 +170,7 @@ python3 examples/lessons/007-variables.py
 | [Flask 实操：路由、模板与会话](/topics/web-frameworks) | [查看源码](https://github.com/lfire/python/blob/main/examples/topics/web-frameworks.py) | 应用工厂与蓝图、jinja2 模板、请求与响应、Cookie/Session、表单与验证码、SQLAlchemy 集成、错误处理、生产部署与 HTTPS。 |
 | [数据分析实战：Jupyter 到报告导出](/topics/data-projects) | [查看源码](https://github.com/lfire/python/blob/main/examples/topics/data-projects.py) | Jupyter 工作流、Pandas 多表联合与透视、Scipy 假设检验、Matplotlib/Seaborn 图表选型、疫情/房价分析、医院科室费用口径校验、报告导出与复现。 |
 | [工程底座：Linux、Git、SQL 与多版本](/topics/toolchain-foundation) | [查看源码](https://github.com/lfire/python/blob/main/examples/topics/toolchain-foundation.py) | Linux 文件权限与常用命令、Shell 管道、Git 分支与协作、.gitignore 防泄漏、MySQL 表设计与多表查询、pyenv/Anaconda 多版本、venv 与国内镜像。 |
-| [参考课程对照与学习路线](/topics/reference-map) | —（对照索引页） | 对照索引页，无独立示例代码；见各专题文件 |
+| [参考课程对照与学习路线](/topics/reference-map) | —（对照索引页） | 对照索引页，不配独立示例文件；9 篇技术专题的示例见上表各行 |
 
 ## 其它入口
 

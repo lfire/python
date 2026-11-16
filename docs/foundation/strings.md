@@ -23,9 +23,7 @@ Python 3 把 str 与 bytes 的边界画得很清楚：str 是 Unicode 码点序�
 
 ## 码点、编码与 str / bytes 的硬边界
 
-str 是 Unicode 码点的不可变序列，`len('中文')` 得 2 是码点数，`ord('中')` 得 20013（U+4E2D），`chr(20013)` 反查回字符；
-
-bytes 是 0 到 255 整数的不可变序列，`len('中文'.encode('utf-8'))` 得 6 是字节数。
+str 是 Unicode 码点的不可变序列，`len('中文')` 得 2 是码点数，`ord('中')` 得 20013（U+4E2D），`chr(20013)` 反查回字符；bytes 是 0 到 255 整数的不可变序列，`len('中文'.encode('utf-8'))` 得 6 是字节数。
 
 二者之间只有两个方向：`str.encode(encoding)` 生成 bytes，`bytes.decode(encoding)` 生成 str，没有隐式转换。
 
@@ -72,15 +70,11 @@ decode 的默认 errors 是 strict，遇到非法字节序列抛 UnicodeDecodeEr
 
 encode 同样有 errors：中文编码到 ascii 会用 strict 抛 UnicodeEncodeError，xmlcharrefreplace 能转成字符引用。
 
-BOM（字节顺序标记）是 `U+FEFF`，用 `codecs.BOM_UTF8.hex()` 可核对为 efbbbf；
-
-UTF-8 本身无字节序问题，但有些 Windows 工具会写 BOM，用普通 utf-8 解码会把 `U+FEFF` 当成一个真实字符留在串首，导致首列名多一个不可见前缀，此时应用 `utf-8-sig` 自动剥离。
+BOM（字节顺序标记）是 `U+FEFF`，用 `codecs.BOM_UTF8.hex()` 可核对为 efbbbf；UTF-8 本身无字节序问题，但有些 Windows 工具会写 BOM，用普通 utf-8 解码会把 `U+FEFF` 当成一个真实字符留在串首，导致首列名多一个不可见前缀，此时应用 `utf-8-sig` 自动剥离。
 
 UTF-16 与 UTF-32 必须区分大小端：`'A'.encode('utf-16-le').hex()` 是 4100，而 utf-16 会在开头加 ff fe 的 BOM。
 
-codecs 模块暴露了 `BOM_UTF8`、`BOM_UTF16_LE` 等常量便于核对；
-
-`sys.getdefaultencoding()` 是 str 内部转换用的编码（3.x 固定 utf-8），`sys.getfilesystemencoding()` 是文件名编码（macOS 与多数 Linux 是 utf-8，Windows 历史上是 mbcs），二者不是一回事，别拿前者去猜文件内容的编码。
+codecs 模块暴露了 `BOM_UTF8`、`BOM_UTF16_LE` 等常量便于核对；`sys.getdefaultencoding()` 是 str 内部转换用的编码（3.x 固定 utf-8），`sys.getfilesystemencoding()` 是文件名编码（macOS 与多数 Linux 是 utf-8，Windows 历史上是 mbcs），二者不是一回事，别拿前者去猜文件内容的编码。
 
 ```python
 import codecs
@@ -105,18 +99,18 @@ print('utf16_hex', 'A'.encode('utf-16-le').hex())
 
 每处只做一次转换：读入时 decode 成 str，内部全程用 str 处理，写出时再 encode 成 bytes；在两个边界之间反复编解码既慢又容易把已替换的字符二次破坏。
 
-诊断顺序也有章法：先确认原始字节（用 `.hex()` 或 `repr(bytes)` 看到底是什么），再确认声明的编码，最后确认是否被 BOM、`errors='replace'` 或双重解码改过；
+诊断顺序也有章法：先确认原始字节（用 `.hex()` 或 `repr(bytes)` 看到底是什么），再确认声明的编码，最后确认是否被 BOM、`errors='replace'` 或双重解码改过；直接对乱码字符串再 decode 会在 str 上抛 AttributeError。
 
-直接对乱码字符串再 decode 会在 str 上抛 AttributeError。日志里打印 bytes 的十六进制比打印乱码字符有用得多，因为前者保留了原始证据。
+日志里打印 bytes 的十六进制比打印乱码字符有用得多，因为前者保留了原始证据。
 
 
 ## 四处显式声明：把乱码挡在边界之外
 
 CPython 内部用 PEP 393 的灵活字符串表示：一个 str 对象按最大码点选择 1、2 或 4 字节的定宽存储（Latin-1、UCS-2、UCS-4），因此索引是 `O(1)` 且不含变长编码的歧义；bytes 则是简单的 PyBytesObject，存一段 char 数组加长度。
 
-编码与解码的本质是在「码点序列」与「字节序列」之间按某个 codec 做映射，UTF-8 用首字节的高位模式声明后续字节数（110xxxxx 表示 2 字节、1110xxxx 表示 3 字节），解码器据此还原码点；
+编码与解码的本质是在「码点序列」与「字节序列」之间按某个 codec 做映射，UTF-8 用首字节的高位模式声明后续字节数（110xxxxx 表示 2 字节、1110xxxx 表示 3 字节），解码器据此还原码点；非法序列（如孤立的 `0xff`）无法匹配任何模式，于是 strict 模式抛 UnicodeDecodeError 并给出出错区间。
 
-非法序列（如孤立的 `0xff`）无法匹配任何模式，于是 strict 模式抛 UnicodeDecodeError 并给出出错区间。BOM 只是 `U+FEFF` 这个码点在流开头的约定，UTF-16 与 UTF-32 靠它判断大小端，UTF-8 不需要但常被写入，故有 `utf-8-sig` 这个专门剥离它的 codec。
+BOM 只是 `U+FEFF` 这个码点在流开头的约定，UTF-16 与 UTF-32 靠它判断大小端，UTF-8 不需要但常被写入，故有 `utf-8-sig` 这个专门剥离它的 codec。
 
 `open()` 的文本模式在 C 层包了一个 IncrementalDecoder，逐块读入字节并增量解码，写入时用 IncrementalEncoder 反向处理。理解「内部定宽码点、边界才做变长字节映射」，就知道为什么不能在 str 上调 decode、为什么省略 encoding 会跨平台翻车。
 

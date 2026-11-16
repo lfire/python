@@ -20,9 +20,7 @@ description: 把语法地基串成一个能用的小程序
 
 团队第一反应是给 `eval` 传入 `{'__builtins__': {}}` 限制内建，结果 `().__class__.__bases__[0].__subclasses__()` 这条属性链照样能绕到文件相关类——CPython 里一切皆对象，限制 `globals` 从来不是安全边界。
 
-第二版改用 `ast.parse` 配合 `mode='eval'` 只生成语法树，再递归只放行数字字面量与加减乘除节点，安全了却冒出新问题：金额用 `float` 算 `0.1 + 0.2` 得到 `0.30000000000000004`，对账差一分钱；
-
-管道输入结束时 `input()` 抛 `EOFError`、`Ctrl+C` 抛 `KeyboardInterrupt`，两个分支都没接，CLI 甩出一堆栈 `Traceback`。
+第二版改用 `ast.parse` 配合 `mode='eval'` 只生成语法树，再递归只放行数字字面量与加减乘除节点，安全了却冒出新问题：金额用 `float` 算 `0.1 + 0.2` 得到 `0.30000000000000004`，对账差一分钱；管道输入结束时 `input()` 抛 `EOFError`、`Ctrl+C` 抛 `KeyboardInterrupt`，两个分支都没接，CLI 甩出一堆栈 `Traceback`。
 
 本讲把求值、精度、输入循环与重试拆成四个可单测的函数，并说明为什么安全边界必须落在语法层而不是 `globals` 层。
 
@@ -35,9 +33,7 @@ description: 把语法地基串成一个能用的小程序
 
 把 `globals` 换成自定义 dict、用正则过滤关键字、限制字符串长度，都是在同一层打补丁，无法给出可证明的边界。
 
-可靠的做法是把边界放在语法层：`ast.parse(s, mode='eval')` 只做词法与语法分析，返回 `Expression` 节点而不执行任何代码；
-
-随后由我们自己的解释器递归遍历，只放行 `ast.Constant`（数字）、`ast.BinOp` 配白名单运算符、`ast.UnaryOp` 配正负号，遇到 `ast.Call` / `ast.Name` / `ast.Attribute` / `ast.Subscript` 立即抛 `ValueError`。
+可靠的做法是把边界放在语法层：`ast.parse(s, mode='eval')` 只做词法与语法分析，返回 `Expression` 节点而不执行任何代码；随后由我们自己的解释器递归遍历，只放行 `ast.Constant`（数字）、`ast.BinOp` 配白名单运算符、`ast.UnaryOp` 配正负号，遇到 `ast.Call` / `ast.Name` / `ast.Attribute` / `ast.Subscript` 立即抛 `ValueError`。
 
 `ast.literal_eval` 是同一思路的内置实现，但它只接受字面量与容器，遇到 `1 + 2` 这类 `BinOp` 会抛 `ValueError`，因此适合读配置、不适合做计算器。
 
@@ -82,17 +78,13 @@ for bad in ('abs(-2)', '1 / 0', 'x + 1'):
 
 读的时候不妨顺手改一个参数再跑一次，看看输出会怎么变。能说清「为什么是变成这样」，比记住这段结果更有用；如果一时说不上来，回到左侧点开那一行，讲解就写在旁边。
 
-`eval` 与 `exec` 的本质是把字符串交给编译器生成 code object 再交给 `ceval` 执行，因此能触达任意名字与内建；
+`eval` 与 `exec` 的本质是把字符串交给编译器生成 code object 再交给 `ceval` 执行，因此能触达任意名字与内建；把 `__builtins__` 设为空字典只切断了内建查找，但 CPython 里所有值都是对象，`().__class__.__bases__[0].__subclasses__()` 这条属性链能从任意字面量走到 `object` 的全部子类并找到文件与 `os` 相关类，这就是沙箱逃逸，所以限制 `globals` 从来不是可证明的安全边界。
 
-把 `__builtins__` 设为空字典只切断了内建查找，但 CPython 里所有值都是对象，`().__class__.__bases__[0].__subclasses__()` 这条属性链能从任意字面量走到 `object` 的全部子类并找到文件与 `os` 相关类，这就是沙箱逃逸，所以限制 `globals` 从来不是可证明的安全边界。
+可靠做法是限制语法本身：`ast.parse(s, mode='eval')` 只做词法与语法分析生成抽象语法树，不执行任何代码；解释器只递归处理白名单节点，遇到 `ast.Call` / `ast.Name` / `ast.Attribute` / `ast.Subscript` 立即抛错。
 
-可靠做法是限制语法本身：`ast.parse(s, mode='eval')` 只做词法与语法分析生成抽象语法树，不执行任何代码；
+3.8 起字面量统一为 `ast.Constant`，旧 `ast.Num` 等变成兼容别名，判断时要用 `isinstance` 并检查 `node.value` 的实际类型，`bool` 是 `int` 的子类必须显式排除。
 
-解释器只递归处理白名单节点，遇到 `ast.Call` / `ast.Name` / `ast.Attribute` / `ast.Subscript` 立即抛错。
-
-3.8 起字面量统一为 `ast.Constant`，旧 `ast.Num` 等变成兼容别名，判断时要用 `isinstance` 并检查 `node.value` 的实际类型，`bool` 是 `int` 的子类必须显式排除。精度是另一条独立轴：`float` 用二进制 `IEEE 754` 表示，0.1 无法精确存储；
-
-`decimal.Decimal` 以十进制整数加指数保存，配合 `getcontext().prec`（默认 28）做可控舍入。
+精度是另一条独立轴：`float` 用二进制 `IEEE 754` 表示，0.1 无法精确存储；`decimal.Decimal` 以十进制整数加指数保存，配合 `getcontext().prec`（默认 28）做可控舍入。
 
 把解析、求值、渲染、输入循环拆开，正因为这四件事的失败模式与测试手段完全不同。
 
@@ -119,9 +111,7 @@ for bad in ('abs(-2)', '1 / 0', 'x + 1'):
 
 第一是节点类：Python 3.8 起 `ast.Num` / `ast.Str` / `ast.Bytes` / `ast.NameConstant` 被统一的 `ast.Constant` 取代，旧类退化为兼容别名（3.12 起访问会触发 `DeprecationWarning`），所以判断要用 `isinstance` 检查节点是不是 `ast.Constant`，而不是写 `type(node) is ast.Num` 这种硬比较。
 
-第二是值类型：`bool` 是 `int` 的子类，若只写 `isinstance(node.value, int)`，`True` 与 `False` 会被当成 1 与 0 参与运算；
-
-正确写法是判断 `type(node.value)` 落在 `(int, float)` 里，显式把 `bool` 排除。
+第二是值类型：`bool` 是 `int` 的子类，若只写 `isinstance(node.value, int)`，`True` 与 `False` 会被当成 1 与 0 参与运算；正确写法是判断 `type(node.value)` 落在 `(int, float)` 里，显式把 `bool` 排除。
 
 运算符不要用一长串 `if/elif`，直接建一张 `OPS` 映射表，把 `ast.Add`、`ast.Sub` 这些节点对应到 `operator.add`、`operator.sub`，递归时用 `OPS[type(node.op)]` 取函数，既短又能保证白名单之外的节点必然走到拒绝分支。
 
@@ -150,17 +140,13 @@ print('restricted eval', eval('40 + 2', {'__builtins__': {}}, {}))
 
 把计算器做成能用的 CLI，还要处理三类与求值无关但同样致命的边界。
 
-输入循环里 `input()` 遇到 EOF（`Ctrl+D` 或管道结束）抛 `EOFError`，遇到 `Ctrl+C` 抛 `KeyboardInterrupt`；
-
-后者继承 `BaseException` 而非 `Exception`，必须单独捕获，否则 `except Exception` 拦不住它，程序会带栈退出。
+输入循环里 `input()` 遇到 EOF（`Ctrl+D` 或管道结束）抛 `EOFError`，遇到 `Ctrl+C` 抛 `KeyboardInterrupt`；后者继承 `BaseException` 而非 `Exception`，必须单独捕获，否则 `except Exception` 拦不住它，程序会带栈退出。
 
 空行与非法语法让 `ast.parse` 抛 `SyntaxError`，除零让 `operator.truediv` 抛 `ZeroDivisionError`，这些应转成一行提示后 `continue`，而不是终止进程。
 
 精度是独立的第二条轴：`float` 用二进制 `IEEE 754` 表示，0.1 无法精确存储，金额场景要改用 `decimal.Decimal`，`Decimal(str(0.1))` 才是精确的 0.1（直接 `Decimal(0.1)` 会把二进制误差带进来），有效位数由 `getcontext().prec` 控制、默认 28，除零时 `decimal.DivisionByZero` 作为 `ZeroDivisionError` 的子类被一并捕获。
 
-工程上把 `parse`、`compute`、`render`、`main_loop` 拆开：前两个是纯函数，单元测试直接对字符串断言返回值，不必 monkeypatch `stdin` 或捕获 `stdout`；
-
-命令行层用 `argparse.ArgumentParser` 提供 `--precision` 与自动生成的 `--help`，把可配参数与业务逻辑隔开。
+工程上把 `parse`、`compute`、`render`、`main_loop` 拆开：前两个是纯函数，单元测试直接对字符串断言返回值，不必 monkeypatch `stdin` 或捕获 `stdout`；命令行层用 `argparse.ArgumentParser` 提供 `--precision` 与自动生成的 `--help`，把可配参数与业务逻辑隔开。
 
 
 ## 交互式计算器：输入循环、AST 白名单、Decimal 精度与可测函数拆分
@@ -171,9 +157,7 @@ print('restricted eval', eval('40 + 2', {'__builtins__': {}}, {}))
 
 精度用 `decimal.Decimal` 而不是 `float`：`Decimal(str(node.value))` 把 0.1 精确转成十进制 0.1，`getcontext().prec` 设为 28 决定有效位数，除零时 `decimal.DivisionByZero` 作为 `ZeroDivisionError` 的子类被转成提示。
 
-命令行层用 `argparse.ArgumentParser` 提供 `--precision` 与自动生成的 `--help`，把用户可配参数与求值逻辑隔开；
-
-真实工程再把每轮异常与耗时写进日志，但核心边界在这四个函数里已经定死。
+命令行层用 `argparse.ArgumentParser` 提供 `--precision` 与自动生成的 `--help`，把用户可配参数与求值逻辑隔开；真实工程再把每轮异常与耗时写进日志，但核心边界在这四个函数里已经定死。
 
 ```python
 import argparse, ast, operator

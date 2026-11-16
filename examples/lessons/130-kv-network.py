@@ -68,10 +68,6 @@ bad[-1] ^= 1
 print('corrupt', decode(bytes(bad)))
 print('oversize', decode(encode('SET', 'k', b'x' * 1100)))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # single [b'SET k hello']
@@ -87,10 +83,6 @@ one = frame_newline(b'hello')
 two = frame_newline(b'a' + bytes([10]) + b'b')
 print('single', cut_newline(one))
 print('value with newline', cut_newline(two))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -111,10 +103,6 @@ print('little endian', struct.pack('<H', 258).hex())
 print('crc32 KV1', zlib.crc32(b'KV1'))
 print('crc32 empty', zlib.crc32(b''))
 print('fsync signature', str(inspect.signature(os.fsync)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -45,15 +45,13 @@ description: 掌握属性访问的底层协议
 
 ## 名称改写与私有约定
 
-单下划线 `_name` 只是约定，提示内部使用，不影响访问；
-
-`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。
+单下划线 `_name` 只是约定，提示内部使用，不影响访问；`from module import *` 默认不导入以 `_` 开头的名字，除非模块定义了 `__all__` 把它们列进去。
 
 双下划线前缀且最多一个尾部下划线的名字（如 `__x`、`__x_`，但 `__x__` 不算）会被名称改写：编译器在编译类体时把它重写成 `_ClassName__x`，并写进 code object 的 `co_names` 与常量，用 `dis` 能看到改写后的属性名。
 
-改写的真实目的是避免子类意外覆盖父类的内部名，不是访问控制——外部仍可通过 `_ClassName__x` 这个真实键访问，`obj.__dict__` 与 `dir(obj)` 都看得到。这条规则只在类体内生效：在类外写 `obj.__x` 不会改写，自然也访问不到改写后的键；
+改写的真实目的是避免子类意外覆盖父类的内部名，不是访问控制——外部仍可通过 `_ClassName__x` 这个真实键访问，`obj.__dict__` 与 `dir(obj)` 都看得到。
 
-`__x__` 这种前后双下划线的 dunder 名完全不改写，留给语言的特殊方法使用。理解编译期改写，才能解释为什么继承体系里两个同名的 `__x` 互不干扰，也才能明白所谓「私有」其实只是命名约定。
+这条规则只在类体内生效：在类外写 `obj.__x` 不会改写，自然也访问不到改写后的键；`__x__` 这种前后双下划线的 dunder 名完全不改写，留给语言的特殊方法使用。理解编译期改写，才能解释为什么继承体系里两个同名的 `__x` 互不干扰，也才能明白所谓「私有」其实只是命名约定。
 
 ```python
 class User:
@@ -132,9 +130,7 @@ __get__(self, obj, objtype=None)
 
 一个对象只要实现了其中任意一个就是描述符，而且必须作为类属性才生效，放进实例字典不会触发分派。数据描述符是实现 `__set__` 或 `__delete__` 的描述符（哪怕只实现其一），非数据描述符只实现 `__get__`。
 
-`property` 是典型的数据描述符：`@property` 生成带 `fget` 的 `getter`，`@x.setter` 用新 `fset` 构造一个新的 `property`，`@x.deleter` 同理；
-
-只读 `property` 赋值会抛 `AttributeError…`。
+`property` 是典型的数据描述符：`@property` 生成带 `fget` 的 `getter`，`@x.setter` 用新 `fset` 构造一个新的 `property`，`@x.deleter` 同理；只读 `property` 赋值会抛 `AttributeError…`。
 
 ```text
 AttributeError: property 'x' of 'C' object has no setter
@@ -212,9 +208,7 @@ except ValueError as e:
 
 描述符协议是 CPython 属性访问的统一钩子。
 
-任何类属性对象只要实现了 `__get__`、`__set__`、`__delete__` 之一，`object.__getattribute__` 查到它时就会分派：若它是数据描述符（有 `__set__` 或 `__delete__`），优先调用 `__get__(obj, type(obj))`，连 `obj.__dict__` 里的同名键都不看；
-
-若是非数据描述符（只有 `__get__`），则先让实例字典有机会。
+任何类属性对象只要实现了 `__get__`、`__set__`、`__delete__` 之一，`object.__getattribute__` 查到它时就会分派：若它是数据描述符（有 `__set__` 或 `__delete__`），优先调用 `__get__(obj, type(obj))`，连 `obj.__dict__` 里的同名键都不看；若是非数据描述符（只有 `__get__`），则先让实例字典有机会。
 
 `object.__setattr__` 同样先看数据描述符的 `__set__`，因此 `property` 的 `setter` 能拦住每一次赋值，而 `__init__` 里写死的校验会在后续直接赋值时被绕过。
 
@@ -231,21 +225,15 @@ except ValueError as e:
 
 ## 优先级规则与自定义描述符
 
-`object.__getattribute__` 的完整优先级是：数据描述符 → 实例 `__dict__` → 非数据描述符 → 类属性 → 全失败后才调用 `__getattr__`；
-
-`object.__setattr__` 里数据描述符的 `__set__` 也优先于写入实例字典，而非数据描述符会被实例同名键覆盖。
+`object.__getattribute__` 的完整优先级是：数据描述符 → 实例 `__dict__` → 非数据描述符 → 类属性 → 全失败后才调用 `__getattr__`；`object.__setattr__` 里数据描述符的 `__set__` 也优先于写入实例字典，而非数据描述符会被实例同名键覆盖。
 
 据此可以写一个可复用的校验字段：`__set_name__` 记录 `name` 与存储键，`__get__` 从 `obj.__dict__` 读，`__set__` 先校验类型与范围再写回，一处定义让所有用了它的字段自动获得校验。
 
-常见失效信号有三个：把描述符实例赋给实例属性（`obj.x = descriptor`）不生效，因为它不在类上；
+常见失效信号有三个：把描述符实例赋给实例属性（`obj.x = descriptor`）不生效，因为它不在类上；忘了实现 `__set__` 就退化成非数据描述符，校验会被实例字典绕过；`__get__` 里若访问 `obj.name` 又会触发描述符本身，造成无限递归，应读写 `obj.__dict__[key]`。
 
-忘了实现 `__set__` 就退化成非数据描述符，校验会被实例字典绕过；
+典型应用包括 `ORM` 字段、配置校验、懒加载属性（`cached_property` 正是非数据描述符）与类型约束；`classmethod` 与 `staticmethod` 也由描述符实现，前者 `__get__` 绑定 `cls`、后者原样返回函数。
 
-`__get__` 里若访问 `obj.name` 又会触发描述符本身，造成无限递归，应读写 `obj.__dict__[key]`。
-
-典型应用包括 `ORM` 字段、配置校验、懒加载属性（`cached_property` 正是非数据描述符）与类型约束；
-
-`classmethod` 与 `staticmethod` 也由描述符实现，前者 `__get__` 绑定 `cls`、后者原样返回函数。`__slots__` 生成的槽本身也是数据描述符。
+`__slots__` 生成的槽本身也是数据描述符。
 
 **属性访问优先级与失效信号**
 

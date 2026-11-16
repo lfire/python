@@ -60,10 +60,6 @@ with tempfile.TemporaryDirectory() as d:
         ep = z.read(dist_info + '/entry_points.txt').decode()
         print('entry point', ep.split('=')[1].strip())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # entry found True
@@ -88,10 +84,6 @@ with tempfile.TemporaryDirectory() as d:
     print('dist version', dist.version)
     sys.path.remove(d)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # wheel vs sdist [True, True, False]
@@ -115,10 +107,6 @@ print('wheel vs sdist', [is_wheel(w) for w in wheels])
 print('pure tag', tags(wheels[0]))
 print('platform tag', tags(wheels[1])[-1])
 print('python', sys.version_info[0], sys.version_info[1])
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

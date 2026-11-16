@@ -59,10 +59,6 @@ async def main():
 
 asyncio.run(main())
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # serial == threaded True
@@ -79,10 +75,6 @@ with ThreadPoolExecutor(max_workers=4) as ex:
 serial = [work(n) for n in nums]
 print('serial == threaded', serial == threaded)
 print('sum', sum(serial))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -108,10 +100,6 @@ next(gen)
 peak_stream = tracemalloc.get_traced_memory()[1]
 tracemalloc.stop()
 print('materialized peak > generator peak', peak_all > peak_stream)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

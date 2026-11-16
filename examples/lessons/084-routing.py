@@ -50,10 +50,6 @@ CACHE.clear()
 print('result', resolve(endpoint))
 print('cache keys', [f.__name__ for f in CACHE])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # {'page': 2, 'size': 20, 'q': 'py'}
@@ -93,10 +89,6 @@ for bad in ({'page': 0, 'size': 20, 'q': 'py'}, {'page': 1, 'size': 'x', 'q': 'p
     except ValueError as e:
         print('reject', str(e))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # endpoint defaults ['Depends', 'Depends']
@@ -119,10 +111,6 @@ def endpoint(user=Depends(get_user), db=Depends(get_db)):
 print('endpoint defaults', [type(d).__name__ for d in endpoint.__defaults__])
 print('resolves to', [d.fn.__name__ for d in endpoint.__defaults__])
 print('get_user param', list(inspect.signature(get_user).parameters))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

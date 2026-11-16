@@ -56,10 +56,6 @@ print('decimal_before', 'decimal' in sys.modules)
 print('result', str(heavy()))
 print('decimal_after', 'decimal' in sys.modules)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # is_package True
@@ -79,10 +75,6 @@ print('cache_tag', sys.implementation.cache_tag)
 print('json_cached', 'json' in sys.modules)
 spec2 = importlib.util.find_spec('json')
 print('same_origin', spec.origin == spec2.origin)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -28,10 +28,6 @@ def bars(values, labels, width=20):
 data = [('一季度', 120), ('二季度', 180), ('三季度', 95)]
 print(bars([v for _, v in data], [l for l, _ in data]))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # bins 1-3/4-6/7-9/10-12 [6, 3, 4, 1]
@@ -44,10 +40,6 @@ for v in data:
 print('bins 1-3/4-6/7-9/10-12', bins)
 print('total', sum(bins), 'n', len(data))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # from zero [0.92, 0.96, 1.0]
@@ -58,10 +50,6 @@ vals = [92, 96, 100]
 print('from zero', [round(v / 100, 2) for v in vals])
 print('truncated at 90', [round((v - 90) / 10, 2) for v in vals])
 print('ratio gap zero', round((100 - 92) / 100, 2), 'gap truncated', round((100 - 92) / 10, 2))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

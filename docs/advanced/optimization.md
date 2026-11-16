@@ -38,17 +38,15 @@ description: 按层次系统性地压低延迟
 
 优化前必须先定位。
 
-cProfile 基于 C 层的 `_lsprof`，按函数统计 ncalls、tottime（函数自身耗时）、cumtime（含子调用），用 `pstats.sort_stats('cumtime')` 找累计热点；
+cProfile 基于 C 层的 `_lsprof`，按函数统计 ncalls、tottime（函数自身耗时）、cumtime（含子调用），用 `pstats.sort_stats('cumtime')` 找累计热点；它是确定性 profiler，会给每次 Python 调用加固定开销，适合找「哪个函数」而非精确绝对耗时。
 
-它是确定性 profiler，会给每次 Python 调用加固定开销，适合找「哪个函数」而非精确绝对耗时。精确微基准用 `timeit`，默认关闭 gc 并重复多次取最小值，避免单次调度噪声；
-
-耗时对比用 `time.perf_counter` 而不是 `time.time`。
+精确微基准用 `timeit`，默认关闭 gc 并重复多次取最小值，避免单次调度噪声；耗时对比用 `time.perf_counter` 而不是 `time.time`。
 
 `tracemalloc` 定位内存分配点。
 
-Amdahl 定律给出上限：若某部分占总耗时比例 p，把它加速 s 倍，整体加速上限是 `1 / ((1-p) + p/s)`；
+Amdahl 定律给出上限：若某部分占总耗时比例 p，把它加速 s 倍，整体加速上限是 `1 / ((1-p) + p/s)`；`p=0.2` 的部分即便优化到无限快，整体最多快 1.25 倍。
 
-`p=0.2` 的部分即便优化到无限快，整体最多快 1.25 倍。因此把两周花在占比 8% 的解析循环上，收益注定有限。剖析要在线上真实输入分布下做，构造数据与真实数据常常不同（例如热点 key 分布、对象大小），结论要写成可复现脚本随代码提交；每一层优化都留下基准与回归测试，性能数字进入 CI，才不会被后续重构悄悄吃掉。
+因此把两周花在占比 8% 的解析循环上，收益注定有限。剖析要在线上真实输入分布下做，构造数据与真实数据常常不同（例如热点 key 分布、对象大小），结论要写成可复现脚本随代码提交；每一层优化都留下基准与回归测试，性能数字进入 CI，才不会被后续重构悄悄吃掉。
 
 ```python
 import time
@@ -112,9 +110,7 @@ print('set_is_faster', (t3 - t2) < (t1 - t0))
 
 换算法是收益最大的一层。成员检测用 list 是 `O(n)`、用 set 或 dict 是平均 `O(1)`；`n=2000` 的双重循环约 1.3e6 次比较（两个集合一个 2000、一个按步长 3 取到 667），改成一次建 set 加线性扫描降到 `O(n+m)`，数量级差异远大于任何语法微调。
 
-字符串循环里累加要用 `''.join(list)` 而不是反复 +，避免反复分配与拷贝；
-
-频繁在序列头部插入，用 `collections.deque` 的 `appendleft`（`O(1)`）而非 `list.insert(0)`（`O(n)`）。
+字符串循环里累加要用 `''.join(list)` 而不是反复 +，避免反复分配与拷贝；频繁在序列头部插入，用 `collections.deque` 的 `appendleft`（`O(1)`）而非 `list.insert(0)`（`O(n)`）。
 
 批处理把逐条数据库往返合并成一次 IN 查询或 `executemany`，把网络 RTT 这个常数从 n 次降到 1 次，通常比优化循环体本身有效得多。
 
@@ -167,9 +163,7 @@ print('has_genexpr', 'genexpr' in text)
 
 Python 层循环无法避免时，下一层是把计算交给不逐条走字节码的执行体。NumPy 对数值数组做向量化，单次调用在 C 里处理整块连续内存，既省分派也命中 `SIMD`；list 存的是 PyObject 指针、并不连续，因此密集数值应先转成 `ndarray`。
 
-Cython 把带类型注解的 Python 编译成 C 扩展，C 扩展可直接用 C API 操作对象或纯 C 数组；
-
-写 C 扩展时长计算要用 `Py_BEGIN_ALLOW_THREADS` 释放 GIL 才能真正并行。
+Cython 把带类型注解的 Python 编译成 C 扩展，C 扩展可直接用 C API 操作对象或纯 C 数组；写 C 扩展时长计算要用 `Py_BEGIN_ALLOW_THREADS` 释放 GIL 才能真正并行。
 
 多进程用 `multiprocessing` / `ProcessPoolExecutor` 绕过 GIL 用满多核，代价是 pickle 序列化与内存拷贝，数据量大时共享内存或内存映射更合适。
 
@@ -188,9 +182,9 @@ Cython 把带类型注解的 Python 编译成 C 扩展，C 扩展可直接用 C 
 
 优化收益的上限由 Amdahl 定律约束：整体加速等于 `1 / ((1-p) + p/s)`，其中 p 是被优化部分原本占总耗时的比例、s 是它获得的加速。
 
-这解释了为什么把占比 8% 的循环改写成 C 最多带来约 1.09 倍整体提升，而先消除一次多余数据库往返、或把一个 `O(n^2)` 成员检测改成 `O(n)`，能带来数量级变化。Python 层循环昂贵的根源，是每条字节码都要经过 ceval 分派与引用计数维护；
+这解释了为什么把占比 8% 的循环改写成 C 最多带来约 1.09 倍整体提升，而先消除一次多余数据库往返、或把一个 `O(n^2)` 成员检测改成 `O(n)`，能带来数量级变化。
 
-内置函数与 NumPy 把循环下沉到 C，用连续内存与更少的分派完成同样工作，而 list 存的是 PyObject 指针且分散，密集数值必须转成 `ndarray` 才能命中 `SIMD` 与缓存局部性。
+Python 层循环昂贵的根源，是每条字节码都要经过 ceval 分派与引用计数维护；内置函数与 NumPy 把循环下沉到 C，用连续内存与更少的分派完成同样工作，而 list 存的是 PyObject 指针且分散，密集数值必须转成 `ndarray` 才能命中 `SIMD` 与缓存局部性。
 
 多进程绕过 GIL 用满多核，但跨进程参数与返回值要 pickle，数据量大时序列化与拷贝会吃掉并行收益，需共享内存或加大任务粒度。C 扩展里长计算要显式释放 GIL。所有层次都依赖同一前提：先剖析得到 p，再按 p 排序投入，达到 SLO 即停，并用基准与回归测试锁住成果。
 
@@ -239,7 +233,7 @@ print('profile_has_loop', 'loop_version' in s.getvalue())
 
 <Callout type="idea" title='落地提示' text='每一层优化都留下基准与回归测试，用数据决定何时停止；把不可读的优化隔离在小函数并写清原因' />
 
-<CheckList id='P119b' title='上线前自检' :items='["能复现并解释「一上来用 Cython 重写热点函数」", "能复现并解释「用 time.time 单次计时做微基准，且不预热」", "能复现并解释「优化后不留基准与回归测试」", "能用一条命令验证 先算法后实现", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P119a' title='上线前自检' :items='["能复现并解释「一上来用 Cython 重写热点函数」", "能复现并解释「用 time.time 单次计时做微基准，且不预热」", "能复现并解释「优化后不留基准与回归测试」", "能用一条命令验证 先算法后实现", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
@@ -260,7 +254,7 @@ python -c "import cProfile; cProfile.run('sum(range(100000))', sort='cumtime')"
 
 cProfile 不是采样器，而是挂在解释器回调上的确定性 profiler。
 
-Modules/`_lsprof.c` 的 `_lsprof.Profiler` 通过 PyEval_SetProfile 注册回调，每个函数调用与返回、C 函数调用与返回都触发一次：它记录 `PyTime_GetPerfCounter()` 的单调时钟差值，把 callcount、reccallcount、tt、ct 累加到以 (code, caller) 为键的 callers 字典，`pstats.Stats` 再按 cumtime 排序。
+`Modules/_lsprof.c` 的 `_lsprof.Profiler` 通过 PyEval_SetProfile 注册回调，每个函数调用与返回、C 函数调用与返回都触发一次：它记录 `PyTime_GetPerfCounter()` 的单调时钟差值，把 callcount、reccallcount、tt、ct 累加到以 (code, caller) 为键的 callers 字典，`pstats.Stats` 再按 cumtime 排序。
 
 代价正是每次事件都要进一次回调，微基准里几十纳秒的函数会被回调开销放大数倍，cProfile 的绝对耗时不能当真实延迟，只能定位占比。3.12 起 PEP 669 的 `sys.monitoring` 提供低开销替代，它在字节码预留监控点按需插桩，未启用工具的事件几乎零成本。
 
@@ -321,13 +315,11 @@ print('builtin_sum_traced', '{built-in method builtins.sum}' in text)
 
 把热点从 Python 循环搬到 C 扩展，收益来自少建 PyObject、少走分派，不是 C 语法本身更快。
 
-调用约定先省一层：`METH_VARARGS` 要为每个参数 build 一个 tuple，而 `METH_FASTCALL` / `METH_O` 直接收到 PyObject *const *args 与 nargs，省掉元组构造；
+调用约定先省一层：`METH_VARARGS` 要为每个参数 build 一个 tuple，而 `METH_FASTCALL` / `METH_O` 直接收到 PyObject *const *args 与 nargs，省掉元组构造；3.10 起 `METH_FASTCALL` | `METH_KEYWORDS` 还能用 kwnames 单独传关键字名。
 
-3.10 起 `METH_FASTCALL` | `METH_KEYWORDS` 还能用 kwnames 单独传关键字名。
+真正的数量级收益来自数据布局：用 PEP 3118 的 Py_buffer 或 memoryview 拿到 buf、len、itemsize、strides，在 C 里用原生 double / int64 数组循环，最后只把结果 PyLong_FromLong 装箱一次；若逐元素 PyLong_AsLong 再 PyNumber_Add，就退化成 Python 语义的 C 版本。
 
-真正的数量级收益来自数据布局：用 PEP 3118 的 Py_buffer 或 memoryview 拿到 buf、len、itemsize、strides，在 C 里用原生 double / int64 数组循环，最后只把结果 PyLong_FromLong 装箱一次；
-
-若逐元素 PyLong_AsLong 再 PyNumber_Add，就退化成 Python 语义的 C 版本。要让多核参与，得在计算段用 Py_BEGIN_ALLOW_THREADS / Py_END_ALLOW_THREADS 临时释放 GIL，但这段里不能碰任何 Python API，自由线程构建下还要自己处理容器锁。
+要让多核参与，得在计算段用 Py_BEGIN_ALLOW_THREADS / Py_END_ALLOW_THREADS 临时释放 GIL，但这段里不能碰任何 Python API，自由线程构建下还要自己处理容器锁。
 
 工程边界同样重要：扩展要按 PEP 489 多阶段初始化写，Py_LIMITED_API 换稳定 ABI 会牺牲一部分内联访问速度，换来跨小版本不用重编译；这些代价要连同收益一起写进 ADR 权衡。
 

@@ -38,10 +38,6 @@ def should_rollback(errors, total, threshold=0.02):
 print('rollback_when_high', should_rollback(8, 100))
 print('keep_when_low', should_rollback(1, 100))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # budget_requests 1000
@@ -58,10 +54,6 @@ print('budget_requests', int(budget))
 print('burned_500', burned(budget, 500))
 print('burned_1500', burned(budget, 1500))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # diff {'replicas': (2, 4), 'image': ('app:v1', 'app:v2')}
@@ -72,10 +64,6 @@ current = {'replicas': 2, 'image': 'app:v1'}
 diff = {k: (current.get(k), desired[k]) for k in desired if current.get(k) != desired[k]}
 print('diff', diff)
 print('need_apply', len(diff) > 0)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

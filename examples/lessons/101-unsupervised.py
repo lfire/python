@@ -37,10 +37,6 @@ hist, centers = kmeans(pts, [(1, 2), (8, 8)])
 for h in hist: print(h)
 print('centers', [(round(a, 2), round(b, 2)) for a, b in centers])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # K=1 168.0
@@ -57,10 +53,6 @@ print('K=1', sse_for_k(pts, [(4, 5)]))
 print('K=2', sse_for_k(pts, [(1, 3), (8, 8)]))
 print('K=3', sse_for_k(pts, [(1, 3), (8, 8), (9, 9)]))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # d(p,q) 1.0 d(p,r) 50.0
@@ -70,10 +62,6 @@ p, q, r = (0, 0), (1, 0), (0, 50)
 print('d(p,q)', dist(p, q), 'd(p,r)', dist(p, r))
 sp, sq, sr = [(x * 100, y) for x, y in (p, q, r)]
 print('after x*100: d(p,q)', dist(sp, sq), 'd(p,r)', dist(sp, sr))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

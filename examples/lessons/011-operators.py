@@ -29,10 +29,6 @@ print('mod', -7 % 2)
 print('chain', 1 < 2 < 3, 1 < 3 < 2)
 print('divmod', divmod(7, 2))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # walrus_n 3
@@ -50,10 +46,6 @@ print('or_bug', count or 'fallback')
 print('fixed', count if count is not None else 'fallback')
 print('truthy_empty', bool([]), bool(''), bool(0))
 print('nonzero', bool([0]), bool('0'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -75,10 +67,6 @@ print('refcount_ge', sys.getrefcount(None) > 1)
 print('int_bool_slot', hasattr(int, '__bool__'))
 print('list_len_slot', hasattr(list, '__len__'))
 print('short_circuit', 0 and (1 // 0))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

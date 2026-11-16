@@ -12,13 +12,9 @@ description: 根据场景选对数值类型，避开精度陷阱
 
 ## 金额累加对不上账：0.1 + 0.2 为什么不是 0.3
 
-财务系统里有人把订单金额累加写成 `total += 0.1`，跑完一万条后对账差了几分钱；
+财务系统里有人把订单金额累加写成 `total += 0.1`，跑完一万条后对账差了几分钱；排查时用 `print(total == expected)` 得到 False，于是改成 `round(total, 2)`，可换个批次又对不上。
 
-排查时用 `print(total == expected)` 得到 False，于是改成 `round(total, 2)`，可换个批次又对不上。
-
-另一个脚本要生成大额订单号，直接 `2 ** 100` 得到 31 位整数却担心溢出，加了一堆没必要的取模；
-
-还有人用 float 存利率，把 `0.1 + 0.2 == 0.3` 写成断言，测试直接挂掉。
+另一个脚本要生成大额订单号，直接 `2 ** 100` 得到 31 位整数却担心溢出，加了一堆没必要的取模；还有人用 float 存利率，把 `0.1 + 0.2 == 0.3` 写成断言，测试直接挂掉。
 
 朴素解法是「用 round 抹平误差」或「拿 == 判断两个计算结果相等」，两者都把表示法的问题当成计算的问题：float 用二进制近似十进制，0.1 根本无法被有限位二进制精确表示，误差会随累加放大。Python 的 int 反而是任意精度、不会溢出，代价是位数越多运算越慢。
 
@@ -33,13 +29,9 @@ CPython 的 int 是变长对象：PyLongObject 用一个 digit 数组（64 位�
 
 3.11 起还加了安全限制：int 与 str 互转默认最多 4300 位十进制，超过抛 ValueError，可用 `sys.set_int_max_str_digits` 调整或置 0 关闭，目的是防止超长数字字符串把 CPU 拖死。
 
-bool 是 int 的子类，True 与 False 就是 1 与 0 的单例，因此 `isinstance(True, int)` 为真、`True + True` 得 2；
+bool 是 int 的子类，True 与 False 就是 1 与 0 的单例，因此 `isinstance(True, int)` 为真、`True + True` 得 2；但 `type(True) is bool`，做类型判断时别把布尔当普通整数收进金额统计。
 
-但 `type(True) is bool`，做类型判断时别把布尔当普通整数收进金额统计。
-
-位运算直接作用在整型的二进制补码语义上：`1 << 10` 得 1024，`0b1100 & 0b1010` 得 8；
-
-复数用 `3 + 4j` 字面量，`abs(3 + 4j)` 返回 5.0，实部虚部都是 float。
+位运算直接作用在整型的二进制补码语义上：`1 << 10` 得 1024，`0b1100 & 0b1010` 得 8；复数用 `3 + 4j` 字面量，`abs(3 + 4j)` 返回 5.0，实部虚部都是 float。
 
 ```python
 from decimal import Decimal
@@ -65,9 +57,9 @@ print('fraction', Fraction(1, 3) + Fraction(1, 6))
 
 float 对应 C 的 double，遵循 `IEEE 754` 二进制 64 位：1 位符号、11 位指数、52 位尾数，约 15 到 17 位有效十进制数字。
 
-十进制的 0.1 转成二进制是无限循环小数，只能存成最接近的近似值，`struct.pack('>d', 0.1).hex()` 得到 3fb999999999999a 就是证据；
+十进制的 0.1 转成二进制是无限循环小数，只能存成最接近的近似值，`struct.pack('>d', 0.1).hex()` 得到 3fb999999999999a 就是证据；`0.1 + 0.2` 因此等于 0.30000000000000004，与 0.3 不相等。
 
-`0.1 + 0.2` 因此等于 0.30000000000000004，与 0.3 不相等。这不是 bug，是二进制浮点表示十进制小数的必然。
+这不是 bug，是二进制浮点表示十进制小数的必然。
 
 比较计算结果一律用 `math.isclose(a, b)`，它默认 `rel_tol=1e-9`、`abs_tol=0.0`，判定取相对容差与绝对容差中较大者：`rel_tol` 乘 `max(abs(a), abs(b))` 与 `abs_tol` 谁大用谁，只要 `abs(a - b)` 不超过这个上限就算接近。
 
@@ -75,9 +67,7 @@ float 对应 C 的 double，遵循 `IEEE 754` 二进制 64 位：1 位符号、1
 
 还要注意 `float('nan')` 与自身用 == 比较恒为 False，判断 NaN 必须用 `math.isnan`；`float('inf')` 参与运算会产生无穷或 nan。用 == 判断两个浮点计算结果相等是财务系统最典型的线上事故，因为它把表示误差当成了逻辑差异。
 
-还要留意一个容易混淆的版本差异：3.12 起 `sum()` 对浮点输入改用补偿求和，`sum([0.1] * 10)` 因此恰好得到 1.0，而手写 += 循环累加十次仍是 0.9999999999999999；
-
-因此「浮点一定不精确」与「sum 一定不精确」都不是准确结论，要看有没有补偿、误差是否被这次舍入吃掉。
+还要留意一个容易混淆的版本差异：3.12 起 `sum()` 对浮点输入改用补偿求和，`sum([0.1] * 10)` 因此恰好得到 1.0，而手写 += 循环累加十次仍是 0.9999999999999999；因此「浮点一定不精确」与「sum 一定不精确」都不是准确结论，要看有没有补偿、误差是否被这次舍入吃掉。
 
 
 ### 浮点误差怎么用 math.isclose 判定
@@ -101,13 +91,13 @@ isclose 让 rel_tol 与 abs_tol 取较大者，近 0 时 rel_tol 几乎归零：
 
 `decimal.Decimal` 用十进制表示，构造时必须传字符串：用 `Decimal('0.1')` 与 `Decimal('0.2')` 相加，结果精确等于 `Decimal('0.3')`，而 `Decimal(0.1)` 会把 float 的近似值一并带进来，得到一长串尾数。
 
-Decimal 的运算受 context 控制：`decimal.getcontext().prec` 默认 28 位有效数字，rounding 默认 `ROUND_HALF_EVEN`（银行家舍入），可用 `localcontext()` 临时改；
+Decimal 的运算受 context 控制：`decimal.getcontext().prec` 默认 28 位有效数字，rounding 默认 `ROUND_HALF_EVEN`（银行家舍入），可用 `localcontext()` 临时改；金额要显式 `quantize(Decimal('0.01'))` 把量化规则写进领域层，而不是最后随手 round。
 
-金额要显式 `quantize(Decimal('0.01'))` 把量化规则写进领域层，而不是最后随手 round。
+`Fraction(1, 3)` 与 `Fraction(1, 6)` 相加得到 1/2，它用分子分母整数做精确有理数运算，适合比例与概率，但分母会随运算膨胀、比 float 慢得多。
 
-`Fraction(1, 3)` 与 `Fraction(1, 6)` 相加得到 1/2，它用分子分母整数做精确有理数运算，适合比例与概率，但分母会随运算膨胀、比 float 慢得多。选型很清晰：金融与计量用 Decimal 并固定量化规则，避免任何二进制误差；需要精确分数用 Fraction；
+选型很清晰：金融与计量用 Decimal 并固定量化规则，避免任何二进制误差；需要精确分数用 Fraction；科学计算与大规模数组用明确 dtype 的 NumPy，用空间换速度并接受浮点误差；一般计数用 int。
 
-科学计算与大规模数组用明确 dtype 的 NumPy，用空间换速度并接受浮点误差；一般计数用 int。不要用 float 累加金额、不要用 == 比较浮点计算结果、不要把 Decimal 与 float 混在一个表达式里（会抛 TypeError）。
+不要用 float 累加金额、不要用 == 比较浮点计算结果、不要把 Decimal 与 float 混在一个表达式里（会抛 TypeError）。
 
 ```python
 big = 2 ** 100
@@ -157,9 +147,7 @@ print('complex', 3 + 4j, abs(3 + 4j))
 
 `sys.float_info` 里 `dig=15`、`mant_dig=53`、epsilon、radix、max 俱全，`struct.calcsize('d')` 恒为 8。
 
-版本另放：3.11 的 set_int_max_str_digits、3.12 起 sum 用补偿求和、3.13 可查 _is_gil_enabled；
-
-`platform.python_implementation()` 在 PyPy 下这些值未必相同。
+版本另放：3.11 的 set_int_max_str_digits、3.12 起 sum 用补偿求和、3.13 可查 _is_gil_enabled；`platform.python_implementation()` 在 PyPy 下这些值未必相同。
 
 下表按机器、版本、实现三栏归位。
 
@@ -192,9 +180,11 @@ Decimal 则用十进制的系数加指数，配合一个线程局部的 Context 
 
 ## 结算服务：把量化规则写进领域层
 
-一个结算服务要把一批交易按分位汇总、计算手续费并输出两位小数，早期实现全程 float，月末对账总差几分钱。下面这段给出工程写法：所有金额用字符串构造的 Decimal，累加后用 `quantize` 配合 `ROUND_HALF_UP` 把量化规则固定在领域层，手续费按比例 Decimal 计算，最后输出可核对的字符串；
+一个结算服务要把一批交易按分位汇总、计算手续费并输出两位小数，早期实现全程 float，月末对账总差几分钱。
 
-同时用 float 版本在同一批数据上的结果说明为什么不能靠 round 兜底。真实系统还会把 context 的 prec 与 rounding 写进配置、对每笔交易留原始字符串，避免二次解析引入误差。重点是量化只做一次、且发生在明确的业务边界，而不是在打印前随手四舍五入。
+下面这段给出工程写法：所有金额用字符串构造的 Decimal，累加后用 `quantize` 配合 `ROUND_HALF_UP` 把量化规则固定在领域层，手续费按比例 Decimal 计算，最后输出可核对的字符串；同时用 float 版本在同一批数据上的结果说明为什么不能靠 round 兜底。
+
+真实系统还会把 context 的 prec 与 rounding 写进配置、对每笔交易留原始字符串，避免二次解析引入误差。重点是量化只做一次、且发生在明确的业务边界，而不是在打印前随手四舍五入。
 
 ```python
 from decimal import Decimal, ROUND_HALF_UP, localcontext
@@ -231,11 +221,11 @@ print('two_places', str(gross))
 
 ## 金额与混算的错因速查
 
-混算往往直接不让算：`Decimal('0.1')` + 0.2 抛 TypeError，报 Decimal 与 float 不能相加，表达式得先统一类型。静默那类更麻烦：True 被当 1 计入金额，bool 是 int 子类不报错，用 `type(x)` is bool 挡一道；
+混算往往直接不让算：`Decimal('0.1')` + 0.2 抛 TypeError，报 Decimal 与 float 不能相加，表达式得先统一类型。
 
-`getcontext().prec` 默认 28 位，连乘后截断，金额该 `quantize(Decimal('0.01'))` 落到分位；
+静默那类更麻烦：True 被当 1 计入金额，bool 是 int 子类不报错，用 `type(x)` is bool 挡一道；`getcontext().prec` 默认 28 位，连乘后截断，金额该 `quantize(Decimal('0.01'))` 落到分位；`round()` 返回 float 救不了账目。
 
-`round()` 返回 float 救不了账目。下表按现象、根因、写法列出，配排查顺序。
+下表按现象、根因、写法列出，配排查顺序。
 
 **错因速查**
 

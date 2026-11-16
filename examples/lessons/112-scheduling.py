@@ -39,10 +39,6 @@ dag = {
 }
 print('order', topo(dag))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # delays [0.1, 0.2, 0.4, 0.8, 1.6, 2.0]
@@ -67,10 +63,6 @@ job = Idempotent()
 print(job.run('2024-01-01'))
 print(job.run('2024-01-01'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # sli 0.997
@@ -87,10 +79,6 @@ print('sli', round(sli(997, 1000), 3))
 print('page_by_user_sli', page_on_sli(sli(997, 1000)))
 print('page_when_healthy', page_on_sli(sli(1000, 1000)))
 print('cpu_threshold', 0.95 > 0.8)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

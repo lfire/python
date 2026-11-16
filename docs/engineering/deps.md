@@ -16,9 +16,9 @@ description: 让任意机器构建出相同的环境
 
 一个服务在预发跑得好好的，某天上游发布了一个小版本，生产环境按 `requirements.txt` 装到了新依赖，行为悄悄变了，回滚都找不到改了什么。
 
-团队只写了 `requests>=2.28` 这样的宽泛范围，既没有锁文件也没有哈希，所谓「可复现」只是同一天碰巧装到同一组包。另一个更隐蔽的问题：开发依赖（pytest、mypy）和运行依赖混在一张清单里，生产镜像白胖一圈还带来额外攻击面。依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；
+团队只写了 `requests>=2.28` 这样的宽泛范围，既没有锁文件也没有哈希，所谓「可复现」只是同一天碰巧装到同一组包。另一个更隐蔽的问题：开发依赖（pytest、mypy）和运行依赖混在一张清单里，生产镜像白胖一圈还带来额外攻击面。
 
-这要求把直接与传递依赖全部钉死到精确版本并校验哈希，区分开发与运行依赖，CI 用 `--require-hashes` 构建，定期审计已知漏洞。
+依赖管理的目标不是「装上」，而是「在任何时间、任何机器上装出同一组字节」；这要求把直接与传递依赖全部钉死到精确版本并校验哈希，区分开发与运行依赖，CI 用 `--require-hashes` 构建，定期审计已知漏洞。
 
 本讲把 PEP 440/508、锁文件与供应链校验讲到能落地。
 
@@ -27,9 +27,7 @@ description: 让任意机器构建出相同的环境
 
 ## pyproject.toml 里声明了什么：直接与传递依赖
 
-PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；
-
-PEP 518 的 `[build-system]` 声明 requires 与 build-backend（如 `setuptools.build_meta`）。
+PEP 621 把项目元数据集中到 `pyproject.toml` 的 `[project]`：name、version、requires-python、dependencies，`[project.optional-dependencies]` 放 dev/test 组；PEP 518 的 `[build-system]` 声明 requires 与 build-backend（如 `setuptools.build_meta`）。
 
 直接依赖是你显式声明的，传递依赖是它们的依赖，`pip freeze` 会把两者连同精确版本全部列出，这正是宽泛范围无法复现的原因：某天传递依赖发新版，解析结果就变。
 
@@ -164,9 +162,7 @@ with tempfile.TemporaryDirectory() as d:
 
 锁文件把一次成功解析的完整结果固化：`uv.lock`、`poetry.lock`、pip-tools 的 `requirements.txt`（由 `pip-compile` 从 `requirements.in` 生成），每行是 name==version 加一条 `--hash=sha256` 摘要。
 
-用 `--require-hashes` 安装时，pip 会对每个下载件校验哈希，任何篡改、上游重传、未锁定的新版本都会被拒绝；
-
-缺哈希或版本不匹配直接报错，而不是装上一个「差不多」的包。
+用 `--require-hashes` 安装时，pip 会对每个下载件校验哈希，任何篡改、上游重传、未锁定的新版本都会被拒绝；缺哈希或版本不匹配直接报错，而不是装上一个「差不多」的包。
 
 要注意普通 `pip install` 不会主动校验哈希，这份保证来自锁文件里的哈希加上 `--require-hashes` 模式。
 
@@ -174,9 +170,7 @@ with tempfile.TemporaryDirectory() as d:
 
 开发依赖与运行依赖要拆成不同组或不同文件，生产镜像只装运行组。
 
-用 `importlib.metadata` 读取已安装分发的 `METADATA`，可核对 Name、Version、Requires-Python、Requires-Dist；
-
-用两个假分发模拟 app 要求 `lib>=2.0` 却装了 1.5，就能复现 `pip check` 要报的依赖冲突。
+用 `importlib.metadata` 读取已安装分发的 `METADATA`，可核对 Name、Version、Requires-Python、Requires-Dist；用两个假分发模拟 app 要求 `lib>=2.0` 却装了 1.5，就能复现 `pip check` 要报的依赖冲突。
 
 **依赖管理工具与产物**
 
@@ -265,7 +259,7 @@ except ValueError as e:
 
 <Callout type="idea" title='落地提示' text='提交锁文件、区分开发与运行依赖、CI 用 --require-hashes，并定期审计已知漏洞' />
 
-<CheckList id='P072b' title='上线前自检' :items='["能复现并解释「只写 requests&gt;=2.28 不提交锁文件」", "能复现并解释「开发与运行依赖混在一张清单」", "能复现并解释「锁了版本却不校验哈希」", "能用一条命令验证 pyproject.toml 规范", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P072a' title='上线前自检' :items='["能复现并解释「只写 requests&gt;=2.28 不提交锁文件」", "能复现并解释「开发与运行依赖混在一张清单」", "能复现并解释「锁了版本却不校验哈希」", "能用一条命令验证 pyproject.toml 规范", "关键路径有自动化测试与失败分支"]' />
 
 **错因速查**
 

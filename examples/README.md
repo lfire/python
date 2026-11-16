@@ -165,4 +165,4 @@ python3 examples/lessons/007-variables.py   # 换成想跑的那一讲
 | [Flask 实操：路由、模板与会话](../docs/topics/web-frameworks.md) | [`web-frameworks.py`](topics/web-frameworks.py) | 应用工厂与蓝图、jinja2 模板、请求与响应、Cookie/Session、表单与验证码、SQLAlchemy 集成、错误处理、生产部署与 HTTPS。 |
 | [数据分析实战：Jupyter 到报告导出](../docs/topics/data-projects.md) | [`data-projects.py`](topics/data-projects.py) | Jupyter 工作流、Pandas 多表联合与透视、Scipy 假设检验、Matplotlib/Seaborn 图表选型、疫情/房价分析、医院科室费用口径校验、报告导出与复现。 |
 | [工程底座：Linux、Git、SQL 与多版本](../docs/topics/toolchain-foundation.md) | [`toolchain-foundation.py`](topics/toolchain-foundation.py) | Linux 文件权限与常用命令、Shell 管道、Git 分支与协作、.gitignore 防泄漏、MySQL 表设计与多表查询、pyenv/Anaconda 多版本、venv 与国内镜像。 |
-| [参考课程对照与学习路线](../docs/topics/reference-map.md) | —（对照索引页） | 对照索引页，无独立示例代码；见各专题文件 |
+| [参考课程对照与学习路线](../docs/topics/reference-map.md) | —（对照索引页） | 对照索引页，不配独立示例文件；9 篇技术专题的示例见上表各行 |

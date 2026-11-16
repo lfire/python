@@ -74,10 +74,6 @@ try:
 except ValueError as err:
     print('bad op', type(err).__name__)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # memory pass
@@ -113,10 +109,6 @@ def suite(make):
 print('memory', suite(Memory))
 print('logged', suite(Logged))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # multi-bytecode True
@@ -137,10 +129,6 @@ with ThreadPoolExecutor(4) as ex:
     list(ex.map(lambda _: bump(box, lock), range(500)))
 print('guarded count', box[0])
 print('lock type', type(lock).__name__)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

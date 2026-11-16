@@ -41,10 +41,6 @@ print('counts', a, b)
 print('equal', a == b)
 print('set_is_faster', (t3 - t2) < (t1 - t0))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # equal True
@@ -63,10 +59,6 @@ t3 = time.perf_counter()
 print('equal', a == b)
 print('builtin_faster', (t1 - t0) < (t3 - t2))
 print('values', a)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -87,10 +79,6 @@ text = s.getvalue()
 print('result', v)
 print('has_work', 'work' in text)
 print('has_genexpr', 'genexpr' in text)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

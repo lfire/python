@@ -40,9 +40,9 @@ description: 处理生产环境里的装饰器组合
 
 带参装饰器其实是装饰器工厂，三层函数各管一段：外层 `def repeat(n)` 收配置、中层 `def deco(fn)` 收被装饰函数、内层 `def wrapper(*a, **k)` 收每次调用的实参，每层把下一层 `return` 出去。
 
-`@repeat(3)` 先调用 `repeat(3)` 得到 deco，再把 deco 应用到函数。常见断点有三类：中层忘了 return wrapper，deco 返回 None，于是 f 变成 None，调用时报 `TypeError`（'NoneType' object is not callable）；
+`@repeat(3)` 先调用 `repeat(3)` 得到 deco，再把 deco 应用到函数。
 
-外层忘了 return deco，`repeat(3)` 直接返回 None，`@` 应用阶段就报同样的错；写成 `@repeat` 漏了括号，则把函数对象本身当成配置 n 传进去，配置被当函数用，报出各种看似无关的 `TypeError`。
+常见断点有三类：中层忘了 return wrapper，deco 返回 None，于是 f 变成 None，调用时报 `TypeError`（'NoneType' object is not callable）；外层忘了 return deco，`repeat(3)` 直接返回 None，`@` 应用阶段就报同样的错；写成 `@repeat` 漏了括号，则把函数对象本身当成配置 n 传进去，配置被当函数用，报出各种看似无关的 `TypeError`。
 
 定位方法是逐层打印中间返回值，或用 `inspect.signature(repeat)` 确认外层只收配置。
 
@@ -137,11 +137,9 @@ print(callable(stacked), type(stacked).__name__)
 
 ## 类装饰器、__call__ 与状态保存
 
-类也可以作装饰器：`@Cls` 等价于 `f = Cls(f)`，要求返回的是可调用对象，因此类实例要实现 `__call__(self, *a, **k)`；
+类也可以作装饰器：`@Cls` 等价于 `f = Cls(f)`，要求返回的是可调用对象，因此类实例要实现 `__call__(self, *a, **k)`；类同样可以装饰另一个类，此时 `__call__` 接收类、返回类。
 
-类同样可以装饰另一个类，此时 `__call__` 接收类、返回类。用类保存状态比闭包清晰：计数器、命中率、配置都是实例属性，天然可读可测；
-
-配合 `functools.update_wrapper` 把 `__name__`、`__doc__`、`__wrapped__` 等搬到实例上（`update_wrapper` 对任何带 `__dict__` 的对象都可用）。
+用类保存状态比闭包清晰：计数器、命中率、配置都是实例属性，天然可读可测；配合 `functools.update_wrapper` 把 `__name__`、`__doc__`、`__wrapped__` 等搬到实例上（`update_wrapper` 对任何带 `__dict__` 的对象都可用）。
 
 ```python
 functools.update_wrapper(self, fn)
@@ -201,11 +199,9 @@ print(type(raw).__name__, raw(9), hasattr(raw, '__wrapped__'))
 
 `@` 展开后是模块字节码里连续的 `CALL`：先算出装饰器表达式的值（带参时先 `CALL` `repeat(n)` 得到 deco），再把函数对象作为参数 `CALL` 一次，把返回值 `STORE` 回名字。多层装饰时这些 `CALL` 从内向外依次发生，因此离 def 最近的先包装、最远的最后包装并成为最外层对象。
 
-每个 wrapper 通过 `__wrapped__` 串成一条链：`inspect.signature` 与 `inspect.unwrap` 沿链向内走，最外层决定调用入口、最内层才是原逻辑；
+每个 wrapper 通过 `__wrapped__` 串成一条链：`inspect.signature` 与 `inspect.unwrap` 沿链向内走，最外层决定调用入口、最内层才是原逻辑；调用时外层 wrapper 先执行前置逻辑再调 fn（也就是下一层 wrapper），返回时各层 `finally` 逆序退出。
 
-调用时外层 wrapper 先执行前置逻辑再调 fn（也就是下一层 wrapper），返回时各层 `finally` 逆序退出。类装饰器走同一条路径，只是返回的是实现了 `__call__` 的实例。
-
-函数对象本身是非数据描述符（有 `__get__`），而普通类实例没有 `__get__`，所以把类装饰器实例放进类属性时不会自动绑定 self，这正是描述符协议（第 040 讲）要处理的问题。
+类装饰器走同一条路径，只是返回的是实现了 `__call__` 的实例。函数对象本身是非数据描述符（有 `__get__`），而普通类实例没有 `__get__`，所以把类装饰器实例放进类属性时不会自动绑定 self，这正是描述符协议（第 040 讲）要处理的问题。
 
 <SequenceDiagram title='第 033 讲 · 调用时序' caption='从触发到收尾，标出最可能失败的两个位置' :actors='["调用方", "核心逻辑", "外部依赖"]' :steps='[{"from": "调用方", "to": "核心逻辑", "label": "发起调用", "note": "三层函数结构与少一层的报错", "kind": "call"}, {"from": "核心逻辑", "to": "核心逻辑", "label": "检查前置", "note": "叠加顺序：包装自下而上、执行…", "kind": "self"}, {"from": "核心逻辑", "to": "外部依赖", "label": "读取资源", "note": "可能超时", "kind": "call"}, {"from": "外部依赖", "to": "核心逻辑", "label": "返回结果", "note": "或抛异常", "kind": "return"}, {"from": "核心逻辑", "to": "调用方", "label": "返回或降级", "note": "清理资源", "kind": "return"}]' />
 
@@ -264,7 +260,7 @@ print(report.__name__)
 
 <Callout type="idea" title='落地提示' text='对外发布的装饰器要提供参数化开关与 bypass 路径，方便在测试与灰度环境里绕开' />
 
-<CheckList id='P033b' title='上线前自检' :items='["能复现并解释「带参装饰器少写一层 return，报 TypeError…」", "能复现并解释「@cache 写在 @auth 外面，未授权结果被缓存」", "能复现并解释「类装饰器实例放进类里当方法用，self 没自动传入」", "能用一条命令验证 三层函数结构", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P033a' title='上线前自检' :items='["能复现并解释「带参装饰器少写一层 return，报 TypeError…」", "能复现并解释「@cache 写在 @auth 外面，未授权结果被缓存」", "能复现并解释「类装饰器实例放进类里当方法用，self 没自动传入」", "能用一条命令验证 三层函数结构", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print(f(4))"
@@ -285,7 +281,7 @@ python -c "from functools import lru_cache; f=lru_cache(64)(lambda x:x*x); print
 
 <Callout type="warn" title='本讲最容易踩的坑' text='带参装饰器少写一层 return，报 TypeError: &#39;NoneType&#39; object is not callable：外层没返回 deco 或中层没返回 wrapper，得到 None 却被当函数调用' />
 
-<CheckList id='P033a' title='学完你应当能' :items='["能讲清 三层函数结构与少一层的报错", "能讲清 叠加顺序：包装自下而上、执行自上而下", "能讲清 类装饰器、__call__ 与状态保存", "能在工程里处理 装饰器与类型注解"]' />
+<CheckList id='P033b' title='学完你应当能' :items='["能讲清 三层函数结构与少一层的报错", "能讲清 叠加顺序：包装自下而上、执行自上而下", "能讲清 类装饰器、__call__ 与状态保存", "能在工程里处理 装饰器与类型注解"]' />
 
 
 ## 组合顺序的练习与自测

@@ -60,10 +60,6 @@ print('pdf', check_attachment('bill.pdf', b'x' * 100, {'.pdf'}, 1024))
 print('exe', check_attachment('setup.exe', b'x', {'.pdf'}, 1024))
 print('big', check_attachment('big.pdf', b'x' * 2048, {'.pdf'}, 1024))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # substitute missing KeyError 'amount'
@@ -79,10 +75,6 @@ except KeyError as e:
     print('substitute missing', type(e).__name__, str(e))
 print('safe substitute', tpl.safe_substitute(name='Zhang'))
 print('naive concat', 'Hi ' + 'Zhang' + ', amount ' + '${amount}')
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -108,10 +100,6 @@ parts = [p.get_content_type() for p in parsed.iter_parts()]
 print('parts', parts)
 print('subject roundtrip', str(parsed['Subject']))
 print('crlf present', bytes([13, 10]) in raw)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

@@ -16,9 +16,7 @@ description: 掌握协程的雏形与状态机写法
 
 一个报表生成器用 `yield` 逐行吐出数据，函数里打开了一个文件句柄却只在正常跑完时关闭；调用方中途 `break` 提前退出，生成器被挂起，句柄一直不释放，跑几百次后进程把文件描述符用光。
 
-更隐蔽的是有人用 `g.send(5)` 启动一个刚创建的生成器，直接抛 `TypeError`——刚启动的生成器还没有等待接收的 `yield`，只能送 `None` 进去；
-
-还有人以为 `close()` 只是停止迭代，不知道它会在暂停处抛 `GeneratorExit` 来触发 `finally`，于是在 `except Exception` 里写清理逻辑却永远不执行。
+更隐蔽的是有人用 `g.send(5)` 启动一个刚创建的生成器，直接抛 `TypeError`——刚启动的生成器还没有等待接收的 `yield`，只能送 `None` 进去；还有人以为 `close()` 只是停止迭代，不知道它会在暂停处抛 `GeneratorExit` 来触发 `finally`，于是在 `except Exception` 里写清理逻辑却永远不执行。
 
 这些现象都指向同一件事：yield 把函数变成了可暂停的状态机，帧里保存着局部变量与指令指针。本讲把 `send` 双向通信、`yield from` 委托、`throw` / `close` 与清理、以及生成器作为协程基座的机制讲清楚。
 
@@ -35,9 +33,7 @@ yield 是表达式，可以写 `value = yield total`：`g.send(10)` 恢复执行
 
 刚创建时不能 send 非 `None` 值，否则抛 `TypeError`，因为还没有 yield 表达式在等待接收。
 
-生成器里的 `return value` 不是把值给调用方，而是让它成为 `StopIteration.value`（PEP 380，3.3+），调用方在 `except StopIteration as e` 里用 `e.value` 取到；
-
-这也是 `yield from` 能把子生成器 return 值带回来的原因。
+生成器里的 `return value` 不是把值给调用方，而是让它成为 `StopIteration.value`（PEP 380，3.3+），调用方在 `except StopIteration as e` 里用 `e.value` 取到；这也是 `yield from` 能把子生成器 return 值带回来的原因。
 
 ```python
 import inspect
@@ -104,13 +100,11 @@ print('after close', log, inspect.getgeneratorstate(c))
 
 含 `yield` 的函数调用后并不执行函数体，只返回一个 generator：code object 的 `co_flags` 含 `CO_GENERATOR`，`gi_frame` 已经分配但 `f_lasti` 停在开头，`inspect.getgeneratorstate` 为 `GEN_CREATED`。
 
-ceval 执行到 `YIELD_VALUE` 时把值交给调用方、把当前帧的指令指针与局部变量原样留在 `gi_frame` 里，下一次 `next()` / `send()` 从该位置继续，这就是可暂停状态机的全部实现。`send(value)` 把 value 压回栈作为 yield 表达式的返回值；
+ceval 执行到 `YIELD_VALUE` 时把值交给调用方、把当前帧的指令指针与局部变量原样留在 `gi_frame` 里，下一次 `next()` / `send()` 从该位置继续，这就是可暂停状态机的全部实现。
 
-刚创建时没有等待接收的 yield，send 非 `None` 会抛 `TypeError`。
+`send(value)` 把 value 压回栈作为 yield 表达式的返回值；刚创建时没有等待接收的 yield，send 非 `None` 会抛 `TypeError`。
 
-`close()` 在暂停处注入 `GeneratorExit`（继承 `BaseException`，故 `except Exception` 拦不住），沿帧展开执行 `finally` 后把状态置为 `GEN_CLOSED`；
-
-若 `finally` 里再 yield 会抛 `RuntimeError`。
+`close()` 在暂停处注入 `GeneratorExit`（继承 `BaseException`，故 `except Exception` 拦不住），沿帧展开执行 `finally` 后把状态置为 `GEN_CLOSED`；若 `finally` 里再 yield 会抛 `RuntimeError`。
 
 生成器 `return value` 被写成 `StopIteration.value`（PEP 380），`yield from` 据此把子生成器结果回传并把 `send` / `throw` / `close` 沿委托链转发。
 
@@ -163,9 +157,7 @@ print('YIELD in bytecode', 'YIELD' in dis.Bytecode(gen).dis())
 
 `g.throw(exc)` 在生成器暂停处抛出指定异常：若生成器内 `try/except` 接住就能继续产出，否则异常向外传播，但 `finally` 一定执行。
 
-`g.close()` 更特殊，它在暂停处抛 `GeneratorExit`（继承 `BaseException` 而非 `Exception`），触发生成器里的 `finally` 做资源释放；
-
-生成器收到 `GeneratorExit` 后必须正常退出，若还在 `finally` 里再 yield 会抛 `RuntimeError`（generator ignored GeneratorExit）。
+`g.close()` 更特殊，它在暂停处抛 `GeneratorExit`（继承 `BaseException` 而非 `Exception`），触发生成器里的 `finally` 做资源释放；生成器收到 `GeneratorExit` 后必须正常退出，若还在 `finally` 里再 yield 会抛 `RuntimeError`（generator ignored GeneratorExit）。
 
 因为 `GeneratorExit` 不在 `Exception` 之下，`except Exception` 捕获不到它，所以清理逻辑只能写进 `finally`，不能写进普通 `except`。
 
@@ -237,13 +229,7 @@ print('contextmanager log', log)
 
 生成器把「执行到一半暂停、保留栈帧、之后再恢复」这件事做成了语言级能力，这正是后来 `async/await` 的基座：3.5 的 PEP 492 用 `types.coroutine` 与 `await` 把生成器协议包装成原生协程，3.6 又加入异步生成器，语义上仍沿袭 `send` / `throw` / `close` 与 `yield from` 的委托模型。
 
-工程上有几条硬约束：生成器是一次性的，耗尽后再 `next()` 只会抛 `StopIteration`；
-
-持有文件句柄、锁、网络连接时必须用 `try/finally` 写清理，并让调用方在提前 `break` 时显式 `close()` 或用 `contextlib.closing` 包住；
-
-不要在生成器里手动 `raise StopIteration`（3.7 起 PEP 479 会把它转成 `RuntimeError`）；
-
-生成器管道用 `yield from` 串联数据源、配合 itertools 可以写出声明式 ETL 流，但每一级都应只做纯变换，副作用与异常处理交给边界层。
+工程上有几条硬约束：生成器是一次性的，耗尽后再 `next()` 只会抛 `StopIteration`；持有文件句柄、锁、网络连接时必须用 `try/finally` 写清理，并让调用方在提前 `break` 时显式 `close()` 或用 `contextlib.closing` 包住；不要在生成器里手动 `raise StopIteration`（3.7 起 PEP 479 会把它转成 `RuntimeError`）；生成器管道用 `yield from` 串联数据源、配合 itertools 可以写出声明式 ETL 流，但每一级都应只做纯变换，副作用与异常处理交给边界层。
 
 `inspect.getgeneratorstate` 能给出 `GEN_CREATED` / `GEN_RUNNING` / `GEN_SUSPENDED` / `GEN_CLOSED` 四种状态，是排查「卡在哪一步」的直接工具。
 
@@ -254,11 +240,11 @@ print('contextmanager log', log)
 
 ## 带清理的可暂停数据管道：send 调阈值、yield from 串联、close 收尾
 
-一个流式报表生成器逐行读数据、按调用方动态调整的阈值过滤，并把多份数据源用 `yield from` 串成一条管道。用 `send` 把新阈值送进生成器，避免为每档阈值重开一次文件；用 `yield from` 委托给子生成器，让 `send` / `throw` / `close` 自动沿链转发；
+一个流式报表生成器逐行读数据、按调用方动态调整的阈值过滤，并把多份数据源用 `yield from` 串成一条管道。
 
-最关键的是把文件句柄与计数器的收尾写进 `finally`，并保证调用方提前退出时显式 `close()`，否则句柄会一直挂到 GC。下面用标准库模拟数据源，演示启动、send 调参、`yield from` 委托与 `close()` 触发清理这四个动作，并用 inspect 观察状态变化。
+用 `send` 把新阈值送进生成器，避免为每档阈值重开一次文件；用 `yield from` 委托给子生成器，让 `send` / `throw` / `close` 自动沿链转发；最关键的是把文件句柄与计数器的收尾写进 `finally`，并保证调用方提前退出时显式 `close()`，否则句柄会一直挂到 GC。
 
-重点是把副作用关进 `finally`，而不是靠调用方记得跑完整个生成器。
+下面用标准库模拟数据源，演示启动、send 调参、`yield from` 委托与 `close()` 触发清理这四个动作，并用 inspect 观察状态变化。重点是把副作用关进 `finally`，而不是靠调用方记得跑完整个生成器。
 
 ```python
 from contextlib import closing
@@ -293,7 +279,7 @@ print('state', inspect.getgeneratorstate(g))
 
 <Callout type="idea" title='落地提示' text='用 yield from 把多个数据源串成管道，配合 itertools 可以写出声明式的 ETL 流' />
 
-<CheckList id='P026b' title='上线前自检' :items='["能复现并解释「生成器持有文件句柄迟迟不释放」", "能复现并解释「把清理逻辑写在 except Exception 里，clo…」", "能复现并解释「用 g.send(5) 启动刚创建的生成器抛 TypeErr…」", "能用一条命令验证 生成器函数与 yield", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P026a' title='上线前自检' :items='["能复现并解释「生成器持有文件句柄迟迟不释放」", "能复现并解释「把清理逻辑写在 except Exception 里，clo…」", "能复现并解释「用 g.send(5) 启动刚创建的生成器抛 TypeErr…」", "能用一条命令验证 生成器函数与 yield", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import itertools; print(list(itertools.islice(itertools.count(), 3)))"

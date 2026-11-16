@@ -48,10 +48,6 @@ print(query(-1))
 print('hits', hits[0], 'misses', misses[0])
 print('ttl key1', store[1]['ttl'], 'null ttl', store[-1]['ttl'])
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # acquire A OK
@@ -89,10 +85,6 @@ print('B release wrong', safe_release(store, 'lock:order', 'other'))
 print('A release', safe_release(store, 'lock:order', token))
 print('final', store.get('lock:order'))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # ttls with jitter [340, 307, 301, 347, 317, 315]
@@ -103,10 +95,6 @@ random.seed(42)
 ttls = [300 + random.randint(0, 60) for _ in range(6)]
 print('ttls with jitter', ttls)
 print('distinct', len(set(ttls)))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

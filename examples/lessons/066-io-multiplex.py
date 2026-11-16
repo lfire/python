@@ -37,10 +37,6 @@ a.close()
 b.close()
 sel.close()
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # nonblocking raises BlockingIOError
@@ -71,10 +67,6 @@ print('platform', sys.platform)
 a.close()
 b.close()
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # DefaultSelector KqueueSelector
@@ -92,10 +84,6 @@ print('EVENT_READ', selectors.EVENT_READ, 'EVENT_WRITE', selectors.EVENT_WRITE)
 print('select sig', str(inspect.signature(select.select)))
 print('epoll on this host', hasattr(select, 'epoll'))
 print('kqueue on this host', hasattr(select, 'kqueue'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

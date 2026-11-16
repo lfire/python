@@ -40,13 +40,11 @@ Docker 镜像按层叠加，每条 `RUN` / `COPY` / `ADD` 生成一层，层内�
 
 因此 Dockerfile 应先 `COPY` 依赖清单（`requirements.txt` 或 `pyproject.toml` 加锁文件）再 `RUN pip install`，最后 `COPY` 源码，避免改一行代码就让依赖层失效重装。
 
-`python:3.13` 这类完整镜像含编译工具链与大量头文件，体积常在 1GB 量级；
+`python:3.13` 这类完整镜像含编译工具链与大量头文件，体积常在 1GB 量级；多阶段构建把编译期与运行期分开：builder 阶段装 gcc、编译需要 C 扩展的依赖并产出 wheel，runtime 阶段用 `python:3.13-slim` 只装 wheel 与运行时库。
 
-多阶段构建把编译期与运行期分开：builder 阶段装 gcc、编译需要 C 扩展的依赖并产出 wheel，runtime 阶段用 `python:3.13-slim` 只装 wheel 与运行时库。
+pip 用 `--no-cache-dir` 避免把缓存写进层，锁文件固定版本保证可复现。
 
-pip 用 `--no-cache-dir` 避免把缓存写进层，锁文件固定版本保证可复现。非 root 运行要建专用用户并 chown 工作目录；
-
-容器开启 `readOnlyRootFilesystem` 时，把临时写入指向 emptyDir 挂载的 /tmp，否则任何落盘操作都会失败。
+非 root 运行要建专用用户并 chown 工作目录；容器开启 `readOnlyRootFilesystem` 时，把临时写入指向 emptyDir 挂载的 /tmp，否则任何落盘操作都会失败。
 
 镜像体积直接决定 HPA 扩容的冷启动速度，是 SLO 的一部分。
 
@@ -74,9 +72,9 @@ pip 用 `--no-cache-dir` 避免把缓存写进层，锁文件固定版本保证�
 
 ## 资源请求与限制、OOMKill 与 CPython 内存特征
 
-K8s 的 `resources.requests` 决定调度与配额，`limits` 决定上限；
+K8s 的 `resources.requests` 决定调度与配额，`limits` 决定上限；CPU 用毫核（500m 即 0.5 核），内存用 Mi（1 Mi 等于 2 的 20 次方字节，也就是 1048576 字节）或 Gi，注意 M 与 Mi 的十进制 / 二进制差异。
 
-CPU 用毫核（500m 即 0.5 核），内存用 Mi（1 Mi 等于 2 的 20 次方字节，也就是 1048576 字节）或 Gi，注意 M 与 Mi 的十进制 / 二进制差异。CPU 超限只被限流（throttle），内存超限则触发内核 OOM Killer 直接杀容器，无法捕获、无优雅退出。
+CPU 超限只被限流（throttle），内存超限则触发内核 OOM Killer 直接杀容器，无法捕获、无优雅退出。
 
 CPython 的内存特征让未设 limit 尤其危险：小对象走 `pymalloc` 的 arena / pool，释放后未必立刻归还 OS；dict / list 的过度分配、导入缓存、第三方 C 扩展的原生内存都不受 Python 堆统计约束，RSS 常高于 `tracemalloc` 看到的值。
 
@@ -93,9 +91,7 @@ CPython 的内存特征让未设 limit 尤其危险：小对象走 `pymalloc` �
 
 容器被 OOMKill 是内核 cgroup 的内存上限触发的：当容器 cgroup 的内存用量超过 `limits.memory`，内核选择其中进程发送 `SIGKILL`，用户态无法捕获，也没有 Python 层面的 `MemoryError` 兜底。
 
-这与 CPython 的内存管理叠加出特有现象：小于 512 字节的对象由 `pymalloc` 在 256KiB 的 arena 中按 4KiB pool 分配，对象释放后 pool 只在该 arena 整体空闲时才可能归还 OS，因此即使 Python 堆里对象已回收，RSS 仍可维持高位；
-
-再叠加 C 扩展用 malloc 申请的原生内存、glibc 的分配器缓存与导入的 `__pycache__`，RSS 往往明显高于 `tracemalloc` 或 gc 统计的 Python 对象总量。
+这与 CPython 的内存管理叠加出特有现象：小于 512 字节的对象由 `pymalloc` 在 256KiB 的 arena 中按 4KiB pool 分配，对象释放后 pool 只在该 arena 整体空闲时才可能归还 OS，因此即使 Python 堆里对象已回收，RSS 仍可维持高位；再叠加 C 扩展用 malloc 申请的原生内存、glibc 的分配器缓存与导入的 `__pycache__`，RSS 往往明显高于 `tracemalloc` 或 gc 统计的 Python 对象总量。
 
 CPU 的行为不同：`limits.cpu` 通过 CFS 配额限流而非杀进程，超限时线程排队等待下一个调度周期，表现为 p99 延迟抬升。理解这两条差异，才能解释为什么内存必须留余量、为什么 CPU throttling 会拖慢延迟却不报错，以及为什么镜像拉取时间会直接决定 HPA 从触发到承载流量的滞后。
 
@@ -239,7 +235,7 @@ print('left_after_drain', app.drain())
 
 <Callout type="idea" title='落地提示' text='多阶段构建、锁文件安装、非 root 运行、就绪与存活探针分开、preStop 配合优雅退出' />
 
-<CheckList id='P110b' title='上线前自检' :items='["能复现并解释「Dockerfile 先 COPY 全部源码再 pip in…」", "能复现并解释「容器不设 memory limit 或 limit 贴着压测…」", "能复现并解释「把就绪探针写成强依赖数据库，且不做 SIGTERM 处理」", "能用一条命令验证 镜像分层与多阶段构建", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P110a' title='上线前自检' :items='["能复现并解释「Dockerfile 先 COPY 全部源码再 pip in…」", "能复现并解释「容器不设 memory limit 或 limit 贴着压测…」", "能复现并解释「把就绪探针写成强依赖数据库，且不做 SIGTERM 处理」", "能用一条命令验证 镜像分层与多阶段构建", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest()[:8])"
@@ -258,19 +254,15 @@ python -c "import uuid, hashlib; print(hashlib.sha256(str(uuid.uuid4()).encode()
 
 ## HPA 期望副本公式与滚动更新的可用 Pod 数
 
-HPA 控制器每个同步周期（默认 `horizontal-pod-autoscaler-sync-period=15s`）读一次指标，按每个指标算 `desiredReplicas = ceil`(currentReplicas 乘 currentMetricValue 除以 desiredMetricValue)，多指标取最大值；
+HPA 控制器每个同步周期（默认 `horizontal-pod-autoscaler-sync-period=15s`）读一次指标，按每个指标算 `desiredReplicas = ceil`(currentReplicas 乘 currentMetricValue 除以 desiredMetricValue)，多指标取最大值；比值落在 1 加减 tolerance（默认 0.1）内则维持 currentReplicas。
 
-比值落在 1 加减 tolerance（默认 0.1）内则维持 currentReplicas。
+源码在 `kubernetes/pkg/controller/podautoscaler/horizontal.go` 的 computeReplicasForMetrics 与convertDesiredReplicasWithRules，后者叠加稳定窗口：缩容取 `behavior.scaleDown.stabilizationWindowSeconds`（默认 300s）内历史建议的最大值，避免指标瞬时回落就缩掉刚扩出的 Pod；扩容受 `scaleUp.policies` 速率限制。
 
-源码在 kubernetes/pkg/controller/podautoscaler/`horizontal.go` 的 computeReplicasForMetrics 与convertDesiredReplicasWithRules，后者叠加稳定窗口：缩容取 `behavior.scaleDown.stabilizationWindowSeconds`（默认 300s）内历史建议的最大值，避免指标瞬时回落就缩掉刚扩出的 Pod；
+由公式能推出「扩容永远追不上流量」的量化条件：设流量每秒增长 r、单 Pod 容量 c、冷启动耗时 T_cold，从指标越限到新 Pod Ready 至少要 T_sync + T_schedule + T_cold 秒，容量缺口是 r 乘该延迟再减现有余量；镜像 1.1GB、拉镜像两分钟时 T_cold 远大于 RPS 爬升时间，desiredReplicas 算得再正确也已经超时。
 
-扩容受 `scaleUp.policies` 速率限制。
+因此镜像瘦身是把 T_cold 压进 SLO 预算，同时配 minReplicas 预留 buffer 或用并发数等指标提前扩。
 
-由公式能推出「扩容永远追不上流量」的量化条件：设流量每秒增长 r、单 Pod 容量 c、冷启动耗时 T_cold，从指标越限到新 Pod Ready 至少要 T_sync + T_schedule + T_cold 秒，容量缺口是 r 乘该延迟再减现有余量；
-
-镜像 1.1GB、拉镜像两分钟时 T_cold 远大于 RPS 爬升时间，desiredReplicas 算得再正确也已经超时。因此镜像瘦身是把 T_cold 压进 SLO 预算，同时配 minReplicas 预留 buffer 或用并发数等指标提前扩。
-
-滚动更新另有一条算术：maxSurge 与 maxUnavailable 决定总 Pod 上限 replicas+maxSurge 与最低可用 replicas-maxUnavailable，二者不能同时为 0，源码在 pkg/controller/deployment/`rolling.go`。
+滚动更新另有一条算术：maxSurge 与 maxUnavailable 决定总 Pod 上限 replicas+maxSurge 与最低可用 replicas-maxUnavailable，二者不能同时为 0，源码在 `pkg/controller/deployment/rolling.go`。
 
 ```python
 import math
@@ -305,9 +297,7 @@ print('rolling_8_2_1', rolling(8, 2, 1))
 
 若 maxSurge 与 maxUnavailable 都设 25%，8 副本时上限 10、下限 6；控制器对百分比向上取整 surge、向下取整 unavailable，8 乘 0.25 恰为 2 与 2 没有歧义，换成 7 副本就变成 2 与 1。
 
-容易踩坑的两点：`maxSurge=0` 且 `maxUnavailable=0` 会被 API 拒绝；
-
-maxUnavailable 等于 replicas 时控制器可能一次删光旧 Pod，可用数掉到 0。
+容易踩坑的两点：`maxSurge=0` 且 `maxUnavailable=0` 会被 API 拒绝；maxUnavailable 等于 replicas 时控制器可能一次删光旧 Pod，可用数掉到 0。
 
 还有一层与 Python 强相关的时序：Pod 删除时 kubelet 先发 `SIGTERM`，terminationGracePeriodSeconds 默认 30s，但 endpoint 从 Service 摘除是异步传播（kube-proxy、Ingress、CoreDNS 各有缓存），旧 Pod 已收到 `SIGTERM` 而摘除未生效时仍有新流量进入，于是出现 502。
 
@@ -328,9 +318,7 @@ preStop hook 先 sleep 5 到 10 秒就是给这段传播留窗口，配合 readi
 
 一个 FastAPI 服务设 memory `limit=512Mi`，压测均值 RSS 380Mi，运维按均值设成 480Mi。上线后每晚批量导入时段 Pod 反复被 OOMKill，重启后立刻预热又撞上下一批。
 
-cgroup v2 的账本解释了原因：容器上限是 `memory.max`=480Mi，内核统计的是整个 cgroup 的 `memory.current`（含页缓存、内核栈、所有线程栈），不是 Python 进程看到的堆；
-
-CPython 的 pymalloc arena 释放后留在 usable_arenas 链表不归还 OS，dict 过度分配、导入缓存与 C 扩展的原生 malloc 都不经过 Python 分配器，tracemalloc 只看得到一部分。
+cgroup v2 的账本解释了原因：容器上限是 `memory.max`=480Mi，内核统计的是整个 cgroup 的 `memory.current`（含页缓存、内核栈、所有线程栈），不是 Python 进程看到的堆；CPython 的 pymalloc arena 释放后留在 usable_arenas 链表不归还 OS，dict 过度分配、导入缓存与 C 扩展的原生 malloc 都不经过 Python 分配器，tracemalloc 只看得到一部分。
 
 导入让 RSS 冲到 520Mi，内核 OOM Killer 直接发 `SIGKILL`（信号 9，无法捕获、无 finally、无优雅退出）。修复是按压测 p99 RSS 加三成余量设 limits、requests 略低于 limits、暴露 RSS 指标并配重启次数告警。下面复现「均值安全、p99 超限」的判定。
 

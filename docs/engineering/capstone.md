@@ -18,9 +18,7 @@ description: 完整走一遍工程化闭环
 
 现在要交给三个团队复用，最朴素的做法是把文件复制过去再附一份 `requirements.txt`。
 
-第一次交付就翻车：对方装完依赖后 `import report` 报 `ModuleNotFoundError`，因为单文件从未打成包，本地能跑靠的是仓库根目录恰好在 `sys.path` 里；
-
-有人机器上是 `httpx 0.27`、CI 解析到 `0.28`，接口行为变了；重构把发消息的函数挪了位置，没有测试，谁也说不清金额统计是否和昨天一致；发版时才发现上一个版本号已经在 PyPI 上，覆盖不了，只能临时改版本号救火。
+第一次交付就翻车：对方装完依赖后 `import report` 报 `ModuleNotFoundError`，因为单文件从未打成包，本地能跑靠的是仓库根目录恰好在 `sys.path` 里；有人机器上是 `httpx 0.27`、CI 解析到 `0.28`，接口行为变了；重构把发消息的函数挪了位置，没有测试，谁也说不清金额统计是否和昨天一致；发版时才发现上一个版本号已经在 PyPI 上，覆盖不了，只能临时改版本号救火。
 
 这些不是四个独立故障，而是同一条工程化闭环缺了四段：可安装的目录结构、锁定的依赖、行为保持的测试、可重复且能回滚的发布。本讲按小步把四段补齐，并让每一步都有可运行的判据。
 
@@ -44,9 +42,7 @@ description: 完整走一遍工程化闭环
 
 src layout 把源码收进 `src/pkgname/`，根目录不再有可导入的包，必须先安装才能 `import`，测试跑的正是安装后的产物，假通过当场暴露。
 
-PEP 517 把构建拆成前端（`pip`、`build`）与后端（`setuptools`、`hatchling`、`flit_core`），由 `pyproject.toml` 的 `[build-system]` 声明 `requires` 与 `build-backend`；
-
-`setuptools` 从 61 版起支持在 `pyproject.toml` 里写 `[project]` 元数据，不必再维护 `setup.py`。
+PEP 517 把构建拆成前端（`pip`、`build`）与后端（`setuptools`、`hatchling`、`flit_core`），由 `pyproject.toml` 的 `[build-system]` 声明 `requires` 与 `build-backend`；`setuptools` 从 61 版起支持在 `pyproject.toml` 里写 `[project]` 元数据，不必再维护 `setup.py`。
 
 PEP 660 定义可编辑安装，`pip install` 会把源码目录挂进解释器路径，改代码即时生效。
 
@@ -117,11 +113,7 @@ print('guarded', any(isinstance(n, ast.If) for n in tree.body))
 
 ## 依赖锁定、控制台入口点与发布产物
 
-`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖；
-
-`requires-python = '>=3.9'` 让 `pip` 在不兼容解释器上直接拒绝安装；
-
-`dependencies` 写兼容范围，锁文件里才 pin 精确值。
+`[project]` 表是 PEP 621 标准化的元数据：`name` 是发行名（可与 `import` 包名不同，含连字符时 import 名用下划线），`version` 遵循 PEP 440（如 `1.4.0`、`2.0rc1`、`1.0.dev3`），发布到 PyPI 后同名同版本不可覆盖；`requires-python = '>=3.9'` 让 `pip` 在不兼容解释器上直接拒绝安装；`dependencies` 写兼容范围，锁文件里才 pin 精确值。
 
 范围与锁定是两件事：`pip-compile` 或 `uv pip` 读 `pyproject.toml` 解析出 `requirements.lock`，带 `--generate-hashes` 后每条都附摘要，CI 用 `pip install` 或 `pip install` 复现同一依赖集合，杜绝解析漂移。
 
@@ -214,15 +206,13 @@ print('functions', [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
 
 ## 测试先行、CI 矩阵与可回滚发布
 
-顺序决定成败：先补特征测试（characterization test）锁住当前可观察行为，哪怕其中藏着旧 bug 也照实记录，再动结构；这样每次小步重构后跑一遍，就能证明行为保持，而不是把重构做成重写。`pytest` 靠 `rootdir` 与 `conftest.py` 组织夹具，把被测包以可编辑安装方式装进同一环境；
+顺序决定成败：先补特征测试（characterization test）锁住当前可观察行为，哪怕其中藏着旧 bug 也照实记录，再动结构；这样每次小步重构后跑一遍，就能证明行为保持，而不是把重构做成重写。
 
-覆盖率用 `coverage.py` 或 `pytest-cov` 量化，但覆盖率是发现盲区的工具，不是行为正确的证明。
+`pytest` 靠 `rootdir` 与 `conftest.py` 组织夹具，把被测包以可编辑安装方式装进同一环境；覆盖率用 `coverage.py` 或 `pytest-cov` 量化，但覆盖率是发现盲区的工具，不是行为正确的证明。
 
 CI 矩阵用 `tox`、`nox` 或 GitHub Actions 的 matrix 覆盖 Python 3.9 到 3.13 与 Linux/macOS/Windows，每格都从锁文件安装后跑同一组命令，本地能过线上才能过。
 
-发布流水线把 `git tag`、版本号、构建、上传串起来：版本只能有一个来源，用 `importlib.metadata.version('shortly')` 从 `.dist-info` 读，而不是在源码里再写一份 `__version__`；
-
-上传用 `twine upload dist/*`，仓库凭据走 `OIDC` 或 token 而不落盘。
+发布流水线把 `git tag`、版本号、构建、上传串起来：版本只能有一个来源，用 `importlib.metadata.version('shortly')` 从 `.dist-info` 读，而不是在源码里再写一份 `__version__`；上传用 `twine upload dist/*`，仓库凭据走 `OIDC` 或 token 而不落盘。
 
 回滚不是覆盖：PyPI 拒绝同名同版本重传，紧急修复要发新版本；对已发布但有问题的版本可用 `yank`（PEP 592）阻止新解析命中，已 pin 的依赖仍能装。回滚路径是让下游 pin 回上一版本号，并在流水线里保留上一版产物与回滚脚本，发布后用 `python -I` 隔离模式跑一次导入冒烟。
 
@@ -233,9 +223,7 @@ CI 矩阵用 `tox`、`nox` 或 GitHub Actions 的 matrix 覆盖 Python 3.9 到 3
 
 PEP 517 把「怎么构建」与「谁来驱动构建」解耦：`pip` 或 `build` 作为前端，先创建隔离虚拟环境、装入 `[build-system].requires` 声明的后端，再调用后端约定的 `build_wheel` / `build_sdist` 钩子。
 
-wheel 本质是 zip，内含包代码与一份 `.dist-info`（`METADATA`、`RECORD`、`entry_points.txt`、`WHEEL`），`pip` 安装 wheel 时只做解压、按 `entry_points` 生成脚本、写 `RECORD` 清单，不执行任何项目构建代码，因此安装快且可复现；
-
-sdist 则要求目标机器具备编译器与后端，失败率更高。
+wheel 本质是 zip，内含包代码与一份 `.dist-info`（`METADATA`、`RECORD`、`entry_points.txt`、`WHEEL`），`pip` 安装 wheel 时只做解压、按 `entry_points` 生成脚本、写 `RECORD` 清单，不执行任何项目构建代码，因此安装快且可复现；sdist 则要求目标机器具备编译器与后端，失败率更高。
 
 `pip` 解析依赖时读 `METADATA` 的 `Requires-Dist`，按 `requires-python` 与版本范围挑候选，这一步每次运行都可能得到不同结果，正是锁文件要消掉的不确定性。
 
@@ -252,9 +240,7 @@ sdist 则要求目标机器具备编译器与后端，失败率更高。
 
 一个团队把脚本拆成包后，最容易在发布当天才发现打错了目录或漏了字段。
 
-把发布前的判据写成一个不依赖第三方库的检查器，随代码提交、在 CI 里执行：先确认仓库里存在 `src/shortly/__init__.py` 与 `pyproject.toml`（src layout 的最低证据），再用 `tomllib` 解析元数据，检查 `name`、`version`、`requires-python`、`dependencies` 四个必需字段是否齐全，顺便确认依赖里确实有精确 pin；
-
-接着用 `ast` 检查包内模块是否用相对导入（`from .core import ...`）而不是硬编码顶层包名，并确认 `__main__` guard 仍保留。
+把发布前的判据写成一个不依赖第三方库的检查器，随代码提交、在 CI 里执行：先确认仓库里存在 `src/shortly/__init__.py` 与 `pyproject.toml`（src layout 的最低证据），再用 `tomllib` 解析元数据，检查 `name`、`version`、`requires-python`、`dependencies` 四个必需字段是否齐全，顺便确认依赖里确实有精确 pin；接着用 `ast` 检查包内模块是否用相对导入（`from .core import ...`）而不是硬编码顶层包名，并确认 `__main__` guard 仍保留。
 
 这段检查把「工程化做没做对」从口头约定变成布尔结果，任何一项为假就卡住发布。真实项目再接 wheel 内容扫描与 `twine check`，但骨架就是这个：每一项失败都必须能指向具体文件与具体字段。
 
@@ -307,7 +293,7 @@ print('main guard', has_main_guard(CLI))
 
 <Callout type="idea" title='落地提示' text='按小步推进：行为保持的测试先行，再动结构，最后接 CI 与发布；保留回滚路径' />
 
-<CheckList id='P081b' title='上线前自检' :items='["能复现并解释「本机 pytest 全绿，别处 pip install 后…」", "能复现并解释「依赖只写 requirements.txt 里的包名，CI…」", "能复现并解释「线上出了 bug 想用同一版本号重新上传修复包」", "能用一条命令验证 目录重构", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P081a' title='上线前自检' :items='["能复现并解释「本机 pytest 全绿，别处 pip install 后…」", "能复现并解释「依赖只写 requirements.txt 里的包名，CI…」", "能复现并解释「线上出了 bug 想用同一版本号重新上传修复包」", "能用一条命令验证 目录重构", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -m compileall -q . && python -m pytest -q

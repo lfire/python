@@ -34,10 +34,6 @@ print('sleep dominates', wall - cpu > cpu)
 samples = timeit.repeat('sum(range(1000))', number=500, repeat=5)
 print('rounds', len(samples), 'min_le_mean', min(samples) <= sum(samples) / len(samples))
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # driver tracked True
@@ -71,10 +67,6 @@ print('genexpr tracked', 'genexpr' in text)
 print('total_calls_positive', st.total_calls > 0)
 print('sort key', pstats.SortKey.CUMULATIVE.value)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 3. 原理验证 ========================
 # 预期输出：
 # peak >= current True
@@ -98,10 +90,6 @@ print('diff rows > 0', len(diff) > 0)
 print('top size_diff >= 0', diff[0].size_diff >= 0)
 print('traced bytes > 0', current > 0)
 tracemalloc.stop()
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

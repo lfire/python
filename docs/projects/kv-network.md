@@ -37,15 +37,15 @@ print('fsync signature', str(inspect.signature(os.fsync)))
 
 ## TCP 字节流与长度前缀帧：消息边界要自己造
 
-`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。换行分隔在值里含换行时立即失效，且要为分隔符做转义；
+`TCP` 只保证字节按序到达，不保留 send 的边界：内核按 MSS、发送/接收缓冲与 Nagle 算法任意切分，一次 `recv` 可能拿到半条、一条半、多条，这是拆包与粘包的根源。
 
-正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pack('>H', n)` 两字节大端（网络字节序），或 `'>I'` 四字节，最大 `2^32-1`，但生产必须另设 `MAX_FRAME`（如 1MB）防止单条超大请求打满内存。
+换行分隔在值里含换行时立即失效，且要为分隔符做转义；正确做法是长度前缀：固定字节头声明 body 长度，例如 `struct.pack('>H', n)` 两字节大端（网络字节序），或 `'>I'` 四字节，最大 `2^32-1`，但生产必须另设 `MAX_FRAME`（如 1MB）防止单条超大请求打满内存。
 
 帧头再加 `MAGIC`（如 `b'KV'`）快速识别协议、`VERSION` 显式版本号便于不兼容升级、`CRC32`（`zlib.crc32`，检错不防篡改，防篡改要 `HMAC`）。
 
-服务端用 `asyncio.StreamReader.readexactly` 精确读 n 字节，它内部循环 `read` 直到凑齐或抛 `IncompleteReadError`；
+服务端用 `asyncio.StreamReader.readexactly` 精确读 n 字节，它内部循环 `read` 直到凑齐或抛 `IncompleteReadError`；半包要先把已到字节缓存进缓冲区等下一批，粘包要在一个循环里连续切出多帧。
 
-半包要先把已到字节缓存进缓冲区等下一批，粘包要在一个循环里连续切出多帧。失效信号：偶发解析错位、大请求打满内存、旧客户端连上后返回乱码。
+失效信号：偶发解析错位、大请求打满内存、旧客户端连上后返回乱码。
 
 **帧格式字段布局**
 
@@ -150,13 +150,9 @@ print('value with newline', cut_newline(two))
 
 ## 序列化选型对照与显式版本号
 
-文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；
+文本协议（空格分隔）简单可调试，但值里含空格或换行就要转义；`json.dumps`/`loads` 跨语言、可读、`sort_keys=True` 可让字节稳定，但不支持裸二进制且数字精度有限；msgpack 与 Protobuf 紧凑且有 schema，需第三方库；`pickle` 绝不能用于网络——反序列化会执行任意代码，是明确的远程代码执行风险；`struct` 适合定长头与数值。
 
-`pickle` 绝不能用于网络——反序列化会执行任意代码，是明确的远程代码执行风险；`struct` 适合定长头与数值。
-
-服务端用 `asyncio.start_server` 返回 `Server`，每个连接调一次 `handle(reader, writer)` 协程；
-
-连接管理要设超时（`asyncio.wait_for` 或 3.11 起的 `asyncio.timeout` 上下文）、限制并发连接数（`Semaphore`）、处理半关闭（EOF 时 `readexactly` 抛 `IncompleteReadError`，`finally` 里 `writer.close()` 配 `await writer.wait_closed()`），并记录 peer 地址。
+服务端用 `asyncio.start_server` 返回 `Server`，每个连接调一次 `handle(reader, writer)` 协程；连接管理要设超时（`asyncio.wait_for` 或 3.11 起的 `asyncio.timeout` 上下文）、限制并发连接数（`Semaphore`）、处理半关闭（EOF 时 `readexactly` 抛 `IncompleteReadError`，`finally` 里 `writer.close()` 配 `await writer.wait_closed()`），并记录 peer 地址。
 
 客户端 SDK 封装 `open_connection`、帧编码、读响应、超时与重连，让调用方看不到字节。
 
@@ -188,9 +184,9 @@ print('value with newline', cut_newline(two))
 
 `TCP` 是面向字节流的传输层协议，send 的边界在接收侧不可见：内核按 MSS 与缓冲区切分，Nagle 还可能合并小包，因此消息边界必须由应用层协议自己定义。
 
-长度前缀把边界编码进固定字节头，接收方用 `readexactly(n)` 循环 `read` 直到凑齐 n 字节或抛 `IncompleteReadError`，这正是把「不知道读多少」变成「精确读多少」；
+长度前缀把边界编码进固定字节头，接收方用 `readexactly(n)` 循环 `read` 直到凑齐 n 字节或抛 `IncompleteReadError`，这正是把「不知道读多少」变成「精确读多少」；`struct` 的 `>` 前缀指定大端（网络字节序），`'>H'` 是 2 字节、`'>I'` 是 4 字节，258 编码成 0102 而小端是 0201。
 
-`struct` 的 `>` 前缀指定大端（网络字节序），`'>H'` 是 2 字节、`'>I'` 是 4 字节，258 编码成 0102 而小端是 0201。`CRC32` 是循环冗余校验，能检出随机位翻转但不防恶意篡改，后者要 `HMAC`。
+`CRC32` 是循环冗余校验，能检出随机位翻转但不防恶意篡改，后者要 `HMAC`。
 
 `asyncio` 的 `StreamReader`/`StreamWriter` 把 socket 包成协程友好的流，`start_server` 为每个连接起一个 `handle` 协程，`Semaphore` 与 `wait_for` 分别约束连接数与超时；端口 0 让内核分配空闲端口，避免测试冲突。
 
@@ -220,7 +216,7 @@ print('value with newline', cut_newline(two))
 | struct 定长头 | 是 | 是 | 只适合定长字段 |
 | pickle | 否 | 是 | 反序列化执行任意代码，禁止用于网络 |
 
-<CheckList id='P130b' title='上线前自检' :items='["能复现并解释「用换行分隔命令，值里含换行就失效」", "能复现并解释「不设最大帧长度，单条超大请求打满内存」", "能复现并解释「只测能跑通，不测半包与粘包」", "能用一条命令验证 TCP 粘包与长度前缀", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P130a' title='上线前自检' :items='["能复现并解释「用换行分隔命令，值里含换行就失效」", "能复现并解释「不设最大帧长度，单条超大请求打满内存」", "能复现并解释「只测能跑通，不测半包与粘包」", "能用一条命令验证 TCP 粘包与长度前缀", "关键路径有自动化测试与失败分支"]' />
 
 
 ## 拆包粘包失败模式速查
@@ -236,9 +232,7 @@ print('value with newline', cut_newline(two))
 
 ## asyncio 长度前缀服务端与客户端 SDK
 
-把协议帧落到真实连接上：服务端用 `asyncio.start_server` 绑定 127.0.0.1 与端口 0，每个连接先用 `readexactly(4)` 读四字节长度头，再 `readexactly(length)` 读 body，回写同样的长度前缀帧；
-
-客户端 SDK 封装 `open_connection`、编码、读响应、`writer.close` 与 `wait_closed`，让调用方只看到字节结果。
+把协议帧落到真实连接上：服务端用 `asyncio.start_server` 绑定 127.0.0.1 与端口 0，每个连接先用 `readexactly(4)` 读四字节长度头，再 `readexactly(length)` 读 body，回写同样的长度前缀帧；客户端 SDK 封装 `open_connection`、编码、读响应、`writer.close` 与 `wait_closed`，让调用方只看到字节结果。
 
 handler 里必须捕获 `IncompleteReadError` 处理半关闭，`finally` 里关闭 writer，避免连接泄漏。
 
@@ -353,15 +347,15 @@ print('truncated', p_len > len(partial) - 8)
 
 WAL 的吞吐瓶颈从来不是 append 而是 fsync。每次写都 fsync 能保证最强一致，但一次 fsync 要刷数据加元数据，单请求串行等它 QPS 会被钉死。
 
-组提交把同一时间窗内到达的多条 append 排成队列：leader 负责一次性 write 加 fsync，follower 挂在这个完成事件上一起返回，N 条写摊薄成一次刷盘，吞吐随并发上升而单请求延迟只增加一个排队时长；
+组提交把同一时间窗内到达的多条 append 排成队列：leader 负责一次性 write 加 fsync，follower 挂在这个完成事件上一起返回，N 条写摊薄成一次刷盘，吞吐随并发上升而单请求延迟只增加一个排队时长；InnoDB 的 innodb_flush_log_at_trx_commit 与 RocksDB 的 group commit 都是这个结构。
 
-InnoDB 的 innodb_flush_log_at_trx_commit 与 RocksDB 的 group commit 都是这个结构。代价是延迟尾部长尾化，且要定义刷盘方案：always 每条都刷、everysec 由后台线程每秒刷一批、never 交给 OS。
+代价是延迟尾部长尾化，且要定义刷盘方案：always 每条都刷、everysec 由后台线程每秒刷一批、never 交给 OS。
 
 第二个常被漏掉的点是目录 fsync：`os.replace` 改的是目录项，文件本身 fsync 只保证内容落盘，rename 的持久性还要对父目录以 `O_DIRECTORY` 打开再 fsync 一次，否则断电后新快照名可能回退。
 
-检查点压缩按固定序：写 `snapshot.tmp`、fsync、原子 rename、更新 `CURRENT` 清单（记录快照号与起始 LSN）、fsync 目录、才截断旧 WAL。崩溃窗口逐个可判：tmp 阶段崩溃删 tmp 重来；rename 后 `CURRENT` 未更新按旧清单重放全部 WAL；
+检查点压缩按固定序：写 `snapshot.tmp`、fsync、原子 rename、更新 `CURRENT` 清单（记录快照号与起始 LSN）、fsync 目录、才截断旧 WAL。
 
-`CURRENT` 已更新但 WAL 未截断，重放跳过已覆盖的 LSN 即可，重复应用幂等。
+崩溃窗口逐个可判：tmp 阶段崩溃删 tmp 重来；rename 后 `CURRENT` 未更新按旧清单重放全部 WAL；`CURRENT` 已更新但 WAL 未截断，重放跳过已覆盖的 LSN 即可，重复应用幂等。
 
 上线前用 kill -9 做断电演练，在 WAL 追加、fsync、改内存、返回 OK 四步各注入一次崩溃。第一次暴露两个问题：开发机把刷盘方案设成 never，断电后 37 条已返回 OK 的写全丢；检查点直接覆盖写快照，压缩中途被杀留下半截文件，恢复时把它当有效快照，数据回退两天。
 

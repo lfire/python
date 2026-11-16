@@ -27,10 +27,6 @@ print('names', code_obj.co_names)
 print('nbytes', len(code_obj.co_code) > 0)
 exec(code_obj)
 
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
-
 # ======================== 2. 对照写法 ========================
 # 预期输出：
 # exec_returns None
@@ -46,10 +42,6 @@ print('eval_returns', eval(eval_code))
 print('exec_has_none_const', None in exec_code.co_consts)
 print('eval_consts', eval_code.co_consts)
 print('eval_names', eval_code.co_names)
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 3. 原理验证 ========================
 # 预期输出：
@@ -70,10 +62,6 @@ print('has_binary_op', any(i.opname == 'BINARY_OP' for i in dis.get_instructions
 cache = importlib.util.cache_from_source('pkg/mod.py')
 print('in_pycache', '__pycache__' in cache)
 print('ends_pyc', cache.endswith('.pyc'))
-
-# —— 段间隔离：撤回上一段注册的自定义 finder，保证各段可独立运行 ——
-import sys as _eg_sys
-_eg_sys.meta_path[:] = [f for f in _eg_sys.meta_path if getattr(f, '__module__', None) != '__main__']
 
 # ======================== 4. 工程案例 ========================
 

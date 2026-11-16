@@ -14,9 +14,7 @@ description: 理解执行上下文如何被创建与销毁
 
 ## 一个 traceback 里 f_locals 和预期对不上的调试现场
 
-一个覆盖率工具上线后结果明显偏低：开发者在函数里通过 `locals()['x'] = 99` 修改局部变量，期待后续逻辑读到 99，实际变量纹丝不动，覆盖到的分支自然对不上；
-
-换成 `frame.f_locals` 又发现 3.13 上行为完全相反，老资料里的快照结论对不上了。
+一个覆盖率工具上线后结果明显偏低：开发者在函数里通过 `locals()['x'] = 99` 修改局部变量，期待后续逻辑读到 99，实际变量纹丝不动，覆盖到的分支自然对不上；换成 `frame.f_locals` 又发现 3.13 上行为完全相反，老资料里的快照结论对不上了。
 
 另一处线上事故来自递归：一个没有正确收敛的解析函数在深层输入上抛 `RecursionError`（提示超过最大递归深度），有人把 `sys.setrecursionlimit` 一路调到十万，结果解释器直接崩溃。
 
@@ -46,9 +44,7 @@ description: 理解执行上下文如何被创建与销毁
 
 获取方式：`sys._getframe(depth)`（`depth=0` 是当前帧）或 `inspect.currentframe()`。
 
-关键差异在 `f_globals is globals()` 通常为 `True`——它是真实模块字典，往里写会立刻影响全局名字；
-
-而 `locals()` 是把 fast locals 数组同步出来的独立快照字典，写入不回写。
+关键差异在 `f_globals is globals()` 通常为 `True`——它是真实模块字典，往里写会立刻影响全局名字；而 `locals()` 是把 fast locals 数组同步出来的独立快照字典，写入不回写。
 
 CPython 3.11 起帧数据尽量内联在解释器的 `_PyInterpreterFrame` 里，只在被 `sys._getframe`、traceback 或生成器暴露时才物化成 `PyFrameObject`，降低了调用开销。
 
@@ -98,19 +94,17 @@ print('result', probe())
 
 ## 执行上下文在 CPython 里如何创建与销毁
 
-CPython 每次 Python 函数调用都建立一个执行帧。3.11 之前帧是堆上的 `PyFrameObject`；
+CPython 每次 Python 函数调用都建立一个执行帧。
 
-3.11 起改成尽量内联的 `_PyInterpreterFrame`，放在解释器的数据栈 chunk 里，只有在 `sys._getframe()`、traceback 或生成器需要暴露时才物化出 `PyFrameObject`，从而减少分配与间接寻址。
+3.11 之前帧是堆上的 `PyFrameObject`；3.11 起改成尽量内联的 `_PyInterpreterFrame`，放在解释器的数据栈 chunk 里，只有在 `sys._getframe()`、traceback 或生成器需要暴露时才物化出 `PyFrameObject`，从而减少分配与间接寻址。
 
 局部变量存在 fast locals 数组里，`LOAD_FAST` 按索引读取；`locals()` 把这份数组同步成独立快照字典返回，写入不回写，而 `globals()` 直接返回模块字典、修改立即生效。
 
 3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理（写入直达 fast locals），`locals()` 则明确保持独立快照；3.12 及以前两者都是快照。生成器不销毁帧：`gi_frame` 保留局部变量与 `f_lasti`，`next()` 从断点恢复，耗尽后释放。
 
-递归深度由 C 层计数与 `sys.getrecursionlimit` 约束，超限抛 `RecursionError`；
+递归深度由 C 层计数与 `sys.getrecursionlimit` 约束，超限抛 `RecursionError`；调得过高会先耗尽 C 栈。
 
-调得过高会先耗尽 C 栈。traceback 是异常对象上的 tb 链，节点指向帧、行号与下一节点，traceback 模块沿链打印。
-
-`sys.settrace` / `sys.setprofile` 在 `call` / `line` / `return` / `exception` 事件上回调 Python 函数，开销与事件密度成正比。
+traceback 是异常对象上的 tb 链，节点指向帧、行号与下一节点，traceback 模块沿链打印。`sys.settrace` / `sys.setprofile` 在 `call` / `line` / `return` / `exception` 事件上回调 Python 函数，开销与事件密度成正比。
 
 <ConceptDiagram type='flow4' title='第 051 讲 · 帧对象：f_locals、f_globals、f_back 与属性查找' labels='帧对象：f_locals、f_globals…|调用栈、递归深度与 tracing 回调|生成器帧保留与 locals() 语义边界|locals() 的语义' caption='理解执行上下文如何被创建与销毁' />
 
@@ -123,13 +117,9 @@ CPython 每次 Python 函数调用都建立一个执行帧。3.11 之前帧是�
 
 调用栈由帧的 `f_back` 链构成，异常对象的 `__traceback__` 也沿这条链记录每个帧与行号，traceback 模块打印的就是它。
 
-递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`；
+递归深度由 C 层计数与 `sys.getrecursionlimit()`（默认 1000）共同约束，超过抛 `RecursionError`；`sys.setrecursionlimit(n)` 可调，但盲目调极高会让 C 栈先溢出，正确做法是给递归补收敛基线或改成迭代。
 
-`sys.setrecursionlimit(n)` 可调，但盲目调极高会让 C 栈先溢出，正确做法是给递归补收敛基线或改成迭代。
-
-`sys.settrace(fn)` 注册全局追踪函数，事件有 `'call'`、`'line'`、`'return'`、`'exception'`，局部追踪函数由 `'call'` 的返回值决定；
-
-`sys.setprofile(fn)` 事件更粗（`call` / `return` / `c_call` / `c_return` / `c_exception`），适合做 profiler 与覆盖率。
+`sys.settrace(fn)` 注册全局追踪函数，事件有 `'call'`、`'line'`、`'return'`、`'exception'`，局部追踪函数由 `'call'` 的返回值决定；`sys.setprofile(fn)` 事件更粗（`call` / `return` / `c_call` / `c_return` / `c_exception`），适合做 profiler 与覆盖率。
 
 两者只对当前线程生效，且每行、每次调用都回调 Python 函数，生产环境长期开启开销显著，用完必须 `sys.settrace(None)` / `sys.setprofile(None)` 关闭。
 
@@ -185,9 +175,11 @@ finally:
 
 `inspect.getgeneratorstate(g)` 返回 `GEN_CREATED` / `GEN_RUNNING` / `GEN_SUSPENDED` / `GEN_CLOSED` 四态之一，生成器耗尽或关闭后 `gi_frame` 被置为 `None`。
 
-这正是惰性求值与协程能成立的物理基础，也解释了为什么生成器里的局部变量能跨多次 `next` 保留。`locals()` 的语义要按版本分层记：在函数里它返回独立快照字典，写入不改变局部变量；3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理，写它会真正改变局部变量（3.12 及以前仍是快照）；
+这正是惰性求值与协程能成立的物理基础，也解释了为什么生成器里的局部变量能跨多次 `next` 保留。
 
-`globals()` 始终返回真实模块字典，修改立即生效。若业务确实需要「按名字改局部状态」，正确做法是直接赋值局部变量，或把状态放进一个可变容器（字典 / 对象属性）再改容器，不要依赖随版本翻转的 `f_locals` 行为。把 3.12 的快照结论套到 3.13，是写调试器与单测 mock 时最常见的误用。
+`locals()` 的语义要按版本分层记：在函数里它返回独立快照字典，写入不改变局部变量；3.13 的 PEP 667 把 `frame.f_locals` 改成写透代理，写它会真正改变局部变量（3.12 及以前仍是快照）；`globals()` 始终返回真实模块字典，修改立即生效。
+
+若业务确实需要「按名字改局部状态」，正确做法是直接赋值局部变量，或把状态放进一个可变容器（字典 / 对象属性）再改容器，不要依赖随版本翻转的 `f_locals` 行为。把 3.12 的快照结论套到 3.13，是写调试器与单测 mock 时最常见的误用。
 
 ```python
 import inspect
@@ -265,7 +257,7 @@ print('trace disabled after', sys.gettrace() is None)
 
 <Callout type="idea" title='落地提示' text='写 profiler、覆盖率工具、调试器时用 sys.setprofile / settrace；生产环境避免长期开启，开销与线程行为都要评估' />
 
-<CheckList id='P051b' title='上线前自检' :items='["能复现并解释「在帧里改 locals() 期待改变局部变量，或把 3.12…」", "能复现并解释「生产服务长期开启 sys.settrace / setpro…」", "能复现并解释「递归爆栈后盲目把 setrecursionlimit 调到极…」", "能用一条命令验证 帧对象与 f_locals / f_globals", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P051a' title='上线前自检' :items='["能复现并解释「在帧里改 locals() 期待改变局部变量，或把 3.12…」", "能复现并解释「生产服务长期开启 sys.settrace / setpro…」", "能复现并解释「递归爆栈后盲目把 setrecursionlimit 调到极…」", "能用一条命令验证 帧对象与 f_locals / f_globals", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis; dis.dis(lambda x: x+1)"

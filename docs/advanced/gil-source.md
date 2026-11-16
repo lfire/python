@@ -27,9 +27,9 @@ GIL 的获取释放点、eval breaker、自适应特化与自由线程化是四�
 
 ## GIL 的获取释放点与 eval breaker
 
-GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；
+GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。
 
-阻塞式 IO、`time.sleep` 与释放 GIL 的 C 扩展，会在进入系统调用前用 `Py_BEGIN_ALLOW_THREADS` 临时释放、完成后用 `Py_END_ALLOW_THREADS` 重新获取，期间不得触碰任何 Python 对象。
+在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL 的 C 扩展，会在进入系统调用前用 `Py_BEGIN_ALLOW_THREADS` 临时释放、完成后用 `Py_END_ALLOW_THREADS` 重新获取，期间不得触碰任何 Python 对象。
 
 切换由 `sys.getswitchinterval()` 控制，默认 0.005 秒：到点设置 eval_breaker 让出请求，持有者在检查点（3.10 之后主要收敛到循环回边与函数调用处，不再每若干条指令检查）释放 GIL 并唤醒等待者。
 
@@ -62,9 +62,9 @@ C 扩展跑长计算时用 `Py_BEGIN_ALLOW_THREADS` 临时释放 GIL、结束后
 
 切换由 eval_breaker 标志位驱动：到 switchinterval 设置让出请求，持有者在循环回边与调用处检查并释放锁。
 
-3.11 的 PEP 659 把热点指令改写成带内联缓存的特化版本，缓存槽以 `CACHE` 条目排在 `co_code` 之后，自适应字节码存在 `_co_code_adaptive`；
+3.11 的 PEP 659 把热点指令改写成带内联缓存的特化版本，缓存槽以 `CACHE` 条目排在 `co_code` 之后，自适应字节码存在 `_co_code_adaptive`；类型变化会去优化回退，因此同一段代码预热前后耗时不同。
 
-类型变化会去优化回退，因此同一段代码预热前后耗时不同。PEP 703 的自由线程构建把引用计数改为偏向线程局部加延迟合并、容器访问加细粒度同步，代价是单线程回退与巨大的扩展适配工作，所以它不是开关，而是一次需要按构建分别验证的全生态迁移。
+PEP 703 的自由线程构建把引用计数改为偏向线程局部加延迟合并、容器访问加细粒度同步，代价是单线程回退与巨大的扩展适配工作，所以它不是开关，而是一次需要按构建分别验证的全生态迁移。
 
 <Term word='GIL 的获取与释放点' text='GIL 是保护解释器共享状态（引用计数、模块字典、类型系统）的互斥锁，不是语言规范，PyPy、Jython 没有它，CPython 3.13 的自由线程构建可以关掉它。在 `ceval.c` 的求值循环里，线程必须持有 GIL 才能执行字节码；阻塞式 IO、`time.sleep` 与释放 GIL 的 C 扩展，会在进…' />
 
@@ -77,11 +77,11 @@ PEP 659（3.11）引入 specializing adaptive interpreter：解释器在运行�
 
 例如 `BINARY_OP` 对两个 int 特化、`LOAD_ATTR` 对同一类型与属性版本特化为实例取值，命中缓存就跳过通用查找；类型变化则去优化回退。
 
-`dis.dis` 加上 `show_caches=True` 能看到 `CACHE` 槽，`adaptive=True` 在预热后可显示 `LOAD_ATTR_INSTANCE_VALUE` 一类特化指令；
+`dis.dis` 加上 `show_caches=True` 能看到 `CACHE` 槽，`adaptive=True` 在预热后可显示 `LOAD_ATTR_INSTANCE_VALUE` 一类特化指令；本机 3.13 实测一个属性读取带 9 个 `CACHE` 条目。
 
-本机 3.13 实测一个属性读取带 9 个 `CACHE` 条目。直接后果是微基准必须先预热：未预热走通用分派，预热后走特化路径，单次测量会把「是否触发 quickening」的噪声算进结论。`timeit` 的 `number` 与 `repeat` 参数正是为此提供重复执行；
+直接后果是微基准必须先预热：未预热走通用分派，预热后走特化路径，单次测量会把「是否触发 quickening」的噪声算进结论。`timeit` 的 `number` 与 `repeat` 参数正是为此提供重复执行；用 `perf_counter` 手测时也要丢弃前几轮。
 
-用 `perf_counter` 手测时也要丢弃前几轮。3.13 还叠加了超级指令与实验性 JIT 骨架，指令级结论更要绑定具体版本。
+3.13 还叠加了超级指令与实验性 JIT 骨架，指令级结论更要绑定具体版本。
 
 ```python
 import sys, dis, time
@@ -185,9 +185,7 @@ PEP 703 让 3.13 提供 `--disable-gil` 的实验性自由线程构建，`sys._i
 
 因此「无 GIL」不等于默认可用，更不等于所有多线程程序自动加速：纯 Python 计算在自由线程构建下能否并行，还取决于对象访问的同步开销与扩展是否放弃持锁假设。
 
-技术判断按四步走：先确认解释器版本与构建（`sys.version_info`、`sys.implementation.cache_tag`、`sys._is_gil_enabled()`）；
-
-再按构建与版本分别跑基准并预热；然后确认热点是在 Python 字节码、释放 GIL 的 C 扩展还是阻塞 IO；最后才选线程、进程或 C 扩展路线，并把结论写成带版本与构建标注的可复现脚本，而不是一句「Python 多线程慢」。
+技术判断按四步走：先确认解释器版本与构建（`sys.version_info`、`sys.implementation.cache_tag`、`sys._is_gil_enabled()`）；再按构建与版本分别跑基准并预热；然后确认热点是在 Python 字节码、释放 GIL 的 C 扩展还是阻塞 IO；最后才选线程、进程或 C 扩展路线，并把结论写成带版本与构建标注的可复现脚本，而不是一句「Python 多线程慢」。
 
 **并发选型按构建与负载判断**
 
@@ -243,7 +241,7 @@ bench()
 
 <Callout type="idea" title='落地提示' text='关注自由线程化对扩展与依赖的兼容进度，性能结论按解释器版本与构建分别测' />
 
-<CheckList id='P118b' title='上线前自检' :items='["能复现并解释「微基准只跑一次就下性能结论」", "能复现并解释「默认 3.13 已无 GIL，在 C 扩展里假设一直持锁」", "能复现并解释「把「多线程一定慢」当成定理」", "能用一条命令验证 GIL 的获取与释放点", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P118a' title='上线前自检' :items='["能复现并解释「微基准只跑一次就下性能结论」", "能复现并解释「默认 3.13 已无 GIL，在 C 扩展里假设一直持锁」", "能复现并解释「把「多线程一定慢」当成定理」", "能用一条命令验证 GIL 的获取与释放点", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
@@ -254,15 +252,13 @@ python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
 
 ## ceval_gil.c 的 _gil_runtime_state 与 take_gil / drop_gil
 
-GIL 是 Python/`ceval_gil.c` 里一套带定时等待的状态机。
+GIL 是 `Python/ceval_gil.c` 里一套带定时等待的状态机。
 
-核心结构 Include/internal/`pycore_gil.h` 的 _gil_runtime_state：_Py_atomic_int locked 表示是否被持有，interval 是默认 5ms 切换间隔（`sys.getswitchinterval()`），mutex 保护状态，cond 与 switch_number 用于等待唤醒，last_holder 记录上次持锁线程，自由线程构建下整条 take_gil/drop_gil 路径被旁路。
+核心结构 `Include/internal/pycore_gil.h` 的 _gil_runtime_state：_Py_atomic_int locked 表示是否被持有，interval 是默认 5ms 切换间隔（`sys.getswitchinterval()`），mutex 保护状态，cond 与 switch_number 用于等待唤醒，last_holder 记录上次持锁线程，自由线程构建下整条 take_gil/drop_gil 路径被旁路。
 
 另一半是原子标志 gil_drop_request 与 eval_breaker 位掩码。
 
-等待线程在 take_gil 里用带 interval 超时的条件变量等待，超时即置 gil_drop_request 并设 `_PY_EVAL_DROP_GIL_BIT`；
-
-执行线程通过 `CHECK_EVAL_BREAKER()` 查看 tstate->eval_breaker，看到该位后 drop_gil 并重新竞争。
+等待线程在 take_gil 里用带 interval 超时的条件变量等待，超时即置 gil_drop_request 并设 `_PY_EVAL_DROP_GIL_BIT`；执行线程通过 `CHECK_EVAL_BREAKER()` 查看 tstate->eval_breaker，看到该位后 drop_gil 并重新竞争。
 
 轮询点不是每条指令，而是 `JUMP_BACKWARD` 回边、`CALL`、`RESUME` 这些插了检查的位置，所以没有调用与回边的纯计算会长时间占住 GIL。
 
@@ -315,9 +311,9 @@ print('load_attr_ops', sorted(set(o for o in ops if o.startswith('LOAD_ATTR'))))
 
 ## specialize.c 的内联缓存守卫与 3.13 的 uop 追踪
 
-团队把一个用 C 写的指标聚合扩展从标准构建迁到 3.13t 自由线程构建，压测十分钟后进程 segfault，堆栈停在 PyList_GET_ITEM 与 Py_DECREF 之间。复盘发现扩展把一份共享 list 当作有 GIL 就安全，直接读元素、原地 PyList_SET_ITEM 且没有临界区；
+团队把一个用 C 写的指标聚合扩展从标准构建迁到 3.13t 自由线程构建，压测十分钟后进程 segfault，堆栈停在 PyList_GET_ITEM 与 Py_DECREF 之间。
 
-GIL 构建下调用被串行化，问题被掩盖，自由线程构建下两个线程同时改 list 与元素引用计数，出现 use-after-free。
+复盘发现扩展把一份共享 list 当作有 GIL 就安全，直接读元素、原地 PyList_SET_ITEM 且没有临界区；GIL 构建下调用被串行化，问题被掩盖，自由线程构建下两个线程同时改 list 与元素引用计数，出现 use-after-free。
 
 修复分三步：用 PEP 703 的 Py_mod_gil 槽声明 Py_MOD_GIL_NOT_USED，把共享容器读写收进 Py_BEGIN_CRITICAL_SECTION / Py_END_CRITICAL_SECTION，跨线程可见对象改用带锁 API。
 
@@ -348,19 +344,15 @@ print('no_corruption', len(shared) == 4000)
 
 ### tp_version_tag 失效如何让特化回退到通用指令
 
-3.11 的自适应特化由 Python/`specialize.c` 驱动：把通用指令改写成带内联缓存的专用版本，用类型版本号做廉价守卫。
+3.11 的自适应特化由 `Python/specialize.c` 驱动：把通用指令改写成带内联缓存的专用版本，用类型版本号做廉价守卫。
 
-热点指令在 co_code 后预留若干 `CACHE` 条目（dis 的 `show_caches=True` 可见），quickening 阶段把 `LOAD_ATTR` 换成 `ADAPTIVE` 版本；
+热点指令在 co_code 后预留若干 `CACHE` 条目（dis 的 `show_caches=True` 可见），quickening 阶段把 `LOAD_ATTR` 换成 `ADAPTIVE` 版本；adaptive_counter 计数达阈值后 `specialize()` 按运行时类型挑实现，例如 `LOAD_ATTR_INSTANCE_VALUE` 把取实例字典固化成一次带 tp_version_tag 与 keys_version 校验的偏移读取。
 
-adaptive_counter 计数达阈值后 `specialize()` 按运行时类型挑实现，例如 `LOAD_ATTR_INSTANCE_VALUE` 把取实例字典固化成一次带 tp_version_tag 与 keys_version 校验的偏移读取。
-
-守卫的 `PyTypeObject.tp_version_tag` 由 type_new 分配全局递增版本号，缓存记下当时的值，每次命中只比一次整数；
-
-setattr 改类属性会经 Objects/`typeobject.c` 的 type_modified 让该类型及子类失效，下一次 `DEOPT_IF` 失败即回退通用分派并重新计数。
+守卫的 `PyTypeObject.tp_version_tag` 由 type_new 分配全局递增版本号，缓存记下当时的值，每次命中只比一次整数；setattr 改类属性会经 `Objects/typeobject.c` 的 type_modified 让该类型及子类失效，下一次 `DEOPT_IF` 失败即回退通用分派并重新计数。
 
 缓存槽数由 `inline_cache_entries[opcode]` 表给出。
 
-3.13 的 Python/`optimizer.c` 又引入第二层 uop 解释器，把热字节码翻译成微操作追踪，实验性 JIT 构建（--enable-experimental-jit）可把追踪编译成机器码；默认解释器仍停在特化字节码层，微基准必须按版本与构建分别测。
+3.13 的 `Python/optimizer.c` 又引入第二层 uop 解释器，把热字节码翻译成微操作追踪，实验性 JIT 构建（--enable-experimental-jit）可把追踪编译成机器码；默认解释器仍停在特化字节码层，微基准必须按版本与构建分别测。
 
 
 ## 练习、选择题与速记卡

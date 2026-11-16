@@ -14,9 +14,11 @@ description: 掌握启动期扩展能力与其代价
 
 ## 包在 __init__ 里连网络，所有命令都变慢
 
-一个 CLI 工具冷启动要 1.8 秒，用户每次执行都等得明显。排查发现入口文件在顶层 import 了一个重型数据模块，而那个模块的 `__init__.py` 又顺手连了一次网络读配置；
+一个 CLI 工具冷启动要 1.8 秒，用户每次执行都等得明显。
 
-更麻烦的是团队为了做自动补丁，注册了一个远程加载的 `import hook`，结果所有命令启动时都要先走一遍这个 hook，静态分析器与依赖审计工具再也看不出代码到底依赖什么。Serverless 场景里这类问题尤其致命，因为每次冷启动都要付一遍串行导入成本。
+排查发现入口文件在顶层 import 了一个重型数据模块，而那个模块的 `__init__.py` 又顺手连了一次网络读配置；更麻烦的是团队为了做自动补丁，注册了一个远程加载的 `import hook`，结果所有命令启动时都要先走一遍这个 hook，静态分析器与依赖审计工具再也看不出代码到底依赖什么。
+
+Serverless 场景里这类问题尤其致命，因为每次冷启动都要付一遍串行导入成本。
 
 另一个 bug 是运行时动态生成插件文件后 import 不到，改 `sys.path` 时好时坏，根因是 finder 的目录清单有缓存，需要 `importlib.invalidate_caches()`。
 
@@ -40,15 +42,11 @@ description: 掌握启动期扩展能力与其代价
 
 importlib 的启动代码在 `Lib/importlib/_bootstrap.py` 与 `_bootstrap_external.py`，二者被冻结进解释器（由 FrozenImporter 加载），因此导入系统在解释器自身可用之前就能工作。
 
-`import x` 编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `_bootstrap._find_and_load`：先查 `sys.modules`，命中且值非 None 就直接返回；
+`import x` 编译成 `IMPORT_NAME` 字节码，运行时调内建 `__import__`，落到 `_bootstrap._find_and_load`：先查 `sys.modules`，命中且值非 None 就直接返回；把值设为 None 表示「导入被阻止」，会抛 `ModuleNotFoundError`。
 
-把值设为 None 表示「导入被阻止」，会抛 `ModuleNotFoundError`。
+未命中则按序遍历 `sys.meta_path`，默认是 BuiltinImporter、FrozenImporter、PathFinder 三个类，依次调用各自的 `find_spec`，谁先返回非 None 的 `ModuleSpec` 谁胜出；`path` 只在导入子模块时传入父包的 `__path__`，`target` 供 reload 复用模块对象。
 
-未命中则按序遍历 `sys.meta_path`，默认是 BuiltinImporter、FrozenImporter、PathFinder 三个类，依次调用各自的 `find_spec`，谁先返回非 None 的 `ModuleSpec` 谁胜出；
-
-`path` 只在导入子模块时传入父包的 `__path__`，`target` 供 reload 复用模块对象。ModuleSpec（PEP 451，3.4 起）字段含 name、loader、origin、submodule_search_locations、has_location、cached；
-
-loader 实现 `create_module` 与 `exec_module`，旧的 `load_module` 自 3.4 起弃用。
+ModuleSpec（PEP 451，3.4 起）字段含 name、loader、origin、submodule_search_locations、has_location、cached；loader 实现 `create_module` 与 `exec_module`，旧的 `load_module` 自 3.4 起弃用。
 
 PathFinder 用 `sys.path_hooks` 与 `path_importer_cache` 缓存目录清单，所以动态新建文件后必须调用 `importlib.invalidate_caches()` 才能被发现。
 
@@ -125,9 +123,7 @@ print('origin_is_py', fractions.__spec__.origin.endswith('.py'))
 
 ## pyc 缓存、命名空间包与循环导入
 
-字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；
-
-默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc，因此同一秒内改动、字节数又没变时可能不触发重编。
+字节码缓存落在 `__pycache__/m.cpython-313.pyc` 这样的路径里，标签来自 `sys.implementation.cache_tag`；默认按源文件 mtime 加大小校验，PEP 552 另支持 checked-hash 与 unchecked-hash 的 hash-based pyc，因此同一秒内改动、字节数又没变时可能不触发重编。
 
 `sys.dont_write_bytecode` 默认 False，`PYTHONDONTWRITEBYTECODE=1` 或 `-B` 可关掉写入，`sys.pycache_prefix` 能重定向缓存目录。
 
@@ -195,9 +191,7 @@ print('same_origin', spec.origin == spec2.origin)
 
 把 finder 插到 `sys.meta_path[0]`，意味着它先于 BuiltinImporter 被询问，既能覆盖标准库，也意味着一个写错的 finder 会拖慢此后每一次导入——它处在所有导入的关键路径上，还会让静态分析器、打包工具与 `find_spec` 的结果不一致。
 
-启动期定位用解释器的 importtime 开关（写成 `-X importtime`）打印每个模块的累计与自身导入耗时，找出在 `__init__` 里做重 IO 的包；
-
-修复是把重依赖延迟到函数内（`importlib.util.LazyLoader` 自 3.5 起可延迟执行模块代码），或改用显式插件注册并校验来源，而不是隐式远程加载。
+启动期定位用解释器的 importtime 开关（写成 `-X importtime`）打印每个模块的累计与自身导入耗时，找出在 `__init__` 里做重 IO 的包；修复是把重依赖延迟到函数内（`importlib.util.LazyLoader` 自 3.5 起可延迟执行模块代码），或改用显式插件注册并校验来源，而不是隐式远程加载。
 
 安全模型上，远程 hook 等于让任意来源的代码进入进程，必须配签名校验、来源白名单、日志与降级路径，否则插件机制本身就是供应链入口。`-X importtime` 的输出是累计微秒与自身微秒两列，按累计值排序即可定位冷启动热点。
 
@@ -237,7 +231,7 @@ sys.meta_path.remove(f)
 
 <Callout type="idea" title='落地提示' text='把重依赖延迟到函数内、用 -X importtime 找热点、插件用显式注册并校验来源' />
 
-<CheckList id='P116b' title='上线前自检' :items='["能复现并解释「包 __init__.py 在顶层连网络或读大文件」", "能复现并解释「注册隐式远程 import hook 做自动补丁」", "能复现并解释「运行时新建插件文件后 import 不到，反复改 sys.p…」", "能用一条命令验证 importlib._bootstrap", "关键路径有自动化测试与失败分支"]' />
+<CheckList id='P116a' title='上线前自检' :items='["能复现并解释「包 __init__.py 在顶层连网络或读大文件」", "能复现并解释「注册隐式远程 import hook 做自动补丁」", "能复现并解释「运行时新建插件文件后 import 不到，反复改 sys.p…」", "能用一条命令验证 importlib._bootstrap", "关键路径有自动化测试与失败分支"]' />
 
 ```bash
 python -c "import dis, sys; print(sys.version.split()[0]); dis.dis(lambda x:x)"
